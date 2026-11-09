@@ -59,3 +59,8 @@ static char *ae_str_cat(char *a, char *b, size_t line, size_t column) {
     return out;
 }
 static void ae_str_release(char **slot) { free(*slot); *slot = NULL; }
+static int64_t ae_str_len(const char *s, size_t line, size_t column) {
+    size_t n = strlen(s);
+    if (n > (size_t)INT64_MAX) ae_fail("string too long", line, column);
+    return (int64_t)n;
+}

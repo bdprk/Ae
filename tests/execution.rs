@@ -526,3 +526,57 @@ fn cache_and_version_commands_work() {
     assert!(!unknown.status.success());
     let _ = fs::remove_dir_all(&dir);
 }
+#[test]
+fn for_loops_iterate_ranges_with_break_and_continue() {
+    // continue must still advance the counter; break exits early.
+    let source = "fn main() { var total = 0; for i in 0..10 { if i % 2 == 0 { continue; } if i > 7 { break; } total = total + i; } print(total); for i in 3..3 { print(999); } for i in 0..3 { for j in 0..2 { total = total + 1; } } print(total); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    // odds below 8: 1+3+5+7 = 16; empty range prints nothing; nested adds 6 → 22
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "16\n22\n");
+}
+#[test]
+fn for_range_bounds_evaluate_once_in_order() {
+    let source = "fn show(x: i64) -> i64 { print(x); return x; } fn main() { for i in show(1)..show(4) { print(i); } }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "1\n4\n1\n2\n3\n");
+}
+#[test]
+fn len_reports_array_lengths_and_string_sizes() {
+    // Array len is compile-time; string len counts UTF-8 bytes at runtime.
+    let source = "fn main() { let a = [5, 6, 7]; print(len(a)); let s = \"héllo\"; print(len(s)); print(len(s + \"!\")); var n = 0; for i in 0..len(a) { n = n + a[i]; } print(n); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    // "héllo" = h + é (2 bytes) + l + l + o = 6 bytes; +1 for "!"
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "3\n6\n7\n18\n");
+}
+#[test]
+fn for_and_len_misuse_is_rejected() {
+    for source in [
+        "fn len(x: i64) -> i64 { return x; } fn main() {}",
+        "fn main() { for i in 0..3 { i = 2; } }",
+        "fn main() { for i in true..3 { print(i); } }",
+        "fn main() { for i in 0..\"x\" { print(i); } }",
+        "fn main() { for i in 0 { print(i); } }",
+        "fn main() { let s = 1; print(len(s)); }",
+        "fn main() { print(len(1)); }",
+        "fn main() { let a = [1]; print(len(a + 1)); }",
+        "fn main() { let a = \"x\"; let b = a; print(len(a)); }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-for-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "{source}");
+    }
+}
+#[test]
+fn for_loop_counter_overflow_fails_safely() {
+    // The hidden increment is checked arithmetic: i reaching i64::MAX fails.
+    let output = execute("fn main() { for i in 9223372036854775805..9223372036854775807 { print(i); } print(9223372036854775807); }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let output = execute("fn main() { for i in 9223372036854775806..9223372036854775807 { print(i); } }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "9223372036854775806");
+}

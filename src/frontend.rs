@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Kind {
-    Ident(String), Number(i64), Text(String), Fn, Let, Var, Print, If, Else, While, Return, Break, Continue, Assert, True, False,
+    Ident(String), Number(i64), Text(String), Fn, Let, Var, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang,
-    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Eof,
+    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, DotDot, Eof,
 }
 #[derive(Debug, Clone)]
 struct Token { kind: Kind, offset: usize, line: usize, column: usize }
@@ -68,6 +68,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
             match &source[start..i] {
                 "fn" => Kind::Fn, "let" => Kind::Let, "var" => Kind::Var, "print" => Kind::Print,
                 "if" => Kind::If, "else" => Kind::Else, "while" => Kind::While, "return" => Kind::Return,
+                "for" => Kind::For, "in" => Kind::In,
                 "break" => Kind::Break, "continue" => Kind::Continue, "assert" => Kind::Assert,
                 "true" => Kind::True, "false" => Kind::False,
                 s => Kind::Ident(s.to_owned()),
@@ -76,9 +77,9 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
             i += 1;
             while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
             Kind::Number(source[start..i].parse().map_err(|_| error(source, start, "integer literal exceeds i64 maximum"))?)
-        } else if ["==", "!=", "<=", ">=", "->", "&&", "||"].iter().any(|op| source[i..].starts_with(op)) {
+        } else if ["==", "!=", "<=", ">=", "->", "&&", "||", ".."].iter().any(|op| source[i..].starts_with(op)) {
             i += 2;
-            match &source[start..i] { "==" => Kind::EqEq, "!=" => Kind::NotEq, "<=" => Kind::LessEq, ">=" => Kind::GreaterEq, "->" => Kind::Arrow, "&&" => Kind::And, "||" => Kind::Or, _ => unreachable!() }
+            match &source[start..i] { "==" => Kind::EqEq, "!=" => Kind::NotEq, "<=" => Kind::LessEq, ">=" => Kind::GreaterEq, "->" => Kind::Arrow, "&&" => Kind::And, "||" => Kind::Or, ".." => Kind::DotDot, _ => unreachable!() }
         } else {
             i += c.len_utf8();
             match c {
@@ -106,13 +107,13 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), Len(Box<Expr>, usize, usize), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 #[derive(Debug)]
 enum Argument { Value(Expr), Borrow(usize) }
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
-enum Statement { Return(Expr, Vec<usize>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), Break, Continue, Frees(Vec<usize>) }
+enum Statement { Return(Expr, Vec<usize>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Break, Continue(Option<usize>), Frees(Vec<usize>) }
 #[derive(Debug)]
 struct Function { id: usize, params: Vec<(usize, Type)>, body: Vec<Statement>, is_main: bool, returns: Type }
 fn returns(stmts: &[Statement]) -> bool {
@@ -122,7 +123,7 @@ fn returns(stmts: &[Statement]) -> bool {
         _ => false,
     })
 }
-struct Parser<'a> { source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, functions: HashMap<String, (usize, Vec<Type>, Type)>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, scopes: Vec<Vec<(usize, Type)>> }
+struct Parser<'a> { source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: HashMap<String, (usize, Vec<Type>, Type)>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, scopes: Vec<Vec<(usize, Type)>> }
 impl<'a> Parser<'a> {
     fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
     fn fail(&self, message: &str) -> String { error(self.source, self.tokens[self.pos].offset, message) }
@@ -175,6 +176,24 @@ impl<'a> Parser<'a> {
                 let name_offset = self.tokens[self.pos].offset;
                 let (vline, vcol) = self.position();
                 self.pos += 1;
+                if name == "len" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    // Array length is a compile-time constant over a bare array variable.
+                    if let Kind::Ident(arg_name) = self.current().clone() {
+                        let after = self.tokens.get(self.pos + 1).map(|t| t.kind.clone());
+                        if after == Some(Kind::RParen) {
+                            if let Some(&(_, _, Type::Array(n))) = self.names.get(&arg_name) {
+                                self.pos += 2;
+                                return Ok((Expr::Number(n as i64), Type::Int));
+                            }
+                        }
+                    }
+                    let (operand, ty) = self.expression(0, false)?;
+                    self.take(Kind::RParen)?;
+                    if ty != Type::String { return Err(self.fail("len expects a string value or an array variable")); }
+                    return Ok((Expr::Len(Box::new(operand), line, col), Type::Int));
+                }
                 if *self.current() == Kind::LParen {
                     let (id, types, ret) = self.functions.get(&name).cloned().ok_or_else(|| error(self.source, name_offset, &format!("unknown function '{name}'")))?;
                     self.pos += 1;
@@ -312,6 +331,7 @@ impl<'a> Parser<'a> {
                 }
             }
             self.take(Kind::RParen)?;
+            if name == "len" { return Err(self.fail("'len' is a built-in and cannot be redefined")); }
             if name == "main" {
                 if !types.is_empty() { return Err(self.fail("main cannot have parameters")); }
             } else {
@@ -495,7 +515,9 @@ impl<'a> Parser<'a> {
                     if self.loop_depth >= 64 { return Err(self.fail("loop nesting limit exceeded (64)")); }
                     self.loop_depth += 1;
                     self.loop_scopes.push(self.scopes.len());
+                    self.loop_labels.push(None);
                     let body = self.block();
+                    self.loop_labels.pop();
                     self.loop_scopes.pop();
                     self.loop_depth -= 1;
                     // Moves inside the body poison uses after the loop; uses
@@ -503,13 +525,47 @@ impl<'a> Parser<'a> {
                     // the null check on every string read.
                     result.push(Statement::While(condition, body?));
                 }
+                Kind::For => {
+                    self.pos += 1;
+                    let var_name = self.identifier()?;
+                    if self.names.contains_key(&var_name) { return Err(self.fail(&format!("duplicate variable '{var_name}'"))); }
+                    self.take(Kind::In)?;
+                    let (start, start_ty) = self.expression(0, false)?;
+                    if start_ty != Type::Int { return Err(self.fail("range bounds must be i64")); }
+                    self.take(Kind::DotDot)?;
+                    let (end, end_ty) = self.expression(0, false)?;
+                    if end_ty != Type::Int { return Err(self.fail("range bounds must be i64")); }
+                    if self.loop_depth >= 64 { return Err(self.fail("loop nesting limit exceeded (64)")); }
+                    let (line, col) = self.position();
+                    // Hidden storage: bounds evaluate once, in order.
+                    let end_var = self.next_var; self.next_var += 1;
+                    let var = self.next_var; self.next_var += 1;
+                    let label = self.next_label; self.next_label += 1;
+                    self.loop_depth += 1;
+                    self.scopes.push(vec![(var, Type::Int)]);
+                    self.loop_scopes.push(self.scopes.len());
+                    self.loop_labels.push(Some(label));
+                    self.names.insert(var_name.clone(), (var, false, Type::Int));
+                    let body = self.block();
+                    self.loop_labels.pop();
+                    self.loop_scopes.pop();
+                    let for_scope = self.scopes.pop().unwrap();
+                    self.loop_depth -= 1;
+                    self.names.remove(&var_name);
+                    let body = body?;
+                    debug_assert!(for_scope.iter().all(|(_, ty)| *ty != Type::String));
+                    // Bounds evaluate once, left to right, before any iteration.
+                    result.push(Statement::Declare(var, start));
+                    result.push(Statement::Declare(end_var, end));
+                    result.push(Statement::For(var, end_var, body, label, line, col));
+                }
                 Kind::Break | Kind::Continue => {
                     let keyword = if *self.current() == Kind::Break { "break" } else { "continue" };
                     if self.loop_depth == 0 { return Err(self.fail(&format!("'{keyword}' outside of a loop"))); }
                     self.pos += 1; self.take(Kind::Semi)?;
                     let strings = self.loop_local_strings();
                     if !strings.is_empty() { result.push(Statement::Frees(strings)); }
-                    result.push(if keyword == "break" { Statement::Break } else { Statement::Continue });
+                    result.push(if keyword == "break" { Statement::Break } else { Statement::Continue(self.loop_labels.last().copied().flatten()) });
                 }
                 Kind::Assert => {
                     let (line, col) = self.position();
@@ -602,6 +658,13 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
         Expr::Index(id, len, index, line, col) => {
             let i = emit_expr(index, out, next, false);
             Emitted { text: format!("v{id}[ae_index({}, {len}, {line}, {col})]", i.text), ty: Type::Int, owned: false, moves: i.moves, materialized: false }
+        }
+        Expr::Len(e, line, col) => {
+            let t = emit_expr(e, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{id} = ae_str_len({}, {line}, {col});\n", t.text));
+            if t.owned { out.push_str(&format!("    free({});\n", t.text)); }
+            Emitted { text: format!("t{id}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::Neg(a, line, column) => {
             let t = emit_expr(a, out, next, false);
@@ -735,13 +798,25 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
             }
             // The while(1) form re-evaluates the condition after `continue`.
             Statement::Break => out.push_str("    break;\n"),
-            Statement::Continue => out.push_str("    continue;\n"),
+            Statement::Continue(label) => match label {
+                // In a for loop, continue must still run the increment.
+                Some(label) => out.push_str(&format!("    goto ae_next_{label};\n")),
+                None => out.push_str("    continue;\n"),
+            },
+            Statement::For(var, end_var, body, label, line, col) => {
+                out.push_str("    while (1) {\n");
+                out.push_str(&format!("    if (!(v{var} < v{end_var})) break;\n"));
+                emit_statements(body, out, next);
+                out.push_str(&format!("    ae_next_{label}: ;\n"));
+                out.push_str(&format!("    v{var} = ae_add(v{var}, 1, {line}, {col});\n"));
+                out.push_str("    }\n");
+            }
             Statement::Frees(ids) => { for id in ids { release_var(out, *id); } }
         }
     }
 }
 fn parse(source: &str) -> Result<Vec<Function>, String> {
-    let mut p = Parser { source, tokens: lex(source)?, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), functions: HashMap::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), scopes: Vec::new() };
+    let mut p = Parser { source, tokens: lex(source)?, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions: HashMap::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), scopes: Vec::new() };
     p.collect_functions()?;
     p.program()
 }
