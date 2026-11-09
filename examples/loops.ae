@@ -1,0 +1,28 @@
+// Ranges evaluate their bounds once; counters are immutable.
+fn main() {
+    var total = 0;
+    for i in 1..101 {
+        total = total + i;
+    }
+    print(total);
+
+    var odds = 0;
+    for i in 0..20 {
+        if i % 2 == 0 {
+            continue;   // still advances the counter
+        }
+        if i > 12 {
+            break;
+        }
+        odds = odds + 1;
+    }
+    print(odds);
+
+    var n = 0;
+    while n < 3 {
+        n = n + 1;
+    }
+    assert(n == 3);
+    assert(1 < 2 && 2 < 3);
+    print(n);
+}

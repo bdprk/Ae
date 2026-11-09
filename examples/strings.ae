@@ -1,0 +1,16 @@
+// Owned strings move; print and len borrow.
+fn exclaim(name: string) -> string {
+    return name + "!";
+}
+
+fn main() {
+    var greeting = "hello";
+    print(greeting);
+    let loud = exclaim(greeting);
+    print(loud);
+    greeting = "hi";                 // re-initialize after the move
+    let phrase = greeting + " there";
+    print(phrase);
+    print(len(phrase));
+    print("中文 😀");                 // UTF-8 passes through
+}
