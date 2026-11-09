@@ -4,7 +4,7 @@ AE 是自主研发的实验性原生编程语言，首批目标平台为 Windows
 
 优先级：安全和正确性是底线；运行 CPU 和内存共同优化；编译速度和磁盘占用都必须满足未来基于基准设定的预算。功能可以为这些目标让路。
 
-当前原型支持的子集：`fn main()` 与用户函数（`i64`/`bool`/`string` 参数与返回值）、`let`/`var`、赋值、整数与布尔字面量、字符串字面量与转义、括号、`+ - * / %` 与一元 `-`/`!`、受检算术（溢出、除零报告位置并退出）、比较与 `&&`/`||` 短路、`if`/`else if`/`else`、`while`、`for i in a..b`（半开区间，界只求值一次）、`break`/`continue`、`assert`、`print`（整数/布尔/字符串/字面量）、`len`（数组编译期常量、字符串字节数）、固定长度整数数组与边界检查、只读数组借用参数、**拥有型字符串的移动语义与确定性释放**。表达式从左到右求值；字符串赋值/传参/返回按移动处理，移动后使用被编译期拒绝，并有运行时空检查兜底；块退出、提前返回与跳转路径全部插入幂等释放。
+当前原型支持的子集：`fn main()` 与用户函数（`i64`/`bool`/`string` 参数与返回值）、`let`/`var`、赋值、整数与布尔字面量、字符串字面量与转义、括号、`+ - * / %` 与一元 `-`/`!`、受检算术（溢出、除零报告位置并退出）、比较与 `&&`/`||` 短路、`if`/`else if`/`else`、`while`、`for i in a..b`（半开区间，界只求值一次）、`break`/`continue`、`assert`、`print`（整数/布尔/字符串/字面量）、`len`（数组编译期常量、字符串字节数）、固定长度整数数组与边界检查、只读数组借用参数、**拥有型字符串与动态向量 vec 的移动语义与确定性释放**、** 只读借用**、**模块（ 导入、环检测）**、**文件读写（Unicode 路径）**、字符串相等比较、 字节向量。表达式从左到右求值；字符串赋值/传参/返回按移动处理，移动后使用被编译期拒绝，并有运行时空检查兜底；块退出、提前返回与跳转路径全部插入幂等释放。
 
 诊断显示行列号；尚无模块、泛型、动态容器、并发或正式安全证明，不能据此宣称完整的内存安全语言已完成。
 
@@ -18,6 +18,8 @@ cargo run -- check examples/hello.ae
 cargo run -- emit-c examples/hello.ae
 cargo run -- run examples/hello.ae
 cargo run -- run examples/strings.ae
+cargo run -- run examples/vectors.ae
+cargo run -- run examples/grep.ae
 cargo run -- run examples/loops.ae
 cargo run -- run examples/arrays.ae
 cargo run -- run examples/functions.ae
