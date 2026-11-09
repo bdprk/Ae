@@ -11,10 +11,10 @@ enum Kind {
 struct Token { kind: Kind, offset: usize, line: usize, column: usize }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, String, Vec, Array(usize) }
+enum Type { Int, Bool, String, Vec, VecRef, Array(usize) }
 impl Type {
     fn name(self) -> &'static str {
-        match self { Type::Int => "i64", Type::Bool => "bool", Type::String => "string", Type::Vec => "vec", Type::Array(_) => "array" }
+        match self { Type::Int => "i64", Type::Bool => "bool", Type::String => "string", Type::Vec => "vec", Type::VecRef => "&vec", Type::Array(_) => "array" }
     }
     fn c_temp(self) -> &'static str {
         match self { Type::Bool => "bool ", Type::String => "char *", Type::Vec => "ae_vec ", _ => "int64_t " }
@@ -26,7 +26,7 @@ impl Type {
     }
 }
 // Built-in names are reserved so their semantics stay unambiguous.
-const RESERVED: [&str; 4] = ["len", "push", "pop", "vec"];
+const RESERVED: [&str; 7] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes"];
 
 fn location(source: &str, offset: usize) -> (usize, usize) {
     let prefix = &source[..offset];
@@ -121,9 +121,9 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize), Len(Box<Expr>, usize, usize), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 #[derive(Debug)]
-enum Argument { Value(Expr), Borrow(usize) }
+enum Argument { Value(Expr), Borrow(usize, bool) } // bool: borrow of a vec struct (pass &slot) vs array (decays)
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
@@ -220,9 +220,9 @@ impl<'a> Parser<'a> {
                                 if self.moved.contains(&id) { return Err(error(&self.file, self.source, name_offset, &format!("cannot use '{arg_name}' because it was moved"))); }
                                 match ty {
                                     Type::Array(n) => { self.pos += 2; fast = Some((Expr::Number(n as i64), Type::Int)); }
-                                    Type::Vec => {
+                                    Type::Vec | Type::VecRef => {
                                         self.pos += 2;
-                                        fast = Some((Expr::Len(Box::new(Expr::Variable(id, Type::Vec, vline, vcol)), line, col), Type::Int));
+                                        fast = Some((Expr::Len(Box::new(Expr::Variable(id, ty, vline, vcol)), line, col), Type::Int));
                                     }
                                     _ => {}
                                 }
@@ -234,10 +234,30 @@ impl<'a> Parser<'a> {
                         None => {
                             let (operand, ty) = self.expression(0, false)?;
                             self.take(Kind::RParen)?;
-                            if !matches!(ty, Type::String | Type::Vec) { return Err(self.fail("len expects a string, vec, or array variable")); }
+                            if !matches!(ty, Type::String | Type::Vec | Type::VecRef) { return Err(self.fail("len expects a string, vec, or array variable")); }
                             (Expr::Len(Box::new(operand), line, col), Type::Int)
                         }
                     }
+                } else if matches!(name.as_str(), "read_file" | "write_file" | "bytes") && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.pos += 1;
+                    let (first, first_ty) = self.expression(0, false)?;
+                    if first_ty != Type::String { return Err(self.fail(&format!("{name} expects a string argument"))); }
+                    let builtin = if name == "read_file" {
+                        self.take(Kind::RParen)?;
+                        Expr::ReadFile(Box::new(first), line, col)
+                    } else if name == "bytes" {
+                        self.take(Kind::RParen)?;
+                        Expr::Bytes(Box::new(first), line, col)
+                    } else {
+                        self.take(Kind::Comma)?;
+                        let (second, second_ty) = self.expression(0, false)?;
+                        if second_ty != Type::String { return Err(self.fail("write_file expects a string content")); }
+                        self.take(Kind::RParen)?;
+                        Expr::WriteFile(Box::new(first), Box::new(second), line, col)
+                    };
+                    let ty = match name.as_str() { "write_file" => Type::Int, "bytes" => Type::Vec, _ => Type::String };
+                    (builtin, ty)
                 } else if *self.current() == Kind::LParen {
                     let (id, types, ret) = self.functions.get(&name).cloned().ok_or_else(|| error(&self.file, self.source, name_offset, &format!("unknown function '{name}'")))?;
                     self.pos += 1;
@@ -246,12 +266,19 @@ impl<'a> Parser<'a> {
                         loop {
                             if args.len() >= 64 { return Err(self.fail("function argument limit exceeded (64)")); }
                             let expected = *types.get(args.len()).ok_or_else(|| self.fail(&format!("too many arguments to '{name}'")))?;
-                            if let Type::Array(len) = expected {
+                            if expected == Type::VecRef {
+                                self.take(Kind::Amp)?;
+                                let arg = self.identifier()?;
+                                let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown variable '{arg}'")))?;
+                                if actual != Type::Vec { return Err(self.fail(&format!("argument must be a vec, found {}", actual.name()))); }
+                                if self.moved.contains(&var) { return Err(self.fail(&format!("cannot borrow '{arg}' because it was moved"))); }
+                                args.push(Argument::Borrow(var, true));
+                            } else if let Type::Array(len) = expected {
                                 self.take(Kind::Amp)?;
                                 let arg = self.identifier()?;
                                 let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown array '{arg}'")))?;
                                 if actual != Type::Array(len) { return Err(self.fail(&format!("argument requires array of length {len}"))); }
-                                args.push(Argument::Borrow(var));
+                                args.push(Argument::Borrow(var, false));
                             } else {
                                 // By-value arguments consume string values.
                                 let (value, ty) = self.expression(0, moving)?;
@@ -274,14 +301,14 @@ impl<'a> Parser<'a> {
                         if index_ty != Type::Int { return Err(self.fail("array index must be an integer")); }
                         self.take(Kind::RBracket)?;
                         (Expr::Index(id, len, Box::new(index), line, col), Type::Int)
-                    } else if ty == Type::Vec && *self.current() == Kind::LBracket {
+                    } else if (ty == Type::Vec || ty == Type::VecRef) && *self.current() == Kind::LBracket {
                         // Vec variables may also be used bare (moves, len);
-                        // indexing is optional.
+                        // indexing is optional. Borrowed vectors are read-only.
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
                         let (index, index_ty) = self.expression(0, false)?;
                         if index_ty != Type::Int { return Err(self.fail("vector index must be an integer")); }
                         self.take(Kind::RBracket)?;
-                        (Expr::VecIndex(id, Box::new(index), line, col), Type::Int)
+                        (Expr::VecIndex(id, Box::new(index), line, col, ty == Type::VecRef), Type::Int)
                     } else {
                         if moving && ty.owned() { self.moved.insert(id); }
                         (Expr::Variable(id, ty, vline, vcol), ty)
@@ -313,7 +340,15 @@ impl<'a> Parser<'a> {
                     Type::Bool
                 }
                 Kind::EqEq | Kind::NotEq | Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq => {
-                    if lhs_ty != Type::Int || rhs_ty != Type::Int { return Err(self.fail("comparison requires integer operands")); }
+                    if lhs_ty != rhs_ty || !matches!(lhs_ty, Type::Int | Type::String) {
+                        return Err(self.fail("comparison requires two integers or two strings"));
+                    }
+                    // String equality gets a dedicated node so emission never
+                    // confuses it with C pointer comparison.
+                    if (op == Kind::EqEq || op == Kind::NotEq) && lhs_ty == Type::String {
+                        lhs = (Expr::StrEq(Box::new(lhs_expr), Box::new(rhs), op == Kind::NotEq), Type::Bool);
+                        continue;
+                    }
                     Type::Bool
                 }
                 Kind::Plus if lhs_ty == Type::String || rhs_ty == Type::String => {
@@ -335,7 +370,12 @@ impl<'a> Parser<'a> {
     // Arrays are borrowed read-only; strings and scalars pass by value.
     fn parameter_type(&mut self) -> Result<Type, String> {
         if *self.current() == Kind::Amp {
-            self.pos += 1; self.take(Kind::LBracket)?;
+            self.pos += 1;
+            if matches!(self.current(), Kind::Ident(name) if name == "vec") {
+                self.pos += 1;
+                return Ok(Type::VecRef);
+            }
+            self.take(Kind::LBracket)?;
             if self.identifier()? != "i64" { return Err(self.fail("array element type must be i64")); }
             self.take(Kind::Semi)?;
             let len = match self.current() {
@@ -675,8 +715,10 @@ impl<'a> Parser<'a> {
                 }
                 Kind::Print => {
                     self.pos += 1; self.take(Kind::LParen)?;
-                    let printed = if let Kind::Text(text) = self.current().clone() {
-                        self.pos += 1; Printed::Text(text)
+                    let is_bare_text = matches!(self.current(), Kind::Text(_))
+                        && matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(Kind::RParen));
+                    let printed = if is_bare_text {
+                        if let Kind::Text(text) = self.current().clone() { self.pos += 1; Printed::Text(text) } else { unreachable!() }
                     } else {
                         // print borrows its value; only `+` consumes strings.
                         let (value, ty) = self.expression(0, false)?;
@@ -733,7 +775,11 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             ty: Type::String, owned: true, moves: Vec::new(), materialized: false,
         },
         Expr::Variable(id, ty, line, column) => {
-            if ty.owned() {
+            if *ty == Type::VecRef {
+                out.push_str(&format!("    if (!v{id}->data) ae_fail(\"use of moved vector\", {line}, {column});
+"));
+                Emitted { text: format!("(*v{id})"), ty: Type::Vec, owned: false, moves: Vec::new(), materialized: true }
+            } else if ty.owned() {
                 // Runtime backstop: a moved value's slot is empty.
                 let probe = match ty { Type::Vec => format!("!v{id}.data"), _ => format!("!v{id}") };
                 let message = match ty { Type::Vec => "use of moved vector", _ => "use of moved string" };
@@ -753,7 +799,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let mut moves = Vec::new();
             let arguments = args.iter().map(|arg| match arg {
                 Argument::Value(e) => { let t = emit_expr(e, out, next, true); moves.extend(t.moves); t.text }
-                Argument::Borrow(id) => format!("v{id}"),
+                Argument::Borrow(id, is_vec) => if *is_vec { format!("&v{id}") } else { format!("v{id}") },
             }).collect::<Vec<_>>().join(", ");
             let t = *next; *next += 1;
             out.push_str(&format!("    {}t{t} = ae_fn_{id}({arguments});\n", ret.c_temp()));
@@ -770,10 +816,15 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             }
             Emitted { text: format!("t{t}"), ty: Type::Vec, owned: true, moves: Vec::new(), materialized: true }
         }
-        Expr::VecIndex(id, index, line, col) => {
-            out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+        Expr::VecIndex(id, index, line, col, by_ref) => {
+            let (check, receiver) = if *by_ref {
+                (format!("if (!v{id}->data) ae_fail(\"use of moved vector\", {line}, {col});"), format!("(*v{id})"))
+            } else {
+                (format!("if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});"), format!("v{id}"))
+            };
+            out.push_str(&format!("    {check}\n"));
             let i = emit_expr(index, out, next, false);
-            Emitted { text: format!("ae_vec_get(v{id}, {}, {line}, {col})", i.text), ty: Type::Int, owned: false, moves: i.moves, materialized: false }
+            Emitted { text: format!("ae_vec_get({receiver}, {}, {line}, {col})", i.text), ty: Type::Int, owned: false, moves: i.moves, materialized: false }
         }
         Expr::Index(id, len, index, line, col) => {
             let i = emit_expr(index, out, next, false);
@@ -783,8 +834,8 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let t = emit_expr(e, out, next, false);
             let id = *next; *next += 1;
             let call = match t.ty {
-                Type::Vec => format!("ae_vec_len({}, {line}, {col})", t.text),
-                _ => format!("ae_str_len({}, {line}, {col})", t.text),
+                Type::String => format!("ae_str_len({}, {line}, {col})", t.text),
+                _ => format!("ae_vec_len({}, {line}, {col})", t.text),
             };
             out.push_str(&format!("    int64_t t{id} = {call};\n"));
             if t.owned { drop_owned_temp(out, &t); }
@@ -797,6 +848,40 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
         Expr::Not(a) => {
             let t = emit_expr(a, out, next, false);
             Emitted { text: format!("!{}", t.text), ty: Type::Bool, owned: false, moves: t.moves, materialized: false }
+        }
+        Expr::ReadFile(e, line, col) => {
+            let t = emit_expr(e, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    char *t{id} = ae_read_file({}, {line}, {col});
+", t.text));
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::WriteFile(path, content, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let c = emit_expr(content, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{id} = ae_write_file({}, {}, {line}, {col});
+", p.text, c.text));
+            Emitted { text: format!("t{id}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Bytes(e, line, col) => {
+            let t = emit_expr(e, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_vec t{id} = ae_bytes({}, {line}, {col});
+", t.text));
+            Emitted { text: format!("t{id}"), ty: Type::Vec, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::StrEq(a, b, negated) => {
+            let l = emit_expr(a, out, next, false);
+            let r = emit_expr(b, out, next, false);
+            let id = *next; *next += 1;
+            let cmp = format!("ae_str_eq({}, {})", l.text, r.text);
+            let text = if *negated { format!("!{cmp}") } else { cmp };
+            out.push_str(&format!("    bool t{id} = {text};
+"));
+            if l.owned { drop_owned_temp(out, &l); }
+            if r.owned { drop_owned_temp(out, &r); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::Binary(a, op, b, line, column, ty) if *op == Kind::And || *op == Kind::Or => {
             let l = emit_expr(a, out, next, false);
@@ -1070,6 +1155,8 @@ fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Bool => format!("bool v{id}"),
         Type::String => format!("char *v{id}"),
         Type::Vec => format!("ae_vec v{id}"),
+        Type::VecRef if declaration => format!("const ae_vec *v{id}"),
+        Type::VecRef => "const ae_vec *".to_owned(),
         Type::Array(_) if declaration => format!("const int64_t *v{id}"),
         Type::Array(_) => "const int64_t *".to_owned(),
     }

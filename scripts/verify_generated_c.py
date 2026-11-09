@@ -14,6 +14,7 @@ def run():
     executable = ROOT / "target" / "debug" / ("ae.exe" if os.name == "nt" else "ae")
     cc = os.environ.get("AE_CC", "gcc")
     cases = [
+        ("vectors.ae", b"5\n55\n154\n0", True),
         ("arrays.ae", b"60", True),
         ("borrow.ae", b"60", True),
         ("functions.ae", b"720", True),
@@ -35,7 +36,8 @@ def run():
             subprocess.run([cc, *flags, cfile, "-o", binary], check=True)
             result = subprocess.run([binary], capture_output=True)
             if ok:
-                assert result.returncode == 0 and result.stdout.strip() == expected, (name, result.returncode, result.stderr)
+                stdout = result.stdout.replace(b"\r\n", b"\n").strip()
+                assert result.returncode == 0 and stdout == expected, (name, result.returncode, result.stderr)
             else:
                 assert result.returncode != 0 and expected in result.stderr, (name, result.returncode, result.stderr)
             assert b"runtime error:" not in result.stderr and b"ERROR: AddressSanitizer" not in result.stderr, (name, result.stderr)

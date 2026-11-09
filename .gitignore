@@ -1,1 +1,4 @@
 /target
+
+# generated benchmark input
+bench-input.txt

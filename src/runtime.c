@@ -59,6 +59,7 @@ static char *ae_str_cat(char *a, char *b, size_t line, size_t column) {
     return out;
 }
 static void ae_str_release(char **slot) { free(*slot); *slot = NULL; }
+static bool ae_str_eq(const char *a, const char *b) { return strcmp(a, b) == 0; }
 static int64_t ae_str_len(const char *s, size_t line, size_t column) {
     size_t n = strlen(s);
     if (n > (size_t)INT64_MAX) ae_fail("string too long", line, column);
@@ -116,4 +117,57 @@ static void ae_vec_forfeit(ae_vec *v) {
     v->data = NULL;
     v->len = 0;
     v->cap = 0;
+}
+
+// File I/O. Paths are UTF-8; on Windows they are widened for _wfopen so
+// non-ASCII paths behave like the rest of the platform layer.
+#ifdef _WIN32
+#include <windows.h>
+static FILE *ae_fopen(const char *path, const char *mode) {
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
+    int mlen = MultiByteToWideChar(CP_UTF8, 0, mode, -1, NULL, 0);
+    if (wlen <= 0 || mlen <= 0) return NULL;
+    wchar_t *wpath = malloc((size_t)wlen * sizeof(wchar_t));
+    wchar_t *wmode = malloc((size_t)mlen * sizeof(wchar_t));
+    if (!wpath || !wmode) { free(wpath); free(wmode); return NULL; }
+    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, wlen);
+    MultiByteToWideChar(CP_UTF8, 0, mode, -1, wmode, mlen);
+    FILE *f = _wfopen(wpath, wmode);
+    free(wpath);
+    free(wmode);
+    return f;
+}
+#else
+static FILE *ae_fopen(const char *path, const char *mode) { return fopen(path, mode); }
+#endif
+
+static char *ae_read_file(const char *path, size_t line, size_t column) {
+    FILE *f = ae_fopen(path, "rb");
+    if (!f) ae_fail("cannot read file", line, column);
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); ae_fail("cannot read file", line, column); }
+    long size = ftell(f);
+    if (size < 0) { fclose(f); ae_fail("cannot read file", line, column); }
+    rewind(f);
+    char *buffer = malloc((size_t)size + 1);
+    if (!buffer) { fclose(f); ae_fail("out of memory", line, column); }
+    size_t read = fread(buffer, 1, (size_t)size, f);
+    fclose(f);
+    if (read != (size_t)size) ae_fail("cannot read file", line, column);
+    buffer[size] = 0;
+    return buffer;
+}
+static int64_t ae_write_file(const char *path, const char *content, size_t line, size_t column) {
+    FILE *f = ae_fopen(path, "wb");
+    if (!f) ae_fail("cannot write file", line, column);
+    size_t n = strlen(content);
+    size_t written = fwrite(content, 1, n, f);
+    if (fclose(f) != 0 || written != n) ae_fail("cannot write file", line, column);
+    return (int64_t)written;
+}
+static ae_vec ae_bytes(const char *s, size_t line, size_t column) {
+    ae_vec v = ae_vec_new(line, column);
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+        ae_vec_push(&v, (int64_t)*p, line, column);
+    }
+    return v;
 }
