@@ -2,7 +2,7 @@ use std::{env, ffi::{OsStr, OsString}, fs, path::{Path, PathBuf}, process::{Comm
 
 mod frontend;
 mod sha256;
-use frontend::compile;
+use frontend::compile_path;
 
 const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae run <source.ae> [--release]\n       ae build <source.ae> -o <output> [--release]\n       ae cache [dir|clear|stats]\n       ae version";
 
@@ -161,16 +161,15 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         _ => return Err(format!("unknown command: {cmd}\n{USAGE}")),
     };
     let input = Path::new(&args[1]);
-    let src = fs::read_to_string(input).map_err(|e| format!("{}: {e}", input.display()))?;
     let started = Instant::now();
     if cmd == "check" {
-        frontend::check(&src).map_err(|e| format!("{}:{e}", input.display()))?;
+        frontend::check_path(input)?;
         if timings_enabled() {
             eprintln!("ae timing: frontend_ms={:.3}", started.elapsed().as_secs_f64() * 1000.0);
         }
         return Ok(0);
     }
-    let c = compile(&src).map_err(|e| format!("{}:{e}", input.display()))?;
+    let c = compile_path(input)?;
     if timings_enabled() {
         eprintln!("ae timing: frontend_and_codegen_ms={:.3}", started.elapsed().as_secs_f64() * 1000.0);
     }

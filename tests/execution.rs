@@ -661,3 +661,49 @@ fn len_works_in_binary_and_condition_contexts() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "4\n8\ntrue\n");
 }
+#[test]
+fn modules_import_transitively_and_reject_cycles_or_conflicts() {
+    let dir = std::env::temp_dir().join(format!("ae-mod-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("sub")).unwrap();
+    fs::write(dir.join("lib.ae"), "use \"sub/deep.ae\";\nfn twice(x: i64) -> i64 { return x * 2; }\nfn quad(x: i64) -> i64 { return twice(twice(x)); }\n").unwrap();
+    fs::write(dir.join("sub/deep.ae"), "fn base() -> i64 { return 3; }\n").unwrap();
+    let main_file = dir.join("main.ae");
+    let executable = dir.join(if cfg!(windows) { "prog.exe" } else { "prog" });
+    let build_with = |text: &str, out: &std::path::Path| {
+        fs::write(&main_file, text).unwrap();
+        let _ = fs::remove_file(out);
+        Command::new(env!("CARGO_BIN_EXE_ae")).arg("build").arg(&main_file).arg("-o").arg(out).output().unwrap()
+    };
+    // Transitive import: main -> lib -> sub/deep.
+    let result = build_with("use \"lib.ae\";\nfn main() { print(base()); print(quad(base())); }", &executable);
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let output = Command::new(&executable).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "3\n12\n");
+    // Cycles are rejected with a diagnostic.
+    fs::write(dir.join("cycle1.ae"), "use \"cycle2.ae\";\nfn a() -> i64 { return 1; }\nfn main() { print(a()); }").unwrap();
+    fs::write(dir.join("cycle2.ae"), "use \"cycle1.ae\";\nfn b() -> i64 { return 2; }\n").unwrap();
+    let result = build_with("use \"cycle1.ae\";\nfn main() { print(1); }", &executable);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("circular import"), "{}", String::from_utf8_lossy(&result.stderr));
+    // Duplicate names across files are rejected.
+    fs::write(dir.join("dupe.ae"), "fn twice(x: i64) -> i64 { return x; }\n").unwrap();
+    let result = build_with("use \"lib.ae\";\nuse \"dupe.ae\";\nfn main() { print(1); }", &executable);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("duplicate function"), "{}", String::from_utf8_lossy(&result.stderr));
+    // Missing import files fail cleanly; two mains are rejected.
+    let result = build_with("use \"nope.ae\";\nfn main() { print(1); }", &executable);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("cannot open"), "{}", String::from_utf8_lossy(&result.stderr));
+    fs::write(dir.join("other.ae"), "fn main() { print(2); }").unwrap();
+    let result = build_with("use \"other.ae\";\nfn main() { print(1); }", &executable);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("exactly one main"), "{}", String::from_utf8_lossy(&result.stderr));
+    // Errors name the file and position.
+    fs::write(dir.join("lib.ae"), "fn twice(x: i64) -> i64 { return x * 2; }\nfn quad(x: i64) -> i64 { return oops; }\n").unwrap();
+    let result = build_with("use \"lib.ae\";\nfn main() { print(quad(1)); }", &executable);
+    assert!(!result.status.success());
+    let err = String::from_utf8_lossy(&result.stderr);
+    assert!(err.contains("lib.ae") && err.contains("unknown variable"), "{err}");
+    let _ = fs::remove_dir_all(&dir);
+}

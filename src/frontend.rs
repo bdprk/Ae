@@ -1,8 +1,9 @@
 use std::collections::HashMap;
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Kind {
-    Ident(String), Number(i64), Text(String), Fn, Let, Var, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False,
+    Ident(String), Number(i64), Text(String), Fn, Let, Var, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, DotDot, Eof,
 }
@@ -32,9 +33,15 @@ fn location(source: &str, offset: usize) -> (usize, usize) {
     (prefix.bytes().filter(|b| *b == b'\n').count() + 1,
      prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1)
 }
-fn error(source: &str, offset: usize, message: &str) -> String {
+// Lexer diagnostics carry no file name; load_file adds the file prefix.
+fn lex_error(source: &str, offset: usize, message: &str) -> String {
     let (line, column) = location(source, offset);
     format!("{line}:{column}: {message}")
+}
+fn error(file: &str, source: &str, offset: usize, message: &str) -> String {
+    let (line, column) = location(source, offset);
+    // In-memory sources carry no file name; keep those diagnostics compact.
+    if file.is_empty() { format!("{line}:{column}: {message}") } else { format!("{file}:{line}:{column}: {message}") }
 }
 fn lex(source: &str) -> Result<Vec<Token>, String> {
     let bytes = source.as_bytes();
@@ -55,18 +62,18 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
             while i < bytes.len() {
                 match bytes[i] {
                     b'"' => break,
-                    b'\n' | b'\0' => return Err(error(source, i, "string literals must not contain raw newlines or NUL; use escapes")),
+                    b'\n' | b'\0' => return Err(lex_error(source, i, "string literals must not contain raw newlines or NUL; use escapes")),
                     b'\\' => {
                         let escaped = bytes.get(i + 1).copied();
                         if !matches!(escaped, Some(b'n' | b't' | b'\\' | b'"')) {
-                            return Err(error(source, i, "unsupported string escape; allowed: \\n \\t \\\\ \\\""));
+                            return Err(lex_error(source, i, "unsupported string escape; allowed: \\n \\t \\\\ \\\""));
                         }
                         i += 2;
                     }
                     _ => i += 1,
                 }
             }
-            if i >= bytes.len() { return Err(error(source, start, "unterminated string literal")); }
+            if i >= bytes.len() { return Err(lex_error(source, start, "unterminated string literal")); }
             i += 1;
             Kind::Text(source[start + 1..i - 1].to_owned())
         } else if c.is_ascii_alphabetic() || c == '_' {
@@ -77,13 +84,13 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                 "if" => Kind::If, "else" => Kind::Else, "while" => Kind::While, "return" => Kind::Return,
                 "for" => Kind::For, "in" => Kind::In,
                 "break" => Kind::Break, "continue" => Kind::Continue, "assert" => Kind::Assert,
-                "true" => Kind::True, "false" => Kind::False,
+                "true" => Kind::True, "false" => Kind::False, "use" => Kind::Use,
                 s => Kind::Ident(s.to_owned()),
             }
         } else if c.is_ascii_digit() {
             i += 1;
             while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
-            Kind::Number(source[start..i].parse().map_err(|_| error(source, start, "integer literal exceeds i64 maximum"))?)
+            Kind::Number(source[start..i].parse().map_err(|_| lex_error(source, start, "integer literal exceeds i64 maximum"))?)
         } else if ["==", "!=", "<=", ">=", "->", "&&", "||", ".."].iter().any(|op| source[i..].starts_with(op)) {
             i += 2;
             match &source[start..i] { "==" => Kind::EqEq, "!=" => Kind::NotEq, "<=" => Kind::LessEq, ">=" => Kind::GreaterEq, "->" => Kind::Arrow, "&&" => Kind::And, "||" => Kind::Or, ".." => Kind::DotDot, _ => unreachable!() }
@@ -95,7 +102,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                 ';' => Kind::Semi, '=' => Kind::Equal, '+' => Kind::Plus, '-' => Kind::Minus,
                 '*' => Kind::Star, '/' => Kind::Slash, '%' => Kind::Percent, '<' => Kind::Less, '>' => Kind::Greater,
                 '!' => Kind::Bang,
-                _ => return Err(error(source, start, &format!("unexpected character {c:?}"))),
+                _ => return Err(lex_error(source, start, &format!("unexpected character {c:?}"))),
             }
         };
         for character in source[location_offset..start].chars() {
@@ -130,10 +137,10 @@ fn returns(stmts: &[Statement]) -> bool {
         _ => false,
     })
 }
-struct Parser<'a> { source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: HashMap<String, (usize, Vec<Type>, Type)>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, scopes: Vec<Vec<(usize, Type)>> }
+struct Parser<'a> { file: String, source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut HashMap<String, (usize, Vec<Type>, Type)>, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, scopes: Vec<Vec<(usize, Type)>> }
 impl<'a> Parser<'a> {
     fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
-    fn fail(&self, message: &str) -> String { error(self.source, self.tokens[self.pos].offset, message) }
+    fn fail(&self, message: &str) -> String { error(&self.file, self.source, self.tokens[self.pos].offset, message) }
     fn take(&mut self, expected: Kind) -> Result<(), String> {
         if *self.current() != expected { return Err(self.fail(&format!("expected {expected:?}, found {:?}", self.current()))); }
         self.pos += 1; Ok(())
@@ -210,7 +217,7 @@ impl<'a> Parser<'a> {
                         let after = self.tokens.get(self.pos + 1).map(|t| t.kind.clone());
                         if after == Some(Kind::RParen) {
                             if let Some(&(id, _, ty)) = self.names.get(&arg_name) {
-                                if self.moved.contains(&id) { return Err(error(self.source, name_offset, &format!("cannot use '{arg_name}' because it was moved"))); }
+                                if self.moved.contains(&id) { return Err(error(&self.file, self.source, name_offset, &format!("cannot use '{arg_name}' because it was moved"))); }
                                 match ty {
                                     Type::Array(n) => { self.pos += 2; fast = Some((Expr::Number(n as i64), Type::Int)); }
                                     Type::Vec => {
@@ -232,7 +239,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                 } else if *self.current() == Kind::LParen {
-                    let (id, types, ret) = self.functions.get(&name).cloned().ok_or_else(|| error(self.source, name_offset, &format!("unknown function '{name}'")))?;
+                    let (id, types, ret) = self.functions.get(&name).cloned().ok_or_else(|| error(&self.file, self.source, name_offset, &format!("unknown function '{name}'")))?;
                     self.pos += 1;
                     let mut args = Vec::new();
                     if *self.current() != Kind::RParen {
@@ -259,8 +266,8 @@ impl<'a> Parser<'a> {
                     if args.len() != types.len() { return Err(self.fail(&format!("function '{name}' expects {} arguments, got {}", types.len(), args.len()))); }
                     (Expr::Call(id, args, ret), ret)
                 } else {
-                    let (id, _, ty) = *self.names.get(&name).ok_or_else(|| error(self.source, name_offset, &format!("unknown variable '{name}'")))?;
-                    if self.moved.contains(&id) { return Err(error(self.source, name_offset, &format!("cannot use '{name}' because it was moved"))); }
+                    let (id, _, ty) = *self.names.get(&name).ok_or_else(|| error(&self.file, self.source, name_offset, &format!("unknown variable '{name}'")))?;
+                    if self.moved.contains(&id) { return Err(error(&self.file, self.source, name_offset, &format!("cannot use '{name}' because it was moved"))); }
                     if let Type::Array(len) = ty {
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
                         let (index, index_ty) = self.expression(0, false)?;
@@ -359,8 +366,11 @@ impl<'a> Parser<'a> {
         }
     }
     // First pass collects only signatures. Bodies are checked in the second pass.
-    fn collect_functions(&mut self) -> Result<(), String> {
-        let mut id = 0;
+    // scan_uses validated the headers; skip them before collecting.
+    fn skip_uses(&mut self) {
+        while *self.current() == Kind::Use { self.pos += 3; }
+    }
+    fn collect_functions(&mut self, next_id: &mut usize) -> Result<(), String> {
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::Eof {
             self.take(Kind::Fn)?;
@@ -381,12 +391,18 @@ impl<'a> Parser<'a> {
             }
             self.take(Kind::RParen)?;
             if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{name}' is a built-in and cannot be redefined"))); }
+            // Ids are unique across all files of a program.
+            let id = *next_id;
+            *next_id += 1;
+            self.id_order.push(id);
             if name == "main" {
                 if !types.is_empty() { return Err(self.fail("main cannot have parameters")); }
             } else {
                 self.take(Kind::Arrow)?;
                 let ret = self.return_annotation()?;
-                self.functions.insert(name, (id, types, ret));
+                if self.functions.insert(name.clone(), (id, types, ret)).is_some() {
+                    return Err(self.fail(&format!("duplicate function '{name}' (already defined in an imported file)")));
+                }
             }
             self.take(Kind::LBrace)?;
             let mut depth = 1usize;
@@ -399,10 +415,10 @@ impl<'a> Parser<'a> {
                 }
                 self.pos += 1;
             }
-            id += 1;
         }
-        if !seen.contains("main") { return Err(self.fail("missing main function")); }
+        // main presence is checked once per program, not per file.
         self.pos = 0;
+        self.skip_uses();
         Ok(())
     }
     fn program(&mut self) -> Result<Vec<Function>, String> {
@@ -432,7 +448,7 @@ impl<'a> Parser<'a> {
                 }
             }
             self.take(Kind::RParen)?;
-            let id = result.len();
+            let id = self.id_order[result.len()];
             let returns_type;
             if is_main {
                 if !params.is_empty() { return Err(self.fail("main cannot have parameters")); }
@@ -455,7 +471,7 @@ impl<'a> Parser<'a> {
             if !is_main && !returns(&body) { return Err(self.fail("function may exit without returning a value")); }
             result.push(Function { id, params, body, is_main, returns: returns_type });
         }
-        if !main_found { return Err(self.fail("missing main function")); }
+        // main presence is checked once per program, not per file.
         Ok(result)
     }
     fn block(&mut self) -> Result<Vec<Statement>, String> {
@@ -963,13 +979,90 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
         }
     }
 }
-fn parse(source: &str) -> Result<Vec<Function>, String> {
-    let mut p = Parser { source, tokens: lex(source)?, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions: HashMap::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), scopes: Vec::new() };
-    p.collect_functions()?;
-    p.program()
+fn make_parser<'a>(file: &str, source: &'a str, tokens: Vec<Token>, functions: &'a mut HashMap<String, (usize, Vec<Type>, Type)>) -> Parser<'a> {
+    Parser { file: file.to_owned(), source, tokens, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), scopes: Vec::new() }
 }
+
+// Leading `use "path";` headers. Parsed from tokens before the Parser owns
+// the shared function table, so imports can be loaded depth-first.
+fn scan_uses(file: &str, tokens: &[Token]) -> Result<Vec<String>, String> {
+    let mut uses = Vec::new();
+    let mut pos = 0;
+    while matches!(tokens.get(pos).map(|t| &t.kind), Some(Kind::Use)) {
+        pos += 1;
+        match tokens.get(pos).map(|t| t.kind.clone()) {
+            Some(Kind::Text(text)) => { uses.push(text); pos += 1; }
+            _ => {
+                let offset = tokens.get(pos).map(|t| t.offset).unwrap_or(0);
+                return Err(error(file, "", offset, "expected a string path after 'use'"));
+            }
+        }
+        match tokens.get(pos).map(|t| &t.kind) {
+            Some(Kind::Semi) => pos += 1,
+            _ => {
+                let offset = tokens.get(pos).map(|t| t.offset).unwrap_or(0);
+                return Err(error(file, "", offset, "expected ';' after 'use' path"));
+            }
+        }
+    }
+    Ok(uses)
+}
+
+#[allow(dead_code)] // exercised by in-memory unit tests
+fn parse_source(file: &str, source: &str, shared: &mut HashMap<String, (usize, Vec<Type>, Type)>, next_id: &mut usize) -> Result<Vec<Function>, String> {
+    let tokens = lex(source)?;
+    let uses = scan_uses(file, &tokens)?;
+    if !uses.is_empty() {
+        return Err(error(file, source, 0, "'use' is only supported when compiling a source file"));
+    }
+    let mut p = make_parser(file, source, tokens, shared);
+    p.collect_functions(next_id)?;
+    let functions = p.program()?;
+    if functions.iter().filter(|f| f.is_main).count() != 1 {
+        return Err(error(file, source, 0, "missing main function"));
+    }
+    Ok(functions)
+}
+
+fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::PathBuf>, shared: &mut HashMap<String, (usize, Vec<Type>, Type)>, next_id: &mut usize, out: &mut Vec<Vec<Function>>, mains: &mut usize) -> Result<(), String> {
+    let canonical = std::fs::canonicalize(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    if !visited.insert(canonical) { return Err(format!("circular import of {}", path.display())); }
+    let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let file = path.display().to_string();
+    let tokens = lex(&source).map_err(|e| format!("{file}:{e}"))?;
+    let uses = scan_uses(&file, &tokens).map_err(|e| format!("{file}:{e}"))?;
+    let parent = path.parent().unwrap_or(Path::new(".")).to_owned();
+    for import in uses {
+        load_file(&parent.join(&import), visited, shared, next_id, out, mains)?;
+    }
+    let mut p = make_parser(&file, &source, tokens, shared);
+    p.skip_uses();
+    p.collect_functions(next_id)?;
+    let functions = p.program()?;
+    *mains += functions.iter().filter(|f| f.is_main).count();
+    out.push(functions);
+    Ok(())
+}
+
+fn load_program(entry: &Path) -> Result<Vec<Vec<Function>>, String> {
+    let mut visited = std::collections::HashSet::new();
+    let mut shared: HashMap<String, (usize, Vec<Type>, Type)> = HashMap::new();
+    let mut next_id = 0usize;
+    let mut files = Vec::new();
+    let mut mains = 0usize;
+    load_file(entry, &mut visited, &mut shared, &mut next_id, &mut files, &mut mains)?;
+    if mains != 1 { return Err(format!("program must define exactly one main function (found {mains})")); }
+    Ok(files)
+}
+
+pub fn check_path(path: &Path) -> Result<(), String> {
+    load_program(path).map(|_| ())
+}
+#[allow(dead_code)] // exercised by in-memory unit tests
 pub fn check(source: &str) -> Result<(), String> {
-    parse(source).map(|_| ())
+    let mut shared: HashMap<String, (usize, Vec<Type>, Type)> = HashMap::new();
+    let mut next_id = 0usize;
+    parse_source("", source, &mut shared, &mut next_id).map(|_| ())
 }
 fn c_type(ty: Type, id: usize, declaration: bool) -> String {
     match ty {
@@ -981,16 +1074,16 @@ fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Array(_) => "const int64_t *".to_owned(),
     }
 }
-pub fn compile(source: &str) -> Result<String, String> {
-    let functions = parse(source)?;
+fn emit_program(files: Vec<Vec<Function>>) -> Result<String, String> {
     let mut out = String::from(include_str!("runtime.c"));
-    for function in &functions {
+    let all: Vec<&Function> = files.iter().flatten().collect();
+    for function in &all {
         if function.is_main { continue; }
         let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, false)).collect::<Vec<_>>().join(", ") };
         let ret = match function.returns { Type::Bool => "bool", Type::String => "char *", Type::Vec => "ae_vec", _ => "int64_t" };
         out.push_str(&format!("\nstatic {ret} ae_fn_{}({params});\n", function.id));
     }
-    for function in &functions {
+    for function in &all {
         if function.is_main { continue; }
         let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, true)).collect::<Vec<_>>().join(", ") };
         let ret = match function.returns { Type::Bool => "bool", Type::String => "char *", Type::Vec => "ae_vec", _ => "int64_t" };
@@ -1000,11 +1093,21 @@ pub fn compile(source: &str) -> Result<String, String> {
         // produce a C function that falls through without returning a value.
         out.push_str("    ae_fail(\"function exited without return\", 0, 0);\n}\n");
     }
-    let main = functions.iter().find(|f| f.is_main).unwrap();
+    let main = all.iter().find(|f| f.is_main).expect("load_program checks exactly one main");
     out.push_str("\nint main(void) {\n");
     emit_statements(&main.body, &mut out, &mut 0);
     out.push_str("    if (fflush(stdout) == EOF) return 1;\n    return 0;\n}\n");
     Ok(out)
+}
+#[allow(dead_code)] // exercised by in-memory unit tests
+pub fn compile(source: &str) -> Result<String, String> {
+    let mut shared: HashMap<String, (usize, Vec<Type>, Type)> = HashMap::new();
+    let mut next_id = 0usize;
+    let functions = parse_source("", source, &mut shared, &mut next_id)?;
+    emit_program(vec![functions])
+}
+pub fn compile_path(path: &Path) -> Result<String, String> {
+    emit_program(load_program(path)?)
 }
 
 #[cfg(test)]
