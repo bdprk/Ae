@@ -10,10 +10,13 @@ enum Kind {
 struct Token { kind: Kind, offset: usize, line: usize, column: usize }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, Array(usize) }
+enum Type { Int, Bool, String, Array(usize) }
 impl Type {
     fn name(self) -> &'static str {
-        match self { Type::Int => "i64", Type::Bool => "bool", Type::Array(_) => "array" }
+        match self { Type::Int => "i64", Type::Bool => "bool", Type::String => "string", Type::Array(_) => "array" }
+    }
+    fn c_temp(self) -> &'static str {
+        match self { Type::Bool => "bool ", Type::String => "char *", _ => "int64_t " }
     }
 }
 
@@ -103,23 +106,23 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), Variable(usize, Type), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 #[derive(Debug)]
 enum Argument { Value(Expr), Borrow(usize) }
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
-enum Statement { Return(Expr), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr), Store(usize, usize, Expr, Expr, usize, usize), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), Break, Continue }
+enum Statement { Return(Expr, Vec<usize>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), Break, Continue, Frees(Vec<usize>) }
 #[derive(Debug)]
 struct Function { id: usize, params: Vec<(usize, Type)>, body: Vec<Statement>, is_main: bool, returns: Type }
 fn returns(stmts: &[Statement]) -> bool {
     stmts.iter().any(|s| match s {
-        Statement::Return(_) => true,
+        Statement::Return(..) => true,
         Statement::If(_, yes, no) => returns(yes) && returns(no),
         _ => false,
     })
 }
-struct Parser<'a> { source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, functions: HashMap<String, (usize, Vec<Type>, Type)>, in_main: bool, return_type: Type }
+struct Parser<'a> { source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, functions: HashMap<String, (usize, Vec<Type>, Type)>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, scopes: Vec<Vec<(usize, Type)>> }
 impl<'a> Parser<'a> {
     fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
     fn fail(&self, message: &str) -> String { error(self.source, self.tokens[self.pos].offset, message) }
@@ -134,37 +137,43 @@ impl<'a> Parser<'a> {
         let token = &self.tokens[self.pos];
         (token.line, token.column)
     }
-    fn expression(&mut self, min: u8) -> Result<(Expr, Type), String> {
+    fn expression(&mut self, min: u8, moving: bool) -> Result<(Expr, Type), String> {
         if self.expression_depth == 0 { self.expression_nodes = 0; }
         if self.expression_depth >= 128 { return Err(self.fail("expression nesting limit exceeded (128)")); }
         self.expression_depth += 1;
-        let result = self.expression_inner(min);
+        let result = self.expression_inner(min, moving);
         self.expression_depth -= 1;
         result
     }
-    fn expression_inner(&mut self, min: u8) -> Result<(Expr, Type), String> {
+    fn expression_inner(&mut self, min: u8, moving: bool) -> Result<(Expr, Type), String> {
         self.expression_nodes += 1;
         if self.expression_nodes > 128 { return Err(self.fail("expression complexity limit exceeded (128)")); }
         let mut lhs = match self.current().clone() {
             Kind::Number(n) => { self.pos += 1; (Expr::Number(n), Type::Int) }
             Kind::True => { self.pos += 1; (Expr::BoolLit(true), Type::Bool) }
             Kind::False => { self.pos += 1; (Expr::BoolLit(false), Type::Bool) }
+            Kind::Text(text) => {
+                let (line, column) = self.position();
+                self.pos += 1;
+                (Expr::StrLit(text, line, column), Type::String)
+            }
             Kind::Minus => {
                 let (line, column) = self.position();
                 self.pos += 1;
                 // Operands bind tighter than any binary operator: -a * b is (-a) * b.
-                let (operand, ty) = self.expression(6)?;
+                let (operand, ty) = self.expression(6, false)?;
                 if ty != Type::Int { return Err(self.fail("unary '-' requires an integer operand")); }
                 (Expr::Neg(Box::new(operand), line, column), Type::Int)
             }
             Kind::Bang => {
                 self.pos += 1;
-                let (operand, ty) = self.expression(6)?;
+                let (operand, ty) = self.expression(6, false)?;
                 if ty != Type::Bool { return Err(self.fail("'!' requires a boolean operand")); }
                 (Expr::Not(Box::new(operand)), Type::Bool)
             }
             Kind::Ident(name) => {
                 let name_offset = self.tokens[self.pos].offset;
+                let (vline, vcol) = self.position();
                 self.pos += 1;
                 if *self.current() == Kind::LParen {
                     let (id, types, ret) = self.functions.get(&name).cloned().ok_or_else(|| error(self.source, name_offset, &format!("unknown function '{name}'")))?;
@@ -181,7 +190,8 @@ impl<'a> Parser<'a> {
                                 if actual != Type::Array(len) { return Err(self.fail(&format!("argument requires array of length {len}"))); }
                                 args.push(Argument::Borrow(var));
                             } else {
-                                let (value, ty) = self.expression(0)?;
+                                // By-value arguments consume string values.
+                                let (value, ty) = self.expression(0, moving)?;
                                 if ty != expected { return Err(self.fail(&format!("argument {} to '{name}' must be {}", args.len() + 1, expected.name()))); }
                                 args.push(Argument::Value(value));
                             }
@@ -194,16 +204,20 @@ impl<'a> Parser<'a> {
                     (Expr::Call(id, args, ret), ret)
                 } else {
                     let (id, _, ty) = *self.names.get(&name).ok_or_else(|| error(self.source, name_offset, &format!("unknown variable '{name}'")))?;
+                    if self.moved.contains(&id) { return Err(error(self.source, name_offset, &format!("cannot use '{name}' because it was moved"))); }
                     if let Type::Array(len) = ty {
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
-                        let (index, index_ty) = self.expression(0)?;
+                        let (index, index_ty) = self.expression(0, false)?;
                         if index_ty != Type::Int { return Err(self.fail("array index must be an integer")); }
                         self.take(Kind::RBracket)?;
                         (Expr::Index(id, len, Box::new(index), line, col), Type::Int)
-                    } else { (Expr::Variable(id, ty), ty) }
+                    } else {
+                        if moving && ty == Type::String { self.moved.insert(id); }
+                        (Expr::Variable(id, ty, vline, vcol), ty)
+                    }
                 }
             }
-            Kind::LParen => { self.pos += 1; let inner = self.expression(0)?; self.take(Kind::RParen)?; inner }
+            Kind::LParen => { self.pos += 1; let inner = self.expression(0, moving)?; self.take(Kind::RParen)?; inner }
             _ => return Err(self.fail("expected expression")),
         };
         loop {
@@ -219,7 +233,8 @@ impl<'a> Parser<'a> {
             if prec < min { break; }
             let (line, column) = self.position();
             self.pos += 1;
-            let (rhs, rhs_ty) = self.expression(prec + 1)?;
+            // `+` always consumes its string operands, even in borrow contexts.
+            let (rhs, rhs_ty) = self.expression(prec + 1, op == Kind::Plus)?;
             let (lhs_expr, lhs_ty) = lhs;
             let ty = match op {
                 Kind::And | Kind::Or => {
@@ -230,6 +245,13 @@ impl<'a> Parser<'a> {
                     if lhs_ty != Type::Int || rhs_ty != Type::Int { return Err(self.fail("comparison requires integer operands")); }
                     Type::Bool
                 }
+                Kind::Plus if lhs_ty == Type::String || rhs_ty == Type::String => {
+                    if lhs_ty != Type::String || rhs_ty != Type::String { return Err(self.fail("'+' requires two strings or two integers")); }
+                    // The left operand was parsed in the caller's mode; using it
+                    // here consumes it, so retroactively record the move.
+                    if let Expr::Variable(id, Type::String, _, _) = lhs_expr { if !self.moved.contains(&id) { self.moved.insert(id); } }
+                    Type::String
+                }
                 _ => {
                     if lhs_ty != Type::Int || rhs_ty != Type::Int { return Err(self.fail("arithmetic requires integer operands")); }
                     Type::Int
@@ -239,7 +261,7 @@ impl<'a> Parser<'a> {
         }
         Ok(lhs)
     }
-    // Arrays are borrowed read-only; scalars pass by value.
+    // Arrays are borrowed read-only; strings and scalars pass by value.
     fn parameter_type(&mut self) -> Result<Type, String> {
         if *self.current() == Kind::Amp {
             self.pos += 1; self.take(Kind::LBracket)?;
@@ -256,7 +278,8 @@ impl<'a> Parser<'a> {
             match name.as_str() {
                 "i64" => Ok(Type::Int),
                 "bool" => Ok(Type::Bool),
-                _ => Err(self.fail("parameter type must be i64, bool, or &[i64; N]")),
+                "string" => Ok(Type::String),
+                _ => Err(self.fail("parameter type must be i64, bool, string, or &[i64; N]")),
             }
         }
     }
@@ -265,7 +288,8 @@ impl<'a> Parser<'a> {
         match name.as_str() {
             "i64" => Ok(Type::Int),
             "bool" => Ok(Type::Bool),
-            _ => Err(self.fail("return type must be i64 or bool")),
+            "string" => Ok(Type::String),
+            _ => Err(self.fail("return type must be i64, bool, or string")),
         }
     }
     // First pass collects only signatures. Bodies are checked in the second pass.
@@ -321,7 +345,8 @@ impl<'a> Parser<'a> {
             let is_main = name == "main";
             if is_main && main_found { return Err(self.fail("duplicate main function")); }
             self.take(Kind::LParen)?;
-            self.names.clear(); self.next_var = 0;
+            // Variable ids restart per function, so move tracking must too.
+            self.names.clear(); self.next_var = 0; self.moved.clear();
             let mut params = Vec::new();
             if *self.current() != Kind::RParen {
                 loop {
@@ -349,7 +374,14 @@ impl<'a> Parser<'a> {
             }
             self.in_main = is_main;
             self.return_type = returns_type;
-            let body = self.block()?;
+            // Parameter scope: lives for the whole body so return paths can
+            // release owned parameters.
+            self.scopes.push(params.iter().map(|&(id, ty)| (id, ty)).collect());
+            let body = self.block();
+            let params_scope = self.scopes.pop().unwrap();
+            let mut body = body?;
+            let param_strings: Vec<usize> = params_scope.iter().filter(|(_, ty)| *ty == Type::String).map(|(id, _)| *id).collect();
+            if !param_strings.is_empty() { body.push(Statement::Frees(param_strings)); }
             if !is_main && !returns(&body) { return Err(self.fail("function may exit without returning a value")); }
             result.push(Function { id, params, body, is_main, returns: returns_type });
         }
@@ -359,16 +391,34 @@ impl<'a> Parser<'a> {
     fn block(&mut self) -> Result<Vec<Statement>, String> {
         if self.block_depth >= 64 { return Err(self.fail("block nesting limit exceeded (64)")); }
         self.block_depth += 1;
+        self.scopes.push(Vec::new());
         let result = self.block_inner();
+        let scope = self.scopes.pop().unwrap();
         self.block_depth -= 1;
-        result
+        let mut result = result?;
+        // Strings owned by this block are released at its end. Releases are
+        // idempotent (the pointer is cleared), so overlapping paths stay safe.
+        let strings: Vec<usize> = scope.iter().filter(|(_, ty)| *ty == Type::String).map(|(id, _)| *id).collect();
+        if !strings.is_empty() { result.push(Statement::Frees(strings)); }
+        // Moved markers for names that left scope are no longer meaningful.
+        let live: std::collections::HashSet<usize> = self.names.values().map(|&(id, _, _)| id).collect();
+        self.moved.retain(|id| live.contains(id));
+        Ok(result)
+    }
+    fn live_strings(&self) -> Vec<usize> {
+        self.scopes.iter().flatten().filter(|(_, ty)| *ty == Type::String).map(|(id, _)| *id).collect()
+    }
+    // break/continue leave the loop body: only strings declared inside it die.
+    fn loop_local_strings(&self) -> Vec<usize> {
+        let base = *self.loop_scopes.last().unwrap_or(&0);
+        self.scopes[base.min(self.scopes.len())..].iter().flatten().filter(|(_, ty)| *ty == Type::String).map(|(id, _)| *id).collect()
     }
     fn block_inner(&mut self) -> Result<Vec<Statement>, String> {
         self.take(Kind::LBrace)?;
         let mut declared = Vec::new();
         let mut result = Vec::new();
         while *self.current() != Kind::RBrace {
-            let stmt = match self.current().clone() {
+            match self.current().clone() {
                 Kind::Let | Kind::Var => {
                     let mutable = *self.current() == Kind::Var; self.pos += 1;
                     let name = self.identifier()?;
@@ -381,7 +431,7 @@ impl<'a> Parser<'a> {
                         if *self.current() == Kind::RBracket { return Err(self.fail("array must contain at least one element")); }
                         loop {
                             if values.len() == 4096 { return Err(self.fail("array element limit exceeded (4096)")); }
-                            let (element, element_ty) = self.expression(0)?;
+                            let (element, element_ty) = self.expression(0, false)?;
                             if element_ty != Type::Int { return Err(self.fail("array elements must be i64")); }
                             values.push(element);
                             if *self.current() != Kind::Comma { break; }
@@ -390,11 +440,14 @@ impl<'a> Parser<'a> {
                         self.take(Kind::RBracket)?; self.take(Kind::Semi)?;
                         let len = values.len(); (Statement::Array(id, values), Type::Array(len))
                     } else {
-                        let (value, ty) = self.expression(0)?; self.take(Kind::Semi)?;
+                        // The initializer consumes string values.
+                        let (value, ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
                         (Statement::Declare(id, value), ty)
                     };
-                    self.names.insert(name.clone(), (id, mutable, ty)); declared.push(name);
-                    stmt
+                    self.names.insert(name.clone(), (id, mutable, ty));
+                    self.scopes.last_mut().unwrap().push((id, ty));
+                    declared.push(name);
+                    result.push(stmt);
                 }
                 Kind::Ident(name) => {
                     let (id, mutable, ty) = *self.names.get(&name).ok_or_else(|| self.fail(&format!("unknown variable '{name}'")))?;
@@ -402,64 +455,83 @@ impl<'a> Parser<'a> {
                     self.pos += 1;
                     if let Type::Array(len) = ty {
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
-                        let (index, index_ty) = self.expression(0)?;
+                        let (index, index_ty) = self.expression(0, false)?;
                         if index_ty != Type::Int { return Err(self.fail("array index must be an integer")); }
                         self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
-                        let (value, value_ty) = self.expression(0)?; self.take(Kind::Semi)?;
+                        let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
                         if value_ty != Type::Int { return Err(self.fail("array elements must be i64")); }
-                        Statement::Store(id, len, index, value, line, col)
+                        result.push(Statement::Store(id, len, index, value, line, col));
                     } else {
                         self.take(Kind::Equal)?;
-                        let (value, value_ty) = self.expression(0)?; self.take(Kind::Semi)?;
+                        let moved_before = self.moved.contains(&id);
+                        let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
                         if value_ty != ty { return Err(self.fail(&format!("cannot assign a {} value to {} variable '{name}'", value_ty.name(), ty.name()))); }
-                        Statement::Assign(id, value)
+                        let release_old = ty == Type::String;
+                        if release_old {
+                            // The right-hand side may not consume the target
+                            // itself; assigning to a previously moved variable
+                            // is a legal re-initialization.
+                            if self.moved.contains(&id) && !moved_before {
+                                return Err(self.fail(&format!("cannot assign to '{name}' because it was moved in the same statement")));
+                            }
+                            self.moved.remove(&id);
+                        }
+                        result.push(Statement::Assign(id, value, release_old));
                     }
                 }
                 Kind::Return => {
                     if self.in_main { return Err(self.fail("return is not supported in main")); }
                     self.pos += 1;
-                    let (value, ty) = self.expression(0)?; self.take(Kind::Semi)?;
+                    let (value, ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
                     if ty != self.return_type { return Err(self.fail(&format!("return type must be {}", self.return_type.name()))); }
-                    Statement::Return(value)
+                    // Every live owned string that is not returned is released.
+                    result.push(Statement::Return(value, self.live_strings()));
                 }
-                Kind::If => self.if_statement()?,
+                Kind::If => result.push(self.if_statement()?),
                 Kind::While => {
                     self.pos += 1;
-                    let (condition, ty) = self.expression(0)?;
+                    let (condition, ty) = self.expression(0, false)?;
                     if ty != Type::Bool { return Err(self.fail("condition must be a boolean expression")); }
                     if self.loop_depth >= 64 { return Err(self.fail("loop nesting limit exceeded (64)")); }
                     self.loop_depth += 1;
+                    self.loop_scopes.push(self.scopes.len());
                     let body = self.block();
+                    self.loop_scopes.pop();
                     self.loop_depth -= 1;
-                    Statement::While(condition, body?)
+                    // Moves inside the body poison uses after the loop; uses
+                    // before the move inside the body are caught at runtime by
+                    // the null check on every string read.
+                    result.push(Statement::While(condition, body?));
                 }
                 Kind::Break | Kind::Continue => {
                     let keyword = if *self.current() == Kind::Break { "break" } else { "continue" };
                     if self.loop_depth == 0 { return Err(self.fail(&format!("'{keyword}' outside of a loop"))); }
                     self.pos += 1; self.take(Kind::Semi)?;
-                    if keyword == "break" { Statement::Break } else { Statement::Continue }
+                    let strings = self.loop_local_strings();
+                    if !strings.is_empty() { result.push(Statement::Frees(strings)); }
+                    result.push(if keyword == "break" { Statement::Break } else { Statement::Continue });
                 }
                 Kind::Assert => {
                     let (line, col) = self.position();
                     self.pos += 1; self.take(Kind::LParen)?;
-                    let (condition, ty) = self.expression(0)?;
+                    let (condition, ty) = self.expression(0, false)?;
                     if ty != Type::Bool { return Err(self.fail("assert requires a boolean condition")); }
                     self.take(Kind::RParen)?; self.take(Kind::Semi)?;
-                    Statement::Assert(condition, line, col)
+                    result.push(Statement::Assert(condition, line, col));
                 }
                 Kind::Print => {
                     self.pos += 1; self.take(Kind::LParen)?;
                     let printed = if let Kind::Text(text) = self.current().clone() {
                         self.pos += 1; Printed::Text(text)
                     } else {
-                        let (value, _) = self.expression(0)?; Printed::Expr(value)
+                        // print borrows its value; only `+` consumes strings.
+                        let (value, _) = self.expression(0, false)?; Printed::Expr(value)
                     };
                     self.take(Kind::RParen)?; self.take(Kind::Semi)?;
-                    Statement::Print(printed)
+                    result.push(Statement::Print(printed));
                 }
                 _ => return Err(self.fail("expected declaration, assignment, print, or '}'")),
             };
-            result.push(stmt);
         }
         self.take(Kind::RBrace)?;
         for name in declared { self.names.remove(&name); }
@@ -467,89 +539,142 @@ impl<'a> Parser<'a> {
     }
     fn if_statement(&mut self) -> Result<Statement, String> {
         self.pos += 1;
-        let (condition, ty) = self.expression(0)?;
+        let (condition, ty) = self.expression(0, false)?;
         if ty != Type::Bool { return Err(self.fail("condition must be a boolean expression")); }
+        let snapshot = self.moved.clone();
         let yes = self.block()?;
+        let after_yes = std::mem::replace(&mut self.moved, snapshot.clone());
         let no = if *self.current() == Kind::Else {
             self.pos += 1;
             // `else if` chains recurse instead of nesting braces.
             if *self.current() == Kind::If { vec![self.if_statement()?] } else { self.block()? }
         } else { Vec::new() };
+        // A variable moved in either branch is treated as moved after the if.
+        for id in after_yes { self.moved.insert(id); }
         Ok(Statement::If(condition, yes, no))
     }
 }
 
-// Expressions are emitted as sequential temporaries, preserving left-to-right
-// evaluation. && and || lower to control flow so the right operand's side
-// effects only happen when the left operand does not decide the result.
-fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize) -> (String, Type) {
-    let (expression, ty) = match expr {
-        Expr::Number(n) => (format!("INT64_C({n})"), Type::Int),
-        Expr::BoolLit(b) => (if *b { "true" } else { "false" }.to_owned(), Type::Bool),
-        Expr::Variable(id, ty) => (format!("v{id}"), *ty),
-        Expr::Call(id, args, ty) => {
+// Expression emission tracks ownership of string values so every buffer is
+// released exactly once: moved variables are nulled after hand-off, owned
+// temporaries are consumed or freed by their statement, and releases are
+// idempotent even if analysis and emission ever disagree.
+#[derive(Debug)]
+struct Emitted { text: String, ty: Type, owned: bool, moves: Vec<usize>, materialized: bool }
+impl Emitted {
+    fn value(text: String, ty: Type) -> Self { Emitted { text, ty, owned: false, moves: Vec::new(), materialized: true } }
+}
+
+fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> Emitted {
+    let emitted = match expr {
+        Expr::Number(n) => Emitted::value(format!("INT64_C({n})"), Type::Int),
+        Expr::BoolLit(b) => Emitted::value(if *b { "true" } else { "false" }.to_owned(), Type::Bool),
+        Expr::StrLit(text, line, column) => Emitted {
+            text: format!("ae_str_from(\"{text}\", {line}, {column})"),
+            ty: Type::String, owned: true, moves: Vec::new(), materialized: false,
+        },
+        Expr::Variable(id, ty, line, column) => {
+            if *ty == Type::String {
+                // Runtime backstop: a moved string's slot is NULL.
+                out.push_str(&format!("    if (!v{id}) ae_fail(\"use of moved string\", {line}, {column});\n"));
+                if moving {
+                    let t = *next; *next += 1;
+                    out.push_str(&format!("    char *t{t} = v{id};\n"));
+                    Emitted { text: format!("t{t}"), ty: Type::String, owned: true, moves: vec![*id], materialized: true }
+                } else {
+                    Emitted { text: format!("v{id}"), ty: Type::String, owned: false, moves: Vec::new(), materialized: true }
+                }
+            } else {
+                Emitted::value(format!("v{id}"), *ty)
+            }
+        }
+        Expr::Call(id, args, ret) => {
+            let mut moves = Vec::new();
             let arguments = args.iter().map(|arg| match arg {
-                Argument::Value(e) => emit_expr(e, out, next).0,
+                Argument::Value(e) => { let t = emit_expr(e, out, next, true); moves.extend(t.moves); t.text }
                 Argument::Borrow(id) => format!("v{id}"),
             }).collect::<Vec<_>>().join(", ");
-            (format!("ae_fn_{id}({arguments})"), *ty)
+            let t = *next; *next += 1;
+            out.push_str(&format!("    {}t{t} = ae_fn_{id}({arguments});\n", ret.c_temp()));
+            for &m in &moves { out.push_str(&format!("    v{m} = NULL;\n")); }
+            Emitted { text: format!("t{t}"), ty: *ret, owned: *ret == Type::String, moves: Vec::new(), materialized: true }
         }
         Expr::Index(id, len, index, line, col) => {
-            let (i, _) = emit_expr(index, out, next);
-            (format!("v{id}[ae_index({i}, {len}, {line}, {col})]"), Type::Int)
+            let i = emit_expr(index, out, next, false);
+            Emitted { text: format!("v{id}[ae_index({}, {len}, {line}, {col})]", i.text), ty: Type::Int, owned: false, moves: i.moves, materialized: false }
         }
         Expr::Neg(a, line, column) => {
-            let (t, _) = emit_expr(a, out, next);
-            (format!("ae_neg({t}, {line}, {column})"), Type::Int)
+            let t = emit_expr(a, out, next, false);
+            Emitted { text: format!("ae_neg({}, {line}, {column})", t.text), ty: Type::Int, owned: false, moves: t.moves, materialized: false }
         }
         Expr::Not(a) => {
-            let (t, _) = emit_expr(a, out, next);
-            (format!("!{t}"), Type::Bool)
+            let t = emit_expr(a, out, next, false);
+            Emitted { text: format!("!{}", t.text), ty: Type::Bool, owned: false, moves: t.moves, materialized: false }
         }
-        Expr::Binary(a, op, b, line, column, _) if *op == Kind::And || *op == Kind::Or => {
-            let (l, _) = emit_expr(a, out, next);
+        Expr::Binary(a, op, b, line, column, ty) if *op == Kind::And || *op == Kind::Or => {
+            let l = emit_expr(a, out, next, false);
             let id = *next; *next += 1;
             // `&&` starts false and fills the result only when the left side
             // is true; `||` mirrors it. The right operand's statements land
             // inside the if body, giving real short-circuit semantics.
             let initial = if *op == Kind::And { "false" } else { "true" };
-            let guard = if *op == Kind::And { l } else { format!("!{l}") };
+            let guard = if *op == Kind::And { l.text.clone() } else { format!("!{}", l.text) };
             out.push_str(&format!("    bool t{id} = {initial};\n    if ({guard}) {{\n"));
-            let (r, _) = emit_expr(b, out, next);
-            out.push_str(&format!("    t{id} = {r};\n    }}\n"));
-            return (format!("t{id}"), Type::Bool);
+            let r = emit_expr(b, out, next, false);
+            out.push_str(&format!("    t{id} = {};\n    }}\n", r.text));
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Binary(a, op, b, line, column, ty) if *op == Kind::Plus && *ty == Type::String => {
+            let l = emit_expr(a, out, next, true);
+            let r = emit_expr(b, out, next, true);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    char *t{id} = ae_str_cat({}, {}, {line}, {column});\n", l.text, r.text));
+            let mut moves = l.moves; moves.extend(r.moves);
+            for &m in &moves { out.push_str(&format!("    v{m} = NULL;\n")); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
         }
         Expr::Binary(a, op, b, line, column, _) => {
-            let (l, _) = emit_expr(a, out, next); let (r, _) = emit_expr(b, out, next);
-            let (statement, ty) = match op {
-                Kind::EqEq => (format!("{l} == {r}"), Type::Bool),
-                Kind::NotEq => (format!("{l} != {r}"), Type::Bool),
-                Kind::Less => (format!("{l} < {r}"), Type::Bool),
-                Kind::LessEq => (format!("{l} <= {r}"), Type::Bool),
-                Kind::Greater => (format!("{l} > {r}"), Type::Bool),
-                Kind::GreaterEq => (format!("{l} >= {r}"), Type::Bool),
-                Kind::Plus => (format!("ae_add({l}, {r}, {line}, {column})"), Type::Int),
-                Kind::Minus => (format!("ae_sub({l}, {r}, {line}, {column})"), Type::Int),
-                Kind::Star => (format!("ae_mul({l}, {r}, {line}, {column})"), Type::Int),
-                Kind::Slash => (format!("ae_div({l}, {r}, {line}, {column})"), Type::Int),
-                Kind::Percent => (format!("ae_mod({l}, {r}, {line}, {column})"), Type::Int),
+            let l = emit_expr(a, out, next, false); let r = emit_expr(b, out, next, false);
+            let text = match op {
+                Kind::EqEq => format!("{} == {}", l.text, r.text),
+                Kind::NotEq => format!("{} != {}", l.text, r.text),
+                Kind::Less => format!("{} < {}", l.text, r.text),
+                Kind::LessEq => format!("{} <= {}", l.text, r.text),
+                Kind::Greater => format!("{} > {}", l.text, r.text),
+                Kind::GreaterEq => format!("{} >= {}", l.text, r.text),
+                Kind::Plus => format!("ae_add({}, {}, {line}, {column})", l.text, r.text),
+                Kind::Minus => format!("ae_sub({}, {}, {line}, {column})", l.text, r.text),
+                Kind::Star => format!("ae_mul({}, {}, {line}, {column})", l.text, r.text),
+                Kind::Slash => format!("ae_div({}, {}, {line}, {column})", l.text, r.text),
+                Kind::Percent => format!("ae_mod({}, {}, {line}, {column})", l.text, r.text),
                 _ => unreachable!(),
             };
-            (statement, ty)
+            let ty = if matches!(op, Kind::EqEq | Kind::NotEq | Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq) { Type::Bool } else { Type::Int };
+            Emitted { text, ty, owned: false, moves: Vec::new(), materialized: false }
         }
     };
+    if emitted.materialized { return emitted; }
     let id = *next; *next += 1;
-    let cty = match ty { Type::Bool => "bool", _ => "int64_t" };
-    out.push_str(&format!("    {cty} t{id} = {expression};\n"));
-    (format!("t{id}"), ty)
+    out.push_str(&format!("    {}t{id} = {};\n", emitted.ty.c_temp(), emitted.text));
+    Emitted { text: format!("t{id}"), owned: emitted.ty == Type::String, ..emitted }
+}
+fn release_var(out: &mut String, id: usize) {
+    out.push_str(&format!("    ae_str_release(&v{id});\n"));
+}
+fn null_moves(out: &mut String, moves: &[usize]) {
+    for &m in moves { out.push_str(&format!("    v{m} = NULL;\n")); }
 }
 fn emit_print(printed: &Printed, out: &mut String, next: &mut usize) {
     match printed {
         Printed::Expr(e) => {
-            let (t, ty) = emit_expr(e, out, next);
-            match ty {
-                Type::Bool => out.push_str(&format!("    if (printf(\"%s\\n\", {t} ? \"true\" : \"false\") < 0) ae_fail(\"output error\", 0, 0);\n")),
-                _ => out.push_str(&format!("    if (printf(\"%\" PRId64 \"\\n\", {t}) < 0) ae_fail(\"output error\", 0, 0);\n")),
+            let t = emit_expr(e, out, next, false);
+            match t.ty {
+                Type::String => {
+                    out.push_str(&format!("    if (printf(\"%s\\n\", {}) < 0) ae_fail(\"output error\", 0, 0);\n", t.text));
+                    if t.owned { out.push_str(&format!("    free({});\n", t.text)); }
+                }
+                Type::Bool => out.push_str(&format!("    if (printf(\"%s\\n\", {} ? \"true\" : \"false\") < 0) ae_fail(\"output error\", 0, 0);\n", t.text)),
+                _ => out.push_str(&format!("    if (printf(\"%\" PRId64 \"\\n\", {}) < 0) ae_fail(\"output error\", 0, 0);\n", t.text)),
             }
         }
         Printed::Text(text) => {
@@ -562,50 +687,61 @@ fn emit_print(printed: &Printed, out: &mut String, next: &mut usize) {
 fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
     for stmt in stmts {
         match stmt {
-            Statement::Return(e) => { let (t, _) = emit_expr(e, out, next); out.push_str(&format!("    return {t};\n")); }
+            Statement::Return(e, frees) => {
+                let t = emit_expr(e, out, next, true);
+                for f in frees { release_var(out, *f); }
+                null_moves(out, &t.moves);
+                out.push_str(&format!("    return {};\n", t.text));
+            }
             Statement::Declare(id, e) => {
-                let (t, ty) = emit_expr(e, out, next);
-                let cty = match ty { Type::Bool => "bool", _ => "int64_t" };
-                out.push_str(&format!("    {cty} v{id} = {t};\n"));
+                let t = emit_expr(e, out, next, true);
+                out.push_str(&format!("    {}v{id} = {};\n", t.ty.c_temp(), t.text));
+                null_moves(out, &t.moves);
             }
             Statement::Array(id, values) => {
-                let items: Vec<_> = values.iter().map(|e| emit_expr(e, out, next).0).collect();
+                let items: Vec<_> = values.iter().map(|e| emit_expr(e, out, next, false).text).collect();
                 out.push_str(&format!("    int64_t v{id}[{}] = {{", items.len()));
                 for item in items { out.push_str(&format!("{item},")); }
                 out.push_str("};\n");
             }
             Statement::Store(id, len, index, value, line, col) => {
-                let (i, _) = emit_expr(index, out, next);
+                let i = emit_expr(index, out, next, false);
                 let checked = *next; *next += 1;
-                out.push_str(&format!("    size_t t{checked} = ae_index({i}, {len}, {line}, {col});\n"));
-                let (value, _) = emit_expr(value, out, next);
-                out.push_str(&format!("    v{id}[t{checked}] = {value};\n"));
+                out.push_str(&format!("    size_t t{checked} = ae_index({}, {len}, {line}, {col});\n", i.text));
+                let value = emit_expr(value, out, next, false);
+                out.push_str(&format!("    v{id}[t{checked}] = {};\n", value.text));
             }
-            Statement::Assign(id, e) => { let (t, _) = emit_expr(e, out, next); out.push_str(&format!("    v{id} = {t};\n")); }
+            Statement::Assign(id, e, release_old) => {
+                let t = emit_expr(e, out, next, true);
+                if *release_old { release_var(out, *id); }
+                out.push_str(&format!("    v{id} = {};\n", t.text));
+                null_moves(out, &t.moves);
+            }
             Statement::Print(printed) => emit_print(printed, out, next),
             Statement::Assert(condition, line, col) => {
-                let (t, _) = emit_expr(condition, out, next);
-                out.push_str(&format!("    if (!({t})) ae_fail(\"assertion failed\", {line}, {col});\n"));
+                let t = emit_expr(condition, out, next, false);
+                out.push_str(&format!("    if (!({})) ae_fail(\"assertion failed\", {line}, {col});\n", t.text));
             }
             Statement::If(condition, yes, no) => {
-                let (cond, _) = emit_expr(condition, out, next);
-                out.push_str(&format!("    if ({cond}) {{\n")); emit_statements(yes, out, next);
+                let cond = emit_expr(condition, out, next, false);
+                out.push_str(&format!("    if ({}) {{\n", cond.text)); emit_statements(yes, out, next);
                 out.push_str("    } else {\n"); emit_statements(no, out, next); out.push_str("    }\n");
             }
             Statement::While(condition, body) => {
                 out.push_str("    while (1) {\n");
-                let (cond, _) = emit_expr(condition, out, next);
-                out.push_str(&format!("    if (!({cond})) break;\n"));
+                let cond = emit_expr(condition, out, next, false);
+                out.push_str(&format!("    if (!({})) break;\n", cond.text));
                 emit_statements(body, out, next); out.push_str("    }\n");
             }
             // The while(1) form re-evaluates the condition after `continue`.
             Statement::Break => out.push_str("    break;\n"),
             Statement::Continue => out.push_str("    continue;\n"),
+            Statement::Frees(ids) => { for id in ids { release_var(out, *id); } }
         }
     }
 }
 fn parse(source: &str) -> Result<Vec<Function>, String> {
-    let mut p = Parser { source, tokens: lex(source)?, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, functions: HashMap::new(), in_main: false, return_type: Type::Int };
+    let mut p = Parser { source, tokens: lex(source)?, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), functions: HashMap::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), scopes: Vec::new() };
     p.collect_functions()?;
     p.program()
 }
@@ -616,6 +752,7 @@ fn c_type(ty: Type, id: usize, declaration: bool) -> String {
     match ty {
         Type::Int => format!("int64_t v{id}"),
         Type::Bool => format!("bool v{id}"),
+        Type::String => format!("char *v{id}"),
         Type::Array(_) if declaration => format!("const int64_t *v{id}"),
         Type::Array(_) => "const int64_t *".to_owned(),
     }
@@ -626,13 +763,13 @@ pub fn compile(source: &str) -> Result<String, String> {
     for function in &functions {
         if function.is_main { continue; }
         let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, false)).collect::<Vec<_>>().join(", ") };
-        let ret = if function.returns == Type::Bool { "bool" } else { "int64_t" };
+        let ret = match function.returns { Type::Bool => "bool", Type::String => "char *", _ => "int64_t" };
         out.push_str(&format!("\nstatic {ret} ae_fn_{}({params});\n", function.id));
     }
     for function in &functions {
         if function.is_main { continue; }
         let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, true)).collect::<Vec<_>>().join(", ") };
-        let ret = if function.returns == Type::Bool { "bool" } else { "int64_t" };
+        let ret = match function.returns { Type::Bool => "bool", Type::String => "char *", _ => "int64_t" };
         out.push_str(&format!("\nstatic {ret} ae_fn_{}({params}) {{\n", function.id));
         emit_statements(&function.body, &mut out, &mut 0);
         // Defensive backstop: even a future control-flow analysis bug must not
