@@ -1,0 +1,8 @@
+fn sum(values: &[i64; 3]) -> i64 {
+    return values[0] + values[1] + values[2];
+}
+
+fn main() {
+    let values = [10, 20, 30];
+    print(sum(&values));
+}

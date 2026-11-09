@@ -1,0 +1,4 @@
+fn main() {
+    // AE's first executable program.
+    print(42);
+}

@@ -1,0 +1,13 @@
+fn main() {
+    var n = 0;
+    var total = 0;
+    while n < 10 {
+        total = total + n;
+        n = n + 1;
+    }
+    if total == 45 {
+        print(total);
+    } else {
+        print(0);
+    }
+}

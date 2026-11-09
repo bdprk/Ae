@@ -1,0 +1,6 @@
+fn main() {
+    let base = 2;
+    var total = base + 3 * 4;
+    total = total / 2;
+    print(total);
+}

@@ -1,0 +1,11 @@
+fn main() {
+    var values = [10, 20, 30];
+    var i = 0;
+    var total = 0;
+    while i < 3 {
+        total = total + values[i];
+        i = i + 1;
+    }
+    values[0] = total;
+    print(values[0]);
+}
