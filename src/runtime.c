@@ -60,6 +60,20 @@ static char *ae_str_cat(char *a, char *b, size_t line, size_t column) {
 }
 static void ae_str_release(char **slot) { free(*slot); *slot = NULL; }
 static bool ae_str_eq(const char *a, const char *b) { return strcmp(a, b) == 0; }
+static char *ae_slice(const char *s, int64_t start, int64_t end, size_t line, size_t column) {
+    int64_t n = (int64_t)strlen(s);
+    if (start < 0 || end < start || end > n) ae_fail("string index out of bounds", line, column);
+    char *out = malloc((size_t)(end - start) + 1);
+    if (!out) ae_fail("out of memory", line, column);
+    memcpy(out, s + start, (size_t)(end - start));
+    out[end - start] = 0;
+    return out;
+}
+static bool ae_contains(const char *haystack, const char *needle, size_t line, size_t column) {
+    // strstr carries the platform's optimized substring search.
+    (void)line; (void)column;
+    return strstr(haystack, needle) != NULL;
+}
 static int64_t ae_str_len(const char *s, size_t line, size_t column) {
     size_t n = strlen(s);
     if (n > (size_t)INT64_MAX) ae_fail("string too long", line, column);

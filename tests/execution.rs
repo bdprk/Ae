@@ -769,6 +769,22 @@ fn file_builtins_are_reserved() {
     }
 }
 #[test]
+fn contains_and_slice_cover_text_processing() {
+    let source = "fn main() { let t = \"the quick brown fox\"; print(contains(t, \"quick\")); print(contains(t, \"lazy\")); print(contains(t, \"\")); let word = slice(t, 4, 9); print(word); print(len(word)); print(word == \"quick\"); print(slice(t, 0, 3) + \" \" + slice(t, 16, 19)); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "true\nfalse\ntrue\nquick\n5\ntrue\nthe fox\n");
+    for (source, expected) in [
+        ("fn main() { print(slice(\"abc\", 1, 5)); }", "string index out of bounds"),
+        ("fn main() { print(slice(\"abc\", 2, 1)); }", "string index out of bounds"),
+        ("fn main() { print(slice(\"abc\", 0 - 1, 2)); }", "string index out of bounds"),
+    ] {
+        let output = execute(source);
+        assert!(!output.status.success(), "{source}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains(expected), "{source}");
+    }
+}
+#[test]
 fn vec_borrows_are_read_only_and_forwardable() {
     // Borrowed vectors forward like array borrows; mutation and moves are rejected.
     let source = "fn total(v: &vec) -> i64 { var t = 0; for i in 0..len(v) { t = t + v[i]; } return t; } fn last_two(v: &vec) -> i64 { return v[len(v) - 2] + v[len(v) - 1]; } fn main() { var data = vec[1, 2, 3]; print(total(&data)); print(last_two(&data)); data[0] = 10; print(total(&data)); }";

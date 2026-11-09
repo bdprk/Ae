@@ -26,7 +26,7 @@ impl Type {
     }
 }
 // Built-in names are reserved so their semantics stay unambiguous.
-const RESERVED: [&str; 7] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes"];
+const RESERVED: [&str; 9] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice"];
 
 fn location(source: &str, offset: usize) -> (usize, usize) {
     let prefix = &source[..offset];
@@ -121,7 +121,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 #[derive(Debug)]
 enum Argument { Value(Expr), Borrow(usize, bool) } // bool: borrow of a vec struct (pass &slot) vs array (decays)
 #[derive(Debug)]
@@ -238,7 +238,7 @@ impl<'a> Parser<'a> {
                             (Expr::Len(Box::new(operand), line, col), Type::Int)
                         }
                     }
-                } else if matches!(name.as_str(), "read_file" | "write_file" | "bytes") && *self.current() == Kind::LParen {
+                } else if matches!(name.as_str(), "read_file" | "write_file" | "bytes" | "contains" | "slice") && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     self.pos += 1;
                     let (first, first_ty) = self.expression(0, false)?;
@@ -249,6 +249,21 @@ impl<'a> Parser<'a> {
                     } else if name == "bytes" {
                         self.take(Kind::RParen)?;
                         Expr::Bytes(Box::new(first), line, col)
+                    } else if name == "slice" {
+                        self.take(Kind::Comma)?;
+                        let (start, start_ty) = self.expression(0, false)?;
+                        if start_ty != Type::Int { return Err(self.fail("slice start must be i64")); }
+                        self.take(Kind::Comma)?;
+                        let (end, end_ty) = self.expression(0, false)?;
+                        if end_ty != Type::Int { return Err(self.fail("slice end must be i64")); }
+                        self.take(Kind::RParen)?;
+                        Expr::Slice(Box::new(first), Box::new(start), Box::new(end), line, col)
+                    } else if name == "contains" {
+                        self.take(Kind::Comma)?;
+                        let (second, second_ty) = self.expression(0, false)?;
+                        if second_ty != Type::String { return Err(self.fail("contains expects a string pattern")); }
+                        self.take(Kind::RParen)?;
+                        Expr::Contains(Box::new(first), Box::new(second), line, col)
                     } else {
                         self.take(Kind::Comma)?;
                         let (second, second_ty) = self.expression(0, false)?;
@@ -256,7 +271,7 @@ impl<'a> Parser<'a> {
                         self.take(Kind::RParen)?;
                         Expr::WriteFile(Box::new(first), Box::new(second), line, col)
                     };
-                    let ty = match name.as_str() { "write_file" => Type::Int, "bytes" => Type::Vec, _ => Type::String };
+                    let ty = match name.as_str() { "write_file" => Type::Int, "bytes" => Type::Vec, "contains" => Type::Bool, _ => Type::String };
                     (builtin, ty)
                 } else if *self.current() == Kind::LParen {
                     let (id, types, ret) = self.functions.get(&name).cloned().ok_or_else(|| error(&self.file, self.source, name_offset, &format!("unknown function '{name}'")))?;
@@ -870,6 +885,26 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             out.push_str(&format!("    ae_vec t{id} = ae_bytes({}, {line}, {col});
 ", t.text));
             Emitted { text: format!("t{id}"), ty: Type::Vec, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Slice(e, start, end, line, col) => {
+            let t = emit_expr(e, out, next, false);
+            let st = emit_expr(start, out, next, false);
+            let en = emit_expr(end, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    char *t{id} = ae_slice({}, {}, {}, {line}, {col});
+", t.text, st.text, en.text));
+            if t.owned { drop_owned_temp(out, &t); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Contains(haystack, needle, line, col) => {
+            let h = emit_expr(haystack, out, next, false);
+            let n = emit_expr(needle, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    bool t{id} = ae_contains({}, {}, {line}, {col});
+", h.text, n.text));
+            if h.owned { drop_owned_temp(out, &h); }
+            if n.owned { drop_owned_temp(out, &n); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::StrEq(a, b, negated) => {
             let l = emit_expr(a, out, next, false);
