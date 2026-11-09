@@ -1,0 +1,77 @@
+{
+  "note": "Exploratory builds with uncontrolled caches. AE uses GCC -O2 and Rust opt-level=2 in release, otherwise both use no optimization; Go uses its default. Flags do not imply equivalent optimization. Runtime includes startup, runs are grouped, CPU time and peak memory are not measured.",
+  "mode": "development",
+  "platform": "Windows-10-10.0.26100-SP0",
+  "machine": "AMD64",
+  "processor": "Intel64 Family 6 Model 141 Stepping 1, GenuineIntel",
+  "versions": {
+    "go": "go version go1.26.0 windows/amd64",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "cc": "gcc (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r3) 16.2.0"
+  },
+  "inputs_sha256": {
+    "sum.ae": "ab508d760ae16ef7eb4a4720a6dee46b99bbced93986b14a0d51092aa1297c3e",
+    "sum.go": "29491cd91778db1f517ad4d7c088a685bbd0e69c01a3d4b1c9a010a93654f78f",
+    "sum.rs": "da91286dc63f2385a3ecbf49b77a2579b40d1a0ffedf6a1b86b90fdc7bd10d16"
+  },
+  "repetitions": 5,
+  "results": {
+    "ae": {
+      "build_ms": [
+        101.2928,
+        73.7323,
+        75.9054,
+        75.2191,
+        83.1098
+      ],
+      "build_median_ms": 75.9054,
+      "run_ms": [
+        15.254,
+        15.2014,
+        15.4842,
+        15.9124,
+        15.2022
+      ],
+      "run_median_ms": 15.254,
+      "executable_bytes": 63397
+    },
+    "go": {
+      "build_ms": [
+        880.2618,
+        1017.732,
+        884.8111,
+        855.9851,
+        869.4096
+      ],
+      "build_median_ms": 880.2618,
+      "run_ms": [
+        12.224,
+        12.3042,
+        13.848,
+        13.2533,
+        12.7826
+      ],
+      "run_median_ms": 12.7826,
+      "executable_bytes": 2460160
+    },
+    "rust": {
+      "build_ms": [
+        219.7951,
+        224.1933,
+        225.9598,
+        228.0433,
+        259.8489
+      ],
+      "build_median_ms": 225.9598,
+      "run_ms": [
+        16.1234,
+        16.2602,
+        16.3339,
+        16.3143,
+        15.9713
+      ],
+      "run_median_ms": 16.2602,
+      "executable_bytes": 135168
+    }
+  }
+}

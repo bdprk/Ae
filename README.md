@@ -10,7 +10,7 @@ AE 是自主研发的实验性原生编程语言，首批目标平台为 Windows
 
 ## 使用
 
-需要 Rust 和支持 C11 的 GCC；使用 `AE_CC` 指定其他兼容的编译器可执行文件。当前 Windows 使用 GCC/MinGW 验证；Linux 支持尚待原生测试。
+需要 Rust 和支持 C11 的 GCC；使用 `AE_CC` 指定其他兼容的编译器可执行文件。Windows（GCC/MinGW）与 Linux（GCC）均已原生验证：双平台全部测试、净化器检查与示例输出一致（见[平台支持矩阵](docs/platform-matrix.md)）。
 
 ```sh
 cargo test

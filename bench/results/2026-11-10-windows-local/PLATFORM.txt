@@ -1,0 +1,19 @@
+Windows 本机（开发机）
+记录时间：2026-11-10
+系统：Windows 10.0.26300 x64（Git Bash / MinGW 环境）
+GCC：gcc.exe (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r3) 16.2.0
+Rust：rustc 1.99.1 (58cf8f9c3 2026-10-13)
+Go：go1.26.0 windows/amd64
+Python：3.10.11
+
+文件说明：
+- bench-dev.json      开发模式（AE -O0 / Rust opt-level=0），缓存默认（含命中路径）
+- bench-rel.json      优化模式（AE -O2 / Rust opt-level=2）
+- bench-cold.json     冷缓存模式（--cold，每轮全新 AE_CACHE，测量真实编译）
+
+结果摘要（中位数，5 次）：
+- 开发热缓存：ae 构建 75.9ms / go 880.3ms / rust 226.0ms
+- 开发冷缓存：ae 构建 326.5ms / go 876.7ms / rust 225.4ms
+- 优化：ae 运行 9.30ms / go 12.35ms / rust 9.23ms；产物 61,429 / 2,460,160 / 131,072 字节
+
+注意事项：这是单机探索性测量，输入很小，缓存状态除 --cold 外不受控，不构成语言性能结论。
