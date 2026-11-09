@@ -332,3 +332,57 @@ fn invalid_borrows_are_rejected() {
         assert!(!output.status.success(), "{source}");
     }
 }
+#[test]
+fn modulo_and_negation_follow_documented_semantics() {
+    let output = execute("fn main() { print(7 % 3); print((0 - 7) % 3); print(7 % (0 - 3)); print(-5 + 2); print(2 * -3); print(-(2 + 3)); }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "1\n-1\n1\n-3\n-6\n-5\n");
+}
+#[test]
+fn modulo_and_negation_boundaries_fail_safely() {
+    for (expr, expected) in [
+        ("1 % 0", "division by zero"),
+        ("(0 - 9223372036854775807 - 1) % (0 - 1)", "integer overflow"),
+        ("-(0 - 9223372036854775807 - 1)", "integer overflow"),
+    ] {
+        let output = execute(&format!("fn main() {{ print({expr}); }}"));
+        assert!(!output.status.success(), "{expr}");
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(err.contains(expected), "{expr}: {err}");
+    }
+}
+#[test]
+fn break_and_continue_control_loop_flow() {
+    // i=1..11: odds accumulate until i>9 breaks; evens continue without accumulating.
+    let source = "fn main() { var i = 0; var total = 0; while 1 == 1 { i = i + 1; if i % 2 == 0 { continue; } if i > 9 { break; } total = total + i; } print(total); print(i); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "25\n11\n");
+    // `continue` must re-evaluate the loop condition, not skip it.
+    let source = "fn main() { var n = 0; var hits = 0; while n < 5 { n = n + 1; if n == 3 { continue; } hits = hits + 1; } print(hits); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "4");
+}
+#[test]
+fn break_and_continue_outside_loops_are_rejected() {
+    for source in ["fn main() { break; }", "fn main() { continue; }", "fn main() { if 1 == 1 { break; } }", "fn f() -> i64 { continue; return 1; } fn main() {}"] {
+        let path = std::env::temp_dir().join(format!("ae-loop-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "{source}");
+    }
+}
+#[test]
+fn else_if_chains_evaluate_in_order() {
+    let source = "fn classify(n: i64) -> i64 { if n < 0 { return 0 - 1; } else if n == 0 { return 0; } else if n < 10 { return 1; } else { return 2; } } fn main() { print(classify(0 - 5)); print(classify(0)); print(classify(5)); print(classify(50)); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "-1\n0\n1\n2\n");
+    // A chain without a final else may run no branch at all.
+    let source = "fn main() { var x = 5; if x == 1 { print(1); } else if x == 2 { print(2); } print(9); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "9");
+}

@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Kind {
-    Ident(String), Number(i64), Fn, Let, Var, Print, If, Else, While, Return,
+    Ident(String), Number(i64), Fn, Let, Var, Print, If, Else, While, Return, Break, Continue,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq,
-    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Eof,
+    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Eof,
 }
 #[derive(Debug, Clone)]
 struct Token { kind: Kind, offset: usize, line: usize, column: usize }
@@ -38,6 +38,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
             match &source[start..i] {
                 "fn" => Kind::Fn, "let" => Kind::Let, "var" => Kind::Var, "print" => Kind::Print,
                 "if" => Kind::If, "else" => Kind::Else, "while" => Kind::While, "return" => Kind::Return,
+                "break" => Kind::Break, "continue" => Kind::Continue,
                 s => Kind::Ident(s.to_owned()),
             }
         } else if c.is_ascii_digit() {
@@ -53,7 +54,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                 '(' => Kind::LParen, ')' => Kind::RParen, '{' => Kind::LBrace, '}' => Kind::RBrace,
                 '[' => Kind::LBracket, ']' => Kind::RBracket, ',' => Kind::Comma, ':' => Kind::Colon, '&' => Kind::Amp,
                 ';' => Kind::Semi, '=' => Kind::Equal, '+' => Kind::Plus, '-' => Kind::Minus,
-                '*' => Kind::Star, '/' => Kind::Slash, '<' => Kind::Less, '>' => Kind::Greater,
+                '*' => Kind::Star, '/' => Kind::Slash, '%' => Kind::Percent, '<' => Kind::Less, '>' => Kind::Greater,
                 _ => return Err(error(source, start, &format!("unexpected character {c:?}"))),
             }
         };
@@ -71,11 +72,11 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 }
 
 #[derive(Debug)]
-enum Expr { Number(i64), Variable(usize), Call(usize, Vec<Argument>), Index(usize, usize, Box<Expr>, usize, usize), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize) }
+enum Expr { Number(i64), Variable(usize), Call(usize, Vec<Argument>), Index(usize, usize, Box<Expr>, usize, usize), Neg(Box<Expr>, usize, usize), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize) }
 #[derive(Debug)]
 enum Argument { Value(Expr), Borrow(usize) }
 #[derive(Debug)]
-enum Statement { Return(Expr), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr), Store(usize, usize, Expr, Expr, usize, usize), Print(Expr), If(Condition, Vec<Statement>, Vec<Statement>), While(Condition, Vec<Statement>) }
+enum Statement { Return(Expr), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr), Store(usize, usize, Expr, Expr, usize, usize), Print(Expr), If(Condition, Vec<Statement>, Vec<Statement>), While(Condition, Vec<Statement>), Break, Continue }
 #[derive(Debug)]
 struct Condition(Expr, Kind, Expr);
 #[derive(Debug)]
@@ -87,7 +88,7 @@ fn returns(stmts: &[Statement]) -> bool {
         _ => false,
     })
 }
-struct Parser<'a> { source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Option<usize>)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, functions: HashMap<String, (usize, Vec<Option<usize>>)>, in_main: bool }
+struct Parser<'a> { source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Option<usize>)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, functions: HashMap<String, (usize, Vec<Option<usize>>)>, in_main: bool }
 impl<'a> Parser<'a> {
     fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
     fn fail(&self, message: &str) -> String { error(self.source, self.tokens[self.pos].offset, message) }
@@ -115,6 +116,13 @@ impl<'a> Parser<'a> {
         if self.expression_nodes > 128 { return Err(self.fail("expression complexity limit exceeded (128)")); }
         let mut lhs = match self.current().clone() {
             Kind::Number(n) => { self.pos += 1; Expr::Number(n) }
+            Kind::Minus => {
+                let (line, column) = self.position();
+                self.pos += 1;
+                // Operands bind tighter than any binary operator: -a * b is (-a) * b.
+                let operand = self.expression(6)?;
+                Expr::Neg(Box::new(operand), line, column)
+            }
             Kind::Ident(name) => {
                 let name_offset = self.tokens[self.pos].offset;
                 self.pos += 1;
@@ -153,7 +161,7 @@ impl<'a> Parser<'a> {
             _ => return Err(self.fail("expected expression")),
         };
         loop {
-            let prec = match self.current() { Kind::Plus | Kind::Minus => 1, Kind::Star | Kind::Slash => 2, _ => break };
+            let prec = match self.current() { Kind::Plus | Kind::Minus => 4, Kind::Star | Kind::Slash | Kind::Percent => 5, _ => break };
             if prec < min { break; }
             let op = self.current().clone();
             let (line, column) = self.position();
@@ -272,6 +280,17 @@ impl<'a> Parser<'a> {
         self.pos += 1;
         Ok(Condition(left, op, self.expression(0)?))
     }
+    fn if_statement(&mut self) -> Result<Statement, String> {
+        self.pos += 1;
+        let condition = self.condition()?;
+        let yes = self.block()?;
+        let no = if *self.current() == Kind::Else {
+            self.pos += 1;
+            // `else if` chains recurse instead of nesting braces.
+            if *self.current() == Kind::If { vec![self.if_statement()?] } else { self.block()? }
+        } else { Vec::new() };
+        Ok(Statement::If(condition, yes, no))
+    }
     fn block(&mut self) -> Result<Vec<Statement>, String> {
         if self.block_depth >= 64 { return Err(self.fail("block nesting limit exceeded (64)")); }
         self.block_depth += 1;
@@ -329,15 +348,20 @@ impl<'a> Parser<'a> {
                     self.pos += 1; let value = self.expression(0)?; self.take(Kind::Semi)?;
                     Statement::Return(value)
                 }
-                Kind::If => {
-                    self.pos += 1; let condition = self.condition()?;
-                    let yes = self.block()?;
-                    let no = if *self.current() == Kind::Else { self.pos += 1; self.block()? } else { Vec::new() };
-                    Statement::If(condition, yes, no)
-                }
+                Kind::If => self.if_statement()?,
                 Kind::While => {
                     self.pos += 1; let condition = self.condition()?;
-                    Statement::While(condition, self.block()?)
+                    if self.loop_depth >= 64 { return Err(self.fail("loop nesting limit exceeded (64)")); }
+                    self.loop_depth += 1;
+                    let body = self.block();
+                    self.loop_depth -= 1;
+                    Statement::While(condition, body?)
+                }
+                Kind::Break | Kind::Continue => {
+                    let keyword = if *self.current() == Kind::Break { "break" } else { "continue" };
+                    if self.loop_depth == 0 { return Err(self.fail(&format!("'{keyword}' outside of a loop"))); }
+                    self.pos += 1; self.take(Kind::Semi)?;
+                    if keyword == "break" { Statement::Break } else { Statement::Continue }
                 }
                 Kind::Print => {
                     self.pos += 1; self.take(Kind::LParen)?;
@@ -370,9 +394,13 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize) -> usize {
             let i = emit_expr(index, out, next);
             format!("v{id}[ae_index(t{i}, {len}, {line}, {col})]")
         }
+        Expr::Neg(a, line, column) => {
+            let t = emit_expr(a, out, next);
+            format!("ae_neg(t{t}, {line}, {column})")
+        }
         Expr::Binary(a, op, b, line, column) => {
             let l = emit_expr(a, out, next); let r = emit_expr(b, out, next);
-            let fun = match op { Kind::Plus => "add", Kind::Minus => "sub", Kind::Star => "mul", Kind::Slash => "div", _ => unreachable!() };
+            let fun = match op { Kind::Plus => "add", Kind::Minus => "sub", Kind::Star => "mul", Kind::Slash => "div", Kind::Percent => "mod", _ => unreachable!() };
             format!("ae_{fun}(t{l}, t{r}, {line}, {column})")
         }
     };
@@ -416,11 +444,14 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                 out.push_str(&format!("    if (!({cond})) break;\n"));
                 emit_statements(body, out, next); out.push_str("    }\n");
             }
+            // The while(1) form re-evaluates the condition after `continue`.
+            Statement::Break => out.push_str("    break;\n"),
+            Statement::Continue => out.push_str("    continue;\n"),
         }
     }
 }
 fn parse(source: &str) -> Result<Vec<Function>, String> {
-    let mut p = Parser { source, tokens: lex(source)?, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, functions: HashMap::new(), in_main: false };
+    let mut p = Parser { source, tokens: lex(source)?, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, functions: HashMap::new(), in_main: false };
     p.collect_functions()?;
     p.program()
 }
