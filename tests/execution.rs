@@ -580,3 +580,84 @@ fn for_loop_counter_overflow_fails_safely() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "9223372036854775806");
 }
+#[test]
+fn vectors_grow_push_pop_and_bounds_check() {
+    // Growth crosses several realloc doublings; len tracks every change.
+    let source = "fn main() { var v = vec[]; print(len(v)); for i in 0..100 { push(v, i * i); } print(len(v)); print(v[99]); pop(v); print(len(v)); print(v[98]); var w = vec[5, 6]; push(w, 7); print(len(w)); print(w[0] + w[1] + w[2]); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "0\n100\n9801\n99\n9604\n3\n18\n");
+}
+#[test]
+fn vector_bounds_failures_report_locations() {
+    // Write checks the index before evaluating the value (division by zero
+    // must not fire first).
+    for (source, expected) in [
+        ("fn main() { var v = vec[1]; print(v[1]); }", "array index out of bounds"),
+        ("fn main() { var v = vec[1]; print(v[0 - 1]); }", "array index out of bounds"),
+        ("fn main() { var v = vec[1]; v[5] = 1 / 0; }", "array index out of bounds"),
+        ("fn main() { var v = vec[]; pop(v); }", "pop from empty vector"),
+    ] {
+        let output = execute(source);
+        assert!(!output.status.success(), "{source}");
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(err.contains(expected), "{source}: {err}");
+    }
+}
+#[test]
+fn vectors_move_through_functions_and_release() {
+    // Passing moves; returning moves out; loop break releases body vectors.
+    let source = "fn sum(v: vec) -> i64 { var total = 0; for i in 0..len(v) { total = total + v[i]; } return total; } fn make(n: i64) -> vec { var v = vec[]; for i in 1..n + 1 { push(v, i); } return v; } fn main() { var a = make(4); print(len(a)); print(sum(a)); a = vec[9]; print(sum(a)); var b = make(3); if true { let inner = make(2); print(len(inner)); } print(len(b)); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "4\n10\n9\n2\n3\n");
+}
+#[test]
+fn vector_misuse_is_rejected_at_compile_time() {
+    for source in [
+        "fn main() { let v = vec[1]; push(v, 2); }",
+        "fn main() { var v = vec[1]; let w = v; push(v, 2); }",
+        "fn main() { var v = vec[1]; let w = v; print(len(v)); }",
+        "fn main() { let v = vec[true]; }",
+        "fn main() { print(vec[1, 2]); }",
+        "fn push(v: vec) -> i64 { return 1; } fn main() {}",
+        "fn main() { var len = 1; }",
+        "fn main() { var v = vec[1]; var w = vec[2]; v = w; push(v, 3); print(len(w)); }",
+        "fn main() { var s = \"x\"; push(s, 1); }",
+        "fn main() { var v = vec[1]; v = 5; }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-vec-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "{source}");
+    }
+}
+#[test]
+fn vector_use_after_move_is_caught_at_runtime_in_loops() {
+    // The move happens after the read within one iteration; the null-check
+    // backstop catches the second iteration instead of misbehaving.
+    let source = "fn main() { var v = vec[1, 2]; while len(v) > 0 { print(v[0]); let w = v; } }";
+    let output = execute(source);
+    assert!(!output.status.success());
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.contains("use of moved vector"), "{err}");
+    assert!(err.contains("1"), "{err}");
+}
+#[test]
+fn returning_a_live_owned_local_keeps_the_buffer_valid() {
+    // Regression: the exit release list must skip slots the return moved
+    // out of, for both owned types.
+    let source = "fn pick_v() -> vec { var v = vec[7, 8]; return v; } fn pick_s() -> string { let s = \"live\"; return s; } fn main() { var v = pick_v(); print(len(v)); print(v[1]); print(pick_s()); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "2\n8\nlive\n");
+}
+#[test]
+fn len_works_in_binary_and_condition_contexts() {
+    // Regression: len() fast paths once skipped the binary-operator loop.
+    let source = "fn main() { var v = vec[1, 2, 3]; let a = [9, 9, 9, 9]; let s = \"abcd\"; if len(v) > 2 { print(len(v) + 1); } print(len(a) * 2); print(len(s) == 4 && len(v) < len(a)); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "4\n8\ntrue\n");
+}

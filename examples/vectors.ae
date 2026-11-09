@@ -1,0 +1,30 @@
+// Owned growable vectors move like strings; push/pop mutate in place.
+fn squares(n: i64) -> vec {
+    var v = vec[];
+    for i in 1..n + 1 {
+        push(v, i * i);
+    }
+    return v;
+}
+
+fn sum(v: vec) -> i64 {
+    var total = 0;
+    for i in 0..len(v) {
+        total = total + v[i];
+    }
+    return total;
+}
+
+fn main() {
+    var v = squares(5);
+    print(len(v));
+    print(sum(v));      // sum consumes v
+    v = squares(5);     // re-initialize after the move
+    v[0] = 100;
+    push(v, 36);
+    pop(v);
+    print(sum(v));      // 100 + 4 + 9 + 16 + 25
+    let empty = vec[];
+    assert(len(empty) == 0);
+    print(len(empty));
+}
