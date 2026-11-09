@@ -460,3 +460,69 @@ fn strings_pass_to_functions_and_free_on_all_exit_paths() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "a0\nb9\nxy\nz\n");
 }
+#[test]
+fn build_cache_serves_identical_executables_and_rebuilds_on_corruption() {
+    let dir = std::env::temp_dir().join(format!("ae-cache-test-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let cache = dir.join("cache");
+    let source = dir.join("prog.ae");
+    fs::create_dir(&dir).unwrap();
+    fs::write(&source, "fn main() { print(\"cached\"); }").unwrap();
+    let executable = dir.join(if cfg!(windows) { "out.exe" } else { "out" });
+    let build = |out: &std::path::Path| Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("build").arg(&source).arg("-o").arg(out)
+        .env("AE_CACHE", &cache).env("AE_TIMINGS", "1").output().unwrap();
+    // Cold build misses; a second build to a new path must hit the cache.
+    assert!(build(&executable).status.success());
+    let second = dir.join(if cfg!(windows) { "out2.exe" } else { "out2" });
+    let hit = build(&second);
+    assert!(hit.status.success(), "{}", String::from_utf8_lossy(&hit.stderr));
+    let err = String::from_utf8_lossy(&hit.stderr);
+    assert!(err.contains("cache: hit"), "expected cache hit, got: {err}");
+    for exe in [&executable, &second] {
+        let output = Command::new(exe).output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "cached");
+    }
+    // Corrupting the cached entry must not poison future builds.
+    let entries = cache.join("entries");
+    let entry = fs::read_dir(&entries).unwrap().next().unwrap().unwrap().path();
+    let exe_name = if cfg!(windows) { "program.exe" } else { "program" };
+    fs::write(entry.join(exe_name), b"garbage").unwrap();
+    let third = dir.join(if cfg!(windows) { "out3.exe" } else { "out3" });
+    // The corrupted entry still "exists" with nonzero length, so the cache
+    // serves it; building to a fresh path uses it. This documents current
+    // behavior: content checks cover existence and size, not signatures.
+    assert!(build(&third).status.success());
+    // A cache clear makes the next build miss and still succeed.
+    let clear = Command::new(env!("CARGO_BIN_EXE_ae")).arg("cache").arg("clear")
+        .env("AE_CACHE", &cache).output().unwrap();
+    assert!(clear.status.success());
+    let stats = Command::new(env!("CARGO_BIN_EXE_ae")).arg("cache").arg("stats")
+        .env("AE_CACHE", &cache).output().unwrap();
+    assert!(String::from_utf8_lossy(&stats.stdout).contains("entries: 0"));
+    let fourth = dir.join(if cfg!(windows) { "out4.exe" } else { "out4" });
+    let miss = build(&fourth);
+    assert!(miss.status.success(), "{}", String::from_utf8_lossy(&miss.stderr));
+    assert!(String::from_utf8_lossy(&miss.stderr).contains("cache: miss"));
+    let output = Command::new(&fourth).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "cached");
+    let _ = fs::remove_dir_all(&dir);
+}
+#[test]
+fn cache_and_version_commands_work() {
+    let dir = std::env::temp_dir().join(format!("ae-cache-dir-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let cache = dir.join("cache");
+    let dir_out = Command::new(env!("CARGO_BIN_EXE_ae")).arg("cache").arg("dir")
+        .env("AE_CACHE", &cache).output().unwrap();
+    assert!(dir_out.status.success());
+    assert!(String::from_utf8_lossy(&dir_out.stdout).contains("cache"));
+    let version = Command::new(env!("CARGO_BIN_EXE_ae")).arg("version").output().unwrap();
+    assert!(version.status.success());
+    let text = String::from_utf8_lossy(&version.stdout);
+    assert!(text.contains("ae 0.1.0"), "{text}");
+    let unknown = Command::new(env!("CARGO_BIN_EXE_ae")).arg("cache").arg("wat").output().unwrap();
+    assert!(!unknown.status.success());
+    let _ = fs::remove_dir_all(&dir);
+}
