@@ -386,3 +386,42 @@ fn else_if_chains_evaluate_in_order() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "9");
 }
+#[test]
+fn booleans_and_short_circuit_evaluation_are_correct() {
+    let source = "fn show(x: i64) -> bool { print(x); return true; } fn main() { var hit = false; hit = show(1) && show(2); print(hit); hit = show(3) && false; print(hit); hit = false && show(4); print(hit); hit = true || show(5); print(hit); hit = show(6) || show(7); print(hit); hit = !hit; print(hit); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    // show(1), show(2) both run; show(3) runs and decides; false skips show(4);
+    // true skips show(5); show(6) decides so show(7) is skipped.
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "1\n2\ntrue\n3\nfalse\nfalse\ntrue\n6\ntrue\nfalse\n");
+}
+#[test]
+fn bool_functions_and_params_round_trip() {
+    let source = "fn is_even(n: i64) -> bool { return n % 2 == 0; } fn xor(a: bool, b: bool) -> bool { if a && b { return false; } else { return a || b; } } fn main() { print(is_even(10)); print(is_even(7)); print(xor(true, false)); print(xor(true, true)); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "true\nfalse\ntrue\nfalse\n");
+}
+#[test]
+fn assert_passes_and_fails_at_the_right_location() {
+    let output = execute("fn main() { assert(1 == 1); assert(2 > 1); print(9); }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "9");
+    let output = execute("fn main() {\n  let x = 5;\n  assert(x == 6);\n}");
+    assert!(!output.status.success());
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.contains("ae:3:3: assertion failed"), "{err}");
+}
+#[test]
+fn print_handles_strings_with_escapes_and_unicode() {
+    let output = execute("fn main() { print(\"hello, world\"); print(\"tab\\there\"); print(\"中文 😀\"); print(\"quote\\\"inside\"); }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "hello, world\ntab\there\n中文 😀\nquote\"inside\n");
+    for source in ["fn main() { print(\"bad \\q\"); }", "fn main() { print(\"open }", "fn main() { print(\"a\nb\"); }", "fn main() { let s = \"text\"; }"] {
+        let path = std::env::temp_dir().join(format!("ae-str-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let result = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!result.status.success(), "{source}");
+    }
+}

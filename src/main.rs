@@ -104,7 +104,20 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
 }
 
 fn main() -> ExitCode {
-    match run(env::args_os().skip(1).collect()) {
+    // Parsing, checking, and dropping deep ASTs recurse; give that work a
+    // dedicated large stack instead of relying on the OS default for the
+    // main thread. Nesting limits still bound recursion explicitly.
+    let worker = std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(|| run(env::args_os().skip(1).collect()));
+    let result = match worker {
+        Ok(worker) => match worker.join() {
+            Ok(code) => code,
+            Err(_) => return ExitCode::FAILURE,
+        },
+        Err(e) => Err(format!("cannot start compiler thread: {e}")),
+    };
+    match result {
         Ok(code) => ExitCode::from(code),
         Err(e) => { eprintln!("ae: {e}"); ExitCode::FAILURE }
     }
