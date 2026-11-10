@@ -31,10 +31,10 @@ fn main() {
     let n = len(data);
     var line_start = 0;
     var matches = 0;
-    var lines = 0;
+    var line_count = 0;
     for i in 0..n {
         if data[i] == 10 {
-            lines = lines + 1;
+            line_count = line_count + 1;
             if line_has(&data, line_start, i, &pat) {
                 matches = matches + 1;
             }
@@ -42,11 +42,11 @@ fn main() {
         }
     }
     if n > line_start {
-        lines = lines + 1;
+        line_count = line_count + 1;
         if line_has(&data, line_start, n, &pat) {
             matches = matches + 1;
         }
     }
-    print(lines);
+    print(line_count);
     print(matches);
 }

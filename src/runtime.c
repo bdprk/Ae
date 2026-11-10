@@ -205,6 +205,36 @@ static ae_string ae_join(const ae_strvec *v, ae_string sep, size_t line, size_t 
     return result;
 }
 
+// lines(): split on newlines with a word-at-a-time scan (SWAR). Trailing
+// newlines do not produce a final empty line, matching common stdlib lines().
+#define AE_HASZERO(x) (((x) - 0x0101010101010101ULL) & ~(x) & 0x8080808080808080ULL)
+static ae_strvec ae_lines(ae_strview s, size_t line, size_t column) {
+    ae_strvec out = ae_strvec_new(line, column);
+    int64_t start = 0;
+    int64_t i = 0;
+    while (i < s.len) {
+        while (i + 8 <= s.len) {
+            uint64_t chunk;
+            memcpy(&chunk, s.ptr + i, 8);
+            chunk ^= 0x0a0a0a0a0a0a0a0aULL;
+            if (AE_HASZERO(chunk)) { break; }
+            i += 8;
+        }
+        if (i >= s.len) { break; }
+        if (s.ptr[i] == 0x0a) {
+            ae_strvec_push(&out, ae_str_from_len(s.ptr + start, i - start, line, column), line, column);
+            i = i + 1;
+            start = i;
+        } else {
+            i = i + 1;
+        }
+    }
+    if (start < s.len) {
+        ae_strvec_push(&out, ae_str_from_len(s.ptr + start, s.len - start, line, column), line, column);
+    }
+    return out;
+}
+
 // Program arguments bridge: the generated main records argc/argv here.
 static int64_t ae_argc_g = 0;
 static char **ae_argv_g = NULL;
