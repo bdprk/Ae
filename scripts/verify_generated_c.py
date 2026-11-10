@@ -60,6 +60,9 @@ def run():
         # Generic structs: each argument list is a distinct layout, and the
         # nested string fields must be released exactly once.
         ("pairs.ae", b"id=7\n1\none\n2\nin\nner", True),
+        # Generic functions: one C function per argument list, and the owned
+        # parameter that is not returned must be released exactly once.
+        ("generic_fn.ae", b"41\nada\nleft\ntrue\nwrapped\nk\n2", True),
         ("json_report.ae", (
             "ready\n"
             "wrote 175 bytes\n"

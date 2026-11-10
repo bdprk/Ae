@@ -1,0 +1,44 @@
+// A generic function is a template: each call site names its type arguments,
+// and the body is parsed again for the concrete types. No runtime machinery is
+// involved — identity[i64] and identity[string] are two ordinary C functions.
+fn identity[T](x: T) -> T {
+    return x;
+}
+
+fn first[T](a: T, b: T) -> T {
+    return a;
+}
+
+fn wrap[T](x: T) -> Option[T] {
+    return Option[T]::Some(x);
+}
+
+struct Pair[K, V] { left: K, right: V }
+
+fn pair_of[T](x: T, n: i64) -> Pair[T, i64] {
+    return Pair[T, i64] { left: x, right: n };
+}
+
+// A generic body may instantiate another generic function with its own
+// parameter, so the substitution composes.
+fn double_wrap[T](x: T) -> Option[T] {
+    let inner = wrap[T](x);
+    return inner;
+}
+
+fn main() {
+    print(identity[i64](41));
+    print(identity[string]("ada"));
+    print(first[string]("left", "right"));
+    print(first[bool](true, false));
+
+    let found = double_wrap[string]("wrapped");
+    match found {
+        Option::Some(text) => { print(text); }
+        Option::None => { print("none"); }
+    }
+
+    let pair = pair_of[string]("k", 2);
+    print(pair.left);
+    print(pair.right);
+}

@@ -921,6 +921,65 @@ fn main() {
     }
 }
 #[test]
+fn generic_functions_are_templates_for_one_argument_list() {
+    // The body is parsed once per argument list, so a `T` that is a string in
+    // one instance is an i64 in another, and instantiating a generic function
+    // from inside another generic body composes the substitution.
+    let source = r#"fn identity[T](x: T) -> T {
+    return x;
+}
+fn first[T](a: T, b: T) -> T {
+    return a;
+}
+fn wrap[T](x: T) -> Option[T] {
+    return Option[T]::Some(x);
+}
+fn double_wrap[T](x: T) -> Option[T] {
+    let inner = wrap[T](x);
+    return inner;
+}
+struct Pair[K, V] { left: K, right: V }
+fn pair_of[T](x: T, n: i64) -> Pair[T, i64] {
+    return Pair[T, i64] { left: x, right: n };
+}
+fn main() {
+    print(identity[i64](41));
+    print(identity[string]("ada"));
+    print(first[string]("left", "right"));
+    let found = double_wrap[string]("wrapped");
+    match found {
+        Option::Some(text) => { print(text); }
+        Option::None => { print("none"); }
+    }
+    let pair = pair_of[string]("k", 2);
+    print(pair.left);
+    print(pair.right);
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "41\nada\nleft\nwrapped\nk\n2\n");
+    for (source, expected) in [
+        // The type arguments are mandatory: there is no inference.
+        ("fn id[T](x: T) -> T { return x; } fn main() { print(id(5)); }", "is a generic function"),
+        ("fn id[T](x: T) -> T { return x; } fn main() { print(id[i64, string](5)); }", "takes 1 type argument(s), found 2"),
+        // A body is checked after substitution, against the concrete type.
+        ("fn bad[T](x: T) -> i64 { return x + 1; } fn main() { print(bad[string](\"a\")); }", "'+' requires two strings"),
+        // Instantiating itself with the same arguments would never finish.
+        ("fn again[T](x: T) -> T { return again[T](x); } fn main() { print(again[i64](1)); }", "would never finish"),
+        // main cannot be generic, and a generic name is still one name.
+        ("fn main[T]() -> i64 { return 1; }", "main cannot be generic"),
+        ("fn id[T](x: T) -> T { return x; } fn id(x: i64) -> i64 { return x; } fn main() { print(1); }", "duplicate function 'id'"),
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-generic-fn-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted invalid program: {source}");
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(err.contains(expected), "{source}: {err}");
+    }
+}
+#[test]
 fn split_and_args_produce_string_vectors() {
     let source = "fn main() { let parts = split(\"a,b,,c\", \",\"); print(len(parts)); print(parts[0]); print(len(parts[2])); let whole = split(\"hello\", \",\"); print(len(whole)); print(whole[0]); var empties = 0; for i in 0..len(parts) { if len(parts[i]) == 0 { empties = empties + 1; } } print(empties); print(join(parts, \"-\")); print(join(parts, \"\")); let a = args(); print(len(a) >= 1); }";
     let output = execute(source);

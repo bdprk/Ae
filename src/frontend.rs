@@ -263,10 +263,18 @@ struct GenericEnum { name: String, params: Vec<String>, variants: Vec<(String, V
 // reason as GenericEnum: a declaration is a shape, not a layout.
 #[derive(Debug, Clone)]
 struct GenericStruct { name: String, params: Vec<String>, fields: Vec<(String, Payload)>, file: String, public: bool }
-// Instantiated generic enums and structs, keyed by declaration and arguments
-// (ADR-21, ADR-30).
+// `fn pick[T](a: T, b: T) -> T { ... }` before any call site picks arguments.
+// The declaration keeps its own token slice and source text so an instantiation
+// can be parsed later, even from another file (ADR-31).
+#[derive(Debug, Clone)]
+struct GenericFn { name: String, params: Vec<String>, start: usize, tokens: Vec<Token>, source: String, file: String, public: bool }
+// An instantiated generic function: its id, parameter types and return type.
+type Instance = (usize, Vec<Type>, Type);
+// Instantiated generic enums, structs and functions, keyed by declaration and
+// arguments (ADR-21, ADR-30, ADR-31). `next_fn_id` is the one id space shared
+// by ordinary and instantiated functions, so C names never collide.
 #[derive(Default)]
-struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize> }
+struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize }
 #[derive(Debug)]
 struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 
@@ -277,7 +285,7 @@ struct Signature { id: usize, params: Vec<Type>, ret: Type, file: String, public
 
 type SharedFunctions = HashMap<String, Signature>;
 
-struct Parser<'a> { file: String, source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>> }
+struct Parser<'a> { file: String, source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>>, subst: HashMap<String, Type>, pending: Vec<Function> }
 impl<'a> Parser<'a> {
     fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
     fn fail(&self, message: &str) -> String { error(&self.file, self.source, self.tokens[self.pos].offset, message) }
@@ -785,55 +793,32 @@ impl<'a> Parser<'a> {
                     };
                     let ty = match name.as_str() { "write_file" => Type::Int, "bytes" => Type::Vec, "contains" | "starts_with" | "ends_with" => Type::Bool, "split" => Type::StrVec, _ => Type::String };
                     (builtin, ty)
+                } else if !self.names.contains_key(&name) && self.generics.fn_names.contains_key(&name) {
+                    // Generic call: the type arguments choose the body, so they
+                    // are mandatory — the language has no type inference.
+                    let gid = self.generics.fn_names[&name];
+                    if *self.current() != Kind::LBracket {
+                        return Err(error(&self.file, self.source, name_offset, &format!("'{name}' is a generic function; write its type arguments, e.g. {name}[i64](...)")));
+                    }
+                    self.pos += 1;
+                    let mut type_args = Vec::new();
+                    loop {
+                        if type_args.len() >= 8 { return Err(self.fail("type argument limit exceeded (8)")); }
+                        type_args.push(self.named_type()?);
+                        if *self.current() != Kind::Comma { break; }
+                        self.pos += 1;
+                    }
+                    self.take(Kind::RBracket)?;
+                    let (id, types, ret) = self.instantiate_fn(gid, type_args, name_offset)?;
+                    let args = self.call_arguments(&name, &types)?;
+                    (Expr::Call(id, args, ret), ret)
                 } else if *self.current() == Kind::LParen {
                     let signature = self.functions.get(&name).cloned().ok_or_else(|| error(&self.file, self.source, name_offset, &format!("unknown function '{name}'")))?;
                     if !signature.public && signature.file != PRELUDE && signature.file != self.file {
                         return Err(error(&self.file, self.source, name_offset, &format!("function '{name}' is private to {} (mark it 'pub' to export it)", signature.file)));
                     }
                     let (id, types, ret) = (signature.id, signature.params.clone(), signature.ret);
-                    self.pos += 1;
-                    let mut args = Vec::new();
-                    if *self.current() != Kind::RParen {
-                        loop {
-                            if args.len() >= 64 { return Err(self.fail("function argument limit exceeded (64)")); }
-                            let expected = *types.get(args.len()).ok_or_else(|| self.fail(&format!("too many arguments to '{name}'")))?;
-                            if expected == Type::StrView {
-                                let (value, ty) = self.expression(0, false)?;
-                                if !matches!(ty, Type::String | Type::StrView) {
-                                    return Err(self.fail(&format!("argument must be a string or string view, found {}", ty.name())));
-                                }
-                                args.push(Argument::View(value));
-                            } else if expected == Type::VecRef || expected == Type::StrVecRef {
-                                self.take(Kind::Amp)?;
-                                let arg = self.identifier()?;
-                                let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown variable '{arg}'")))?;
-                                let required = if expected == Type::VecRef { Type::Vec } else { Type::StrVec };
-                                if actual != required {
-                                    return Err(self.fail(&format!("argument must be {}, found {}", required.name(), actual.name())));
-                                }
-                                if self.moved.contains(&var) { return Err(self.fail(&format!("cannot borrow '{arg}' because it was moved"))); }
-                                args.push(Argument::Borrow(var, true));
-                            } else if let Type::Array(len) = expected {
-                                self.take(Kind::Amp)?;
-                                let arg = self.identifier()?;
-                                let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown array '{arg}'")))?;
-                                if actual != Type::Array(len) { return Err(self.fail(&format!("argument requires array of length {len}"))); }
-                                args.push(Argument::Borrow(var, false));
-                            } else {
-                                // By-value arguments always consume their value:
-                                // the callee releases the parameter, so the caller
-                                // must not use the slot afterwards even when the
-                                // surrounding statement is not a move context.
-                                let (value, ty) = self.expression(0, true)?;
-                                if ty != expected { return Err(self.fail(&format!("argument {} to '{name}' must be {}", args.len() + 1, expected.name()))); }
-                                args.push(Argument::Value(value));
-                            }
-                            if *self.current() != Kind::Comma { break; }
-                            self.pos += 1;
-                        }
-                    }
-                    self.take(Kind::RParen)?;
-                    if args.len() != types.len() { return Err(self.fail(&format!("function '{name}' expects {} arguments, got {}", types.len(), args.len()))); }
+                    let args = self.call_arguments(&name, &types)?;
                     (Expr::Call(id, args, ret), ret)
                 } else {
                     let (id, _, ty) = *self.names.get(&name).ok_or_else(|| {
@@ -978,6 +963,10 @@ impl<'a> Parser<'a> {
     }
     fn named_type(&mut self) -> Result<Type, String> {
         let name = self.identifier()?;
+        // Inside a generic instantiation a type parameter stands for the
+        // argument the call site supplied; nothing must reach code generation
+        // with a parameter still in it.
+        if let Some(&concrete) = self.subst.get(&name) { return Ok(concrete); }
         match name.as_str() {
             "i64" => Ok(Type::Int),
             "bool" => Ok(Type::Bool),
@@ -1403,6 +1392,26 @@ impl<'a> Parser<'a> {
             self.pos += 1;
         }
     }
+    // Skip `(params) -> Ret { body }` without interpreting it. Used for a
+    // generic declaration, whose body is parsed at each instantiation instead.
+    fn skip_function_body(&mut self) -> Result<(), String> {
+        while *self.current() != Kind::LBrace {
+            if *self.current() == Kind::Eof { return Err(self.fail("expected '{' before end of file")); }
+            self.pos += 1;
+        }
+        self.pos += 1;
+        let mut depth = 1usize;
+        while depth > 0 {
+            match self.current() {
+                Kind::LBrace => depth += 1,
+                Kind::RBrace => depth -= 1,
+                Kind::Eof => return Err(self.fail("expected '}' before end of file")),
+                _ => {}
+            }
+            self.pos += 1;
+        }
+        Ok(())
+    }
     fn skip_enum_def(&mut self) {
         self.pos += 2; // 'enum' Name
         self.skip_type_params();
@@ -1427,6 +1436,17 @@ impl<'a> Parser<'a> {
             self.take(Kind::Fn)?;
             let name = self.identifier()?;
             if !seen.insert(name.clone()) { return Err(self.fail(&format!("duplicate function '{name}'"))); }
+            if *self.current() == Kind::LBracket {
+                // A generic function has no signature of its own: only its
+                // instantiations exist, and each gets an id when constructed.
+                if name == "main" { return Err(self.fail("main cannot be generic")); }
+                let params = self.type_params()?;
+                let gid = self.generics.fn_defs.len();
+                self.generics.fn_names.insert(name.clone(), gid);
+                self.generics.fn_defs.push(GenericFn { name, params, start: self.pos, tokens: self.tokens.clone(), source: self.source.to_owned(), file: self.file.clone(), public });
+                self.skip_function_body()?;
+                continue;
+            }
             self.take(Kind::LParen)?;
             let mut types = Vec::new();
             if *self.current() != Kind::RParen {
@@ -1443,9 +1463,13 @@ impl<'a> Parser<'a> {
             }
             self.take(Kind::RParen)?;
             if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{name}' is a built-in and cannot be redefined"))); }
-            // Ids are unique across all files of a program.
-            let id = *next_id;
-            *next_id += 1;
+            // Ids are unique across all files of a program, and share one
+            // space with generic instantiations, so keep the counter in the
+            // shared state and fold the per-file value in.
+            self.generics.next_fn_id = self.generics.next_fn_id.max(*next_id);
+            let id = self.generics.next_fn_id;
+            self.generics.next_fn_id += 1;
+            *next_id = self.generics.next_fn_id;
             self.id_order.push(id);
             if name == "main" {
                 if !types.is_empty() { return Err(self.fail("main cannot have parameters")); }
@@ -1486,57 +1510,156 @@ impl<'a> Parser<'a> {
             if *self.current() == Kind::Enum { self.skip_enum_def(); continue; }
             self.take(Kind::Fn)?;
             let name = self.identifier()?;
+            // A generic declaration has no body of its own: the signature pass
+            // recorded it and an instantiation parses it later (ADR-31).
+            if *self.current() == Kind::LBracket { self.skip_function_body()?; continue; }
             let is_main = name == "main";
             if is_main && main_found { return Err(self.fail("duplicate main function")); }
-            self.take(Kind::LParen)?;
-            // Variable ids restart per function, so move tracking must too.
-            self.names.clear(); self.next_var = 0; self.moved.clear();
-            let mut params = Vec::new();
-            if *self.current() != Kind::RParen {
-                loop {
-                    if params.len() >= 64 { return Err(self.fail("function parameter limit exceeded (64)")); }
-                    // `var` marks the parameter slot writable. The value was moved
-                    // in at the call site, so mutating this copy cannot be seen by
-                    // the caller; that difference is what keeps it safe.
-                    let mutable = *self.current() == Kind::Var;
-                    if mutable { self.pos += 1; }
-                    let param = self.identifier()?;
-                    if RESERVED.contains(&param.as_str()) { return Err(self.fail(&format!("'{param}' is a built-in name and cannot be a parameter"))); }
-                    if self.names.contains_key(&param) { return Err(self.fail(&format!("duplicate parameter '{param}'"))); }
-                    self.take(Kind::Colon)?;
-                    let ty = self.parameter_type()?;
-                    let id = self.next_var; self.next_var += 1;
-                    self.names.insert(param, (id, mutable, ty)); params.push((id, ty));
-                    if *self.current() != Kind::Comma { break; }
-                    self.pos += 1;
-                }
-            }
-            self.take(Kind::RParen)?;
+            if is_main { main_found = true; }
             let id = self.id_order[result.len()];
-            let returns_type;
-            if is_main {
-                if !params.is_empty() { return Err(self.fail("main cannot have parameters")); }
-                main_found = true;
-                returns_type = Type::Int;
-            } else {
-                self.take(Kind::Arrow)?;
-                returns_type = self.return_annotation()?;
-            }
-            self.in_main = is_main;
-            self.return_type = returns_type;
-            // Parameter scope: lives for the whole body so return paths can
-            // release owned parameters.
-            self.scopes.push(params.iter().map(|&(id, ty)| (id, ty)).collect());
-            let body = self.block();
-            let params_scope = self.scopes.pop().unwrap();
-            let mut body = body?;
-            let param_owned: Vec<(usize, Type)> = params_scope.iter().filter(|(_, ty)| ty.owned()).copied().collect();
-            if !param_owned.is_empty() { body.push(Statement::Frees(param_owned)); }
-            if !is_main && !returns(&body) { return Err(self.fail("function may exit without returning a value")); }
-            result.push(Function { id, params, body, is_main, returns: returns_type });
+            result.push(self.function_rest(is_main, id)?);
         }
+        // Instantiations discovered while parsing bodies have no place in the
+        // file's own order, but they must still be emitted.
+        result.append(&mut self.pending);
         // main presence is checked once per program, not per file.
         Ok(result)
+    }
+    // `(params) -> Ret { body }` for one function, starting at the parameter
+    // list. Shared by the file's own functions and by generic instantiations,
+    // which parse the same tokens with type parameters substituted.
+    fn function_rest(&mut self, is_main: bool, id: usize) -> Result<Function, String> {
+        self.take(Kind::LParen)?;
+        // Variable ids restart per function, so move tracking must too.
+        self.names.clear(); self.next_var = 0; self.moved.clear(); self.scopes.clear(); self.borrows.clear();
+        let mut params = Vec::new();
+        if *self.current() != Kind::RParen {
+            loop {
+                if params.len() >= 64 { return Err(self.fail("function parameter limit exceeded (64)")); }
+                // `var` marks the parameter slot writable. The value was moved
+                // in at the call site, so mutating this copy cannot be seen by
+                // the caller; that difference is what keeps it safe.
+                let mutable = *self.current() == Kind::Var;
+                if mutable { self.pos += 1; }
+                let param = self.identifier()?;
+                if RESERVED.contains(&param.as_str()) { return Err(self.fail(&format!("'{param}' is a built-in name and cannot be a parameter"))); }
+                if self.names.contains_key(&param) { return Err(self.fail(&format!("duplicate parameter '{param}'"))); }
+                self.take(Kind::Colon)?;
+                let ty = self.parameter_type()?;
+                let var_id = self.next_var; self.next_var += 1;
+                self.names.insert(param, (var_id, mutable, ty)); params.push((var_id, ty));
+                if *self.current() != Kind::Comma { break; }
+                self.pos += 1;
+            }
+        }
+        self.take(Kind::RParen)?;
+        let returns_type;
+        if is_main {
+            if !params.is_empty() { return Err(self.fail("main cannot have parameters")); }
+            returns_type = Type::Int;
+        } else {
+            self.take(Kind::Arrow)?;
+            returns_type = self.return_annotation()?;
+        }
+        self.in_main = is_main;
+        self.return_type = returns_type;
+        // Parameter scope: lives for the whole body so return paths can
+        // release owned parameters.
+        self.scopes.push(params.iter().map(|&(var_id, ty)| (var_id, ty)).collect());
+        let body = self.block();
+        let params_scope = self.scopes.pop().unwrap();
+        let mut body = body?;
+        let param_owned: Vec<(usize, Type)> = params_scope.iter().filter(|(_, ty)| ty.owned()).copied().collect();
+        if !param_owned.is_empty() { body.push(Statement::Frees(param_owned)); }
+        if !is_main && !returns(&body) { return Err(self.fail("function may exit without returning a value")); }
+        Ok(Function { id, params, body, is_main, returns: returns_type })
+    }
+    // Parse a generic function's own tokens once per argument list. The
+    // sub-parser shares this program's maps and id space, so a nested
+    // instantiation behaves exactly like one written at the top level.
+    fn instantiate_fn(&mut self, gid: usize, args: Vec<Type>, offset: usize) -> Result<Instance, String> {
+        let def = self.generics.fn_defs[gid].clone();
+        if args.len() != def.params.len() {
+            return Err(error(&self.file, self.source, offset, &format!("'{}' takes {} type argument(s), found {}", def.name, def.params.len(), args.len())));
+        }
+        self.require_public("function", &def.name, &def.file, def.public)?;
+        let key = format!("{gid}:{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
+        if let Some(instance) = self.generics.fn_done.get(&key) { return Ok(instance.clone()); }
+        if self.generics.fn_in_progress.contains(&key) {
+            return Err(error(&self.file, self.source, offset, &format!("'{}' is already being instantiated with these type arguments; the expansion would never finish", def.name)));
+        }
+        self.generics.fn_in_progress.insert(key.clone());
+        let id = self.generics.next_fn_id;
+        self.generics.next_fn_id += 1;
+        let mut subst = HashMap::new();
+        for (index, param) in def.params.iter().enumerate() { subst.insert(param.clone(), args[index]); }
+        let mut sub = Parser {
+            file: def.file.clone(), source: def.source.as_str(), tokens: def.tokens, pos: def.start,
+            names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0,
+            loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0,
+            functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
+            enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
+            id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
+            borrows: Vec::new(), scopes: Vec::new(), subst, pending: Vec::new(),
+        };
+        let parsed = sub.function_rest(false, id);
+        let mut nested = std::mem::take(&mut sub.pending);
+        drop(sub);
+        let function = parsed?;
+        let instance: Instance = (id, function.params.iter().map(|&(_, ty)| ty).collect(), function.returns);
+        self.pending.push(function);
+        self.pending.append(&mut nested);
+        self.generics.fn_done.insert(key.clone(), instance.clone());
+        self.generics.fn_in_progress.remove(&key);
+        Ok(instance)
+    }
+    // The argument list of a call, starting at '(' (ADR-31 shares it between
+    // ordinary calls and generic instantiations).
+    fn call_arguments(&mut self, name: &str, types: &[Type]) -> Result<Vec<Argument>, String> {
+        self.pos += 1;
+        let mut args = Vec::new();
+        if *self.current() != Kind::RParen {
+            loop {
+                if args.len() >= 64 { return Err(self.fail("function argument limit exceeded (64)")); }
+                let expected = *types.get(args.len()).ok_or_else(|| self.fail(&format!("too many arguments to '{name}'")))?;
+                if expected == Type::StrView {
+                    let (value, ty) = self.expression(0, false)?;
+                    if !matches!(ty, Type::String | Type::StrView) {
+                        return Err(self.fail(&format!("argument must be a string or string view, found {}", ty.name())));
+                    }
+                    args.push(Argument::View(value));
+                } else if expected == Type::VecRef || expected == Type::StrVecRef {
+                    self.take(Kind::Amp)?;
+                    let arg = self.identifier()?;
+                    let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown variable '{arg}'")))?;
+                    let required = if expected == Type::VecRef { Type::Vec } else { Type::StrVec };
+                    if actual != required {
+                        return Err(self.fail(&format!("argument must be {}, found {}", required.name(), actual.name())));
+                    }
+                    if self.moved.contains(&var) { return Err(self.fail(&format!("cannot borrow '{arg}' because it was moved"))); }
+                    args.push(Argument::Borrow(var, true));
+                } else if let Type::Array(len) = expected {
+                    self.take(Kind::Amp)?;
+                    let arg = self.identifier()?;
+                    let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown array '{arg}'")))?;
+                    if actual != Type::Array(len) { return Err(self.fail(&format!("argument requires array of length {len}"))); }
+                    args.push(Argument::Borrow(var, false));
+                } else {
+                    // By-value arguments always consume their value:
+                    // the callee releases the parameter, so the caller
+                    // must not use the slot afterwards even when the
+                    // surrounding statement is not a move context.
+                    let (value, ty) = self.expression(0, true)?;
+                    if ty != expected { return Err(self.fail(&format!("argument {} to '{name}' must be {}", args.len() + 1, expected.name()))); }
+                    args.push(Argument::Value(value));
+                }
+                if *self.current() != Kind::Comma { break; }
+                self.pos += 1;
+            }
+        }
+        self.take(Kind::RParen)?;
+        if args.len() != types.len() { return Err(self.fail(&format!("function '{name}' expects {} arguments, got {}", types.len(), args.len()))); }
+        Ok(args)
     }
     fn block(&mut self) -> Result<Vec<Statement>, String> {
         if self.block_depth >= 64 { return Err(self.fail("block nesting limit exceeded (64)")); }
@@ -3047,7 +3170,7 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
 struct Program { files: Vec<Vec<Function>>, structs: Vec<StructDef>, enums: Vec<EnumDef> }
 
 fn make_parser<'a>(file: &str, source: &'a str, tokens: Vec<Token>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics) -> Parser<'a> {
-    Parser { file: file.to_owned(), source, tokens, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new() }
+    Parser { file: file.to_owned(), source, tokens, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new(), subst: HashMap::new(), pending: Vec::new() }
 }
 
 // Leading `use "path";` headers. Parsed from tokens before the Parser owns

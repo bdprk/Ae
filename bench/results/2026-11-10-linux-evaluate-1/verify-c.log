@@ -26,6 +26,8 @@ PASS dir_report.ae
   leak blocks=0 bytes=0
 PASS pairs.ae
   leak blocks=0 bytes=0
+PASS generic_fn.ae
+  leak blocks=0 bytes=0
 PASS json_report.ae
   leak blocks=0 bytes=0
 PASS maybe.ae
@@ -35,4 +37,3 @@ PASS main.ae
 PASS text_preview.ae
   leak blocks=0 bytes=0
 PASS bounds.ae
-verify-exit=0
