@@ -45,7 +45,7 @@ cargo run -- cache stats
 
 验证生成的 C：`cargo build` 后运行 `python scripts/verify_generated_c.py`；Linux 可加 `--sanitize` 启用地址和未定义行为检测，MinGW 无 libasan 时用 `--leak` 走 `-Wl,--wrap` 的分配计数（要求每个程序的退出分配块数等于空程序基线）。检测覆盖有限案例，不能证明实现完全安全。
 
-现有子集的完整规则见 [当前语言语义](docs/current-language.md)；设计决策记录见 [docs/decisions.md](docs/decisions.md)；探索性测量工具和限制见 [基准说明](bench/README.md)。目前不能据此宣称性能优于 Go、Rust、Gojo 或 Python。
+现有子集的完整规则见 [当前语言语义](docs/current-language.md)；所有权、借用与释放的正式规范见 [资源模型](docs/resource-model.md)；设计决策记录见 [docs/decisions.md](docs/decisions.md)；探索性测量工具和限制见 [基准说明](bench/README.md)。目前不能据此宣称性能优于 Go、Rust、Gojo 或 Python。
 
 ## 许可证
 
