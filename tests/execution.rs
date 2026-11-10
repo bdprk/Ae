@@ -938,6 +938,55 @@ fn lines_splits_on_newlines_like_common_stdlibs() {
     assert!(!output.status.success());
 }
 #[test]
+fn count_lines_with_matches_reference_semantics() {
+    // Reference: split into lines (trailing newline yields no final empty),
+    // count lines whose content contains the pattern.
+    let nl = "\n";
+    let cases = [
+        (format!("ae here{nl}nope{nl}ae again"), "ae", 2),
+        (String::new(), "x", 0),
+        ("one".to_string(), "two", 0),
+        ("yes".to_string(), "", 1),
+        (format!("x{nl}{nl}y"), "", 3),
+        (format!("a{nl}b{nl}"), "b", 1),
+        (format!("aaa{nl}aa{nl}a"), "aa", 2),
+        (format!("{nl}{nl}"), "z", 0),
+    ];
+    fn ae_lit(t: &str) -> String {
+        t.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n")
+    }
+    for (text, pat, expected) in cases {
+        let src_text = ae_lit(&text);
+        let src_pat = ae_lit(&pat);
+        let source = format!("fn main() {{ print(count_lines_with(\"{src_text}\", \"{src_pat}\")); }}");
+        let output = execute(&source);
+        assert!(output.status.success(), "{source}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected.to_string(), "{text:?} / {pat:?}");
+    }
+}
+#[test]
+fn cli_grep_reads_pattern_and_file_from_args() {
+    let dir = std::env::temp_dir().join(format!("ae-cli-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir(&dir).unwrap();
+    let src = dir.join("grep_cli.ae");
+    fs::copy(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/grep_cli.ae"), &src).unwrap();
+    let data = dir.join("data.txt");
+    fs::write(&data, "hit one\nmiss\nhit two\n").unwrap();
+    let executable = dir.join(if cfg!(windows) { "g.exe" } else { "g" });
+    let result = Command::new(env!("CARGO_BIN_EXE_ae")).arg("build").arg(&src).arg("-o").arg(&executable).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let run = |args: &[&str]| Command::new(&executable).args(args).current_dir(&dir).output().unwrap();
+    let hit = run(&["hit", "data.txt"]);
+    assert!(hit.status.success());
+    assert_eq!(String::from_utf8_lossy(&hit.stdout).replace("\r\n", "\n").trim(), "2");
+    let miss = run(&["zzz", "data.txt"]);
+    assert_eq!(String::from_utf8_lossy(&miss.stdout).replace("\r\n", "\n").trim(), "0");
+    let usage = run(&[]);
+    assert!(String::from_utf8_lossy(&usage.stdout).contains("usage"));
+    let _ = fs::remove_dir_all(&dir);
+}
+#[test]
 fn vec_borrows_are_read_only_and_forwardable() {
     // Borrowed vectors forward like array borrows; mutation and moves are rejected.
     let source = "fn total(v: &vec) -> i64 { var t = 0; for i in 0..len(v) { t = t + v[i]; } return t; } fn last_two(v: &vec) -> i64 { return v[len(v) - 2] + v[len(v) - 1]; } fn main() { var data = vec[1, 2, 3]; print(total(&data)); print(last_two(&data)); data[0] = 10; print(total(&data)); }";
