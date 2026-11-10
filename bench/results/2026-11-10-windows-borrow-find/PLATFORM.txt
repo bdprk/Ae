@@ -1,0 +1,26 @@
+AE Windows local verification, 2026-11-10
+Commit: 3c97dae (Borrow a generic T, forward read-only borrows, and find byte offsets as a result)
+Scope: ADR-35 (generic &T borrow, read-only borrow forwarding) and ADR-36 (find -> IntResult)
+
+Platform
+  OS: Windows x86-64 (native, MinGW-W64 UCRT toolchain)
+  C compiler: gcc.exe (MinGW-W64 x86_64-ucrt-posix-seh) 16.2.0
+  Rust: cargo 1.99.1
+  AddressSanitizer: unavailable on MinGW; allocation counting uses -Wl,--wrap (see verify-c-leak.log)
+
+Commands (run from the repository root)
+  cargo test --locked
+  python scripts/verify_generated_c.py --leak
+  ae check <each file in examples/*.ae and examples/modules/*.ae>
+
+Results
+  cargo test --locked: 9 unit + 129 integration tests, 0 failures
+  verify --leak: 23 generated-C cases PASS, every program exits with the same
+    allocation block count as the trivial program baseline (2 blocks on UCRT)
+  examples: all entry programs pass `check`; modules/report.ae and modules/words.ae
+    are library files with no main, which is expected
+
+Not covered here
+  Linux native run, Linux --sanitize, and byte-for-byte comparison of every example
+  on Linux. Until those are archived, ADR-35/36 stay "Windows verified" only.
+  This directory is a verification log, not a performance benchmark.
