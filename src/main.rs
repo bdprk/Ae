@@ -77,6 +77,54 @@ fn publish_cache(entry: &Path, exe: &Path) {
     let _ = fs::rename(&manifest, entry.join("manifest"));
 }
 
+/// Cache size cap from AE_CACHE_LIMIT, in bytes. Zero or an unparseable
+/// value means "no cap": a limit nobody asked for is worse than a growing
+/// cache, and a typo must not silently delete entries.
+fn cache_limit() -> Option<u64> {
+    let raw = env::var_os("AE_CACHE_LIMIT")?;
+    raw.to_str()?.trim().parse::<u64>().ok().filter(|n| *n > 0)
+}
+
+fn entry_exe(entry: &Path) -> PathBuf { entry.join(if cfg!(windows) { "program.exe" } else { "program" }) }
+
+fn entry_bytes(entry: &Path) -> u64 {
+    [entry_exe(entry), entry.join("manifest")].iter()
+        .filter_map(|p| fs::metadata(p).ok())
+        .map(|m| m.len())
+        .sum()
+}
+
+/// Records a use so pruning can tell hot entries from cold ones. The marker
+/// file's modification time is the clock; its contents would be a second
+/// source of truth to keep in sync.
+fn touch_used(entry: &Path) { let _ = fs::write(entry.join("used"), b""); }
+
+fn entry_used(entry: &Path) -> std::time::SystemTime {
+    fs::metadata(entry.join("used")).and_then(|m| m.modified())
+        .or_else(|_| fs::metadata(entry_exe(entry)).and_then(|m| m.modified()))
+        .unwrap_or(std::time::UNIX_EPOCH)
+}
+
+/// Drops least recently used entries until the cache fits the limit. Runs after
+/// publishing; a delete that fails is not a build failure — the entry simply
+/// survives to the next prune.
+fn prune_cache(limit: u64) {
+    let entries = cache_root().join("entries");
+    let Ok(read) = fs::read_dir(&entries) else { return };
+    let mut found: Vec<(PathBuf, u64, std::time::SystemTime)> = read.flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .map(|p| (p.clone(), entry_bytes(&p), entry_used(&p)))
+        .collect();
+    let mut total: u64 = found.iter().map(|(_, size, _)| size).sum();
+    if total <= limit { return; }
+    found.sort_by_key(|(_, _, used)| *used);
+    for (path, size, _) in found {
+        if total <= limit { break; }
+        if fs::remove_dir_all(&path).is_ok() { total = total.saturating_sub(size); }
+    }
+}
+
 fn timings_enabled() -> bool { env::var_os("AE_TIMINGS").as_deref() == Some(std::ffi::OsStr::new("1")) }
 
 /// Build the generated C. Results are cached under a key covering every
@@ -112,6 +160,7 @@ fn build_c(c: &str, dir: &Path, release: bool, use_cache: bool) -> Result<PathBu
                 let cached = entry.join(exe_name);
                 if cached.is_file() && cache_manifest_matches(&entry, &cached) {
                     let started = Instant::now();
+                    touch_used(&entry);
                     fs::copy(&cached, &exe).map_err(|e| format!("copying cached executable: {e}"))?;
                     if timings_enabled() {
                         eprintln!("ae cache: hit");
@@ -138,7 +187,10 @@ fn build_c(c: &str, dir: &Path, release: bool, use_cache: bool) -> Result<PathBu
 
     // Publishing is best effort: nothing here may turn a successful compile
     // into a failure, and a half-written entry must read as a miss.
-    if let Some(entry) = cache_entry { publish_cache(&entry, &exe); }
+    if let Some(entry) = cache_entry {
+        publish_cache(&entry, &exe);
+        if let Some(limit) = cache_limit() { prune_cache(limit); }
+    }
     Ok(exe)
 }
 
@@ -158,6 +210,7 @@ fn cache_command(subcommand: Option<&OsString>) -> Result<u8, String> {
             }
             println!("entries: {count}");
             println!("bytes: {bytes}");
+            println!("limit: {}", cache_limit().map(|n| n.to_string()).unwrap_or_else(|| "none".into()));
             println!("dir: {}", entries.display());
             Ok(0)
         }

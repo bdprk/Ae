@@ -2230,3 +2230,44 @@ fn json_errors_separate_missing_from_wrong_type() {
         )
     );
 }
+#[test]
+fn cache_prunes_entries_beyond_the_configured_limit() {
+    let dir = std::env::temp_dir().join(format!("ae-cache-limit-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let cache = dir.join("cache");
+    let source = dir.join("prog.ae");
+    fs::create_dir(&dir).unwrap();
+    fs::write(&source, "fn main() { print(\"limited\"); }").unwrap();
+    let stats = || {
+        let out = Command::new(env!("CARGO_BIN_EXE_ae")).arg("cache").arg("stats")
+            .env("AE_CACHE", &cache).env("AE_CACHE_LIMIT", "1").output().unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let build = |out: &std::path::Path, limit: Option<&str>| {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_ae"));
+        cmd.arg("build").arg(&source).arg("-o").arg(out).env("AE_CACHE", &cache).env("AE_TIMINGS", "1");
+        match limit {
+            Some(value) => { cmd.env("AE_CACHE_LIMIT", value); }
+            None => { cmd.env_remove("AE_CACHE_LIMIT"); }
+        }
+        cmd.output().unwrap()
+    };
+    // One byte is below any entry, so publishing is followed by an immediate
+    // prune: the build succeeds and the cache ends up empty.
+    let first = dir.join(if cfg!(windows) { "one.exe" } else { "one" });
+    let out = build(&first, Some("1"));
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(stats().contains("entries: 0"), "{}", stats());
+    assert!(stats().contains("limit: 1"), "{}", stats());
+    let output = Command::new(&first).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "limited");
+    // Without the cap the entry survives, so the cache is usable at all.
+    let second = dir.join(if cfg!(windows) { "two.exe" } else { "two" });
+    let out = build(&second, None);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let after = String::from_utf8_lossy(&Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("cache").arg("stats").env("AE_CACHE", &cache).env_remove("AE_CACHE_LIMIT").output().unwrap().stdout).into_owned();
+    assert!(after.contains("entries: 1"), "{after}");
+    assert!(after.contains("limit: none"), "{after}");
+    let _ = fs::remove_dir_all(&dir);
+}

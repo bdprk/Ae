@@ -11,13 +11,13 @@
 
 ## 验证内容
 
-- `cargo test --locked`：9 单元 + 119 集成测试（Unicode 路径与字符边界、受检算术边界、字符串/向量/映射/枚举的所有权与释放、循环与范围、`?` 传播、哈希表、模块可见性、泛型枚举实例化与预算、排序/时钟/环境变量/追加、`exit` 状态码、标准输入与工作目录、JSON 路径查询、缓存命中/损坏/清理）。
+- `cargo test --locked`：9 单元 + 120 集成测试（Unicode 路径与字符边界、受检算术边界、字符串/向量/映射/枚举的所有权与释放、循环与范围、`?` 传播、哈希表、模块可见性、泛型枚举实例化与预算、排序/时钟/环境变量/追加、`exit` 状态码、标准输入与工作目录、JSON 路径查询、缓存命中/损坏/清理/大小上限）。
 - `scripts/verify_generated_c.py [--sanitize] [--leak]`：生成 C 在两种优化模式输出一致；失败路径（越界、断言、UTF-8 边界、分配失败）按预期非零退出；`--leak` 用分配计数要求每个程序的退出块数等于空程序基线（**Windows 2 块，Linux 0 块**——glibc 在 `main` 之前不保留堆分配，UCRT 会保留 2 块）；Linux 净化器下无地址/未定义行为报告。
 - 全部 `examples/*.ae`（含 `examples/modules/` 的多文件程序）输出在两平台逐字节一致。
 
 ### 记录时效
 
-2026-11-10 的两次 Linux 运行覆盖了当前全部能力：第一阶段（InstaBox `evaluate-2`）记录的是性能基准，第二阶段（`evaluate-1`，见 `bench/results/2026-11-10-linux-evaluate-1/`）在新增哈希表、UTF-8 边界、分配器接口、`pub` 可见性、循环移动规则、泛型枚举、排序/时钟/环境变量/追加写入、`exit`、`read_stdin`/`cwd`、JSON 路径查询之后重跑，9 + 119 全部通过、17 个生成 C 用例全部 PASS 且分配计数为 0。第一阶段暴露并修复了一个**只在 Linux 出现**的缺陷：`clock_gettime` 属于 POSIX，在 `-std=c11 -pedantic-errors` 下被 glibc 隐藏，导致 91 个测试无法编译；改用 ISO C11 的 `timespec_get` 后消失（见 ADR-25）。
+2026-11-10 的两次 Linux 运行覆盖了当前全部能力：第一阶段（InstaBox `evaluate-2`）记录的是性能基准，第二阶段（`evaluate-1`，见 `bench/results/2026-11-10-linux-evaluate-1/`）在新增哈希表、UTF-8 边界、分配器接口、`pub` 可见性、循环移动规则、泛型枚举、排序/时钟/环境变量/追加写入、`exit`、`read_stdin`/`cwd`、JSON 路径查询、缓存校验与上限之后重跑，9 + 120 全部通过、17 个生成 C 用例全部 PASS 且分配计数为 0。第一阶段暴露并修复了一个**只在 Linux 出现**的缺陷：`clock_gettime` 属于 POSIX，在 `-std=c11 -pedantic-errors` 下被 glibc 隐藏，导致 91 个测试无法编译；改用 ISO C11 的 `timespec_get` 后消失（见 ADR-25）。
 
 此后任何新增能力在提交前都要求两平台各跑一次上述命令；只有一方通过时，本文不会把它标记为跨平台已验证。
 

@@ -38,6 +38,7 @@ cargo run -- run examples/functions.ae
 cargo run -- run examples/borrow.ae
 cargo run -- build examples/arithmetic.ae -o arithmetic.exe
 cargo run -- run examples/arithmetic.ae --release
+cargo run -- cache stats            # 条目数、字节数、上限
 cargo run -- version
 cargo run -- cache stats
 ```
