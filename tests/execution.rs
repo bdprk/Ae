@@ -1814,3 +1814,145 @@ fn trim_and_prefix_checks_reject_wrong_argument_types() {
         assert!(!output.status.success(), "accepted invalid program: {source}");
     }
 }
+#[test]
+fn generic_enums_instantiate_per_argument() {
+    let output = execute(r#"enum Either[T, U] { Left(T), Right(U), Both(T, U), Neither }
+fn find(text: &string, needle: &string) -> Option[i64] {
+    let parts = split(text, needle);
+    if len(parts) < 2 { return Option[i64]::None; }
+    return Option[i64]::Some(len(parts[0]));
+}
+fn label(opt: Option[i64]) -> string {
+    match opt {
+        Option::Some(v) => { return "at " + to_string(v); }
+        Option::None => { return "absent"; }
+    }
+}
+fn main() {
+    let hit = find("a,b,c", ",");
+    match hit {
+        Option::Some(v) => { print("hit " + to_string(v)); }
+        Option::None => { print("miss"); }
+    }
+    print(label(find("abc", ",")));
+    print(label(find("xy;z", ";")));
+    let e = Either[string, i64]::Both("n", 3);
+    match e {
+        Either::Left(text) => { print("left " + text); }
+        Either::Right(n) => { print(n); }
+        Either::Both(text, n) => { print(text + "=" + to_string(n)); }
+        Either::Neither => { print("neither"); }
+    }
+    let many = Either[i64, vec[string]]::Right(split("p q", " "));
+    match many {
+        Either::Left(n) => { print(n); }
+        Either::Right(parts) => { print(len(parts)); }
+        Either::Both(n, parts) => { print(n); }
+        Either::Neither => { print("neither"); }
+    }
+    let absent = Option[vec[string]]::None;
+    match absent {
+        Option::Some(parts) => { print(len(parts)); }
+        Option::None => { print("no vector"); }
+    }
+}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "hit 1\nabsent\nat 2\nn=3\n2\nno vector\n"
+    );
+}
+#[test]
+fn generic_enums_reuse_one_layout_per_argument_list() {
+    // Two mentions of Option[string] must be the same type: the second match
+    // would be rejected as a type mismatch otherwise.
+    let output = execute(r#"fn pick(flag: bool) -> Option[string] {
+    if flag { return Option[string]::Some("yes"); }
+    return Option[string]::None;
+}
+fn main() {
+    let a = pick(true);
+    let b = pick(false);
+    match a {
+        Option::Some(v) => { print(v); }
+        Option::None => { print("none"); }
+    }
+    match b {
+        Option::Some(v) => { print(v); }
+        Option::None => { print("none"); }
+    }
+}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "yes\nnone\n");
+}
+#[test]
+fn invalid_generic_enums_are_rejected() {
+    for (source, expected) in [
+        ("fn main() { let a = Option; }", "'Option' is a generic enum"),
+        ("fn main() { let a = Option[i64, i64]::Some(1); }", "takes 1 type argument(s), found 2"),
+        ("struct P { x: i64 }\nfn main() { let a = Option[P]::None; }", "type arguments must be i64"),
+        ("struct B[T] { v: i64 }\nfn main() { print(1); }", "generic structs are not supported"),
+        ("enum P[t] { A(t) }\nfn main() { print(1); }", "type parameters are single uppercase letters"),
+        ("enum Option { Here, Gone }\nfn main() { print(1); }", "duplicate enum 'Option'"),
+        ("enum P[T] { A(T), B(T) }\nfn main() { let p = P[i64]::A(1); match p { P::A(v) => { print(v); } } }", "match is not exhaustive"),
+        ("fn main() { let a = Option[i64]::Some(\"x\"); }", "payload 1 of 'Option[i64]::Some' must be i64"),
+        ("fn main() { let a = Option[string]::Some(\"x\"); let b = a; print(len(a)); }", "because it was moved"),
+        ("fn t(o: Option) -> i64 { return 1; }\nfn main() { print(t()); }", "is a generic enum"),
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-generic-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted invalid program: {source}");
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(err.contains(expected), "{source}: {err}");
+    }
+}
+#[test]
+fn generic_instantiation_budget_is_enforced() {
+    // Four parameters and four argument types give 256 combinations, which is
+    // past the budget: the point is a diagnostic, not a compiler OOM.
+    let mut source = String::from("enum Tag[T, U, V, W] { Here, There }\nfn main() {\n");
+    let types = ["i64", "bool", "string", "vec"];
+    let mut index = 0;
+    for a in types { for b in types { for c in types { for d in types {
+        source.push_str(&format!("    let t{index} = Tag[{a}, {b}, {c}, {d}]::Here;\n"));
+        index += 1;
+    } } } }
+    source.push_str("    print(1);\n}\n");
+    let path = std::env::temp_dir().join(format!("ae-generic-budget-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, &source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(!output.status.success(), "a program past the instantiation budget must be rejected");
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.contains("generic instantiation budget exceeded"), "{err}");
+}
+#[test]
+fn generic_enums_respect_file_visibility() {
+    let dir = std::env::temp_dir().join(format!("ae-generic-vis-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("lib.ae"), "pub enum Found[T] { Here(T), Gone }\nfn hidden(flag: bool) -> Found[i64] { if flag { return Found[i64]::Here(1); } return Found[i64]::Gone; }\npub fn open(flag: bool) -> Found[i64] { return hidden(flag); }\n").unwrap();
+    let main_file = dir.join("main.ae");
+    let check = |body: &str| {
+        fs::write(&main_file, format!("use \"lib.ae\";\nfn main() {{ {body} }}")).unwrap();
+        Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&main_file).output().unwrap()
+    };
+    // The exported enum is usable, and so is the exported function returning it.
+    let ok = check("let f = open(true); match f { Found::Here(v) => { print(v); } Found::Gone => { print(0); } }");
+    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    // A private function is still private, whatever type it returns.
+    let bad = check("let f = hidden(true); print(1);");
+    assert!(!bad.status.success());
+    let err = String::from_utf8_lossy(&bad.stderr);
+    assert!(err.contains("'hidden' is private to"), "{err}");
+    // A private generic enum is not instantiable from another file either.
+    fs::write(dir.join("secret.ae"), "enum Quiet[T] { Here(T), Gone }\npub fn one() -> i64 { return 1; }\n").unwrap();
+    fs::write(&main_file, "use \"secret.ae\";\nfn main() { let q = Quiet[i64]::Gone; print(1); }").unwrap();
+    let bad = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&main_file).output().unwrap();
+    assert!(!bad.status.success());
+    let err = String::from_utf8_lossy(&bad.stderr);
+    assert!(err.contains("enum 'Quiet[i64]' is private to"), "{err}");
+    fs::remove_dir_all(dir).unwrap();
+}

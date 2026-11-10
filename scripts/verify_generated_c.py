@@ -44,6 +44,9 @@ def run():
         ("word_count.ae", b"distinct 8\nbrown 1\ndog 1\nfox 2\njumps 1\nlazy 1\nover 1\nquick 1\nthe 3", True),
         # Character-safe truncation: every cut lands on a UTF-8 boundary, so the
         # ellipsis is never preceded by half a character.
+        # Generic enums: Option[string] and Option[i64] are separate layouts,
+        # and a moved-in payload is released with the value.
+        ("maybe.ae", b"longest line: three\nlongest line: (none)\nfirst number: 42\nfirst number: (none)", True),
         # Two modules and a private helper: only `pub` items are reachable, and
         # the import graph is resolved relative to the entry file.
         ("modules/main.ae", b"a=3\nb=2\nc=1\n3 entries, 6 words", True),

@@ -54,6 +54,10 @@ impl Type {
 enum MoveKind { Var(usize), Field, StrVecElement }
 // Names owned by the prelude rather than by any file on disk.
 const PRELUDE: &str = "<prelude>";
+// Cap on enum layouts per program, prelude and instantiations included. Each
+// layout is a tag enum plus one struct per payload variant, so an unbounded
+// instantiation count is a real code-size hazard (ADR-21).
+const MAX_ENUM_TYPES: usize = 256;
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
 const RESERVED: [&str; 43] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with"];
@@ -78,9 +82,25 @@ fn prelude_enums() -> (Vec<EnumDef>, HashMap<String, usize>) {
     let mut names = HashMap::new();
     for (name, variants) in defs {
         names.insert(name.to_owned(), enums.len());
-        enums.push(EnumDef { name, variants: variants.into_iter().map(|(v, fields)| (v.to_owned(), fields)).collect(), file: PRELUDE.to_owned(), public: true });
+        enums.push(EnumDef { name, variants: variants.into_iter().map(|(v, fields)| (v.to_owned(), fields)).collect(), file: PRELUDE.to_owned(), public: true, pattern: name.to_owned() });
     }
     (enums, names)
+}
+
+// `Option[T]` ships with the prelude: "a value that may be absent" is the one
+// generic shape every program needs, and building it in keeps programs from
+// each declaring a slightly different `Maybe`.
+fn prelude_generics() -> Generics {
+    let mut generics = Generics::default();
+    generics.names.insert("Option".to_owned(), 0);
+    generics.defs.push(GenericEnum {
+        name: "Option".to_owned(),
+        params: vec!["T".to_owned()],
+        variants: vec![("Some".to_owned(), vec![Payload::Param(0)]), ("None".to_owned(), Vec::new())],
+        file: PRELUDE.to_owned(),
+        public: true,
+    });
+    generics
 }
 
 fn location(source: &str, offset: usize) -> (usize, usize) {
@@ -218,7 +238,19 @@ struct StructDef { name: String, fields: Vec<(String, Type)>, file: String, publ
 // version restricts payload fields to i64/bool/string so no enum can contain
 // itself and every payload has a trivial release.
 #[derive(Debug, Clone)]
-struct EnumDef { name: &'static str, variants: Vec<(String, Vec<Type>)>, file: String, public: bool }
+struct EnumDef { name: &'static str, variants: Vec<(String, Vec<Type>)>, file: String, public: bool, pattern: String }
+// A payload type in a generic declaration: either fixed, or one of the
+// declaration's type parameters. Substitution replaces every Param with a
+// concrete argument, so Param never reaches code generation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Payload { Concrete(Type), Param(usize) }
+// `enum Option[T] { Some(T), None }` before it is instantiated. Kept apart from
+// EnumDef because a declaration has no layout: only instantiations do.
+#[derive(Debug, Clone)]
+struct GenericEnum { name: String, params: Vec<String>, variants: Vec<(String, Vec<Payload>)>, file: String, public: bool }
+// Instantiated generic enums, keyed by declaration and arguments (ADR-21).
+#[derive(Default)]
+struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize> }
 #[derive(Debug)]
 struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 
@@ -229,7 +261,7 @@ struct Signature { id: usize, params: Vec<Type>, ret: Type, file: String, public
 
 type SharedFunctions = HashMap<String, Signature>;
 
-struct Parser<'a> { file: String, source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>> }
+struct Parser<'a> { file: String, source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>> }
 impl<'a> Parser<'a> {
     fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
     fn fail(&self, message: &str) -> String { error(&self.file, self.source, self.tokens[self.pos].offset, message) }
@@ -310,33 +342,22 @@ impl<'a> Parser<'a> {
                     // Enum::Variant or Enum::Variant(payload, ...)
                     let eid = *self.enum_names.get(&name)
                         .ok_or_else(|| error(&self.file, self.source, name_offset, &format!("'{name}' is not an enum; variants are written Enum::Variant")))?;
+                    self.enum_literal(eid, name_offset)?
+                } else if self.generics.names.contains_key(&name) && *self.current() == Kind::LBracket {
+                    // Generic enum literal: the arguments pick the layout, so
+                    // Option[string]::Some and Option[i64]::Some are different
+                    // variants of different types (ADR-21).
+                    let gid = self.generics.names[&name];
                     self.pos += 1;
-                    let vname = self.identifier()?;
-                    let def = self.enums[eid].clone();
-                    self.require_public("enum", def.name, &def.file, def.public)?;
-                    let vidx = def.variants.iter().position(|(n, _)| *n == vname)
-                        .ok_or_else(|| self.fail(&format!("enum '{}' has no variant '{}'", def.name, vname)))?;
-                    let fields = def.variants[vidx].1.clone();
-                    let mut values = Vec::new();
-                    if *self.current() == Kind::LParen {
+                    let mut args = Vec::new();
+                    loop {
+                        args.push(self.type_argument()?);
+                        if *self.current() != Kind::Comma { break; }
                         self.pos += 1;
-                        for (index, field) in fields.iter().enumerate() {
-                            // String payloads are moved into the variant.
-                            let (value, value_ty) = self.expression(0, *field == Type::String)?;
-                            if value_ty != *field {
-                                return Err(self.fail(&format!("payload {} of '{}::{}' must be {}", index + 1, def.name, vname, field.name())));
-                            }
-                            values.push(value);
-                            if index + 1 < fields.len() { self.take(Kind::Comma)?; }
-                        }
-                        if *self.current() == Kind::Comma {
-                            return Err(self.fail(&format!("variant '{}::{}' takes {} payload value(s)", def.name, vname, fields.len())));
-                        }
-                        self.take(Kind::RParen)?;
-                    } else if !fields.is_empty() {
-                        return Err(self.fail(&format!("variant '{}::{}' needs {} payload value(s)", def.name, vname, fields.len())));
                     }
-                    (Expr::EnumLit(def.name, eid, vidx, values), Type::Enum(def.name, eid))
+                    self.take(Kind::RBracket)?;
+                    let eid = self.instantiate_enum(gid, args, name_offset)?;
+                    self.enum_literal(eid, name_offset)?
                 } else if let Some(&sid) = self.struct_names.get(&name) {
                     self.require_public("struct", &self.structs[sid].name, &self.structs[sid].file, self.structs[sid].public)?;
                     if *self.current() == Kind::LBrace {
@@ -732,7 +753,14 @@ impl<'a> Parser<'a> {
                     if args.len() != types.len() { return Err(self.fail(&format!("function '{name}' expects {} arguments, got {}", types.len(), args.len()))); }
                     (Expr::Call(id, args, ret), ret)
                 } else {
-                    let (id, _, ty) = *self.names.get(&name).ok_or_else(|| error(&self.file, self.source, name_offset, &format!("unknown variable '{name}'")))?;
+                    let (id, _, ty) = *self.names.get(&name).ok_or_else(|| {
+                        // A generic enum used as a value: the arguments are
+                        // mandatory, so say that instead of "unknown variable".
+                        if self.generics.names.contains_key(&name) {
+                            return error(&self.file, self.source, name_offset, &format!("'{name}' is a generic enum; write '{name}[string]::Variant'"));
+                        }
+                        error(&self.file, self.source, name_offset, &format!("unknown variable '{name}'"))
+                    })?;
                     if self.moved.contains(&id) { return Err(error(&self.file, self.source, name_offset, &format!("cannot use '{name}' because it was moved"))); }
                     if let Type::Array(len) = ty {
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
@@ -871,7 +899,16 @@ impl<'a> Parser<'a> {
             "i64" => Ok(Type::Int),
             "bool" => Ok(Type::Bool),
             "string" => Ok(Type::String),
-            "vec" => Ok(Type::Vec),
+            "vec" => {
+                // `vec` alone is the i64 vector; `vec[string]` names the other
+                // one, so a type annotation can say which it means instead of
+                // leaving owned string vectors unnameable.
+                if *self.current() != Kind::LBracket { return Ok(Type::Vec); }
+                self.pos += 1;
+                if self.identifier()? != "string" { return Err(self.fail("only vec[string] names an element type; vector elements are i64 by default")); }
+                self.take(Kind::RBracket)?;
+                Ok(Type::StrVec)
+            }
             "map" => {
                 // Only one shape exists, but the shape is spelled out so the
                 // code says what it means and the parser can grow later.
@@ -882,7 +919,26 @@ impl<'a> Parser<'a> {
                 self.take(Kind::RBracket)?;
                 Ok(Type::Map)
             }
-            other => match self.struct_names.get(other) {
+            other => {
+                if let Some(&gid) = self.generics.names.get(other) {
+                    if *self.current() != Kind::LBracket {
+                        return Err(self.fail(&format!("'{other}' is a generic enum; write its type arguments, e.g. {other}[string]")));
+                    }
+                    let offset = self.tokens[self.pos].offset;
+                    self.pos += 1;
+                    let mut args = Vec::new();
+                    loop {
+                        args.push(self.type_argument()?);
+                        if *self.current() != Kind::Comma { break; }
+                        self.pos += 1;
+                    }
+                    self.take(Kind::RBracket)?;
+                    let eid = self.instantiate_enum(gid, args, offset)?;
+                    let def = &self.enums[eid];
+                    self.require_public("enum", def.name, &def.file.clone(), def.public)?;
+                    return Ok(Type::Enum(def.name, eid));
+                }
+                match self.struct_names.get(other) {
                 Some(&id) => {
                     let def = &self.structs[id];
                     self.require_public("struct", &def.name.clone(), &def.file.clone(), def.public)?;
@@ -896,17 +952,52 @@ impl<'a> Parser<'a> {
                     }
                     None => Err(self.fail(&format!("unknown type '{}'", other))),
                 },
-            },
+                }
+            }
         }
     }
+    // `::Variant(payload, ...)` once the enum type is known. Payload values are
+    // moved in, so a variant owns whatever it carries.
+    fn enum_literal(&mut self, eid: usize, offset: usize) -> Result<(Expr, Type), String> {
+        self.take(Kind::ColonColon)?;
+        let vname = self.identifier()?;
+        let def = self.enums[eid].clone();
+        self.require_public("enum", def.name, &def.file, def.public)?;
+        let vidx = def.variants.iter().position(|(n, _)| *n == vname)
+            .ok_or_else(|| error(&self.file, self.source, offset, &format!("enum '{}' has no variant '{}'", def.name, vname)))?;
+        let fields = def.variants[vidx].1.clone();
+        let mut values = Vec::new();
+        if *self.current() == Kind::LParen {
+            self.pos += 1;
+            for (index, field) in fields.iter().enumerate() {
+                // String payloads are moved into the variant.
+                let (value, value_ty) = self.expression(0, *field == Type::String)?;
+                if value_ty != *field {
+                    return Err(self.fail(&format!("payload {} of '{}::{}' must be {}", index + 1, def.name, vname, field.name())));
+                }
+                values.push(value);
+                if index + 1 < fields.len() { self.take(Kind::Comma)?; }
+            }
+            if *self.current() == Kind::Comma {
+                return Err(self.fail(&format!("variant '{}::{}' takes {} payload value(s)", def.name, vname, fields.len())));
+            }
+            self.take(Kind::RParen)?;
+        } else if !fields.is_empty() {
+            return Err(self.fail(&format!("variant '{}::{}' needs {} payload value(s)", def.name, vname, fields.len())));
+        }
+        Ok((Expr::EnumLit(def.name, eid, vidx, values), Type::Enum(def.name, eid)))
+    }
+    // `enum Name { ... }` or `enum Name[T, U] { ... }`. A generic declaration
+    // produces no layout at all; only instantiations do (ADR-21).
     fn parse_enum_def(&mut self, public: bool) -> Result<(), String> {
         self.pos += 1;
         let name = self.identifier()?;
         if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{}' is a built-in name and cannot be an enum", name))); }
         if self.struct_names.contains_key(&name) { return Err(self.fail(&format!("'{}' is already a struct", name))); }
-        if self.enum_names.contains_key(&name) { return Err(self.fail(&format!("duplicate enum '{}'", name))); }
+        if self.enum_names.contains_key(&name) || self.generics.names.contains_key(&name) { return Err(self.fail(&format!("duplicate enum '{}'", name))); }
+        let params = self.type_params()?;
         self.take(Kind::LBrace)?;
-        let mut variants: Vec<(String, Vec<Type>)> = Vec::new();
+        let mut variants: Vec<(String, Vec<Payload>)> = Vec::new();
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::RBrace {
             let vname = self.identifier()?;
@@ -917,13 +1008,7 @@ impl<'a> Parser<'a> {
                 if *self.current() != Kind::RParen {
                     loop {
                         if fields.len() >= 16 { return Err(self.fail("variant payload limit exceeded (16)")); }
-                        let fty = self.named_type()?;
-                        // Payloads stay flat in the first version: a variant may
-                        // carry scalars, strings or an i64 vector, but not a
-                        // struct or another enum (no layout recursion).
-                        if !matches!(fty, Type::Int | Type::Bool | Type::String | Type::Vec | Type::StrVec) {
-                            return Err(self.fail("enum variant payloads must be i64, bool, string, vec, or vec[string]"));
-                        }
+                        let fty = self.variant_payload(&params)?;
                         fields.push(fty);
                         if *self.current() != Kind::Comma { break; }
                         self.pos += 1;
@@ -937,19 +1022,98 @@ impl<'a> Parser<'a> {
         self.take(Kind::RBrace)?;
         if variants.is_empty() { return Err(self.fail(&format!("enum '{}' needs at least one variant", name))); }
         if variants.len() > 256 { return Err(self.fail("enum variant limit exceeded (256)")); }
-        let id = self.enums.len();
-        // Type names are interned once per declaration so Type stays Copy and
-        // diagnostics can print the declared name.
-        let interned: &'static str = Box::leak(name.clone().into_boxed_str());
-        self.enum_names.insert(name, id);
-        self.enums.push(EnumDef { name: interned, variants, file: self.file.clone(), public });
+        if params.is_empty() {
+            let id = self.enums.len();
+            // Type names are interned once per declaration so Type stays Copy and
+            // diagnostics can print the declared name.
+            let interned: &'static str = Box::leak(name.clone().into_boxed_str());
+            self.enum_names.insert(name.clone(), id);
+            let concrete = variants.into_iter().map(|(vname, fields)| (vname, fields.into_iter().map(|p| match p {
+                Payload::Concrete(ty) => ty,
+                Payload::Param(_) => unreachable!("a non-generic enum has no type parameters"),
+            }).collect())).collect();
+            self.enums.push(EnumDef { name: interned, variants: concrete, file: self.file.clone(), public, pattern: name });
+        } else {
+            let gid = self.generics.defs.len();
+            self.generics.names.insert(name.clone(), gid);
+            self.generics.defs.push(GenericEnum { name, params, variants, file: self.file.clone(), public });
+        }
         Ok(())
+    }
+    // `[T, U]` after a declaration name; empty for a plain definition. Single
+    // uppercase letters keep a parameter from being mistaken for a real type.
+    fn type_params(&mut self) -> Result<Vec<String>, String> {
+        let mut params = Vec::new();
+        if *self.current() != Kind::LBracket { return Ok(params); }
+        self.pos += 1;
+        loop {
+            if params.len() >= 8 { return Err(self.fail("type parameter limit exceeded (8)")); }
+            let param = self.identifier()?;
+            if param.len() != 1 || !param.chars().all(|c| c.is_ascii_uppercase()) { return Err(self.fail("type parameters are single uppercase letters, e.g. 'T'")); }
+            if params.contains(&param) { return Err(self.fail(&format!("duplicate type parameter '{param}'"))); }
+            params.push(param);
+            if *self.current() != Kind::Comma { break; }
+            self.pos += 1;
+        }
+        self.take(Kind::RBracket)?;
+        Ok(params)
+    }
+    fn variant_payload(&mut self, params: &[String]) -> Result<Payload, String> {
+        if let Kind::Ident(name) = self.current() {
+            if let Some(index) = params.iter().position(|p| p == name) {
+                self.pos += 1;
+                return Ok(Payload::Param(index));
+            }
+        }
+        let fty = self.named_type()?;
+        // Payloads stay flat: a variant may carry scalars, strings or a vector,
+        // but not a struct or another enum (no layout recursion).
+        if !matches!(fty, Type::Int | Type::Bool | Type::String | Type::Vec | Type::StrVec) {
+            return Err(self.fail("enum variant payloads must be i64, bool, string, vec, vec[string], or a type parameter"));
+        }
+        Ok(Payload::Concrete(fty))
+    }
+    // One C layout per (declaration, argument) pair, generated on first use. The
+    // budget bounds code growth for a program that instantiates endlessly.
+    fn instantiate_enum(&mut self, gid: usize, args: Vec<Type>, offset: usize) -> Result<usize, String> {
+        let def = self.generics.defs[gid].clone();
+        if args.len() != def.params.len() {
+            return Err(error(&self.file, self.source, offset, &format!("'{}' takes {} type argument(s), found {}", def.name, def.params.len(), args.len())));
+        }
+        let key = format!("{gid}:{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
+        if let Some(&eid) = self.generics.done.get(&key) { return Ok(eid); }
+        if self.enums.len() >= MAX_ENUM_TYPES {
+            return Err(error(&self.file, self.source, offset, &format!("generic instantiation budget exceeded ({MAX_ENUM_TYPES} enum types) at '{}'", def.name)));
+        }
+        let variants: Vec<(String, Vec<Type>)> = def.variants.iter().map(|(vname, fields)| {
+            let types = fields.iter().map(|p| match p {
+                Payload::Concrete(ty) => *ty,
+                Payload::Param(index) => args[*index],
+            }).collect();
+            (vname.clone(), types)
+        }).collect();
+        let display = format!("{}[{}]", def.name, args.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "));
+        let interned: &'static str = Box::leak(display.into_boxed_str());
+        let eid = self.enums.len();
+        self.enums.push(EnumDef { name: interned, variants, file: def.file, public: def.public, pattern: def.name });
+        self.generics.done.insert(key, eid);
+        Ok(eid)
+    }
+    // A concrete type argument. Structs and enums are rejected for the same
+    // reason variant payloads are: no recursion and no hidden layout.
+    fn type_argument(&mut self) -> Result<Type, String> {
+        let ty = self.named_type()?;
+        if !matches!(ty, Type::Int | Type::Bool | Type::String | Type::Vec | Type::StrVec) {
+            return Err(self.fail("type arguments must be i64, bool, string, vec, or vec[string]"));
+        }
+        Ok(ty)
     }
     fn parse_struct_def(&mut self, public: bool) -> Result<(), String> {
         self.pos += 1;
         let name = self.identifier()?;
         if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{}' is a built-in name and cannot be a struct", name))); }
         if self.struct_names.contains_key(&name) { return Err(self.fail(&format!("duplicate struct '{}'", name))); }
+        if *self.current() == Kind::LBracket { return Err(self.fail("generic structs are not supported yet; generic enums are (e.g. Option[string])")); }
         self.take(Kind::LBrace)?;
         let mut fields: Vec<(String, Type)> = Vec::new();
         let mut seen = std::collections::HashSet::new();
@@ -1049,8 +1213,22 @@ impl<'a> Parser<'a> {
         }
     }
     // Enum bodies are collected in the first pass, skipped in the second.
+    // Step over `[T, U]` when a declaration is skipped in the second pass.
+    fn skip_type_params(&mut self) {
+        if *self.current() != Kind::LBracket { return; }
+        let mut depth = 0usize;
+        while *self.current() != Kind::Eof {
+            match self.current() {
+                Kind::LBracket => depth += 1,
+                Kind::RBracket => { depth -= 1; if depth == 0 { self.pos += 1; return; } }
+                _ => {}
+            }
+            self.pos += 1;
+        }
+    }
     fn skip_enum_def(&mut self) {
         self.pos += 2; // 'enum' Name
+        self.skip_type_params();
         self.pos += 1; // the opening brace
         let mut depth = 1usize;
         while depth > 0 {
@@ -1715,8 +1893,10 @@ impl<'a> Parser<'a> {
         self.borrows.push((sid, self.scopes.len()));
         while *self.current() != Kind::RBrace {
             let pattern = self.identifier()?;
-            if pattern != def.name {
-                return Err(self.fail(&format!("pattern must name the matched enum ('{}::Variant')", def.name)));
+            // An instantiated enum is matched by its declaration name:
+            // `Option::Some(v)` covers Option[string] and Option[i64] alike.
+            if pattern != def.pattern {
+                return Err(self.fail(&format!("pattern must name the matched enum ('{}::Variant')", def.pattern)));
             }
             self.take(Kind::ColonColon)?;
             let vname = self.identifier()?;
@@ -2553,8 +2733,8 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
 #[derive(Debug, Default)]
 struct Program { files: Vec<Vec<Function>>, structs: Vec<StructDef>, enums: Vec<EnumDef> }
 
-fn make_parser<'a>(file: &str, source: &'a str, tokens: Vec<Token>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>) -> Parser<'a> {
-    Parser { file: file.to_owned(), source, tokens, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new() }
+fn make_parser<'a>(file: &str, source: &'a str, tokens: Vec<Token>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics) -> Parser<'a> {
+    Parser { file: file.to_owned(), source, tokens, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new() }
 }
 
 // Leading `use "path";` headers. Parsed from tokens before the Parser owns
@@ -2583,13 +2763,13 @@ fn scan_uses(file: &str, tokens: &[Token]) -> Result<Vec<String>, String> {
 }
 
 #[allow(dead_code)] // exercised by in-memory unit tests
-fn parse_source(file: &str, source: &str, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, next_id: &mut usize) -> Result<Vec<Function>, String> {
+fn parse_source(file: &str, source: &str, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, generics: &mut Generics, next_id: &mut usize) -> Result<Vec<Function>, String> {
     let tokens = lex(source)?;
     let uses = scan_uses(file, &tokens)?;
     if !uses.is_empty() {
         return Err(error(file, source, 0, "'use' is only supported when compiling a source file"));
     }
-    let mut p = make_parser(file, source, tokens, shared, structs, struct_names, enums, enum_names);
+    let mut p = make_parser(file, source, tokens, shared, structs, struct_names, enums, enum_names, generics);
     p.collect_functions(next_id)?;
     let functions = p.program()?;
     if functions.iter().filter(|f| f.is_main).count() != 1 {
@@ -2598,7 +2778,7 @@ fn parse_source(file: &str, source: &str, shared: &mut SharedFunctions, structs:
     Ok(functions)
 }
 
-fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::PathBuf>, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, next_id: &mut usize, out: &mut Vec<Vec<Function>>, mains: &mut usize) -> Result<(), String> {
+fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::PathBuf>, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, generics: &mut Generics, next_id: &mut usize, out: &mut Vec<Vec<Function>>, mains: &mut usize) -> Result<(), String> {
     let canonical = std::fs::canonicalize(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
     if !visited.insert(canonical) { return Err(format!("circular import of {}", path.display())); }
     let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -2607,9 +2787,9 @@ fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::Pat
     let uses = scan_uses(&file, &tokens).map_err(|e| format!("{file}:{e}"))?;
     let parent = path.parent().unwrap_or(Path::new(".")).to_owned();
     for import in uses {
-        load_file(&parent.join(&import), visited, shared, structs, struct_names, enums, enum_names, next_id, out, mains)?;
+        load_file(&parent.join(&import), visited, shared, structs, struct_names, enums, enum_names, generics, next_id, out, mains)?;
     }
-    let mut p = make_parser(&file, &source, tokens, shared, structs, struct_names, enums, enum_names);
+    let mut p = make_parser(&file, &source, tokens, shared, structs, struct_names, enums, enum_names, generics);
     p.skip_uses();
     p.collect_functions(next_id)?;
     let functions = p.program()?;
@@ -2625,10 +2805,11 @@ fn load_program(entry: &Path) -> Result<Program, String> {
     let mut struct_names: HashMap<String, usize> = HashMap::new();
     // Prelude result types are registered first, so their ids are stable.
     let (mut enums, mut enum_names) = prelude_enums();
+    let mut generics = prelude_generics();
     let mut next_id = 0usize;
     let mut files = Vec::new();
     let mut mains = 0usize;
-    load_file(entry, &mut visited, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut next_id, &mut files, &mut mains)?;
+    load_file(entry, &mut visited, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut generics, &mut next_id, &mut files, &mut mains)?;
     if mains != 1 { return Err(format!("program must define exactly one main function (found {mains})")); }
     Ok(Program { files, structs, enums })
 }
@@ -2643,8 +2824,9 @@ pub fn check(source: &str) -> Result<(), String> {
     let mut struct_names: HashMap<String, usize> = HashMap::new();
     // Prelude result types are registered first, so their ids are stable.
     let (mut enums, mut enum_names) = prelude_enums();
+    let mut generics = prelude_generics();
     let mut next_id = 0usize;
-    parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut next_id).map(|_| ())
+    parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut generics, &mut next_id).map(|_| ())
 }
 fn c_type_field(ty: Type) -> String {
     match ty {
@@ -2846,8 +3028,9 @@ pub fn compile(source: &str) -> Result<String, String> {
     let mut struct_names: HashMap<String, usize> = HashMap::new();
     // Prelude result types are registered first, so their ids are stable.
     let (mut enums, mut enum_names) = prelude_enums();
+    let mut generics = prelude_generics();
     let mut next_id = 0usize;
-    let functions = parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut next_id)?;
+    let functions = parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut generics, &mut next_id)?;
     emit_program(Program { files: vec![functions], structs, enums })
 }
 pub fn compile_path(path: &Path) -> Result<String, String> {

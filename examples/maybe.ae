@@ -1,0 +1,57 @@
+// `Option[T]` for "a value that may be absent". The alternative -- returning a
+// sentinel such as an empty string or -1 -- cannot be told apart from a real
+// empty line or a real index, and the caller has to remember which one it is.
+
+fn longest_line(text: &string) -> Option[string] {
+    let all = lines(text);
+    if len(all) == 0 {
+        return Option[string]::None;
+    }
+    var best = 0;
+    var i = 1;
+    while i < len(all) {
+        if len(all[i]) > len(all[best]) {
+            best = i;
+        }
+        i = i + 1;
+    }
+    // A copy: the vector of lines is released when this function returns.
+    return Option[string]::Some(slice(all[best], 0, len(all[best])));
+}
+
+fn first_number(text: &string) -> Option[i64] {
+    let words = split(text, " ");
+    for word in words {
+        let parsed = parse_int(word);
+        match parsed {
+            IntResult::Ok(n) => { return Option[i64]::Some(n); }
+            IntResult::Err(reason) => { continue; }
+        }
+    }
+    return Option[i64]::None;
+}
+
+fn describe(line: Option[string]) -> string {
+    match line {
+        Option::Some(text) => { return "longest line: " + text; }
+        Option::None => { return "longest line: (none)"; }
+    }
+}
+
+fn main() {
+    let text = "one\nthree\nseven\n";
+    print(describe(longest_line(text)));
+    print(describe(longest_line("")));
+
+    let numbers = first_number("no digits here 42 and 7");
+    match numbers {
+        Option::Some(n) => { print("first number: " + to_string(n)); }
+        Option::None => { print("first number: (none)"); }
+    }
+
+    let none = first_number("still nothing");
+    match none {
+        Option::Some(n) => { print("first number: " + to_string(n)); }
+        Option::None => { print("first number: (none)"); }
+    }
+}
