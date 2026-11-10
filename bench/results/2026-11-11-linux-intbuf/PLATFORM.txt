@@ -1,0 +1,29 @@
+to_string 栈缓冲融合（intbuf）· Linux 回填归档（2026-11-11）
+
+## 源码树身份
+工作树 = 提交 d71c7f4（ADR-45），tar 管道同步到 ~/ae-intbuf；日志由
+nohup 后台任务在沙箱内生成（SSH 证书窗口极短，连接多次过期重取，
+`instabox ssh-cert node` 刷新；后台任务不受连接影响）。
+
+## 平台
+instabox-node 沙箱：Debian 13，内核 6.18.54-instabox，x86-64，4 vCPU；
+gcc 14.2.0-19；rustc 1.99.0。
+
+## 命令（沙箱内后台执行，工作目录 = ~/ae-intbuf）
+- cargo build --locked
+- cargo test --locked
+- python3 scripts/verify_generated_c.py --leak
+- python3 scripts/verify_generated_c.py --sanitize
+- target/debug/ae test tests_demo/strings_test.ae
+全部输出在 intbuf-all.log。
+
+## 结果摘要
+- cargo test：31 单元 + 148 集成全通过（与 Windows 同数）。
+- 净化器 + 泄漏：50 个用例全部 PASS（25 --leak + 25 --sanitize），
+  退出分配块 0（glibc 基线），无 ASan/UBSan 报告。
+- tests_demo：3 测试全过（ok: 3 passed）。
+
+## 结论与边界
+ADR-45 在 Linux 上正确性验证通过，升级为**双平台验证**。
+Linux 侧同次运行新旧对照未做（证书窗口不足 + 交互式构建不可行），
+性能证据以 Windows 归档对照为准；绝对时间不跨平台比较。

@@ -740,4 +740,4 @@
   - **产物/缓存体积**：运行时闭包裁剪处理未用辅助；注意在注释里写函数名会多保留一个函数（ADR-38 已记录的保守行为，本轮生成 C 因此多含一个未调用的 `ae_to_string` 定义，只损失体积）。
   - **安全语义**：未关闭任何检查；`--leak` 退出块 Windows 仍为 2。
 - 边界：只覆盖「字面量 + `to_string(i64)`」形状；两个 `to_string` 相加、变量 + `to_string` 等仍走 ADR-44/原路径；Linux 正确性验证在后台运行（证书窗口多次缩短，取证方式为 nohup + 稍后收取），若未及完成则本 ADR 记「Windows 已验、Linux 待回填」。
-- 验证：Windows 31 单元 + 148 集成全通过，`--leak` 25 用例基线 2 块；发射断言（生成 C 含 `ae_str_cat_lit_buf`、无 `= ae_to_string(` 调用）。Linux 证据见 `bench/results/2026-11-11-linux-intbuf/`（收取后更新）。
+- 验证：Windows 31 单元 + 148 集成全通过，`--leak` 25 用例基线 2 块；发射断言（生成 C 含 `ae_str_cat_lit_buf`、无 `= ae_to_string(` 调用）。Linux（nohup 后台取证）31 + 148 全通过、50 用例 PASS、`--leak` 0 块、净化器无报告，见 `bench/results/2026-11-11-linux-intbuf/`。**双平台验证。**
