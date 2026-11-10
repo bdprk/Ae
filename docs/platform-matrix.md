@@ -11,7 +11,7 @@
 
 ## 验证内容
 
-- `cargo test --locked`：9 单元 + 127 集成测试（Unicode 路径与字符边界、受检算术边界、字符串/向量/映射/枚举的所有权与释放、循环与范围、`?` 传播（结果枚举与 `Option`）、哈希表、模块可见性、泛型枚举/泛型结构体/泛型函数实例化及预算、类型参数约束与布尔相等、排序/时钟/环境变量/追加、`exit` 状态码、标准输入与工作目录（含 `set_cwd`）、JSON 路径查询、`vec[string]` 借用元素拷贝、子进程状态与输出、缓存命中/损坏/清理/大小上限）。
+- `cargo test --locked`：9 单元 + 129 集成测试（Unicode 路径与字符边界、受检算术边界、字符串/向量/映射/枚举的所有权与释放、循环与范围、`?` 传播（结果枚举与 `Option`）、哈希表、模块可见性、泛型枚举/泛型结构体/泛型函数实例化及预算、类型参数约束与布尔相等、泛型借用参数 `&T` 与只读借用转发、`find` 字节下标结果值、排序/时钟/环境变量/追加、`exit` 状态码、标准输入与工作目录（含 `set_cwd`）、JSON 路径查询、`vec[string]` 借用元素拷贝、子进程状态与输出、缓存命中/损坏/清理/大小上限）。
 - `scripts/verify_generated_c.py [--sanitize] [--leak]`：生成 C 在两种优化模式输出一致；失败路径（越界、断言、UTF-8 边界、分配失败）按预期非零退出；`--leak` 用分配计数要求每个程序的退出块数等于空程序基线（**Windows 2 块，Linux 0 块**——glibc 在 `main` 之前不保留堆分配，UCRT 会保留 2 块）；Linux 净化器下无地址/未定义行为报告。
 - 全部 `examples/*.ae`（含 `examples/modules/` 的多文件程序）输出在两平台逐字节一致。
 
@@ -22,6 +22,8 @@
 此后任何新增能力在提交前都要求两平台各跑一次上述命令；只有一方通过时，本文不会把它标记为跨平台已验证。
 
 2026-11-10 在 Windows 本地与 Linux（instabox-node）各跑一次全量验证，覆盖 `?` 对 `Option` 的传播：9 单元 + 127 集成测试全部通过，21 个生成 C 用例在两种优化模式下 PASS，Linux 净化器无地址/未定义行为报告、`--leak` 的退出分配计数为 0（Windows 为 2 块基线）。原始输出见 `bench/results/2026-11-10-linux-node-option/`。
+
+2026-11-10 本轮 Windows 本地验证（ADR-35/36）：`&T` 泛型借用参数、只读借用参数转发、`find(text, needle) -> IntResult`。`cargo test --locked` 为 9 单元 + 129 集成测试全部通过；`python scripts/verify_generated_c.py --leak` 共 23 个用例全部 PASS，每个程序的退出分配块数都等于 Windows 空程序基线（2 块），含 `find` 的 `Err` 分支与 `generic_borrow.ae` 的借用路径；`examples/generic_borrow.ae` 与 `examples/find_text.ae` 输出已核对。**Linux 最近一次全量记录早于本轮三项能力**，因此它们目前只是「Windows 已验证」，下一次 Linux 运行需重跑 `cargo test --locked`、`--sanitize`、`--leak` 与全部示例并回填结果；在此之前平台矩阵不把它们标为双平台验证。
 
 ## 已知平台差异（不掩盖）
 

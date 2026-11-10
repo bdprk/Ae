@@ -340,6 +340,31 @@ static AE_READ_RESULT ae_try_cwd(size_t line, size_t column) {
 #endif
 }
 
+// Byte offset of the first match, or an Err value when there is none. The
+// views carry explicit lengths, so embedded NUL bytes are searched as well —
+// strstr() would stop at the first one. memchr() is the platform's optimized
+// byte scan; the success path allocates nothing, and the failure path only
+// allocates the error string the result enum already owns.
+static AE_INT_RESULT ae_find(ae_strview haystack, ae_strview needle, size_t line, size_t column) {
+    if (needle.len <= 0) {
+        AE_INT_RESULT out = { AE_INT_OK, { .v0 = { 0 } } };
+        return out;
+    }
+    const int64_t last = haystack.len - needle.len;
+    for (int64_t at = 0; at <= last; ) {
+        const char *hit = memchr(haystack.ptr + at, needle.ptr[0], (size_t)(last - at + 1));
+        if (!hit) break;
+        at = (int64_t)(hit - haystack.ptr);
+        if (needle.len == 1 || memcmp(hit, needle.ptr, (size_t)needle.len) == 0) {
+            AE_INT_RESULT out = { AE_INT_OK, { .v0 = { at } } };
+            return out;
+        }
+        at++;
+    }
+    AE_INT_RESULT bad = { AE_INT_ERR, { .v1 = { ae_str_from("substring not found", line, column) } } };
+    return bad;
+}
+
 // Strict integer parsing: optional sign, ASCII digits only, whole string, and
 // no wrap-around. Anything else is an error value, never a silent default.
 static AE_INT_RESULT ae_parse_int(ae_strview text, size_t line, size_t column) {

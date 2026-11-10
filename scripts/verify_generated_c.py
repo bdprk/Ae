@@ -69,6 +69,12 @@ def run():
         # Option propagation: a None returns early, a discarded Some payload
         # (string and vec) is released exactly once on the successful path.
         ("option_propagate.ae", b"found!\nnone\nalways\nnone\n1\nnone\n3\nnone", True),
+        # Generic borrow parameters: no owned value is moved into the callee,
+        # so the caller's strings and vectors must still be intact afterwards.
+        ("generic_borrow.ae", b"6\n3\n3\n60\n3\nAE\n10\nbeta", True),
+        # find returns an IntResult: the Err branch allocates an error string
+        # that the enum release must give back exactly once.
+        ("find_text.ae", b"4\n13\nsubstring not found\n0\n7", True),
         ("json_report.ae", (
             "ready\n"
             "wrote 175 bytes\n"

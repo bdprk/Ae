@@ -2078,7 +2078,7 @@ fn trim_and_prefix_checks_reject_wrong_argument_types() {
 #[test]
 fn generic_enums_instantiate_per_argument() {
     let output = execute(r#"enum Either[T, U] { Left(T), Right(U), Both(T, U), Neither }
-fn find(text: &string, needle: &string) -> Option[i64] {
+fn locate(text: &string, needle: &string) -> Option[i64] {
     let parts = split(text, needle);
     if len(parts) < 2 { return Option[i64]::None; }
     return Option[i64]::Some(len(parts[0]));
@@ -2090,13 +2090,13 @@ fn label(opt: Option[i64]) -> string {
     }
 }
 fn main() {
-    let hit = find("a,b,c", ",");
+    let hit = locate("a,b,c", ",");
     match hit {
         Option::Some(v) => { print("hit " + to_string(v)); }
         Option::None => { print("miss"); }
     }
-    print(label(find("abc", ",")));
-    print(label(find("xy;z", ";")));
+    print(label(locate("abc", ",")));
+    print(label(locate("xy;z", ";")));
     let e = Either[string, i64]::Both("n", 3);
     match e {
         Either::Left(text) => { print("left " + text); }
@@ -2575,4 +2575,92 @@ fn run_command_reports_status_and_output() {
     let output = execute(&source);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "0\ntrue\ntrue\n");
+}
+
+#[test]
+fn generic_borrow_parameters_resolve_at_each_call_site() {
+    // `&T` is not a new borrow kind: after substitution it is one of the three
+    // read-only borrows the language already has, with the same call syntax.
+    let source = r#"fn size_of[T](value: &T) -> i64 { return len(value); }
+fn total(values: &vec) -> i64 {
+    var sum = 0;
+    for i in 0..len(values) { sum = sum + values[i]; }
+    return sum;
+}
+fn forward(values: &vec) -> i64 { return total(&values); }
+fn count(parts: &vec[string]) -> i64 { return len(parts); }
+fn forward_parts(parts: &vec[string]) -> i64 { return count(&parts); }
+fn main() {
+    let text = "AE";
+    let numbers = vec[10, 20, 30];
+    let words = split("alpha,beta,gamma", ",");
+    print(size_of[string](text));
+    print(size_of[vec](&numbers));
+    print(size_of[vec[string]](&words));
+    print(forward(&numbers));
+    print(forward_parts(&words));
+    print(text);
+    print(numbers[0]);
+    print(words[1]);
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "6\n3\n3\n60\n3\nAE\n10\nbeta\n");
+
+    for (source, expected) in [
+        ("fn f[T](x: &T) -> i64 { return len(x); } fn main() { print(f[i64](1)); }", "has no read-only borrow"),
+        ("fn f[T](x: &T) -> i64 { return len(x); } fn main() { print(f[bool](true)); }", "has no read-only borrow"),
+        ("fn f(x: &T) -> i64 { return len(x); } fn main() { print(1); }", "unsupported borrow type"),
+        ("fn f[T](x: T) -> &T { return x; } fn main() { print(f[i64](1)); }", "expected identifier"),
+        ("struct B[T] { v: &T } fn main() { print(1); }", "expected identifier"),
+        // A borrowed string vector is not a borrowed i64 vector.
+        ("fn inner(v: &vec) -> i64 { return len(v); } fn outer(v: &vec[string]) -> i64 { return inner(&v); } fn main() { print(1); }", "argument must be vec"),
+        // Forwarding must not relax the read-only rule.
+        ("fn inner(v: &vec) -> i64 { push(v, 1); return 0; } fn outer(v: &vec) -> i64 { return inner(&v); } fn main() { print(1); }", "push expects a vec"),
+        // A view cannot escape the callee, generic or not.
+        ("fn f[T](x: &T) -> string { return x; } fn main() { print(f[string](\"a\")); }", "return type must be string"),
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-generic-borrow-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted invalid program: {source}");
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(err.contains(expected), "{source}: {err}");
+    }
+}
+
+#[test]
+fn find_reports_a_byte_offset_or_an_error_value() {
+    let source = r#"fn main() {
+    let line = "name=AE; mode=fast";
+    let eq = find(line, "=");
+    match eq { IntResult::Ok(at) => { print(at); } IntResult::Err(reason) => { print(reason); } }
+    let mode = find(line, "mode=");
+    match mode { IntResult::Ok(at) => { print(at); } IntResult::Err(reason) => { print(reason); } }
+    let absent = find(line, "slow");
+    match absent { IntResult::Ok(at) => { print(at); } IntResult::Err(reason) => { print(reason); } }
+    let empty = find(line, "");
+    match empty { IntResult::Ok(at) => { print(at); } IntResult::Err(reason) => { print(reason); } }
+    let utf8 = find("中文 abc", "abc");
+    match utf8 { IntResult::Ok(at) => { print(at); } IntResult::Err(reason) => { print(reason); } }
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "4\n13\nsubstring not found\n0\n7\n");
+
+    for (source, expected) in [
+        ("fn main() { let x = find(1, \"a\"); print(1); }", "expects a string to search in"),
+        ("fn main() { let x = find(\"a\", 1); print(1); }", "expects a string to search for"),
+        ("fn main() { let find = 1; print(find); }", "built-in name"),
+        ("fn main() { find(\"a\", \"b\"); }", "must end with"),
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-find-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted invalid program: {source}");
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(err.contains(expected), "{source}: {err}");
+    }
 }

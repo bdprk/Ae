@@ -1,0 +1,43 @@
+// A generic function can borrow its type parameter. At each call site T is
+// already concrete, so one of the three existing read-only borrows applies:
+// string becomes a view, vec and vec[string] become const pointers. No new
+// lifetime rule and no runtime machinery are introduced.
+fn size_of[T](value: &T) -> i64 {
+    return len(value);
+}
+
+// A borrowed vector can be handed to another function without copying it.
+fn total(values: &vec) -> i64 {
+    var sum = 0;
+    for i in 0..len(values) { sum = sum + values[i]; }
+    return sum;
+}
+fn forward(values: &vec) -> i64 {
+    return total(&values);
+}
+
+fn count(parts: &vec[string]) -> i64 {
+    return len(parts);
+}
+fn forward_parts(parts: &vec[string]) -> i64 {
+    return count(&parts);
+}
+
+fn main() {
+    let text = "AE";
+    let numbers = vec[10, 20, 30];
+    let words = split("alpha,beta,gamma", ",");
+
+    // A string view is passed directly; vectors are passed with `&`, exactly
+    // as they are for non-generic functions.
+    print(size_of[string](text));
+    print(size_of[vec](&numbers));
+    print(size_of[vec[string]](&words));
+    print(forward(&numbers));
+    print(forward_parts(&words));
+
+    // None of those calls moved their arguments: all three are still readable.
+    print(text);
+    print(numbers[0]);
+    print(words[1]);
+}

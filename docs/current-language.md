@@ -36,6 +36,24 @@
 
 **目录与路径**：`try_list_dir(path) -> DirResult` 返回目录下的条目名（不含 `.` 与 `..`，按字节序排序），失败返回 `Err(描述)`；`path_exists(path) -> bool`、`path_is_dir(path) -> bool` 只做查询。三者都接受拥有字符串或视图。
 
+## 字符串查找 `find`
+
+`find(text, needle) -> IntResult` 返回 **首次匹配的字节下标**：命中是 `Ok(下标)`，未命中是 `Err("substring not found")`，空 `needle` 返回 `Ok(0)`。两个参数都接受拥有字符串或视图，借用而不移动；结果必须 `let` 绑定后 `match`，不能写成裸表达式语句。`find` 是保留名，不能重定义。
+
+```ae
+fn main() {
+    let at = find("name=AE", "=");
+    match at {
+        IntResult::Ok(n) => { print(n); }          // 4
+        IntResult::Err(reason) => { print(reason); }
+    }
+}
+```
+
+下标按**字节**计算，与 `len`/`slice` 同一口径：`find("中文 abc", "abc")` 得到 7，而不是 3。实现用 `memchr` 定位首字节再 `memcmp` 比较，成功路径不分配内存，失败路径只分配 `Err` 的错误文本（由结果枚举释放）。最坏情况 O(n·m)，没有预处理表；长模式与大量重复首字节的文本上不是最优实现。
+
+与 `contains` 的一处已知差异：`contains` 用 `strstr`，遇到字符串中间的 NUL 会停止；`find` 按显式长度搜索，嵌入的 NUL 也是普通字节。因此含嵌入 NUL 的输入上，两者可能给出不同结论——这是既有实现的真实行为，文档不掩盖，也不在本轮悄悄改动 `contains`。
+
 ## Unicode 与字符边界
 
 `len` 与 `slice` 按**字节**工作（字符串是 UTF-8 字节序列，两者都是 O(1)）。为避免切出非法 UTF-8，`slice`/`slice_view` 在索引落在字符中间时终止并报告 `string index splits a UTF-8 character`——判定只看一个字节，仍是 O(1)；`start`/`end` 等于 `len` 视为合法边界。
@@ -232,7 +250,7 @@ fn port(config: &string) -> i64 {
 
 `match` 的模式写**声明名**而不是实例化名：`Option[string]` 与 `Option[i64]` 的值都用 `Option::Some(v)` / `Option::None` 匹配，`v` 的实际类型由被匹配值的类型决定（`string` 负载仍按视图绑定）。穷尽性、借用规则、移动语义与普通枚举完全一致。
 
-预置 `Option[T] { Some(T), None }` 对所有文件公开，意思是「可能没有的值」：`fn find(text: &string, needle: &string) -> Option[i64]` 比用 `-1` 或空串当哨兵清楚得多，因为哨兵无法与真实的 `-1`、真实存在的空行区分。`?` 同样作用于 `Option`：`None` 原样返回给调用者，`Some` 绑定负载（见 [ADR-21](decisions.md) 与 [ADR-34](decisions.md)）。
+预置 `Option[T] { Some(T), None }` 对所有文件公开，意思是「可能没有的值」：`fn locate(text: &string, needle: &string) -> Option[i64]` 比用 `-1` 或空串当哨兵清楚得多，因为哨兵无法与真实的 `-1`、真实存在的空行区分。`?` 同样作用于 `Option`：`None` 原样返回给调用者，`Some` 绑定负载（见 [ADR-21](decisions.md) 与 [ADR-34](decisions.md)）。
 
 每个程序最多 256 个枚举类型（含预置与全部实例化），超出时在实例化处报错；这是代码体积预算，不是最终限制。
 
@@ -255,8 +273,24 @@ fn port(config: &string) -> i64 {
 - 同一实参列表只实例化一次（缓存），因此 `identity[i64]` 在任何地方都是同一个 C 函数；不同实参是不同函数。
 - 泛型体内可以把类型参数再传给别的泛型：`fn double_wrap[T](x: T) -> Option[T] { let inner = wrap[T](x); return inner; }`，`Option[T]`、`Pair[T, i64]` 都会按当前替换表解析。
 - 声明会保存自己的 token 与源码，因此**跨文件实例化**可用：在 `lib.ae` 里 `pub fn identity[T](...)`，`main.ae` 直接 `identity[string](...)`。实例化时以声明文件为「当前文件」，所以泛型体可以调用声明文件里的私有函数与私有类型。
-- 参数类型可以写类型参数，但 `&T` 这类借用形式尚不支持（`&` 只接受 `string`/`vec`/数组）；`main` 不能是泛型。
+- 参数类型可以写类型参数，也可以写借用形式 `&T`（见下一节）；`main` 不能是泛型。
 - 同一个函数用同样的实参（直接或间接）实例化自己会无限展开，编译器在闭合处报错（`is already being instantiated with these type arguments`）。用不同实参递归是允许的，只要不绕回同一个实参列表。
+
+## 泛型借用参数 `&T`
+
+`fn size_of[T](value: &T) -> i64 { return len(value); }` 在**每个实例化处**才知道 `T` 是什么，于是 `&T` 直接落到已有的三种只读借用，不引入新的生命周期、借用种类或运行时类型信息：
+
+| 类型实参 | `&T` 实例化为 | 调用点写法 | 函数体内可用 |
+|---|---|---|---|
+| `string` | `string view` | `size_of[string](text)` | `len`、`contains`、`==`、`print`、`+`（复制） |
+| `vec` | `&vec` | `size_of[vec](&numbers)` | `len`、索引、`for x in v`、转借 |
+| `vec[string]` | `&vec[string]` | `size_of[vec[string]](&words)` | `len`、索引（视图）、`for x in v`、转借 |
+
+调用点的形状由**具体类型**决定，与写非泛型函数时完全一致：字符串视图直接传，向量借用显式写 `&`。所有借用都不移动实参，调用结束后原值仍可读写；函数体内只读，视图不能作为函数返回值，借用向量不能 push/写。`i64`、`bool`、结构体、枚举、映射、数组没有对应的只读借用，用它们实例化 `&T` 会在实例化处报 `has no read-only borrow`；在非泛型函数里写 `&T` 会报 `unsupported borrow type`。`&T` 不能作返回类型、结构体字段或枚举负载，约束（`T: Add`）也不检查借用能力——它仍只是调用点的实参形状检查（见下一节）。
+
+**一个真实限制**：同一个泛型体里再实例化另一个 `&T` 模板时，调用语法会随 `T` 变化（`string` 不写 `&`、`vec` 要写），因此这类嵌套目前只对 `string` 形状可靠；其它形状请在具体函数里按类型分开写。未被调用的泛型声明不在声明处检查 `&T`，与「函数体在实例化时才解析」一致。
+
+顺带修正一处文档与实现不一致：`&vec` / `&vec[string]` 参数现在**可以转借**给另一个只读参数（`fn outer(v: &vec) { return inner(&v); }`），生成的 C 直接传递已有的 const 指针，不再取地址变成二级指针；类型不匹配的转发（`&vec[string]` 传给 `&vec`）仍然被拒绝，只读与移动规则不变。
 
 ## 类型参数约束
 
@@ -278,4 +312,4 @@ fn port(config: &string) -> i64 {
 trait（用户自定义约束、静态分派、方法表）尚未实现；目前没有能让用户扩展约束种类的语法。
 
 ## 当前实现限制
-编译器当前限制表达式嵌套深度及表达式节点数各为 128，块嵌套深度为 64，循环嵌套 64；超出时报告错误。这些是早期实现的资源限制，不是最终语言能力承诺。移动/所有权跟踪覆盖所有拥有型值：string、vec、map 与结构体变量共用同一套 moved 集合（编译器以 MoveKind::{Var, Field, StrVecElement} 记录），结构体字段与 vec 元素按设计不能被拆出、只能作为借用使用（具体编译期/运行时边界见上文）。比较不可链接；字符串不可变（无原地修改）；这些限制将在后续版本按规范逐步放开。
+编译器当前限制表达式嵌套深度及表达式节点数各为 128，块嵌套深度为 64，循环嵌套 64；超出时报告错误。这些是早期实现的资源限制，不是最终语言能力承诺。移动/所有权跟踪覆盖所有拥有型值：string、vec、map 与结构体变量共用同一套 moved 集合（编译器以 MoveKind::{Var, Field, StrVecElement} 记录），结构体字段与 vec 元素按设计不能被拆出、只能作为借用使用（具体编译期/运行时边界见上文）。比较不可链接；字符串不可变（无原地修改）；这些限制将在后续版本按规范逐步放开。泛型借用 `&T` 目前只覆盖 `string`/`vec`/`vec[string]`，且泛型体内再实例化另一个 `&T` 模板时调用语法随类型实参变化（见上文），同样是实现边界而不是最终设计承诺。

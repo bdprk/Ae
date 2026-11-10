@@ -1,0 +1,39 @@
+// find(text, needle) reports the first byte offset as a result value. There is
+// no -1 sentinel: "not found" is an Err that must be handled, and 0 is a real
+// match at the start of the string.
+fn main() {
+    let line = "name=AE; mode=fast";
+
+    let eq = find(line, "=");
+    match eq {
+        IntResult::Ok(at) => { print(at); }
+        IntResult::Err(reason) => { print(reason); }
+    }
+
+    let mode = find(line, "mode=");
+    match mode {
+        IntResult::Ok(at) => { print(at); }
+        IntResult::Err(reason) => { print(reason); }
+    }
+
+    let absent = find(line, "slow");
+    match absent {
+        IntResult::Ok(at) => { print(at); }
+        IntResult::Err(reason) => { print(reason); }
+    }
+
+    // An empty needle matches at offset 0, the same rule `contains` uses.
+    let empty = find(line, "");
+    match empty {
+        IntResult::Ok(at) => { print(at); }
+        IntResult::Err(reason) => { print(reason); }
+    }
+
+    // Offsets are bytes, not characters: this match starts after two
+    // three-byte UTF-8 characters and one space.
+    let utf8 = find("中文 abc", "abc");
+    match utf8 {
+        IntResult::Ok(at) => { print(at); }
+        IntResult::Err(reason) => { print(reason); }
+    }
+}
