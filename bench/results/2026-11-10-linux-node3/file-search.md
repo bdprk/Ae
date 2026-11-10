@@ -27,3 +27,7 @@
 
 程序：`grep.ae`（examples/）、`grep.gojo`、`grep.go`、`grep.rs`（本目录归档副本）。
 命令：`ae run examples/grep.ae`、`gojo run grep.gojo`、`go run grep.go`、`rustc -O grep.rs && ./grep_rs`；输入由 `python -c` 固定种子（42）生成。
+
+## 复测注记（同日第二轮，表示法变更后）
+
+字符串改为长度携带表示（ADR-8 演进）后复测：ae 7.62 ms / gojo 5.87 ms（各 7 次中位）。两项均比首轮高约 30%——主机同期承载其他负载，绝对值有漂移；相对比值稳定（≈1.3:1）。朴素字节扫描版仍为 AE 最快变体；切片分配与借用视图的影响见 ADR-8。
