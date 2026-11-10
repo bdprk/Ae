@@ -4,7 +4,7 @@ mod frontend;
 mod sha256;
 use frontend::compile_path;
 
-const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--release]\n       ae cache [dir|clear|stats]\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--release]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -238,6 +238,11 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         return Ok(0);
     }
     if cmd == "cache" { return cache_command(args.get(1)); }
+    if cmd == "deps" {
+        if args.len() != 2 { return Err(USAGE.into()); }
+        print!("{}", frontend::describe_path(Path::new(&args[1]))?);
+        return Ok(0);
+    }
     if args.len() < 2 { return Err(USAGE.into()); }
     let release = match cmd.as_str() {
         "run" if args.len() == 3 && args[2] == "--release" => true,

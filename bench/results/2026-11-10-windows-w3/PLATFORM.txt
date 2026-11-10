@@ -1,0 +1,51 @@
+AE Windows local verification, 2026-11-10 (W3 stage 1)
+Scope: ADR-38 (reachable-runtime pruning, WIN32_LEAN_AND_MEAN, ae deps)
+
+Platform
+  OS: Windows x86-64 (native, MinGW-W64 UCRT toolchain)
+  C compiler: gcc.exe (MinGW-W64 x86_64-ucrt-posix-seh) 16.2.0
+  Rust: cargo / rustc 1.99.1
+  AddressSanitizer: unavailable on MinGW; allocation counting uses -Wl,--wrap
+
+Commands (run from the repository root)
+  cargo test --locked
+  python scripts/verify_generated_c.py --leak
+  python bench/build_timings.py --runs 3 --full-c baseline-full-runtime.c
+  ae deps examples/modules/main.ae
+  ae check on every examples/*.ae
+
+Results
+  cargo-test.log: 9 unit + 135 integration tests, 0 failures
+  verify-c-leak.log: 24 generated-C cases PASS, every program exits at the
+    UCRT baseline of 2 live allocation blocks
+  deps-output.txt: import graph and public interface hashes; matches the Linux
+    file byte-for-byte after CRLF/LF normalization
+  timings.json / timings.txt: four build scenarios and the C-compiler comparison
+
+Measured build effect (this machine, wall clock)
+  generated C for `fn main() { print(1); }`: 109,721 -> 20,273 bytes
+  gcc -std=c11 -O0 on that C text: 1,030.0 -> 690.0 ms (median of 3 runs)
+  full `ae build` process: cold 772 ms, unchanged 99 ms,
+    implementation edit 769 ms, interface edit 779 ms
+  -O0 executable: 64,195 bytes
+  The "unchanged" number is the whole process (cc --version, manifest check,
+  copying the cached executable); the cache lookup itself is about 2 ms.
+
+Baseline
+  baseline-full-runtime.c is the emit-c output of the same `print(1)` program
+  from before ADR-38 (109,721 bytes, full runtime and plain windows.h). It is
+  archived so the C-compiler comparison can be reproduced without rebuilding
+  an old compiler. Measurements on this host vary between runs; a second
+  session measured 1,331 -> 705 ms for the same pair, so only the direction
+  and order of magnitude are claimed, not a precise speedup ratio.
+
+Rejected experiments (see ADR-38 for the numbers)
+  precompiled header: 69,495,776-byte .gch for ~0.8 s of savings
+  split runtime object + program TU: cold build regressed ~68%, warm only ~18%
+  A leftover .gch initially inflated the split-TU numbers; it was removed and
+  every figure above was re-measured without it.
+
+Not covered here
+  Linux run (archived in ../2026-11-10-linux-w3/), performance claims beyond
+  the four scenarios above, macOS/ARM64, and user-module-level incremental
+  compilation. This directory is a correctness/safety/build-time log.

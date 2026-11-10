@@ -11,7 +11,7 @@
 
 ## 验证内容
 
-- `cargo test --locked`：9 单元 + 133 集成测试（Unicode 路径与字符边界、受检算术边界、字符串/向量/映射/枚举的所有权与释放、循环与范围、`?` 传播（结果枚举与 `Option`）、哈希表、模块可见性、泛型枚举/泛型结构体/泛型函数实例化及预算、类型参数约束与布尔相等、泛型借用参数 `&T` 与只读借用转发、`find` 字节下标结果值、`f64` 规范文本/结构体字段/枚举负载/泛型实参与显式转换、排序/时钟/环境变量/追加、`exit` 状态码、标准输入与工作目录（含 `set_cwd`）、JSON 路径查询、`vec[string]` 借用元素拷贝、子进程状态与输出、缓存命中/损坏/清理/大小上限）。
+- `cargo test --locked`：9 单元 + 135 集成测试（含 `ae deps` 的接口摘要不变性/变更检测与依赖图；Unicode 路径与字符边界、受检算术边界、字符串/向量/映射/枚举的所有权与释放、循环与范围、`?` 传播（结果枚举与 `Option`）、哈希表、模块可见性、泛型枚举/泛型结构体/泛型函数实例化及预算、类型参数约束与布尔相等、泛型借用参数 `&T` 与只读借用转发、`find` 字节下标结果值、`f64` 规范文本/结构体字段/枚举负载/泛型实参与显式转换、排序/时钟/环境变量/追加、`exit` 状态码、标准输入与工作目录（含 `set_cwd`）、JSON 路径查询、`vec[string]` 借用元素拷贝、子进程状态与输出、缓存命中/损坏/清理/大小上限）。
 - `scripts/verify_generated_c.py [--sanitize] [--leak]`：生成 C 在两种优化模式输出一致；失败路径（越界、断言、UTF-8 边界、分配失败）按预期非零退出；`--leak` 用分配计数要求每个程序的退出块数等于空程序基线（**Windows 2 块，Linux 0 块**——glibc 在 `main` 之前不保留堆分配，UCRT 会保留 2 块）；Linux 净化器下无地址/未定义行为报告。
 - 全部 `examples/*.ae`（含 `examples/modules/` 的多文件程序）输出在两平台**按行尾归一化后**逐字节一致：Linux 为 LF，Windows 因 stdout 处于文本模式而为 CRLF；这不是原始字节一致，见「已知平台差异」。此前写成「逐字节一致」不准确，已修正。集成测试与示例比对都先把 `\r\n` 归一化为 `\n`。
 
@@ -29,7 +29,11 @@
 
 **同日 W2（`f64`，ADR-37）也在两平台各跑一次**：Windows `bench/results/2026-11-10-windows-float/`、Linux `bench/results/2026-11-10-linux-float/`。两平台均为 9 单元 + 133 集成测试全通过；Linux `--sanitize` 24 个用例 PASS、无 ASan/UBSan 报告；`--leak` 24 个用例 PASS，Linux 退出分配块数为 0、Windows 等于 2 块基线（`float_math.ae` 的 `to_string`/`to_i64` 分配全部归还）。`float_math.ae` 输出在两平台按行尾归一化后逐字节一致——因为文本由运行时 `ae_f64_text` 生成，不经过 `printf` 的 `%g`；实测 UCRT 对 NaN 输出 `-nan(ind)`、glibc 输出 `-nan`，这正是不能用 `%g` 当语言语义的证据。生成 C 文本在两平台完全相同（trivial 109,721 字节、`float_math.ae` 116,494 字节，+6,773 字节主要是格式化器源码）；空程序的 release 产物仍是 Windows 61,309 / Linux 16,176 字节，说明未被引用的格式化器会被优化掉。`float_math.ae` 用了格式化与转换，release 产物 Windows 70,467 / Linux 21,576 字节；它与 `find_text.ae`（66,904 字节）不是同一程序，差值只能作量级参考，不能当作 `f64` 的精确增量。
 
-**资源成本（如实记录）**：`f64` 支持让每个程序多约 6.8 KB 生成 C；实际进入可执行文件的只有引用到的格式化和转换路径（`float_math.ae` 这类程序约多几 KB，空程序 0）。这是「跨平台规范文本」的价格，不以关闭检查或依赖 CRT 差异换取体积。
+**资源成本（如实记录）**：`f64` 支持让每个程序多约 6.8 KB 生成 C；实际进入可执行文件的只有引用到的格式化和转换路径（`float_math.ae` 这类程序约多几 KB，空程序 0）。这是「跨平台规范文本」的价格，不以关闭检查或依赖 CRT 差异换取体积。**注意这些字节数是 ADR-38 之前测的**：现在生成 C 只含可达运行时函数，同一程序已变成 20,273 字节，不能直接与旧数字相减当作某个特性的体积增量。
+
+**同日 W3 阶段 1（ADR-38，运行时按需裁剪 + `WIN32_LEAN_AND_MEAN` + `ae deps`）在两平台各跑一次**：Windows `bench/results/2026-11-10-windows-w3/`、Linux `bench/results/2026-11-10-linux-w3/`。两平台 9 单元 + 135 集成测试全通过；Linux `--sanitize` 24 个用例 PASS、无 ASan/UBSan 报告；`--leak` 24 个用例 PASS，Linux 退出分配块数 0、Windows 等于 2 块基线；全部 `examples/*.ae` 通过 `check`。`deps examples/modules/main.ae` 的两份输出在行尾归一化后完全一致，说明接口摘要与路径标签与平台无关。
+
+生成 C 文本在两平台完全相同：`fn main() { print(1); }` 从改动前的 109,721 字节降到 20,273 字节。同一份基线 C 已归档为 `baseline-full-runtime.c`，用 `bench/build_timings.py --full-c` 可复跑对比：Windows gcc 编译 1,030 → 690 ms、Linux 121.8 → 30.6 ms（各为 3 次中位值，本机多次测量波动明显，只报告方向与量级）。四类场景整进程耗时见各自 `timings.json`：Windows 冷 772 / 无修改 99 / 改实现 769 / 改接口 779 ms，Linux 37.4 / 5.6 / 34.3 / 37.1 ms。**PCH（69 MB 缓存）与分离翻译单元（冷构建回归约 68%）都实测否决并回退**，详见 ADR-38；本轮没有新增缓存种类，也没有关闭任何检查。
 
 ## 已知平台差异（不掩盖）
 
@@ -41,8 +45,9 @@
 - 严格 ISO C：生成文件只用 C11 标准接口，不注入 `_POSIX_C_SOURCE` 之类的特性宏，因此同一份 C 在 glibc、musl 与 `-std=c11 -pedantic-errors` 下都能编译；代价是不能使用 POSIX 专有接口（时间只能走 `timespec_get`，拿不到单调时钟）。
 - 标准输入的换行：两平台都按二进制读入，`\r\n` 不会被翻译；差异只存在于用户自己传入的文本里。
 - 标准输出的换行：生成的 C 用 `fputs`/`printf`/`fputc('\n')` 写 stdout，Windows 文本模式把每个 `\n` 翻成 `\r\n`，Linux 保持 `\n`。因此跨平台比较必须先归一化行尾；Rust 集成测试与示例比对都这么做。这是 CRT 差异，不是生成代码里的分支。
+- C 编译耗时：Windows 分支要解析 `<windows.h>`（实测单独 `-fsyntax-only` 约 690 ms，`WIN32_LEAN_AND_MEAN` 后约 520 ms），Linux 分支不需要。因此同一份生成 C 在 Windows 的编译时间是 Linux 的十几倍；`bench/build_timings.py` 的两平台结果必须分别看，不能混成一个「编译速度」数字，也不能用 Linux 的数字代表 Windows 体验。
 - 子进程：`run_command` 在两平台都**不**经过 shell（Windows 直接 `CreateProcessW`，POSIX 直接 `execvp`），所以 `echo`、`dir` 这类内建命令要显式写成 `cmd` 加 `/c` 的形式。被信号杀死时 POSIX 报 `128 + 信号号`，Windows 直接给退出码——这是唯一有意保留的语义差异。
 
 ## 复现
 
-Linux 结果与原始数据见 `bench/results/2026-11-10-linux-evaluate-1/`（Debian 13、GCC 14.2.0、rustc 1.99.0、4 vCPU / 7.8 GB：`PLATFORM.txt`、`cargo-test.log`、`verify-c.log`）与 `bench/results/2026-11-10-linux-node-option/`（同机型的 `instabox-node`，含 `verify-c-sanitize.log` 与 `verify-c-leak.log`），性能基准见 `bench/results/2026-11-10-linux-node3/`（InstaBox `evaluate-2`），Windows 见 `bench/results/2026-11-10-windows-local/`，本轮 `&T`/`find` 的 Windows 验证日志见 `bench/results/2026-11-10-windows-borrow-find/`，同一提交树的 Linux 回填见 `bench/results/2026-11-10-linux-borrow-find/`，`f64` 的两平台日志见 `bench/results/2026-11-10-windows-float/` 与 `bench/results/2026-11-10-linux-float/`（两处均有 `PLATFORM.txt`、`cargo-test.log`，Windows 另有 `verify-c-leak.log` 与 `example-output.txt`，Linux 另有 `verify-c-sanitize.log` 与 `verify-c-leak.log`）。命令：`cargo test --locked`、`python3 scripts/verify_generated_c.py --sanitize`、`python3 scripts/verify_generated_c.py --leak`、`python3 bench/run.py [--release] [--cold]`。
+Linux 结果与原始数据见 `bench/results/2026-11-10-linux-evaluate-1/`（Debian 13、GCC 14.2.0、rustc 1.99.0、4 vCPU / 7.8 GB：`PLATFORM.txt`、`cargo-test.log`、`verify-c.log`）与 `bench/results/2026-11-10-linux-node-option/`（同机型的 `instabox-node`，含 `verify-c-sanitize.log` 与 `verify-c-leak.log`），性能基准见 `bench/results/2026-11-10-linux-node3/`（InstaBox `evaluate-2`），Windows 见 `bench/results/2026-11-10-windows-local/`，本轮 `&T`/`find` 的 Windows 验证日志见 `bench/results/2026-11-10-windows-borrow-find/`，同一提交树的 Linux 回填见 `bench/results/2026-11-10-linux-borrow-find/`，`f64` 的两平台日志见 `bench/results/2026-11-10-windows-float/` 与 `bench/results/2026-11-10-linux-float/`（两处均有 `PLATFORM.txt`、`cargo-test.log`，Windows 另有 `verify-c-leak.log` 与 `example-output.txt`，Linux 另有 `verify-c-sanitize.log` 与 `verify-c-leak.log`）。W3 阶段 1 的两平台日志与四类场景计时见 `bench/results/2026-11-10-windows-w3/` 与 `bench/results/2026-11-10-linux-w3/`（`PLATFORM.txt`、`cargo-test.log`、`verify-c-*.log`、`timings.json`、`deps-output.txt`；Windows 另存 `baseline-full-runtime.c`）。命令：`cargo test --locked`、`python3 scripts/verify_generated_c.py --sanitize`、`python3 scripts/verify_generated_c.py --leak`、`python3 bench/run.py [--release] [--cold]`、`python3 bench/build_timings.py --runs 3 [--full-c PATH]`、`ae deps <source.ae>`。

@@ -1,0 +1,12 @@
+module words.ae
+  interface f453e8bdfc5352e6
+  exports 1
+module report.ae
+  interface 9fb9613b70925dc9
+  exports 2
+module main.ae
+  interface e3b0c44298fc1c14
+  exports 0
+  uses words.ae
+  uses report.ae
+fingerprint 9a857f7e8b286c96

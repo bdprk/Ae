@@ -489,6 +489,13 @@ static void ae_vec_reverse(ae_vec *v) {
 // File I/O. Paths are UTF-8; on Windows they are widened for _wfopen so
 // non-ASCII paths behave like the rest of the platform layer.
 #ifdef _WIN32
+// The full windows.h pulls in winsock, RPC, GDI and shell declarations that
+// this runtime never uses. Measured on WinLibs GCC 16.2: parsing the plain
+// header costs ~690 ms, with this define ~520 ms. Every generated program pays
+// that cost at build time, so keep the header surface minimal.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 // UTF-8 to UTF-16 for the wide-character Win32 APIs; callers free the result.
 static wchar_t *ae_widen(const char *text) {

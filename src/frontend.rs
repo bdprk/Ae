@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -3469,7 +3469,17 @@ fn parse_source(file: &str, source: &str, shared: &mut SharedFunctions, structs:
     Ok(functions)
 }
 
-fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::PathBuf>, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, generics: &mut Generics, next_id: &mut usize, out: &mut Vec<Vec<Function>>, mains: &mut usize) -> Result<(), String> {
+/// One source file in the import graph. `raw` matches the `file` field stored
+/// on declarations; `label` is a platform-independent name for reports.
+struct ModuleInfo { raw: String, label: String, uses: Vec<String> }
+
+fn module_label(path: &Path, root: &Path) -> String {
+    let rel = path.strip_prefix(root).unwrap_or(path);
+    rel.components().map(|part| part.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/")
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_file(path: &Path, root: &Path, visited: &mut std::collections::HashSet<std::path::PathBuf>, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, generics: &mut Generics, next_id: &mut usize, out: &mut Vec<Vec<Function>>, mains: &mut usize, modules: &mut Vec<ModuleInfo>) -> Result<(), String> {
     let canonical = std::fs::canonicalize(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
     if !visited.insert(canonical) { return Err(format!("circular import of {}", path.display())); }
     let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -3477,8 +3487,8 @@ fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::Pat
     let tokens = lex(&source).map_err(|e| format!("{file}:{e}"))?;
     let uses = scan_uses(&file, &tokens).map_err(|e| format!("{file}:{e}"))?;
     let parent = path.parent().unwrap_or(Path::new(".")).to_owned();
-    for import in uses {
-        load_file(&parent.join(&import), visited, shared, structs, struct_names, enums, enum_names, generics, next_id, out, mains)?;
+    for import in &uses {
+        load_file(&parent.join(import), root, visited, shared, structs, struct_names, enums, enum_names, generics, next_id, out, mains, modules)?;
     }
     let mut p = make_parser(&file, &source, tokens, shared, structs, struct_names, enums, enum_names, generics);
     p.skip_uses();
@@ -3486,10 +3496,23 @@ fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::Pat
     let functions = p.program()?;
     *mains += functions.iter().filter(|f| f.is_main).count();
     out.push(functions);
+    modules.push(ModuleInfo {
+        raw: file,
+        label: module_label(path, root),
+        uses: uses.iter().map(|u| u.replace('\\', "/")).collect(),
+    });
     Ok(())
 }
 
-fn load_program(entry: &Path) -> Result<Program, String> {
+struct Loaded {
+    program: Program,
+    shared: SharedFunctions,
+    generics: Generics,
+    modules: Vec<ModuleInfo>,
+}
+
+fn load_program_full(entry: &Path) -> Result<Loaded, String> {
+    let root = entry.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let mut visited = std::collections::HashSet::new();
     let mut shared: SharedFunctions = HashMap::new();
     let mut structs: Vec<StructDef> = Vec::new();
@@ -3500,13 +3523,79 @@ fn load_program(entry: &Path) -> Result<Program, String> {
     let mut next_id = 0usize;
     let mut files = Vec::new();
     let mut mains = 0usize;
-    load_file(entry, &mut visited, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut generics, &mut next_id, &mut files, &mut mains)?;
+    let mut modules = Vec::new();
+    load_file(entry, root, &mut visited, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut generics, &mut next_id, &mut files, &mut mains, &mut modules)?;
     if mains != 1 { return Err(format!("program must define exactly one main function (found {mains})")); }
-    Ok(Program { files, structs, enums })
+    Ok(Loaded { program: Program { files, structs, enums }, shared, generics, modules })
+}
+
+fn load_program(entry: &Path) -> Result<Program, String> {
+    load_program_full(entry).map(|loaded| loaded.program)
 }
 
 pub fn check_path(path: &Path) -> Result<(), String> {
     load_program(path).map(|_| ())
+}
+
+/// A stable, platform-independent description of the import graph and every
+/// module's public interface. Function bodies, comments and local variables
+/// are deliberately absent: changing one must not change any interface hash.
+/// This is a diagnosis and planning tool for package-level incrementality; it
+/// does not yet participate in a cache decision, because the backend still
+/// emits one translation unit per program.
+pub fn describe_path(entry: &Path) -> Result<String, String> {
+    let loaded = load_program_full(entry)?;
+    let Loaded { program, shared, generics, modules } = loaded;
+    let Program { structs, enums, .. } = program;
+    let mut lines = Vec::new();
+    let mut all = Vec::new();
+    for module in &modules {
+        let mut items: Vec<String> = Vec::new();
+        for (name, sig) in &shared {
+            if sig.file != module.raw || !sig.public { continue; }
+            let params = sig.params.iter().map(|t| t.name()).collect::<Vec<_>>().join(", ");
+            items.push(format!("fn {name}({params}) -> {}", sig.ret.name()));
+        }
+        for def in &structs {
+            if def.file != module.raw || !def.public { continue; }
+            let fields = def.fields.iter().map(|(n, t)| format!("{n}: {}", t.name())).collect::<Vec<_>>().join(", ");
+            items.push(format!("struct {} {{ {fields} }}", def.name));
+        }
+        for def in &enums {
+            if def.file != module.raw || !def.public { continue; }
+            let variants = def.variants.iter().map(|(name, fields)| {
+                let payload = fields.iter().map(|t| t.name()).collect::<Vec<_>>().join(", ");
+                format!("{name}({payload})")
+            }).collect::<Vec<_>>().join(", ");
+            items.push(format!("enum {} {{ {variants} }}", def.name));
+        }
+        for def in &generics.fn_defs {
+            if def.file != module.raw || !def.public { continue; }
+            let params = def.params.iter().zip(&def.bounds)
+                .map(|(n, bounds)| format!("{n}: {}", bounds.iter().map(|b| b.name()).collect::<Vec<_>>().join(" + ")))
+                .collect::<Vec<_>>().join(", ");
+            items.push(format!("generic fn {}[{params}]", def.name));
+        }
+        for def in &generics.defs {
+            if def.file != module.raw || !def.public { continue; }
+            items.push(format!("generic enum {}[{}]", def.name, def.params.join(", ")));
+        }
+        for def in &generics.struct_defs {
+            if def.file != module.raw || !def.public { continue; }
+            items.push(format!("generic struct {}[{}]", def.name, def.params.join(", ")));
+        }
+        items.sort();
+        let digest = crate::sha256::hex(items.join("\n").as_bytes());
+        let short = digest[..16].to_owned();
+        all.push(format!("{} {short}", module.label));
+        lines.push(format!("module {}", module.label));
+        lines.push(format!("  interface {short}"));
+        lines.push(format!("  exports {}", items.len()));
+        for used in &module.uses { lines.push(format!("  uses {used}")); }
+    }
+    all.sort();
+    lines.push(format!("fingerprint {}", crate::sha256::hex(all.join("\n").as_bytes())[..16].to_owned()));
+    Ok(lines.join("\n") + "\n")
 }
 #[allow(dead_code)] // exercised by in-memory unit tests
 pub fn check(source: &str) -> Result<(), String> {
@@ -3572,15 +3661,169 @@ fn c_return(ty: Type) -> String {
         _ => "int64_t".to_owned(),
     }
 }
-fn emit_program(program: Program) -> Result<String, String> {
-    let Program { files, structs, enums } = program;
-    let mut out = String::from(include_str!("runtime.c"));
+/// `full` is the self-contained C translation unit that `emit-c` prints.
+/// `runtime_len` marks where the program-specific suffix begins: the runtime
+/// part is the reachable subset of the fixed runtime prefix, the suffix holds
+/// user layouts and functions. Both views come from one string so they cannot
+/// disagree about what the program means.
+struct GeneratedC { full: String, runtime_len: usize }
+
+#[derive(Clone, Copy, PartialEq)]
+enum CScan { Code, Str, Char, Block }
+
+/// Count braces outside strings, character literals and comments. Runtime code
+/// contains JSON examples and format strings, so a literal '{' must never be
+/// mistaken for the start of a function body.
+fn c_brace_delta(line: &str, state: &mut CScan) -> i32 {
+    let bytes = line.as_bytes();
+    let mut i = 0usize;
+    let mut delta = 0i32;
+    while i < bytes.len() {
+        let b = bytes[i];
+        let next = bytes.get(i + 1).copied().unwrap_or(0);
+        match *state {
+            CScan::Block => { if b == b'*' && next == b'/' { *state = CScan::Code; i += 2; } else { i += 1; } }
+            CScan::Str => { if b == b'\\' { i += 2; } else { if b == b'"' { *state = CScan::Code; } i += 1; } }
+            CScan::Char => { if b == b'\\' { i += 2; } else { if b == b'\'' { *state = CScan::Code; } i += 1; } }
+            CScan::Code => {
+                if b == b'/' && next == b'*' { *state = CScan::Block; i += 2; }
+                else if b == b'/' && next == b'/' { break; }
+                else if b == b'"' { *state = CScan::Str; i += 1; }
+                else if b == b'\'' { *state = CScan::Char; i += 1; }
+                else { if b == b'{' { delta += 1; } else if b == b'}' { delta -= 1; } i += 1; }
+            }
+        }
+    }
+    delta
+}
+
+/// Recognise the single-line `static <ret> ae_xxx(<args>) {` form used by
+/// every runtime function. Returns (specifier prefix, signature, name, tail).
+fn runtime_function_start(line: &str) -> Option<(&str, &str, &str, &str)> {
+    let at = line.find("static ")?;
+    let head = &line[..at];
+    if !head.trim().is_empty() && head.trim() != "_Noreturn" { return None; }
+    let rest = &line[at + "static ".len()..];
+    let open = rest.find('(')?;
+    let close = open + rest[open..].find(')')?;
+    let brace = close + rest[close..].find('{')?;
+    if !rest[close + 1..brace].trim().is_empty() { return None; }
+    let name = &rest[..open];
+    let name = &name[name.rfind("ae_")?..];
+    if !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') { return None; }
+    Some((head, rest[..brace].trim_end(), name, &rest[brace + 1..]))
+}
+
+/// Split the runtime prefix into top-level units. `Some(name)` is a complete
+/// function definition; `None` is any other text (includes, macros, typedefs,
+/// static data, comments) that must be kept verbatim. Anything not recognised
+/// as a function lands in a `None` unit, which is the conservative outcome.
+fn runtime_units(prefix: &str) -> Vec<(Option<String>, String)> {
+    let mut units: Vec<(Option<String>, String)> = Vec::new();
+    let mut pending = String::new();
+    let mut depth = 0i32;
+    let mut state = CScan::Code;
+    let mut in_function = false;
+    for line in prefix.split_inclusive('\n') {
+        let raw = line.strip_suffix('\n').unwrap_or(line);
+        if !in_function {
+            if let Some((head, signature, name, tail)) = runtime_function_start(raw) {
+                if !pending.is_empty() {
+                    units.push((None, std::mem::take(&mut pending)));
+                }
+                let mut text = String::new();
+                text.push_str(head); text.push_str(signature); text.push('{'); text.push_str(tail); text.push('\n');
+                units.push((Some(name.to_owned()), text));
+                let mut first = String::from("{");
+                first.push_str(tail);
+                state = CScan::Code;
+                depth = c_brace_delta(&first, &mut state);
+                in_function = depth > 0;
+                continue;
+            }
+            pending.push_str(line);
+            continue;
+        }
+        units.last_mut().unwrap().1.push_str(line);
+        depth += c_brace_delta(raw, &mut state);
+        if depth <= 0 { depth = 0; in_function = false; state = CScan::Code; }
+    }
+    if !pending.is_empty() { units.push((None, pending)); }
+    units
+}
+
+/// Every `ae_...` identifier in a piece of C text. Used both for roots and
+/// for the transitive dependency walk; a symbol that names no function is
+/// harmless (it is a type, macro or a name in a comment).
+fn ae_symbols(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut found = Vec::new();
+    let mut i = 0usize;
+    while i + 7 <= bytes.len() {
+        if &bytes[i..i + 7] == b"ae_" && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_')) {
+            let mut end = i + 7;
+            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') { end += 1; }
+            found.push(text[i..end].to_owned());
+            i = end;
+            continue;
+        }
+        i += 1;
+    }
+    found
+}
+
+/// Keep only runtime functions reachable from the program. Roots are the
+/// symbols in the program suffix plus every symbol in the always-retained
+/// non-function text (macro bodies and static initialisers can call functions
+/// that the generated code never names directly). The walk then follows calls
+/// between retained functions. Dropping an unreachable function cannot change
+/// behaviour: it has no caller in this translation unit.
+fn prune_runtime(prefix: &str, suffix: &str) -> (String, usize) {
+    let units = runtime_units(prefix);
+    // A name can have several definitions under #ifdef/_WIN32 branches. The
+    // scanner does not run the preprocessor, so every definition must be kept
+    // and every body scanned: keeping only the last one would silently drop a
+    // helper that the Windows branch calls.
+    let mut definitions: HashMap<String, Vec<usize>> = HashMap::new();
+    for (index, (name, _)) in units.iter().enumerate() {
+        if let Some(name) = name { definitions.entry(name.clone()).or_default().push(index); }
+    }
+    let mut keep: HashSet<String> = HashSet::new();
+    let mut queue: Vec<String> = Vec::new();
+    queue.extend(ae_symbols(suffix));
+    for (name, text) in &units {
+        if name.is_none() { queue.extend(ae_symbols(text)); }
+    }
+    // Hosts embedding the generated C may substitute the allocator without
+    // the generated code naming it; keep that documented entry point.
+    queue.push("ae_set_allocator".to_owned());
+    while let Some(symbol) = queue.pop() {
+        if !keep.insert(symbol.clone()) { continue; }
+        if let Some(indices) = definitions.get(&symbol) {
+            for &index in indices {
+                for next in ae_symbols(&units[index].1) {
+                    if !keep.contains(&next) { queue.push(next); }
+                }
+            }
+        }
+    }
+    let mut out = String::new();
+    for (name, text) in &units {
+        if name.is_none() || name.as_ref().is_some_and(|n| keep.contains(n)) { out.push_str(text); }
+    }
+    let runtime_len = out.len();
+    out.push_str(suffix);
+    (out, runtime_len)
+}
+
+fn emit_enum_layouts(enums: &[EnumDef], from: usize, to: usize, out: &mut String) {
     // Enum layouts: a tag plus a union of per-variant payload records. Each
     // variant gets its own struct so a variant can carry several fields at
     // once (a union of individual fields would alias them). Release frees the
     // live variant's owned payloads (idempotently); forfeit only clears them
     // because the value moved elsewhere.
-    for (eid, def) in enums.iter().enumerate() {
+    for eid in from..to {
+        let def = &enums[eid];
         let tags = (0..def.variants.len()).map(|v| format!("    AE_E{eid}_{v} = {v}")).collect::<Vec<_>>().join(",\n");
         out.push_str(&format!("\ntypedef enum {{\n{tags}\n}} ae_e{eid}_tag;\n"));
         let mut members = String::new();
@@ -3638,14 +3881,29 @@ fn emit_program(program: Program) -> Result<String, String> {
         out.push_str(&format!("static void ae_e{eid}_release(ae_e{eid} *v) {{\n{release}}}\n"));
         out.push_str(&format!("static void ae_e{eid}_forfeit(ae_e{eid} *v) {{\n{forfeit}}}\n"));
     }
-    // Fallible built-ins and platform helpers name prelude enum types, so they
-    // are included after the layouts above. runtime_ex.c relies on the prelude
-    // order, which is checked here rather than trusted.
+}
+
+fn emit_program(program: Program) -> Result<GeneratedC, String> {
+    let Program { files, structs, enums } = program;
+    let prelude_count = prelude_enums().0.len();
+    // Fallible built-ins and platform helpers name prelude enum types, so the
+    // prelude layouts come before runtime_ex.c. Their order is checked here
+    // rather than trusted; a reordered prelude would silently change payload
+    // ids in generated code.
     let names: Vec<&str> = enums.iter().take(6).map(|def| def.name).collect();
     if names != ["ReadResult", "WriteResult", "IntResult", "DirResult", "FileResult", "StatusResult"] {
         return Err(format!("internal: prelude enums must be registered first and in order, found {names:?}"));
     }
+    let mut out = String::from(include_str!("runtime.c"));
+    emit_enum_layouts(&enums, 0, prelude_count, &mut out);
     out.push_str(include_str!("runtime_ex.c"));
+    // Everything above is byte-identical for every program: no user enum,
+    // struct, function or literal reaches it. Keeping the cut here lets the
+    // build driver reuse one compiled runtime object across programs.
+    let runtime_len = out.len();
+    // User enums are emitted after the runtime prefix. runtime_ex.c only names
+    // prelude ids, so this does not change any type it can reference.
+    emit_enum_layouts(&enums, prelude_count, enums.len(), &mut out);
     // Struct layouts and their ownership helpers. Release zeroes every field
     // and frees owned ones; forfeit only zeroes (the value moved elsewhere).
     for (sid, def) in structs.iter().enumerate() {
@@ -3713,7 +3971,11 @@ fn emit_program(program: Program) -> Result<String, String> {
     out.push_str("\nint main(int argc, char **argv) {\n    ae_argc_g = (int64_t)argc;\n    ae_argv_g = argv;\n");
     emit_statements(&main.body, &mut out, &mut 0);
     out.push_str("    if (fflush(stdout) == EOF) return 1;\n    return 0;\n}\n");
-    Ok(out)
+    // The fixed prefix is program-independent; emit only its reachable part.
+    // `split_off` avoids copying the 100 KB runtime text.
+    let user = out.split_off(runtime_len);
+    let (full, pruned_len) = prune_runtime(&out, &user);
+    Ok(GeneratedC { full, runtime_len: pruned_len })
 }
 #[allow(dead_code)] // exercised by in-memory unit tests
 pub fn compile(source: &str) -> Result<String, String> {
@@ -3725,10 +3987,21 @@ pub fn compile(source: &str) -> Result<String, String> {
     let mut generics = prelude_generics();
     let mut next_id = 0usize;
     let functions = parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut generics, &mut next_id)?;
-    emit_program(Program { files: vec![functions], structs, enums })
+    emit_program(Program { files: vec![functions], structs, enums }).map(|g| g.full)
 }
 pub fn compile_path(path: &Path) -> Result<String, String> {
-    emit_program(load_program(path)?)
+    compile_path_parts(path).map(|(runtime, user)| runtime + &user)
+}
+/// The build driver's incremental view: `(runtime_prefix, program_suffix)`.
+/// Concatenating the two reproduces `compile_path` exactly, so `emit-c` stays
+/// the authority for what a program means.
+pub fn compile_path_parts(path: &Path) -> Result<(String, String), String> {
+    let generated = emit_program(load_program(path)?)?;
+    let GeneratedC { full, runtime_len } = generated;
+    let user = full[runtime_len..].to_owned();
+    let mut runtime = full;
+    runtime.truncate(runtime_len);
+    Ok((runtime, user))
 }
 
 #[cfg(test)]

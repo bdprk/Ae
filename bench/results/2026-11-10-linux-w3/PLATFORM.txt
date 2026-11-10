@@ -1,0 +1,43 @@
+AE Linux native verification, 2026-11-10 (W3 stage 1)
+Scope: ADR-38 (reachable-runtime pruning, WIN32_LEAN_AND_MEAN, ae deps)
+
+Platform
+  Host: instabox-node sandbox (Debian 13, 4 vCPU)
+  C compiler: GCC 14.2.0 (glibc)
+  Rust: rustc 1.99.0
+  AddressSanitizer + UBSan: available
+
+Commands (run from ~/ae-lang)
+  cargo test --locked
+  python3 scripts/verify_generated_c.py --sanitize
+  python3 scripts/verify_generated_c.py --leak
+  python3 bench/build_timings.py --runs 3 --full-c /tmp/ae-baseline.c
+  ae deps examples/modules/main.ae
+  ae check on every examples/*.ae
+
+Results
+  cargo-test.log: 9 unit + 135 integration tests, 0 failures
+  verify-c-sanitize.log: 24 generated-C cases PASS, 0 ASan/UBSan reports
+  verify-c-leak.log: 24 generated-C cases PASS, 0 live allocation blocks
+    at exit for every case (glibc baseline 0)
+  all examples/*.ae pass `check`
+  deps-output.txt: import graph and public interface hashes; matches the
+    Windows file byte-for-byte after CRLF/LF normalization
+  timings.json: four build scenarios and the C-compiler comparison
+
+Measured build effect (this machine, wall clock)
+  generated C for `fn main() { print(1); }`: 109,721 -> 20,273 bytes
+    (identical C text on both platforms)
+  gcc -std=c11 -O0 on that C text: 121.8 -> 30.6 ms (median of 3 runs)
+  full `ae build` process: cold 37.4 ms, unchanged 5.6 ms,
+    implementation edit 34.3 ms, interface edit 37.1 ms
+  -O0 executable: 17,168 bytes
+  Linux has no windows.h, so pruning removes a larger share of the compile
+  time here than on Windows. The baseline C file is the same archived
+  pre-ADR-38 emit-c dump used on Windows; on Linux its Windows-only branches
+  are preprocessed away, which is why it still compiles to the same program.
+
+Not covered here
+  Windows run (archived in ../2026-11-10-windows-w3/), MinGW-specific header
+  costs, macOS/ARM64, musl, and user-module-level incremental compilation.
+  This directory is a correctness/safety/build-time log.

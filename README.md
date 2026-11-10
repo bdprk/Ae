@@ -47,11 +47,13 @@ cargo run -- run examples/borrow.ae
 cargo run -- build examples/arithmetic.ae -o arithmetic.exe
 cargo run -- run examples/arithmetic.ae --release
 cargo run -- cache stats            # 条目数、字节数、上限
+cargo run -- deps examples/modules/main.ae   # 模块依赖图与公开接口摘要
 cargo run -- version
-cargo run -- cache stats
 ```
 
 默认构建使用 `-O0`，`run` 或 `build` 末尾加 `--release` 使用 `-O2`；两者均保留全部检查。`build` 与 `run` 的产物进入内容寻址缓存（键覆盖生成的 C、模式、C 编译器标识、编译器版本与平台），相同输入直接复用可执行文件；`AE_CACHE` 覆盖缓存位置，`cache dir|clear|stats` 管理。`run` 在系统临时目录中编译并执行；`build` 写入指定路径，拒绝覆盖已有文件。Linux 上可将输出命名为 `arithmetic`。
+
+生成的 C 只保留本程序可达的运行时函数（按符号引用做保守的传递闭包），所以 `emit-c` 的字节数随所用内建变化，不要再把它当作固定值；`deps` 输出模块依赖图与公开接口摘要哈希，改函数体不改变摘要、改 `pub` 签名会改变，但它**尚未参与缓存失效判定**，用户模块仍是同一个翻译单元。规则与实测取舍见 [当前语言语义](docs/current-language.md) 与 ADR-38。`bench/build_timings.py` 可复跑冷构建、无修改、改实现、改接口四类场景的耗时。
 
 `run` 支持把程序参数放在 `--` 之后转发给被运行的程序（`args()` 才能看到它们）：`cargo run -- run examples/find_files.ae -- examples txt`。设置 `AE_TIMINGS=1` 输出前端、C 编译与链接耗时及缓存命中情况；设置 `AE_ALLOC_LIMIT=N` 把运行时的累计分配字节数限制在 N，用于确定性地验证分配失败诊断（超出后按「out of memory」终止并给出位置，不是内存配额）；`check` 只做词法、语法与语义检查，不需要 C 编译器。
 

@@ -2759,3 +2759,49 @@ fn float_runtime_guards_report_instead_of_rounding() {
         assert!(String::from_utf8_lossy(&output.stderr).contains(expected), "{source}: {}", String::from_utf8_lossy(&output.stderr));
     }
 }
+
+#[test]
+fn interface_summaries_ignore_function_bodies_but_track_public_signatures() {
+    let dir = std::env::temp_dir().join(format!("ae-deps-test-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir(&dir).unwrap();
+    let lib = dir.join("lib.ae");
+    let main = dir.join("main.ae");
+    let report = || {
+        let out = Command::new(env!("CARGO_BIN_EXE_ae")).arg("deps").arg(&main).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n")
+    };
+
+    fs::write(&main, "use \"lib.ae\";\nfn main() { print(twice(3)); }\n").unwrap();
+    fs::write(&lib, "pub fn twice(x: i64) -> i64 { return x + x; }\n").unwrap();
+    let first = report();
+    assert!(first.contains("uses lib.ae"), "{first}");
+    assert!(first.contains("exports 1"), "{first}");
+    assert!(first.contains("fingerprint "), "{first}");
+
+    // A body-only edit (including a private helper) must not change any hash.
+    fs::write(&lib, "fn helper(x: i64) -> i64 { return x + 1; }\npub fn twice(x: i64) -> i64 { let y = x + x; return helper(y) - 1; }\n").unwrap();
+    assert_eq!(report(), first, "a body edit changed the interface fingerprint");
+
+    // Changing a public signature changes that module's interface and the
+    // program fingerprint, while the dependency graph stays the same.
+    fs::write(&main, "use \"lib.ae\";\nfn main() { print(twice(3.0)); }\n").unwrap();
+    fs::write(&lib, "pub fn twice(x: f64) -> f64 { return x + x; }\n").unwrap();
+    let third = report();
+    assert_ne!(third, first, "a signature edit left the fingerprint unchanged");
+    assert!(third.contains("uses lib.ae"), "{third}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn deps_reports_the_import_graph_in_load_order() {
+    let out = Command::new(env!("CARGO_BIN_EXE_ae")).arg("deps")
+        .arg("examples/modules/main.ae").output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
+    assert!(text.contains("module words.ae"), "{text}");
+    assert!(text.contains("module report.ae"), "{text}");
+    assert!(text.contains("module main.ae"), "{text}");
+    assert!(text.contains("  uses words.ae\n  uses report.ae\n"), "{text}");
+}
