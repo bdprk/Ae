@@ -2155,3 +2155,75 @@ fn the_pipe_stats_example_counts_a_piped_stream() {
         "bytes 16\ncharacters 10\nlines 2\nlongest line 5\n"
     );
 }
+#[test]
+fn json_paths_select_members_elements_and_escapes() {
+    let source = r#"fn main() {
+    let doc = "{ \"name\": \"ae\", \"tags\": [\"lang\", \"fast\"], \"meta\": { \"stars\": 12, \"flag\": true }, \"note\": null, \"text\": \"caf\\u00e9\\n\" }";
+    let a = json_get(doc, "name");
+    match a { ReadResult::Ok(v) => { print(v); } ReadResult::Err(e) => { print(e); } }
+    let b = json_get(doc, "tags[1]");
+    match b { ReadResult::Ok(v) => { print(v); } ReadResult::Err(e) => { print(e); } }
+    let c = json_int(doc, "meta.stars");
+    match c { IntResult::Ok(n) => { print(to_string(n)); } IntResult::Err(e) => { print(e); } }
+    let d = json_bool(doc, "meta.flag");
+    match d { BoolResult::Ok(f) => { print(f); } BoolResult::Err(e) => { print(e); } }
+    let e = json_get(doc, "note");
+    match e { ReadResult::Ok(v) => { print(v); } ReadResult::Err(x) => { print(x); } }
+    let f = json_get(doc, "text");
+    match f { ReadResult::Ok(v) => { print(v); print(len(v)); } ReadResult::Err(x) => { print(x); } }
+    let g = json_len(doc, "tags");
+    match g { IntResult::Ok(n) => { print(to_string(n)); } IntResult::Err(x) => { print(x); } }
+    print(json_has(doc, "meta.stars"));
+    print(json_has(doc, "missing"));
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "ae\nfast\n12\ntrue\nnull\ncafé\n\n6\n2\ntrue\nfalse\n"
+    );
+}
+
+#[test]
+fn json_errors_separate_missing_from_wrong_type() {
+    let source = r#"fn main() {
+    let doc = "{ \"s\": \"x\", \"n\": 3, \"arr\": [1], \"big\": 99999999999999999999, \"f\": 1.5 }";
+    let a = json_get(doc, "missing");
+    match a { ReadResult::Ok(v) => { print(v); } ReadResult::Err(e) => { print(e); } }
+    let b = json_int(doc, "s");
+    match b { IntResult::Ok(n) => { print(to_string(n)); } IntResult::Err(e) => { print(e); } }
+    let c = json_bool(doc, "n");
+    match c { BoolResult::Ok(f) => { print(f); } BoolResult::Err(e) => { print(e); } }
+    let d = json_len(doc, "s");
+    match d { IntResult::Ok(n) => { print(to_string(n)); } IntResult::Err(e) => { print(e); } }
+    let e = json_get(doc, "arr[3]");
+    match e { ReadResult::Ok(v) => { print(v); } ReadResult::Err(x) => { print(x); } }
+    let f = json_get(doc, "s.x");
+    match f { ReadResult::Ok(v) => { print(v); } ReadResult::Err(x) => { print(x); } }
+    let g = json_int(doc, "big");
+    match g { IntResult::Ok(n) => { print(to_string(n)); } IntResult::Err(x) => { print(x); } }
+    let h = json_int(doc, "f");
+    match h { IntResult::Ok(n) => { print(to_string(n)); } IntResult::Err(x) => { print(x); } }
+    let i = json_get(doc, "a.");
+    match i { ReadResult::Ok(v) => { print(v); } ReadResult::Err(x) => { print(x); } }
+    let j = json_get("{ \"a\": }", "a");
+    match j { ReadResult::Ok(v) => { print(v); } ReadResult::Err(x) => { print(x); } }
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        concat!(
+            "no member named 'missing'\n",
+            "'s' is a string, not a number\n",
+            "'n' is a number, not a boolean\n",
+            "'s' is a string; only arrays and objects have a member count\n",
+            "path segment [3] is past the end of the array\n",
+            "path segment 'x' needs an object, found a string\n",
+            "'big' does not fit in i64\n",
+            "'f' is not an integer\n",
+            "path ends with '.'\n",
+            "JSON syntax error near byte 0\n",
+        )
+    );
+}

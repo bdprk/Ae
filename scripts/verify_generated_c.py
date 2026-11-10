@@ -54,6 +54,28 @@ def run():
             "largest 8\n"
             "entries 3"
         ).encode("utf-8"), True),
+        # JSON path queries: a member, a nested member, an array element, an
+        # escaped \u sequence, a null, a missing name and a type mismatch all
+        # come back as values, and the document is read from disk.
+        ("json_report.ae", (
+            "ready\n"
+            "wrote 175 bytes\n"
+            "name gateway\n"
+            "workers 4\n"
+            "debug true\n"
+            "limits.rps 120\n"
+            "routes[1] /api/v1\n"
+            "routes: 'routes' is an array, not a number\n"
+            "routes[9]: path segment [9] is past the end of the array\n"
+            "owner ops\u00e9quipe\n"
+            "timeout: no member named 'timeout'\n"
+            "name: 'name' is a string, not a number\n"
+            "limits { \"rps\": 120, \"burst\": 40 }\n"
+            "counted 3 routes\n"
+            "true\n"
+            "cleaned\n"
+            "done"
+        ).encode("utf-8"), True),
         # Generic enums: Option[string] and Option[i64] are separate layouts,
         # and a moved-in payload is released with the value.
         ("maybe.ae", b"longest line: three\nlongest line: (none)\nfirst number: 42\nfirst number: (none)", True),

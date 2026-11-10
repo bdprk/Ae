@@ -36,6 +36,9 @@
 #define AE_STATUS_RESULT ae_e5
 #define AE_STATUS_OK AE_E5_0
 #define AE_STATUS_ERR AE_E5_1
+#define AE_BOOL_RESULT ae_e6
+#define AE_BOOL_OK AE_E6_0
+#define AE_BOOL_ERR AE_E6_1
 
 static AE_STATUS_RESULT ae_status_ok(void) {
     AE_STATUS_RESULT out = { AE_STATUS_OK, { { 0 } } };
@@ -741,4 +744,498 @@ static ae_strvec ae_map_keys(const ae_map *m, size_t line, size_t column) {
     }
     if (keys.len > 1) qsort(keys.data, (size_t)keys.len, sizeof(ae_string), ae_name_compare);
     return keys;
+}
+
+// ---- JSON reader (ADR-26) ---------------------------------------------------
+// A path query, not a document model: one call selects one value and reports it
+// as text, an integer or a boolean. The document is rescanned per call, which is
+// the right trade for config-sized input and keeps JSON out of the type system:
+// there is no container type to own, borrow or release.
+#define AE_JSON_OK 0
+#define AE_JSON_SYNTAX 1
+#define AE_JSON_MISSING 2
+#define AE_JSON_EXPECTED 3
+#define AE_JSON_DEPTH 64
+#define AE_JSON_STRING 0
+#define AE_JSON_NUMBER 1
+#define AE_JSON_BOOL 2
+#define AE_JSON_NULL 3
+#define AE_JSON_ARRAY 4
+#define AE_JSON_OBJECT 5
+
+static void ae_json_ws(const char *t, int64_t n, int64_t *i) {
+    while (*i < n) {
+        const char c = t[*i];
+        if (c != ' ' && c != '\t' && c != '\n' && c != '\r') break;
+        *i += 1;
+    }
+}
+static int ae_json_hex(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+static int ae_json_utf8(char *out, unsigned cp) {
+    if (cp < 0x80u) { out[0] = (char)cp; return 1; }
+    if (cp < 0x800u) { out[0] = (char)(0xC0u | (cp >> 6)); out[1] = (char)(0x80u | (cp & 0x3Fu)); return 2; }
+    if (cp < 0x10000u) { out[0] = (char)(0xE0u | (cp >> 12)); out[1] = (char)(0x80u | ((cp >> 6) & 0x3Fu)); out[2] = (char)(0x80u | (cp & 0x3Fu)); return 3; }
+    out[0] = (char)(0xF0u | (cp >> 18)); out[1] = (char)(0x80u | ((cp >> 12) & 0x3Fu)); out[2] = (char)(0x80u | ((cp >> 6) & 0x3Fu)); out[3] = (char)(0x80u | (cp & 0x3Fu)); return 4;
+}
+static int ae_json_skip_string(const char *t, int64_t n, int64_t *i) {
+    if (*i >= n || t[*i] != '"') return 0;
+    int64_t j = *i + 1;
+    while (j < n) {
+        const unsigned char c = (unsigned char)t[j];
+        if (c == '"') { *i = j + 1; return 1; }
+        if (c == '\\') { j += 2; continue; }
+        if (c < 0x20u) return 0;
+        j += 1;
+    }
+    return 0;
+}
+static int ae_json_skip_value(const char *t, int64_t n, int64_t *i, int depth) {
+    if (depth > AE_JSON_DEPTH) return 0;
+    ae_json_ws(t, n, i);
+    if (*i >= n) return 0;
+    const char c = t[*i];
+    if (c == '"') return ae_json_skip_string(t, n, i);
+    if (c == '{' || c == '[') {
+        const char close = c == '{' ? '}' : ']';
+        *i += 1;
+        ae_json_ws(t, n, i);
+        if (*i < n && t[*i] == close) { *i += 1; return 1; }
+        for (;;) {
+            ae_json_ws(t, n, i);
+            if (c == '{') {
+                if (!ae_json_skip_string(t, n, i)) return 0;
+                ae_json_ws(t, n, i);
+                if (*i >= n || t[*i] != ':') return 0;
+                *i += 1;
+            }
+            if (!ae_json_skip_value(t, n, i, depth + 1)) return 0;
+            ae_json_ws(t, n, i);
+            if (*i >= n) return 0;
+            if (t[*i] == ',') { *i += 1; continue; }
+            if (t[*i] == close) { *i += 1; return 1; }
+            return 0;
+        }
+    }
+    // A bare token: number, true, false or null. Its end is punctuation or space.
+    const int64_t start = *i;
+    while (*i < n) {
+        const char d = t[*i];
+        if (d == ',' || d == '}' || d == ']' || d == ' ' || d == '\t' || d == '\r' || d == '\n') break;
+        *i += 1;
+    }
+    return *i > start;
+}
+// Decodes one JSON string at *i into an owned string, resolving escapes (and
+// surrogate pairs) so the language never sees a \uXXXX sequence.
+static int ae_json_decode(const char *t, int64_t n, int64_t *i, ae_string *out, size_t line, size_t column) {
+    if (*i >= n || t[*i] != '"') return 0;
+    int64_t j = *i + 1;
+    while (j < n) {
+        const unsigned char c = (unsigned char)t[j];
+        if (c == '"') break;
+        if (c == '\\') { j += 2; continue; }
+        if (c < 0x20u) return 0;
+        j += 1;
+    }
+    if (j >= n) return 0;
+    const int64_t raw = j - (*i + 1);
+    char *buffer = ae_alloc((size_t)raw + 1, line, column);
+    int64_t s = *i + 1;
+    int64_t k = 0;
+    while (s < j) {
+        const unsigned char c = (unsigned char)t[s];
+        if (c != '\\') { buffer[k] = (char)c; k += 1; s += 1; continue; }
+        s += 1;
+        if (s >= j) { ae_free(buffer); return 0; }
+        const char e = t[s];
+        s += 1;
+        switch (e) {
+            case '"': buffer[k] = '"'; k += 1; break;
+            case '\\': buffer[k] = '\\'; k += 1; break;
+            case '/': buffer[k] = '/'; k += 1; break;
+            case 'b': buffer[k] = '\b'; k += 1; break;
+            case 'f': buffer[k] = '\f'; k += 1; break;
+            case 'n': buffer[k] = '\n'; k += 1; break;
+            case 'r': buffer[k] = '\r'; k += 1; break;
+            case 't': buffer[k] = '\t'; k += 1; break;
+            case 'u': {
+                unsigned cp = 0;
+                if (s + 4 > j) { ae_free(buffer); return 0; }
+                for (int d = 0; d < 4; d++) {
+                    const int v = ae_json_hex(t[s + d]);
+                    if (v < 0) { ae_free(buffer); return 0; }
+                    cp = (cp << 4) | (unsigned)v;
+                }
+                s += 4;
+                if (cp >= 0xD800u && cp <= 0xDBFFu && s + 6 <= j && t[s] == '\\' && t[s + 1] == 'u') {
+                    unsigned low = 0;
+                    int ok = 1;
+                    for (int d = 0; d < 4; d++) {
+                        const int v = ae_json_hex(t[s + 2 + d]);
+                        if (v < 0) { ok = 0; break; }
+                        low = (low << 4) | (unsigned)v;
+                    }
+                    if (ok && low >= 0xDC00u && low <= 0xDFFFu) {
+                        cp = 0x10000u + ((cp - 0xD800u) << 10) + (low - 0xDC00u);
+                        s += 6;
+                    }
+                }
+                // A NUL would end the string early for every C consumer.
+                if (cp == 0) { ae_free(buffer); return 0; }
+                k += ae_json_utf8(buffer + k, cp);
+                break;
+            }
+            default: ae_free(buffer); return 0;
+        }
+    }
+    buffer[k] = 0;
+    out->ptr = buffer;
+    out->len = k;
+    *i = j + 1;
+    return 1;
+}
+static int ae_json_kind(const char *t, int64_t n, int64_t start) {
+    if (start >= n) return -1;
+    const char c = t[start];
+    if (c == '"') return AE_JSON_STRING;
+    if (c == '{') return AE_JSON_OBJECT;
+    if (c == '[') return AE_JSON_ARRAY;
+    if (c == 't' || c == 'f') return AE_JSON_BOOL;
+    if (c == 'n') return AE_JSON_NULL;
+    return AE_JSON_NUMBER;
+}
+static const char *ae_json_kind_name(int kind) {
+    switch (kind) {
+        case AE_JSON_STRING: return "a string";
+        case AE_JSON_NUMBER: return "a number";
+        case AE_JSON_BOOL: return "a boolean";
+        case AE_JSON_NULL: return "null";
+        case AE_JSON_ARRAY: return "an array";
+        case AE_JSON_OBJECT: return "an object";
+        default: return "nothing";
+    }
+}
+// Locates one member inside the object at *pos, leaving its value span in
+// *vs/*ve. *found separates "no such member" from "not an object at all".
+static int ae_json_member(const char *t, int64_t n, int64_t *pos, const char *key, int64_t key_len, int64_t *vs, int64_t *ve, int *found, size_t line, size_t column) {
+    *found = 0;
+    int64_t i = *pos;
+    if (i >= n || t[i] != '{') return 0;
+    i += 1;
+    ae_json_ws(t, n, &i);
+    if (i < n && t[i] == '}') { *pos = i + 1; return 1; }
+    for (;;) {
+        ae_json_ws(t, n, &i);
+        ae_string name;
+        if (!ae_json_decode(t, n, &i, &name, line, column)) return 0;
+        ae_json_ws(t, n, &i);
+        if (i >= n || t[i] != ':') { ae_free(name.ptr); return 0; }
+        i += 1;
+        ae_json_ws(t, n, &i);
+        const int64_t start = i;
+        if (!ae_json_skip_value(t, n, &i, 0)) { ae_free(name.ptr); return 0; }
+        const int match = name.len == key_len && memcmp(name.ptr, key, (size_t)key_len) == 0;
+        ae_free(name.ptr);
+        if (match) { *vs = start; *ve = i; *found = 1; return 1; }
+        ae_json_ws(t, n, &i);
+        if (i >= n) return 0;
+        if (t[i] == ',') { i += 1; continue; }
+        if (t[i] == '}') { *pos = i + 1; return 1; }
+        return 0;
+    }
+}
+static int ae_json_element(const char *t, int64_t n, int64_t *pos, int64_t index, int64_t *vs, int64_t *ve, int *found) {
+    *found = 0;
+    int64_t i = *pos;
+    if (i >= n || t[i] != '[') return 0;
+    i += 1;
+    ae_json_ws(t, n, &i);
+    if (i < n && t[i] == ']') { *pos = i + 1; return 1; }
+    int64_t k = 0;
+    for (;;) {
+        ae_json_ws(t, n, &i);
+        const int64_t start = i;
+        if (!ae_json_skip_value(t, n, &i, 0)) return 0;
+        if (k == index) { *vs = start; *ve = i; *found = 1; return 1; }
+        k += 1;
+        ae_json_ws(t, n, &i);
+        if (i >= n) return 0;
+        if (t[i] == ',') { i += 1; continue; }
+        if (t[i] == ']') { *pos = i + 1; return 1; }
+        return 0;
+    }
+}
+// Validates the path on its own first, so a typo in the path is reported as a
+// path error even when the document would have failed on the same segment.
+static int ae_json_path_check(const char *path, int64_t plen, char *why, size_t why_cap) {
+    int64_t p = 0;
+    while (p < plen) {
+        if (path[p] == '[') {
+            const int64_t open = p;
+            p += 1;
+            int digits = 0;
+            while (p < plen && path[p] >= '0' && path[p] <= '9') { p += 1; digits += 1; }
+            if (digits == 0 || p >= plen || path[p] != ']') {
+                snprintf(why, why_cap, "path index at byte %lld needs digits and a closing ']'", (long long)open);
+                return 0;
+            }
+            p += 1;
+            if (p < plen && path[p] == '.') {
+                p += 1;
+                if (p >= plen) { snprintf(why, why_cap, "path ends with '.'"); return 0; }
+            }
+            continue;
+        }
+        const int64_t kstart = p;
+        while (p < plen && path[p] != '.' && path[p] != '[') p += 1;
+        if (p == kstart) {
+            snprintf(why, why_cap, "path has an empty segment at byte %lld", (long long)kstart);
+            return 0;
+        }
+        if (p < plen && path[p] == '.') {
+            p += 1;
+            if (p >= plen) { snprintf(why, why_cap, "path ends with '.'"); return 0; }
+        }
+    }
+    return 1;
+}
+// Path grammar: `key`, `key.sub`, `key[2].sub`, `[0].key`. A segment is a run of
+// bytes up to the next '.' or '['; keys are compared after unescaping.
+static int ae_json_locate(const char *t, int64_t n, const char *path, int64_t plen, int64_t *vs, int64_t *ve, int *kind, char *why, size_t why_cap, size_t line, size_t column) {
+    if (!ae_json_path_check(path, plen, why, why_cap)) return AE_JSON_SYNTAX;
+    int64_t pos = 0;
+    ae_json_ws(t, n, &pos);
+    const int64_t start0 = pos;
+    if (!ae_json_skip_value(t, n, &pos, 0)) {
+        snprintf(why, why_cap, "JSON syntax error near byte %lld", (long long)start0);
+        return AE_JSON_SYNTAX;
+    }
+    int64_t start = start0;
+    int64_t end = pos;
+    int current = ae_json_kind(t, n, start);
+    int64_t p = 0;
+    while (p < plen) {
+        if (path[p] == '[') {
+            const int64_t open = p;
+            p += 1;
+            int64_t index = 0;
+            int digits = 0;
+            while (p < plen && path[p] >= '0' && path[p] <= '9' && digits < 10) { index = index * 10 + (path[p] - '0'); p += 1; digits += 1; }
+            if (digits == 0 || p >= plen || path[p] != ']') {
+                snprintf(why, why_cap, "path index at byte %lld needs digits and a closing ']'", (long long)open);
+                return AE_JSON_SYNTAX;
+            }
+            p += 1;
+            if (current != AE_JSON_ARRAY) {
+                snprintf(why, why_cap, "path segment [%lld] needs an array, found %s", (long long)index, ae_json_kind_name(current));
+                return AE_JSON_EXPECTED;
+            }
+            int64_t cursor = start;
+            int found = 0;
+            if (!ae_json_element(t, n, &cursor, index, &start, &end, &found)) {
+                snprintf(why, why_cap, "JSON syntax error while reading an array element");
+                return AE_JSON_SYNTAX;
+            }
+            if (!found) {
+                snprintf(why, why_cap, "path segment [%lld] is past the end of the array", (long long)index);
+                return AE_JSON_MISSING;
+            }
+        } else {
+            const int64_t kstart = p;
+            while (p < plen && path[p] != '.' && path[p] != '[') p += 1;
+            const int64_t klen = p - kstart;
+            if (klen == 0) {
+                snprintf(why, why_cap, "path has an empty segment at byte %lld", (long long)kstart);
+                return AE_JSON_SYNTAX;
+            }
+            if (current != AE_JSON_OBJECT) {
+                snprintf(why, why_cap, "path segment '%.*s' needs an object, found %s", (int)klen, path + kstart, ae_json_kind_name(current));
+                return AE_JSON_EXPECTED;
+            }
+            int64_t cursor = start;
+            int found = 0;
+            if (!ae_json_member(t, n, &cursor, path + kstart, klen, &start, &end, &found, line, column)) {
+                snprintf(why, why_cap, "JSON syntax error while reading a member");
+                return AE_JSON_SYNTAX;
+            }
+            if (!found) {
+                snprintf(why, why_cap, "no member named '%.*s'", (int)klen, path + kstart);
+                return AE_JSON_MISSING;
+            }
+        }
+        current = ae_json_kind(t, n, start);
+        if (p < plen) {
+            if (path[p] != '.' && path[p] != '[') {
+                snprintf(why, why_cap, "path segment ends unexpectedly at byte %lld", (long long)p);
+                return AE_JSON_SYNTAX;
+            }
+            if (path[p] == '.') {
+                p += 1;
+                if (p >= plen) {
+                    snprintf(why, why_cap, "path ends with '.'");
+                    return AE_JSON_SYNTAX;
+                }
+            }
+        }
+    }
+    *vs = start;
+    *ve = end;
+    *kind = current;
+    return AE_JSON_OK;
+}
+static int ae_json_count(const char *t, int64_t n, int64_t start, int kind) {
+    int64_t i = start + 1;
+    int64_t count = 0;
+    const char close = kind == AE_JSON_OBJECT ? '}' : ']';
+    ae_json_ws(t, n, &i);
+    if (i < n && t[i] == close) return 0;
+    for (;;) {
+        ae_json_ws(t, n, &i);
+        if (kind == AE_JSON_OBJECT) {
+            if (!ae_json_skip_string(t, n, &i)) return -1;
+            ae_json_ws(t, n, &i);
+            if (i >= n || t[i] != ':') return -1;
+            i += 1;
+        }
+        if (!ae_json_skip_value(t, n, &i, 0)) return -1;
+        count += 1;
+        ae_json_ws(t, n, &i);
+        if (i >= n) return -1;
+        if (t[i] == ',') { i += 1; continue; }
+        if (t[i] == close) return count;
+        return -1;
+    }
+}
+static AE_READ_RESULT ae_json_get(const char *doc_text, int64_t doc_size, const char *path_text, int64_t path_size, size_t line, size_t column) {
+    const ae_strview doc = { doc_text, doc_size };
+    const ae_strview path = { path_text, path_size };
+
+    int64_t vs = 0;
+    int64_t ve = 0;
+    int kind = 0;
+    char why[192];
+    if (ae_json_locate(doc.ptr, doc.len, path.ptr, path.len, &vs, &ve, &kind, why, sizeof why, line, column) != AE_JSON_OK) {
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from(why, line, column) } } };
+        return out;
+    }
+    ae_string value;
+    if (kind == AE_JSON_STRING) {
+        int64_t at = vs;
+        if (!ae_json_decode(doc.ptr, doc.len, &at, &value, line, column)) {
+            AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("JSON string could not be decoded", line, column) } } };
+            return out;
+        }
+    } else {
+        value = ae_str_from_len(doc.ptr + vs, ve - vs, line, column);
+    }
+    AE_READ_RESULT out = { AE_READ_OK, { .v0 = { value } } };
+    return out;
+}
+static AE_INT_RESULT ae_json_int(const char *doc_text, int64_t doc_size, const char *path_text, int64_t path_size, size_t line, size_t column) {
+    const ae_strview doc = { doc_text, doc_size };
+    const ae_strview path = { path_text, path_size };
+
+    int64_t vs = 0;
+    int64_t ve = 0;
+    int kind = 0;
+    char why[192];
+    if (ae_json_locate(doc.ptr, doc.len, path.ptr, path.len, &vs, &ve, &kind, why, sizeof why, line, column) != AE_JSON_OK) {
+        AE_INT_RESULT out = { AE_INT_ERR, { .v1 = { ae_str_from(why, line, column) } } };
+        return out;
+    }
+    if (kind != AE_JSON_NUMBER) {
+        snprintf(why, sizeof why, "'%.*s' is %s, not a number", (int)path.len, path.ptr, ae_json_kind_name(kind));
+        AE_INT_RESULT out = { AE_INT_ERR, { .v1 = { ae_str_from(why, line, column) } } };
+        return out;
+    }
+    int64_t i = vs;
+    int negative = 0;
+    if (i < ve && doc.ptr[i] == '-') { negative = 1; i += 1; }
+    if (i >= ve) {
+        snprintf(why, sizeof why, "'%.*s' is not an integer", (int)path.len, path.ptr);
+        AE_INT_RESULT out = { AE_INT_ERR, { .v1 = { ae_str_from(why, line, column) } } };
+        return out;
+    }
+    int64_t value = 0;
+    for (; i < ve; i++) {
+        const char d = doc.ptr[i];
+        if (d < '0' || d > '9') {
+            // A fraction or exponent is a real number; this reader has no float type.
+            snprintf(why, sizeof why, "'%.*s' is not an integer", (int)path.len, path.ptr);
+            AE_INT_RESULT out = { AE_INT_ERR, { .v1 = { ae_str_from(why, line, column) } } };
+            return out;
+        }
+        const int digit = d - '0';
+        if (value > (INT64_MAX - digit) / 10) {
+            snprintf(why, sizeof why, "'%.*s' does not fit in i64", (int)path.len, path.ptr);
+            AE_INT_RESULT out = { AE_INT_ERR, { .v1 = { ae_str_from(why, line, column) } } };
+            return out;
+        }
+        value = value * 10 + digit;
+    }
+    AE_INT_RESULT out = { AE_INT_OK, { .v0 = { negative ? -value : value } } };
+    return out;
+}
+static AE_BOOL_RESULT ae_json_bool(const char *doc_text, int64_t doc_size, const char *path_text, int64_t path_size, size_t line, size_t column) {
+    const ae_strview doc = { doc_text, doc_size };
+    const ae_strview path = { path_text, path_size };
+
+    int64_t vs = 0;
+    int64_t ve = 0;
+    int kind = 0;
+    char why[192];
+    if (ae_json_locate(doc.ptr, doc.len, path.ptr, path.len, &vs, &ve, &kind, why, sizeof why, line, column) != AE_JSON_OK) {
+        AE_BOOL_RESULT out = { AE_BOOL_ERR, { .v1 = { ae_str_from(why, line, column) } } };
+        return out;
+    }
+    const int64_t width = ve - vs;
+    bool value = false;
+    if (kind == AE_JSON_BOOL && width == 4 && memcmp(doc.ptr + vs, "true", 4) == 0) value = true;
+    else if (!(kind == AE_JSON_BOOL && width == 5 && memcmp(doc.ptr + vs, "false", 5) == 0)) {
+        snprintf(why, sizeof why, "'%.*s' is %s, not a boolean", (int)path.len, path.ptr, ae_json_kind_name(kind));
+        AE_BOOL_RESULT out = { AE_BOOL_ERR, { .v1 = { ae_str_from(why, line, column) } } };
+        return out;
+    }
+    AE_BOOL_RESULT out = { AE_BOOL_OK, { .v0 = { value } } };
+    return out;
+}
+static AE_INT_RESULT ae_json_len(const char *doc_text, int64_t doc_size, const char *path_text, int64_t path_size, size_t line, size_t column) {
+    const ae_strview doc = { doc_text, doc_size };
+    const ae_strview path = { path_text, path_size };
+
+    int64_t vs = 0;
+    int64_t ve = 0;
+    int kind = 0;
+    char why[192];
+    if (ae_json_locate(doc.ptr, doc.len, path.ptr, path.len, &vs, &ve, &kind, why, sizeof why, line, column) != AE_JSON_OK) {
+        AE_INT_RESULT out = { AE_INT_ERR, { .v1 = { ae_str_from(why, line, column) } } };
+        return out;
+    }
+    if (kind != AE_JSON_ARRAY && kind != AE_JSON_OBJECT) {
+        snprintf(why, sizeof why, "'%.*s' is %s; only arrays and objects have a member count", (int)path.len, path.ptr, ae_json_kind_name(kind));
+        AE_INT_RESULT out = { AE_INT_ERR, { .v1 = { ae_str_from(why, line, column) } } };
+        return out;
+    }
+    const int64_t count = ae_json_count(doc.ptr, doc.len, vs, kind);
+    if (count < 0) {
+        AE_INT_RESULT out = { AE_INT_ERR, { .v1 = { ae_str_from("JSON syntax error while counting members", line, column) } } };
+        return out;
+    }
+    AE_INT_RESULT out = { AE_INT_OK, { .v0 = { count } } };
+    return out;
+}
+static bool ae_json_has(const char *doc_text, int64_t doc_size, const char *path_text, int64_t path_size, size_t line, size_t column) {
+    const ae_strview doc = { doc_text, doc_size };
+    const ae_strview path = { path_text, path_size };
+
+    int64_t vs = 0;
+    int64_t ve = 0;
+    int kind = 0;
+    char why[192];
+    return ae_json_locate(doc.ptr, doc.len, path.ptr, path.len, &vs, &ve, &kind, why, sizeof why, line, column) == AE_JSON_OK;
 }

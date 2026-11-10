@@ -82,7 +82,7 @@
 
 ## 可恢复错误与数字转换
 
-程序预置六个结果枚举（无需导入，变体顺序固定）：`ReadResult{Ok(string), Err(string)}`、`WriteResult{Ok(i64), Err(string)}`、`IntResult{Ok(i64), Err(string)}`、`DirResult{Ok(vec[string]), Err(string)}`、`FileResult{Ok(i64, i64, bool), Err(string)}`、`StatusResult{Ok, Err(string)}`。可失败内建：`try_read_file(path) -> ReadResult`、`try_write_file(path, content) -> WriteResult`（成功返回写入字节数）、`parse_int(text) -> IntResult`。失败返回 `Err` 负载的错误描述，**不终止进程**；`read_file`/`write_file` 仍是失败即终止的不可恢复版本。`parse_int` 严格按十进制：可选 `+`/`-`、只允许 ASCII 数字、整串必须消费完、正负分别以 `9223372036854775807`/`-9223372036854775808` 为界，其余情况均为 `Err`。`to_string(i64) -> string` 是十进制格式化，与 `parse_int` 构成往返。
+程序预置七个结果枚举（无需导入，变体顺序固定）：`ReadResult{Ok(string), Err(string)}`、`WriteResult{Ok(i64), Err(string)}`、`IntResult{Ok(i64), Err(string)}`、`DirResult{Ok(vec[string]), Err(string)}`、`FileResult{Ok(i64, i64, bool), Err(string)}`、`StatusResult{Ok, Err(string)}`、`BoolResult{Ok(bool), Err(string)}`。可失败内建：`try_read_file(path) -> ReadResult`、`try_write_file(path, content) -> WriteResult`（成功返回写入字节数）、`parse_int(text) -> IntResult`。失败返回 `Err` 负载的错误描述，**不终止进程**；`read_file`/`write_file` 仍是失败即终止的不可恢复版本。`parse_int` 严格按十进制：可选 `+`/`-`、只允许 ASCII 数字、整串必须消费完、正负分别以 `9223372036854775807`/`-9223372036854775808` 为界，其余情况均为 `Err`。`to_string(i64) -> string` 是十进制格式化，与 `parse_int` 构成往返。
 
 结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string`/`map_new`/`map_get`/`map_has`/`map_remove`/`keys`/`utf8_len`/`utf8_prefix` 与六个结果类型名均为保留名。
 
@@ -90,7 +90,7 @@
 
 `let x = 调用()?;` 与 `调用()?;` 是传播语句：结果枚举处于 `Err` 时，先释放当前函数内所有仍存活的拥有型变量，再把这个结果值本身返回给调用者；处于 `Ok` 时，`let` 形式把唯一的负载移出并绑定（`Ok` 必须恰好一个负载），裸语句形式则释放负载后继续。裸语句是语言里唯一的「表达式语句」，且**必须以 `?` 结尾**，因此不存在「静默丢弃返回值」的写法。
 
-可传播的类型必须形如 `{ Ok(...), Err(string) }`（`Ok` 在前、`Err` 在后），六个预置结果枚举都满足；自定义枚举照此形状同样可用。传播要求外层函数返回**同一个**枚举类型，`main` 里不能传播；一个函数只能传播一个结果族，跨族（例如 `try_list_dir` 的 `DirResult` 与 `try_copy_file` 的 `StatusResult`）必须在边界处用 `match` 转换。`?` 是语句而非表达式，不能出现在更大的表达式里。
+可传播的类型必须形如 `{ Ok(...), Err(string) }`（`Ok` 在前、`Err` 在后），七个预置结果枚举都满足；自定义枚举照此形状同样可用。传播要求外层函数返回**同一个**枚举类型，`main` 里不能传播；一个函数只能传播一个结果族，跨族（例如 `try_list_dir` 的 `DirResult` 与 `try_copy_file` 的 `StatusResult`）必须在边界处用 `match` 转换。`?` 是语句而非表达式，不能出现在更大的表达式里。
 
 ## 路径代数与文件元数据
 
@@ -137,6 +137,26 @@ fn main() {
 `cwd() -> ReadResult` 返回当前工作目录的绝对路径，分隔符统一为 `/`（与 `path_join`/`path_parent` 同一口径），可继续传给 `path_join` 或 `try_*` 系列。`getcwd` 会失败（目录被删除、权限变化），所以是结果值而不是裸字符串。不解析符号链接，也没有 `set_cwd`。
 
 `grep_cli.ae` 与 `pipe_stats.ae` 是两个验收示例：前者把 `-` 当作「从标准输入读」，后者统计管道字节/字符/行/最长行（`cat notes.txt | ae run examples/pipe_stats.ae`）。
+
+## JSON 路径查询
+
+`json_get(text, path) -> ReadResult` 按路径取一个值：字符串会解码转义（含 `\uXXXX` 与代理对），数字与 `true`/`false`/`null` 返回原文，数组与对象返回原始片段。路径写成 `key.sub[2].name`，空路径表示整个文档，`[0]` 可以直接用在根数组上。
+
+`json_int(text, path) -> IntResult` 只接受纯整数（有小数点或指数就报错，溢出 `i64` 也报错）；`json_bool(text, path) -> BoolResult` 只接受 `true`/`false`；`json_len(text, path) -> IntResult` 返回数组元素数或对象成员数；`json_has(text, path) -> bool` 只问存在与否（`null` 也算存在）。
+
+```ae
+fn port(config: &string) -> i64 {
+    let found = json_int(config, "server.port");
+    match found {
+        IntResult::Ok(n) => { return n; }
+        IntResult::Err(reason) => { print("no port: " + reason); return 8080; }
+    }
+}
+```
+
+三种失败是分开的：`no member named 'timeout'`（没有这个键）、`'name' is a string, not a number`（键在但类型不对）、`path segment [9] is past the end of the array`（越界）。路径自身写错（`a.`、`a[`、`a..b`）会在扫描文档之前报出来。
+
+这是**读取器**而不是验证器：它只沿着路径检查语法，不校验整份文档；数字的严格性在 `json_int` 转换时才保证；重复键取第一个；键名里含 `.` 或 `[` 的字段无法用路径表达；没有写入与序列化。每次调用都会重新扫描文档，配置级输入足够快，同一字段反复查询应先取出存进变量。
 
 ## 哈希表
 

@@ -1,0 +1,88 @@
+// Reading a configuration without a JSON type in the language: every field is
+// a path query, and each query reports why it failed instead of guessing. A
+// missing member, a wrong type and a malformed document are three different
+// errors, which is the point of returning a result instead of a sentinel.
+
+fn document() -> string {
+    // JSON does not care about line breaks, so one literal keeps this readable
+    // (the language has no empty `vec[string]` to build up line by line).
+    return "{\n  \"name\": \"gateway\",\n  \"workers\": 4,\n  \"debug\": true,\n  \"routes\": [\"/health\", \"/api/v1\", \"/metrics\"],\n  \"limits\": { \"rps\": 120, \"burst\": 40 },\n  \"owner\": \"ops\\u00e9quipe\"\n}\n";
+}
+
+fn show(doc: &string, path: &string) -> i64 {
+    let result = json_get(doc, path);
+    match result {
+        ReadResult::Ok(text) => { print(path + " " + text); }
+        ReadResult::Err(reason) => { print(path + ": " + reason); }
+    }
+    return 0;
+}
+
+fn show_int(doc: &string, path: &string) -> i64 {
+    let result = json_int(doc, path);
+    match result {
+        IntResult::Ok(n) => { print(path + " " + to_string(n)); }
+        IntResult::Err(reason) => { print(path + ": " + reason); }
+    }
+    return 0;
+}
+
+fn show_bool(doc: &string, path: &string) -> i64 {
+    let result = json_bool(doc, path);
+    match result {
+        BoolResult::Ok(flag) => {
+            if flag { print(path + " true"); } else { print(path + " false"); }
+        }
+        BoolResult::Err(reason) => { print(path + ": " + reason); }
+    }
+    return 0;
+}
+
+fn run() -> i64 {
+    let dir = "ae-json";
+    let _leftover = try_remove_file(path_join(dir, "config.json"));
+    let _stale = try_remove_dir(dir);
+    let made = try_create_dir(dir);
+    match made {
+        StatusResult::Ok => { print("ready"); }
+        StatusResult::Err(reason) => { print("cannot create: " + reason); return 0; }
+    }
+    let written = try_write_file(path_join(dir, "config.json"), document());
+    match written {
+        WriteResult::Ok(n) => { print("wrote " + to_string(n) + " bytes"); }
+        WriteResult::Err(reason) => { print("cannot write: " + reason); return 0; }
+    }
+    let doc = read_file(path_join(dir, "config.json"));
+    let _a = show(doc, "name");
+    let _b = show_int(doc, "workers");
+    let _c = show_bool(doc, "debug");
+    let _d = show_int(doc, "limits.rps");
+    let _e = show(doc, "routes[1]");
+    let _f = show_int(doc, "routes");
+    let _g = show_int(doc, "routes[9]");
+    let _h = show(doc, "owner");
+    let _i = show(doc, "timeout");
+    let _j = show_int(doc, "name");
+    let _k = show(doc, "limits");
+    let counted = json_len(doc, "routes");
+    match counted {
+        IntResult::Ok(n) => { print("counted " + to_string(n) + " routes"); }
+        IntResult::Err(reason) => { print("cannot count: " + reason); }
+    }
+    print(json_has(doc, "limits.burst"));
+    let removed = try_remove_file(path_join(dir, "config.json"));
+    let dropped = try_remove_dir(dir);
+    match removed {
+        StatusResult::Ok => { print("cleaned"); }
+        StatusResult::Err(reason) => { print("cannot remove: " + reason); }
+    }
+    match dropped {
+        StatusResult::Ok => { print("done"); }
+        StatusResult::Err(reason) => { print("cannot drop: " + reason); }
+    }
+    return 0;
+}
+
+fn main() {
+    assert(run() == 0);
+}
