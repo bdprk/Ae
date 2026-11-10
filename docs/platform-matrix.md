@@ -27,9 +27,9 @@
 
 **同日 W1 已在 Linux 回填完成**（`bench/results/2026-11-10-linux-borrow-find/`，Debian 13 / GCC 14.2.0 / rustc 1.99.0）：`cargo test --locked` 9 单元 + 129 集成全部通过；`--sanitize` 23 个用例 PASS 且无 ASan/UBSan 报告；`--leak` 23 个用例 PASS、退出分配块数均为 glibc 基线 0；全部 `examples/*.ae` 通过 `check`；两个新示例与 Windows 输出按行尾归一化后一致。因此这三项能力现为**双平台验证**，不再是单平台原型；净化器只在 Linux 跑过（MinGW 无 ASan 运行时），这一限制不变。
 
-**同日 W2（`f64`，ADR-37）也在两平台各跑一次**：Windows `bench/results/2026-11-10-windows-float/`、Linux `bench/results/2026-11-10-linux-float/`。两平台均为 9 单元 + 133 集成测试全通过；Linux `--sanitize` 24 个用例 PASS、无 ASan/UBSan 报告；`--leak` 24 个用例 PASS，Linux 退出分配块数为 0、Windows 等于 2 块基线（`float_math.ae` 的 `to_string`/`to_i64` 分配全部归还）。`float_math.ae` 输出在两平台按行尾归一化后逐字节一致——因为文本由运行时 `ae_f64_text` 生成，不经过 `printf` 的 `%g`；实测 UCRT 对 NaN 输出 `-nan(ind)`、glibc 输出 `-nan`，这正是不能用 `%g` 当语言语义的证据。生成 C 文本在两平台完全相同（trivial 109,721 字节、`float_math.ae` 116,494 字节，+6,773 字节来自格式化与转换）；release 产物 Windows 70,467 字节、Linux 21,576 字节。
+**同日 W2（`f64`，ADR-37）也在两平台各跑一次**：Windows `bench/results/2026-11-10-windows-float/`、Linux `bench/results/2026-11-10-linux-float/`。两平台均为 9 单元 + 133 集成测试全通过；Linux `--sanitize` 24 个用例 PASS、无 ASan/UBSan 报告；`--leak` 24 个用例 PASS，Linux 退出分配块数为 0、Windows 等于 2 块基线（`float_math.ae` 的 `to_string`/`to_i64` 分配全部归还）。`float_math.ae` 输出在两平台按行尾归一化后逐字节一致——因为文本由运行时 `ae_f64_text` 生成，不经过 `printf` 的 `%g`；实测 UCRT 对 NaN 输出 `-nan(ind)`、glibc 输出 `-nan`，这正是不能用 `%g` 当语言语义的证据。生成 C 文本在两平台完全相同（trivial 109,721 字节、`float_math.ae` 116,494 字节，+6,773 字节主要是格式化器源码）；空程序的 release 产物仍是 Windows 61,309 / Linux 16,176 字节，说明未被引用的格式化器会被优化掉。`float_math.ae` 用了格式化与转换，release 产物 Windows 70,467 / Linux 21,576 字节；它与 `find_text.ae`（66,904 字节）不是同一程序，差值只能作量级参考，不能当作 `f64` 的精确增量。
 
-**资源成本（如实记录）**：`f64` 的格式化器让每个程序多约 6.8 KB 生成 C，release 产物多约 3.6 KB（Windows），主要来自 `snprintf`/`strtod`；这是「跨平台规范文本」的价格，不以关闭检查或依赖 CRT 差异换取体积。
+**资源成本（如实记录）**：`f64` 支持让每个程序多约 6.8 KB 生成 C；实际进入可执行文件的只有引用到的格式化和转换路径（`float_math.ae` 这类程序约多几 KB，空程序 0）。这是「跨平台规范文本」的价格，不以关闭检查或依赖 CRT 差异换取体积。
 
 ## 已知平台差异（不掩盖）
 

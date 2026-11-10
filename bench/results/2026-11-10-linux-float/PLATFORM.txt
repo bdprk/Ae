@@ -31,7 +31,8 @@ Results
 Resource measurements
   emit-c: trivial program 109,721 bytes; float_math.ae 116,494 bytes
     (identical to Windows: the generated C text is platform-independent)
-  build --release: float_math.ae 21,576 bytes
+  build --release: trivial 16,176 bytes (unchanged range), float_math.ae 21,576
+    bytes. The formatter is dead-code-eliminated at -O2 when unused.
 
 Not covered here
   Performance benchmarks, macOS/ARM64/musl, and any capability added after this

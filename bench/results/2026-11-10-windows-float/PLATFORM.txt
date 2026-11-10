@@ -21,9 +21,11 @@ Results
 
 Resource measurements (this machine)
   emit-c: trivial program 109,721 bytes; float_math.ae 116,494 bytes
-    (+6,773 bytes for the f64 formatter and conversions)
-  build --release: float_math.ae 70,467 bytes; find_text.ae 66,904 bytes
-    (+~3.6 KB, mostly the snprintf/strtod path)
+    (+6,773 bytes of formatter/conversion source, most of it removed again at -O2
+    when the program never prints an f64)
+  build --release: trivial 61,309 bytes (unchanged range), float_math.ae 70,467
+    bytes. float_math.ae and find_text.ae (66,904) are different programs, so
+    their difference is an order-of-magnitude hint, not an exact f64 increment.
 
 Not covered here
   Linux run (archived separately), performance, and any capability added after
