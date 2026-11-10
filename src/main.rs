@@ -36,14 +36,45 @@ fn cache_root() -> PathBuf {
 }
 
 /// First line of the C compiler's --version output identifies the toolchain
-/// inside cache keys; an unqueryable compiler yields a stable placeholder.
-fn cc_identity(cc: &OsStr) -> String {
-    Command::new(cc).arg("--version")
-        .output()
-        .ok()
-        .map(|out| String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").trim().to_owned())
-        .filter(|line| !line.is_empty())
-        .unwrap_or_else(|| "unknown".into())
+/// inside cache keys. An unqueryable compiler yields None, and the caller then
+/// disables the cache: reusing an entry we cannot attribute to a toolchain is
+/// exactly the stale binary a cache must never serve.
+fn cc_identity(cc: &OsStr) -> Option<String> {
+    let out = Command::new(cc).arg("--version").output().ok()?;
+    if !out.status.success() { return None; }
+    let line = String::from_utf8_lossy(&out.stdout).lines().next().unwrap_or("").trim().to_owned();
+    if line.is_empty() { None } else { Some(line) }
+}
+
+/// A cache entry is usable only while its manifest still describes the bytes on
+/// disk. Size plus content hash catches a truncated copy, a replaced file and
+/// hand damage, which existence plus nonzero length did not.
+fn cache_manifest_matches(entry: &Path, exe: &Path) -> bool {
+    let Ok(manifest) = fs::read_to_string(entry.join("manifest")) else { return false };
+    let Ok(bytes) = fs::read(exe) else { return false };
+    manifest.trim_end() == format!("{} {}", bytes.len(), sha256::hex(&bytes))
+}
+
+/// Publishes an entry with the executable renamed into place before its
+/// manifest: a crash between the two leaves a manifest that does not match,
+/// which the next build reads as a miss rather than as a usable entry.
+fn publish_cache(entry: &Path, exe: &Path) {
+    let Ok(bytes) = fs::read(exe) else { return };
+    let Some(name) = exe.file_name().map(|n| n.to_string_lossy().into_owned()) else { return };
+    if fs::create_dir_all(entry).is_err() { return; }
+    let staging = entry.join(format!("{name}.{}.tmp", std::process::id()));
+    if fs::copy(exe, &staging).is_err() { return; }
+    let manifest = entry.join(format!("manifest.{}.tmp", std::process::id()));
+    if fs::write(&manifest, format!("{} {}", bytes.len(), sha256::hex(&bytes))).is_err() {
+        let _ = fs::remove_file(&staging);
+        return;
+    }
+    if fs::rename(&staging, entry.join(&name)).is_err() {
+        let _ = fs::remove_file(&staging);
+        let _ = fs::remove_file(&manifest);
+        return;
+    }
+    let _ = fs::rename(&manifest, entry.join("manifest"));
 }
 
 fn timings_enabled() -> bool { env::var_os("AE_TIMINGS").as_deref() == Some(std::ffi::OsStr::new("1")) }
@@ -61,25 +92,39 @@ fn build_c(c: &str, dir: &Path, release: bool, use_cache: bool) -> Result<PathBu
 
     let mut cache_entry: Option<PathBuf> = None;
     if use_cache {
-        let key = sha256::hex([
-            c.as_bytes(),
-            optimization.as_bytes(),
-            cc_identity(&cc).as_bytes(),
-            env!("CARGO_PKG_VERSION").as_bytes(),
-            if cfg!(windows) { &b"windows"[..] } else { &b"unix"[..] },
-        ].concat().as_slice());
-        let entry = cache_root().join("entries").join(key);
-        let cached = entry.join(exe_name);
-        if cached.is_file() && fs::metadata(&cached).map(|m| m.len() > 0).unwrap_or(false) {
-            let started = Instant::now();
-            fs::copy(&cached, &exe).map_err(|e| format!("copying cached executable: {e}"))?;
-            if timings_enabled() {
-                eprintln!("ae cache: hit");
-                eprintln!("ae timing: c_compile_and_link_ms={:.3} (cache hit)", started.elapsed().as_secs_f64() * 1000.0);
+        let cc_name = cc.to_string_lossy().into_owned();
+        match cc_identity(&cc) {
+            None => {
+                // Without a toolchain identity the key cannot distinguish
+                // compilers, so the safe answer is to compile every time.
+                if timings_enabled() { eprintln!("ae cache: disabled (cannot identify the C compiler {cc_name:?})"); }
             }
-            return Ok(exe);
+            Some(identity) => {
+                let key = sha256::hex([
+                    c.as_bytes(),
+                    optimization.as_bytes(),
+                    identity.as_bytes(),
+                    cc_name.as_bytes(),
+                    env!("CARGO_PKG_VERSION").as_bytes(),
+                    if cfg!(windows) { &b"windows"[..] } else { &b"unix"[..] },
+                ].concat().as_slice());
+                let entry = cache_root().join("entries").join(key);
+                let cached = entry.join(exe_name);
+                if cached.is_file() && cache_manifest_matches(&entry, &cached) {
+                    let started = Instant::now();
+                    fs::copy(&cached, &exe).map_err(|e| format!("copying cached executable: {e}"))?;
+                    if timings_enabled() {
+                        eprintln!("ae cache: hit");
+                        eprintln!("ae timing: c_compile_and_link_ms={:.3} (cache hit)", started.elapsed().as_secs_f64() * 1000.0);
+                    }
+                    return Ok(exe);
+                }
+                // The key covers every input, so an entry that fails its
+                // manifest is damaged, not a near-miss: drop it and rebuild.
+                if entry.exists() { let _ = fs::remove_dir_all(&entry); }
+                cache_entry = Some(entry);
+            }
         }
-        cache_entry = Some(entry);
     }
 
     let started = Instant::now();
@@ -91,16 +136,9 @@ fn build_c(c: &str, dir: &Path, release: bool, use_cache: bool) -> Result<PathBu
     }
     if !status.success() { return Err(format!("C compiler failed: {status}")); }
 
-    // Publishing to the cache is best effort: the rename makes a partial
-    // entry impossible to mistake for a complete one.
-    if let Some(entry) = cache_entry {
-        let _ = fs::create_dir_all(&entry);
-        let staging = entry.join(format!("{exe_name}.{}.tmp", std::process::id()));
-        if fs::copy(&exe, &staging).is_ok() {
-            let _ = fs::rename(&staging, entry.join(exe_name));
-        }
-        let _ = fs::remove_file(entry.join(format!("{exe_name}.{}.tmp", std::process::id())));
-    }
+    // Publishing is best effort: nothing here may turn a successful compile
+    // into a failure, and a half-written entry must read as a miss.
+    if let Some(entry) = cache_entry { publish_cache(&entry, &exe); }
     Ok(exe)
 }
 

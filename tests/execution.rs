@@ -487,16 +487,19 @@ fn build_cache_serves_identical_executables_and_rebuilds_on_corruption() {
         assert!(output.status.success());
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "cached");
     }
-    // Corrupting the cached entry must not poison future builds.
+    // Corrupting the cached entry must not poison future builds: the manifest
+    // no longer describes the bytes on disk, so the entry is dropped and the
+    // program is rebuilt instead of serving a dead executable.
     let entries = cache.join("entries");
     let entry = fs::read_dir(&entries).unwrap().next().unwrap().unwrap().path();
     let exe_name = if cfg!(windows) { "program.exe" } else { "program" };
     fs::write(entry.join(exe_name), b"garbage").unwrap();
     let third = dir.join(if cfg!(windows) { "out3.exe" } else { "out3" });
-    // The corrupted entry still "exists" with nonzero length, so the cache
-    // serves it; building to a fresh path uses it. This documents current
-    // behavior: content checks cover existence and size, not signatures.
-    assert!(build(&third).status.success());
+    let rebuilt = build(&third);
+    assert!(rebuilt.status.success(), "{}", String::from_utf8_lossy(&rebuilt.stderr));
+    assert!(String::from_utf8_lossy(&rebuilt.stderr).contains("cache: miss"), "{}", String::from_utf8_lossy(&rebuilt.stderr));
+    let repaired = Command::new(&third).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&repaired.stdout).trim(), "cached");
     // A cache clear makes the next build miss and still succeed.
     let clear = Command::new(env!("CARGO_BIN_EXE_ae")).arg("cache").arg("clear")
         .env("AE_CACHE", &cache).output().unwrap();

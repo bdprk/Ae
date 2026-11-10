@@ -58,7 +58,7 @@
 
 ## 工具链
 
-`ae check|emit-c|run|build|cache|version`。`build` 与 `run` 的产物基于内容寻址缓存：键覆盖生成的 C、优化模式、C 编译器标识、编译器版本与目标平台，相同输入直接复用可执行文件而不重新调用 C 编译器；缓存命中与全量构建语义一致。`AE_CACHE` 覆盖缓存位置，`cache dir|clear|stats` 查看与清理。`AE_CC` 指定 C 编译器；默认开发模式 `-O0`，`--release` 使用 `-O2`；两种模式保持相同语言语义与检查。`run` 把 `--` 之后的参数转发给被运行的程序（`args()` 可见，含 argv[0]）；其他子命令不接受程序参数，传入即报错。`AE_TIMINGS=1` 输出阶段耗时与缓存命中情况；`AE_ALLOC_LIMIT=N` 把运行时累计分配字节数限制在 N，用于确定性地验证分配失败诊断（超出后以「out of memory」终止并给出位置，不是内存配额，非数字值被忽略）。
+`ae check|emit-c|run|build|cache|version`。`build` 与 `run` 的产物基于内容寻址缓存：键覆盖生成的 C、优化模式、C 编译器标识与其路径、AE 版本与目标平台；条目带 `字节数 + SHA-256` 的 manifest，命中前校验，损坏条目会被删除并重建；编译器身份无法查询时本次禁用缓存（`AE_TIMINGS=1` 会说明原因）。缓存命中与全量构建语义一致。更换 libc/SDK 等键外因素后应 `ae cache clear`。`AE_CACHE` 覆盖缓存位置，`cache dir|clear|stats` 查看与清理。`AE_CC` 指定 C 编译器；默认开发模式 `-O0`，`--release` 使用 `-O2`；两种模式保持相同语言语义与检查。`run` 把 `--` 之后的参数转发给被运行的程序（`args()` 可见，含 argv[0]）；其他子命令不接受程序参数，传入即报错。`AE_TIMINGS=1` 输出阶段耗时与缓存命中情况；`AE_ALLOC_LIMIT=N` 把运行时累计分配字节数限制在 N，用于确定性地验证分配失败诊断（超出后以「out of memory」终止并给出位置，不是内存配额，非数字值被忽略）。
 
 ## 字符串向量
 
