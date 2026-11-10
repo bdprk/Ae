@@ -12,7 +12,7 @@ enum Kind {
 struct Token { kind: Kind, offset: usize, line: usize, column: usize }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, String, StrView, Vec, StrVec, VecRef, Array(usize), Struct(usize), Enum(&'static str, usize) }
+enum Type { Int, Bool, String, StrView, Vec, StrVec, VecRef, StrVecRef, Array(usize), Struct(usize), Enum(&'static str, usize) }
 impl Type {
     fn name(self) -> String {
         match self {
@@ -23,6 +23,7 @@ impl Type {
             Type::Vec => "vec".to_owned(),
             Type::StrVec => "vec[string]".to_owned(),
             Type::VecRef => "&vec".to_owned(),
+            Type::StrVecRef => "&vec[string]".to_owned(),
             Type::Array(n) => format!("&[i64; {n}]"),
             Type::Struct(id) => format!("struct #{}", id),
             Type::Enum(name, _) => name.to_owned(),
@@ -49,23 +50,24 @@ impl Type {
 }
 enum MoveKind { Var(usize), Field, StrVecElement }
 // Built-in names are reserved so their semantics stay unambiguous.
-const RESERVED: [&str; 19] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string"];
+const RESERVED: [&str; 22] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir"];
 // Provisional prelude: fallible operations report failure as values instead of
 // terminating the process (§4.5). These enums are registered before any user
 // type, so a program can name them without importing anything. They are
 // expected to move into a stdlib module once generics and a module search path
 // exist (ADR-11).
 fn prelude_enums() -> (Vec<EnumDef>, HashMap<String, usize>) {
-    let defs: [(&'static str, [(&'static str, &[Type]); 2]); 3] = [
-        ("ReadResult", [("Ok", &[Type::String]), ("Err", &[Type::String])]),
-        ("WriteResult", [("Ok", &[Type::Int]), ("Err", &[Type::String])]),
-        ("IntResult", [("Ok", &[Type::Int]), ("Err", &[Type::String])]),
+    let defs: Vec<(&'static str, Vec<(&'static str, Vec<Type>)>)> = vec![
+        ("ReadResult", vec![("Ok", vec![Type::String]), ("Err", vec![Type::String])]),
+        ("WriteResult", vec![("Ok", vec![Type::Int]), ("Err", vec![Type::String])]),
+        ("IntResult", vec![("Ok", vec![Type::Int]), ("Err", vec![Type::String])]),
+        ("DirResult", vec![("Ok", vec![Type::StrVec]), ("Err", vec![Type::String])]),
     ];
     let mut enums = Vec::new();
     let mut names = HashMap::new();
     for (name, variants) in defs {
         names.insert(name.to_owned(), enums.len());
-        enums.push(EnumDef { name, variants: variants.iter().map(|(v, fields)| ((*v).to_owned(), fields.to_vec())).collect() });
+        enums.push(EnumDef { name, variants: variants.into_iter().map(|(v, fields)| (v.to_owned(), fields)).collect() });
     }
     (enums, names)
 }
@@ -164,9 +166,9 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 #[derive(Debug)]
-enum Argument { Value(Expr), Borrow(usize, bool) } // bool: borrow of a vec struct (pass &slot) vs array (decays)
+enum Argument { Value(Expr), Borrow(usize, bool), View(Expr) } // Borrow bool: pass &slot vs array (decays); View: read-only string borrow
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
@@ -350,7 +352,7 @@ impl<'a> Parser<'a> {
                                 if self.moved.contains(&id) { return Err(error(&self.file, self.source, name_offset, &format!("cannot use '{arg_name}' because it was moved"))); }
                                 match ty {
                                     Type::Array(n) => { self.pos += 2; fast = Some((Expr::Number(n as i64), Type::Int)); }
-                                    Type::Vec | Type::StrVec | Type::VecRef => {
+                                    Type::Vec | Type::StrVec | Type::VecRef | Type::StrVecRef => {
                                         self.pos += 2;
                                         fast = Some((Expr::Len(Box::new(Expr::Variable(id, ty, vline, vcol)), line, col), Type::Int));
                                     }
@@ -446,6 +448,28 @@ impl<'a> Parser<'a> {
                     if !matches!(content_ty, Type::String | Type::StrView) { return Err(self.fail("try_write_file expects a string or string view content")); }
                     self.take(Kind::RParen)?;
                     (Expr::TryWriteFile(Box::new(path), Box::new(content), ty, line, col), ty)
+                } else if name == "try_list_dir" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    let ty = self.prelude_type("DirResult");
+                    self.take(Kind::LParen)?;
+                    let (path, path_ty) = self.expression(0, false)?;
+                    if !matches!(path_ty, Type::String | Type::StrView) { return Err(self.fail("try_list_dir expects a string path")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::TryListDir(Box::new(path), ty, line, col), ty)
+                } else if name == "path_is_dir" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    let (path, path_ty) = self.expression(0, false)?;
+                    if !matches!(path_ty, Type::String | Type::StrView) { return Err(self.fail("path_is_dir expects a string path")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::PathIsDir(Box::new(path), line, col), Type::Bool)
+                } else if name == "path_exists" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    let (path, path_ty) = self.expression(0, false)?;
+                    if !matches!(path_ty, Type::String | Type::StrView) { return Err(self.fail("path_exists expects a string path")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::PathExists(Box::new(path), line, col), Type::Bool)
                 } else if name == "parse_int" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     let ty = self.prelude_type("IntResult");
@@ -510,11 +534,20 @@ impl<'a> Parser<'a> {
                         loop {
                             if args.len() >= 64 { return Err(self.fail("function argument limit exceeded (64)")); }
                             let expected = *types.get(args.len()).ok_or_else(|| self.fail(&format!("too many arguments to '{name}'")))?;
-                            if expected == Type::VecRef {
+                            if expected == Type::StrView {
+                                let (value, ty) = self.expression(0, false)?;
+                                if !matches!(ty, Type::String | Type::StrView) {
+                                    return Err(self.fail(&format!("argument must be a string or string view, found {}", ty.name())));
+                                }
+                                args.push(Argument::View(value));
+                            } else if expected == Type::VecRef || expected == Type::StrVecRef {
                                 self.take(Kind::Amp)?;
                                 let arg = self.identifier()?;
                                 let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown variable '{arg}'")))?;
-                                if actual != Type::Vec { return Err(self.fail(&format!("argument must be a vec, found {}", actual.name()))); }
+                                let required = if expected == Type::VecRef { Type::Vec } else { Type::StrVec };
+                                if actual != required {
+                                    return Err(self.fail(&format!("argument must be {}, found {}", required.name(), actual.name())));
+                                }
                                 if self.moved.contains(&var) { return Err(self.fail(&format!("cannot borrow '{arg}' because it was moved"))); }
                                 args.push(Argument::Borrow(var, true));
                             } else if let Type::Array(len) = expected {
@@ -545,14 +578,14 @@ impl<'a> Parser<'a> {
                         if index_ty != Type::Int { return Err(self.fail("array index must be an integer")); }
                         self.take(Kind::RBracket)?;
                         (Expr::Index(id, len, Box::new(index), line, col), Type::Int)
-                    } else if ty == Type::StrVec && *self.current() == Kind::LBracket {
+                    } else if (ty == Type::StrVec || ty == Type::StrVecRef) && *self.current() == Kind::LBracket {
                         // Reading an element borrows it; only mutation is
                         // rejected while a borrow is live (see the store paths).
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
                         let (index, index_ty) = self.expression(0, false)?;
                         if index_ty != Type::Int { return Err(self.fail("vector index must be an integer")); }
                         self.take(Kind::RBracket)?;
-                        (Expr::StrVecIndex(id, Box::new(index), line, col), Type::StrView)
+                        (Expr::StrVecIndex(id, Box::new(index), line, col, ty == Type::StrVecRef), Type::StrView)
                     } else if (ty == Type::Vec || ty == Type::VecRef) && *self.current() == Kind::LBracket {
                         // Vec variables may also be used bare (moves, len);
                         // indexing is optional. Borrowed vectors are read-only.
@@ -597,7 +630,7 @@ impl<'a> Parser<'a> {
                     Some(MoveKind::Var(*id))
                 }
                 (Expr::Field(_, _, fty), _) if fty.owned() => Some(MoveKind::Field),
-                (Expr::StrVecIndex(_, _, _, _), _) => Some(MoveKind::StrVecElement),
+                (Expr::StrVecIndex(_, _, _, _, _), _) => Some(MoveKind::StrVecElement),
                 _ => None,
             };
             match move_target {
@@ -705,10 +738,11 @@ impl<'a> Parser<'a> {
                     loop {
                         if fields.len() >= 16 { return Err(self.fail("variant payload limit exceeded (16)")); }
                         let fty = self.named_type()?;
-                        // Payloads stay flat in the first version: a variant
-                        // may not carry a vec, struct, or another enum.
-                        if !matches!(fty, Type::Int | Type::Bool | Type::String) {
-                            return Err(self.fail("enum variant payloads must be i64, bool, or string"));
+                        // Payloads stay flat in the first version: a variant may
+                        // carry scalars, strings or an i64 vector, but not a
+                        // struct or another enum (no layout recursion).
+                        if !matches!(fty, Type::Int | Type::Bool | Type::String | Type::Vec | Type::StrVec) {
+                            return Err(self.fail("enum variant payloads must be i64, bool, string, vec, or vec[string]"));
                         }
                         fields.push(fty);
                         if *self.current() != Kind::Comma { break; }
@@ -757,8 +791,21 @@ impl<'a> Parser<'a> {
     fn parameter_type(&mut self) -> Result<Type, String> {
         if *self.current() == Kind::Amp {
             self.pos += 1;
+            if matches!(self.current(), Kind::Ident(name) if name == "string") {
+                // &string borrows a string read-only for the duration of the
+                // call: no move, no copy, and it binds as an ordinary view.
+                self.pos += 1;
+                return Ok(Type::StrView);
+            }
             if matches!(self.current(), Kind::Ident(name) if name == "vec") {
                 self.pos += 1;
+                // &vec[string] borrows a string vector read-only.
+                if *self.current() == Kind::LBracket {
+                    self.pos += 1;
+                    if self.identifier()? != "string" { return Err(self.fail("only &vec[string] is supported; vector elements are i64 by default")); }
+                    self.take(Kind::RBracket)?;
+                    return Ok(Type::StrVecRef);
+                }
                 return Ok(Type::VecRef);
             }
             self.take(Kind::LBracket)?;
@@ -946,7 +993,7 @@ impl<'a> Parser<'a> {
     // view can still be read.
     fn record_borrow_bases(&mut self, e: &Expr) {
         match e {
-            Expr::StrVecIndex(id, idx, _, _) => {
+            Expr::StrVecIndex(id, idx, _, _, _) => {
                 if !self.borrows.iter().any(|&(bid, _)| bid == *id) {
                     self.borrows.push((*id, self.scopes.len()));
                 }
@@ -963,6 +1010,7 @@ impl<'a> Parser<'a> {
                 for arg in args {
                     match arg {
                         Argument::Value(e) => self.record_borrow_bases(e),
+                        Argument::View(e) => self.record_borrow_bases(e),
                         Argument::Borrow(_, _) => {}
                     }
                 }
@@ -1014,6 +1062,11 @@ impl<'a> Parser<'a> {
                     } else {
                         // The initializer consumes string values.
                         let (value, ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
+                        // A borrow has no storage of its own: it lives only as a
+                        // parameter or a pattern binding, never as a variable.
+                        if matches!(ty, Type::VecRef | Type::StrVecRef) {
+                            return Err(self.fail("cannot store a borrowed vector in a variable; pass it directly to a parameter that borrows"));
+                        }
                         (Statement::Declare(id, value), ty)
                     };
                     self.names.insert(name.clone(), (id, mutable, ty));
@@ -1189,9 +1242,13 @@ impl<'a> Parser<'a> {
                         // `for x in vec-variable` iterates owned elements by
                         // value: desugars to a hidden range loop plus an
                         // immutable element declaration per iteration.
-                        let (v_id, elem_ty) = match (&first, first_ty) {
-                            (Expr::Variable(id, Type::Vec, _, _), Type::Vec) => (*id, Type::Int),
-                            (Expr::Variable(id, Type::StrVec, _, _), Type::StrVec) => (*id, Type::StrView),
+                        // Borrowed string vectors iterate the same way, with
+                        // element access going through the pointer.
+                        let (v_id, elem_ty, by_ref) = match (&first, first_ty) {
+                            (Expr::Variable(id, Type::Vec, _, _), Type::Vec) => (*id, Type::Int, false),
+                            (Expr::Variable(id, Type::StrVec, _, _), Type::StrVec) => (*id, Type::StrView, false),
+                            (Expr::Variable(id, Type::StrVecRef, _, _), Type::StrVecRef) => (*id, Type::StrView, true),
+                            (Expr::Variable(id, Type::VecRef, _, _), Type::VecRef) => (*id, Type::Int, false),
                             _ => return Err(self.fail("for-in needs a bare vec variable or an int range (start..end)")),
                         };
                         if self.loop_depth >= 64 { return Err(self.fail("loop nesting limit exceeded (64)")); }
@@ -1219,8 +1276,8 @@ impl<'a> Parser<'a> {
                         if self.moved.contains(&v_id) { return Err(self.fail(&format!("cannot move the vector being iterated (a move of it happens in this loop)"))); }
                         // Per-iteration element binding, then the user's body.
                         let element = match elem_ty {
-                            Type::StrView => Expr::StrVecIndex(v_id, Box::new(Expr::Variable(counter, Type::Int, line, col)), line, col),
-                            _ => Expr::VecIndex(v_id, Box::new(Expr::Variable(counter, Type::Int, line, col)), line, col, false),
+                            Type::StrView => Expr::StrVecIndex(v_id, Box::new(Expr::Variable(counter, Type::Int, line, col)), line, col, by_ref),
+                            _ => Expr::VecIndex(v_id, Box::new(Expr::Variable(counter, Type::Int, line, col)), line, col, first_ty == Type::VecRef),
                         };
                         body.insert(0, Statement::Declare(var, element));
                         result.push(Statement::Declare(end_var, Expr::Len(Box::new(first), line, col)));
@@ -1352,9 +1409,15 @@ impl<'a> Parser<'a> {
                     if RESERVED.contains(&bname.as_str()) { return Err(self.fail(&format!("'{bname}' is a built-in name and cannot be a pattern binding"))); }
                     if self.names.contains_key(&bname) { return Err(self.fail(&format!("duplicate variable '{bname}'"))); }
                     let id = self.next_var; self.next_var += 1;
-                    // String payloads bind as read-only views: nothing can be
-                    // moved out of the matched enum.
-                    let bty = if field == Type::String { Type::StrView } else { field };
+                    // String payloads bind as read-only views and vec payloads
+                    // as read-only borrows: nothing can be moved out of the
+                    // matched enum.
+                    let bty = match field {
+                        Type::String => Type::StrView,
+                        Type::Vec => Type::VecRef,
+                        Type::StrVec => Type::StrVecRef,
+                        other => other,
+                    };
                     self.names.insert(bname.clone(), (id, false, bty));
                     self.scopes.last_mut().unwrap().push((id, bty));
                     bound.push(bname);
@@ -1407,6 +1470,9 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
                 out.push_str(&format!("    if (!v{id}->data) ae_fail(\"use of moved vector\", {line}, {column});
 "));
                 Emitted { text: format!("(*v{id})"), ty: Type::Vec, owned: false, moves: Vec::new(), materialized: true }
+            } else if *ty == Type::StrVecRef {
+                out.push_str(&format!("    if (!v{id}->data) ae_fail(\"use of moved vector\", {line}, {column});\n"));
+                Emitted { text: format!("(*v{id})"), ty: Type::StrVec, owned: false, moves: Vec::new(), materialized: true }
             } else if ty.owned() {
                 // Runtime backstop: a moved value's slot is empty.
                 match ty {
@@ -1435,6 +1501,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let arguments = args.iter().map(|arg| match arg {
                 Argument::Value(e) => { let t = emit_expr(e, out, next, true); moves.extend(t.moves); t.text }
                 Argument::Borrow(id, is_vec) => if *is_vec { format!("&v{id}") } else { format!("v{id}") },
+                Argument::View(e) => { let t = emit_expr(e, out, next, false); moves.extend(t.moves); format!("AE_VIEW({})", t.text) },
             }).collect::<Vec<_>>().join(", ");
             let t = *next; *next += 1;
             out.push_str(&format!("    {}t{t} = ae_fn_{id}({arguments});\n", ret.c_temp()));
@@ -1541,11 +1608,16 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             out.push_str(&format!("    ae_strvec t{id} = ae_args({line}, {col});\n"));
             Emitted { text: format!("t{id}"), ty: Type::StrVec, owned: true, moves: Vec::new(), materialized: true }
         }
-        Expr::StrVecIndex(id, index, line, col) => {
-            out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+        Expr::StrVecIndex(id, index, line, col, by_ref) => {
+            let (check, access) = if *by_ref {
+                (format!("if (!v{id}->data) ae_fail(\"use of moved vector\", {line}, {col});"), format!("ae_strvec_get_const(v{id}"))
+            } else {
+                (format!("if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});"), format!("ae_strvec_get(&v{id}"))
+            };
+            out.push_str(&format!("    {check}\n"));
             let i = emit_expr(index, out, next, false);
             // Elements are borrow-only: the pointer view never owns.
-            Emitted { text: format!("(*ae_strvec_get(&v{id}, {}, {line}, {col}))", i.text), ty: Type::String, owned: false, moves: i.moves, materialized: true }
+            Emitted { text: format!("(*{access}, {}, {line}, {col}))", i.text), ty: Type::String, owned: false, moves: i.moves, materialized: true }
         }
         Expr::SliceView(vid, start, end, line, col) => {
             // The base is a borrowed bare string variable; it cannot move or
@@ -1624,6 +1696,20 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             out.push_str(&format!("    {}t{id} = ae_try_write_file({}.ptr, AE_VIEW({}), {line}, {col});\n", ty.c_temp(), p.text, c.text));
             if c.owned { drop_owned_temp(out, &c); }
             Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryListDir(path, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_list_dir({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::PathExists(path, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            Emitted { text: format!("ae_path_exists({}.ptr, {line}, {col})", p.text), ty: Type::Bool, owned: false, moves: p.moves, materialized: false }
+        }
+        Expr::PathIsDir(path, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            Emitted { text: format!("ae_path_is_dir({}.ptr, {line}, {col})", p.text), ty: Type::Bool, owned: false, moves: p.moves, materialized: false }
         }
         Expr::ParseInt(text, ty, line, col) => {
             let t = emit_expr(text, out, next, false);
@@ -1904,6 +1990,9 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                         match pty {
                             Type::String => out.push_str(&format!("    ae_strview v{bid} = AE_VIEW({member});\n")),
                             Type::Bool => out.push_str(&format!("    bool v{bid} = {member};\n")),
+                            // Vector payloads bind as read-only borrows of the slot.
+                            Type::Vec => out.push_str(&format!("    const ae_vec *v{bid} = &{member};\n")),
+                            Type::StrVec => out.push_str(&format!("    const ae_strvec *v{bid} = &{member};\n")),
                             _ => out.push_str(&format!("    int64_t v{bid} = {member};\n")),
                         }
                     }
@@ -2030,6 +2119,7 @@ fn c_type_field(ty: Type) -> String {
         Type::Struct(k) => format!("ae_t{k}"),
         Type::Enum(_, k) => format!("ae_e{k}"),
         Type::VecRef => "const ae_vec *".to_owned(),
+        Type::StrVecRef => "const ae_strvec *".to_owned(),
         Type::Array(n) => format!("int64_t [{n}]"),
     }
 }
@@ -2045,6 +2135,8 @@ fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Enum(_, k) => format!("ae_e{k} v{id}"),
         Type::VecRef if declaration => format!("const ae_vec *v{id}"),
         Type::VecRef => "const ae_vec *".to_owned(),
+        Type::StrVecRef if declaration => format!("const ae_strvec *v{id}"),
+        Type::StrVecRef => "const ae_strvec *".to_owned(),
         Type::Array(_) if declaration => format!("const int64_t *v{id}"),
         Type::Array(_) => "const int64_t *".to_owned(),
     }
@@ -2101,6 +2193,14 @@ fn emit_program(program: Program) -> Result<String, String> {
                         clears.push_str(&format!("        ae_str_release(&{member});\n"));
                         forfeits.push_str(&format!("        ae_str_forfeit(&{member});\n"));
                     }
+                    Type::Vec => {
+                        clears.push_str(&format!("        ae_vec_release(&{member});\n"));
+                        forfeits.push_str(&format!("        ae_vec_forfeit(&{member});\n"));
+                    }
+                    Type::StrVec => {
+                        clears.push_str(&format!("        ae_strvec_release(&{member});\n"));
+                        forfeits.push_str(&format!("        ae_strvec_forfeit(&{member});\n"));
+                    }
                     Type::Bool => {
                         clears.push_str(&format!("        {member} = false;\n"));
                         forfeits.push_str(&format!("        {member} = false;\n"));
@@ -2117,99 +2217,14 @@ fn emit_program(program: Program) -> Result<String, String> {
         out.push_str(&format!("static void ae_e{eid}_release(ae_e{eid} *v) {{\n{release}}}\n"));
         out.push_str(&format!("static void ae_e{eid}_forfeit(ae_e{eid} *v) {{\n{forfeit}}}\n"));
     }
-    // Fallible built-ins return prelude result values instead of terminating.
-    // They are generated here because they name prelude enum types, which only
-    // exist after the layouts above. Variant order is fixed by the prelude:
-    // Ok = 0, Err = 1.
-    let eid_of = |name: &str| -> Result<usize, String> {
-        enums.iter().position(|def| def.name == name).ok_or_else(|| format!("internal: prelude enum '{name}' missing"))
-    };
-    let read_id = eid_of("ReadResult")?;
-    let write_id = eid_of("WriteResult")?;
-    let int_id = eid_of("IntResult")?;
-    out.push_str(&format!(
-        r#"
-#include <errno.h>
-static ae_string ae_io_message(int code, size_t line, size_t column) {{
-    const char *text = strerror(code == 0 ? EIO : code);
-    return ae_str_from(text ? text : "I/O error", line, column);
-}}
-static ae_e{read_id} ae_try_read_file(const char *path, size_t line, size_t column) {{
-    errno = 0;
-    FILE *f = ae_fopen(path, "rb");
-    if (!f) {{ ae_e{read_id} out = {{ AE_E{read_id}_1, {{ .v1 = {{ ae_io_message(errno, line, column) }} }} }}; return out; }}
-    ae_string failure = {{ NULL, 0 }};
-    if (fseek(f, 0, SEEK_END) != 0) failure = ae_io_message(errno, line, column);
-    long size = failure.ptr ? -1 : ftell(f);
-    if (!failure.ptr && size < 0) failure = ae_io_message(errno, line, column);
-    if (!failure.ptr) rewind(f);
-    char *buffer = NULL;
-    if (!failure.ptr) {{
-        buffer = malloc((size_t)size + 1);
-        if (!buffer) failure = ae_str_from("out of memory", line, column);
-    }}
-    size_t read = 0;
-    if (!failure.ptr) {{
-        read = fread(buffer, 1, (size_t)size, f);
-        if (read != (size_t)size) {{ free(buffer); buffer = NULL; failure = ae_io_message(errno, line, column); }}
-    }}
-    fclose(f);
-    if (failure.ptr) {{ ae_e{read_id} out = {{ AE_E{read_id}_1, {{ .v1 = {{ failure }} }} }}; return out; }}
-    buffer[size] = 0;
-    ae_string content = {{ buffer, (int64_t)size }};
-    ae_e{read_id} out = {{ AE_E{read_id}_0, {{ .v0 = {{ content }} }} }};
-    return out;
-}}
-static ae_e{write_id} ae_try_write_file(const char *path, ae_strview content, size_t line, size_t column) {{
-    errno = 0;
-    FILE *f = ae_fopen(path, "wb");
-    if (!f) {{ ae_e{write_id} out = {{ AE_E{write_id}_1, {{ .v1 = {{ ae_io_message(errno, line, column) }} }} }}; return out; }}
-    size_t written = fwrite(content.ptr, 1, (size_t)content.len, f);
-    bool closed = fclose(f) == 0;
-    if (!closed || written != (size_t)content.len) {{
-        ae_e{write_id} out = {{ AE_E{write_id}_1, {{ .v1 = {{ ae_io_message(errno, line, column) }} }} }};
-        return out;
-    }}
-    ae_e{write_id} out = {{ AE_E{write_id}_0, {{ .v0 = {{ (int64_t)written }} }} }};
-    return out;
-}}
-// Strict integer parsing: optional sign, ASCII digits only, whole string, and
-// no wrap-around. Anything else is an error value, never a silent default.
-static ae_e{int_id} ae_parse_int(ae_strview text, size_t line, size_t column) {{
-    int64_t at = 0;
-    bool negative = false;
-    if (text.len > 0 && (text.ptr[0] == '-' || text.ptr[0] == '+')) {{ negative = text.ptr[0] == '-'; at = 1; }}
-    if (at >= text.len) {{
-        ae_e{int_id} bad = {{ AE_E{int_id}_1, {{ .v1 = {{ ae_str_from("empty or sign-only integer", line, column) }} }} }};
-        return bad;
-    }}
-    uint64_t magnitude = 0;
-    const uint64_t limit = negative ? (uint64_t)INT64_MAX + 1u : (uint64_t)INT64_MAX;
-    for (; at < text.len; at++) {{
-        const char c = text.ptr[at];
-        if (c < '0' || c > '9') {{
-            ae_e{int_id} bad = {{ AE_E{int_id}_1, {{ .v1 = {{ ae_str_from("not a base-10 integer", line, column) }} }} }};
-            return bad;
-        }}
-        const uint64_t digit = (uint64_t)(c - '0');
-        if (magnitude > (limit - digit) / 10u) {{
-            ae_e{int_id} bad = {{ AE_E{int_id}_1, {{ .v1 = {{ ae_str_from("integer out of i64 range", line, column) }} }} }};
-            return bad;
-        }}
-        magnitude = magnitude * 10u + digit;
-    }}
-    const int64_t value = negative ? (int64_t)(0u - magnitude) : (int64_t)magnitude;
-    ae_e{int_id} out = {{ AE_E{int_id}_0, {{ .v0 = {{ value }} }} }};
-    return out;
-}}
-static ae_string ae_to_string(int64_t value, size_t line, size_t column) {{
-    char buffer[24];
-    const int length = snprintf(buffer, sizeof buffer, "%" PRId64, value);
-    if (length < 0) ae_fail("cannot format integer", line, column);
-    return ae_str_from_len(buffer, (int64_t)length, line, column);
-}}
-"#
-    ));
+    // Fallible built-ins and platform helpers name prelude enum types, so they
+    // are included after the layouts above. runtime_ex.c relies on the prelude
+    // order, which is checked here rather than trusted.
+    let names: Vec<&str> = enums.iter().take(4).map(|def| def.name).collect();
+    if names != ["ReadResult", "WriteResult", "IntResult", "DirResult"] {
+        return Err(format!("internal: prelude enums must be registered first and in order, found {names:?}"));
+    }
+    out.push_str(include_str!("runtime_ex.c"));
     // Struct layouts and their ownership helpers. Release zeroes every field
     // and frees owned ones; forfeit only zeroes (the value moved elsewhere).
     for (sid, def) in structs.iter().enumerate() {

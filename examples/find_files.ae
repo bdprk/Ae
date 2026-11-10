@@ -1,0 +1,39 @@
+// Recursive name search: directory traversal, read-only string parameters and
+// recoverable errors together. Usage: find_files <directory> <pattern>
+
+fn walk(dir: &string, pattern: &string, depth: i64) -> i64 {
+    if depth <= 0 {
+        return 0;
+    }
+    let listed = try_list_dir(dir);
+    var matches = 0;
+    match listed {
+        DirResult::Ok(names) => {
+            for name in names {
+                let child = dir + "/" + name;
+                if path_is_dir(child) {
+                    matches = matches + walk(child, pattern, depth - 1);
+                } else {
+                    if contains(name, pattern) {
+                        print(child);
+                        matches = matches + 1;
+                    }
+                }
+            }
+        }
+        DirResult::Err(reason) => {
+            print("skipped " + dir + ": " + reason);
+        }
+    }
+    return matches;
+}
+
+fn main() {
+    let parts = args();
+    if len(parts) < 3 {
+        print("usage: find_files <directory> <pattern>");
+    } else {
+        let found = walk(parts[1], parts[2], 8);
+        print("found " + to_string(found));
+    }
+}

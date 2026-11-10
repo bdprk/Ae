@@ -1089,7 +1089,6 @@ fn invalid_enum_programs_are_rejected() {
         ("enum E { A } fn main() { let x = E::A; match x { F::A => { print(1); } } }", "pattern must name"),
         ("enum E { A } enum E { B } fn main() { print(1); }", "duplicate enum"),
         ("enum E { A, A } fn main() { print(1); }", "duplicate variant"),
-        ("enum E { A(vec) } fn main() { print(1); }", "payloads must be"),
         ("enum E { A } fn main() { let E = 1; print(E); }", "names an enum"),
         ("enum E { A } fn main() { let x = 1; match x { E::A => { print(1); } } }", "bare enum variable"),
         ("enum E { A } fn main() { let x = E::A; let y = x; match x { E::A => { print(1); } } }", "moved"),
@@ -1200,6 +1199,109 @@ fn invalid_prelude_usage_is_rejected() {
         "enum ReadResult { A } fn main() { print(1); }",
     ] {
         let path = std::env::temp_dir().join(format!("ae-prelude-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted invalid program: {source}");
+    }
+}
+
+#[test]
+fn directory_traversal_is_sorted_and_reports_errors() {
+    let root = std::env::temp_dir().join(format!("ae-dir-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::create_dir_all(root.join("nested")).unwrap();
+    fs::write(root.join("b.txt"), "b").unwrap();
+    fs::write(root.join("a.txt"), "a").unwrap();
+    fs::write(root.join("nested/c.txt"), "c").unwrap();
+    let missing = root.join("absent");
+    let literal = |p: &std::path::Path| p.display().to_string().replace('\\', "\\\\");
+    let source = format!(r#"fn main() {{
+    let listed = try_list_dir("{root}");
+    match listed {{
+        DirResult::Ok(names) => {{
+            print(len(names));
+            for name in names {{
+                print(name);
+                print(path_is_dir("{root}/" + name));
+            }}
+        }}
+        DirResult::Err(reason) => {{ print("unexpected failure"); }}
+    }}
+    let absent = try_list_dir("{missing}");
+    match absent {{
+        DirResult::Ok(names) => {{ print("unexpected success"); }}
+        DirResult::Err(reason) => {{ print(len(reason) > 0); }}
+    }}
+    print(path_exists("{root}/a.txt"));
+    print(path_exists("{missing}"));
+}}"#, root = literal(&root), missing = literal(&missing));
+    let output = execute(&source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    // Entries are sorted by bytes: a.txt, b.txt, nested.
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "3\na.txt\nfalse\nb.txt\nfalse\nnested\ntrue\ntrue\ntrue\nfalse\n");
+    fs::remove_dir_all(root).unwrap();
+}
+#[test]
+fn read_only_string_parameters_do_not_consume_their_arguments() {
+    let source = r#"fn label(text: &string) -> string {
+    return "[" + text + "]";
+}
+fn twice(text: &string) -> i64 {
+    print(label(text));
+    print(label(text));
+    return len(text);
+}
+fn main() {
+    let name = "hello";
+    print(twice(name));
+    print(name);
+    print(twice("literal"));
+    let base = "abcdef";
+    let view = slice_view(base, 1, 3);
+    print(twice(view));
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "[hello]\n[hello]\n5\nhello\n[literal]\n[literal]\n7\n[bc]\n[bc]\n2\n");
+}
+#[test]
+fn borrowed_string_vectors_can_be_iterated_and_read() {
+    let source = r#"fn count(parts: &vec[string]) -> i64 {
+    return len(parts);
+}
+fn longest(parts: &vec[string]) -> i64 {
+    var best = 0;
+    for part in parts {
+        if len(part) > best { best = len(part); }
+    }
+    return best;
+}
+fn main() {
+    let parts = split("aa,bbb,c", ",");
+    print(count(&parts));
+    print(longest(&parts));
+    print(parts[1]);
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "3\n3\nbbb\n");
+}
+#[test]
+fn invalid_filesystem_and_borrow_usage_is_rejected() {
+    for source in [
+        "fn main() { print(try_list_dir(1)); }",
+        "fn main() { print(path_exists(1)); }",
+        "fn main() { print(path_is_dir(1)); }",
+        // a read-only parameter cannot be returned or handed on as owned
+        "fn grab(s: &string) -> string { return s; } fn main() { print(len(grab(\"x\"))); }",
+        "fn take(s: string) -> i64 { return len(s); } fn own(s: &string) -> i64 { return take(s); } fn main() { print(own(\"x\")); }",
+        // a vec is not a string
+        "fn f(s: &string) -> i64 { return len(s); } fn main() { let v = vec[1]; print(f(v)); }",
+        // a borrowed string vector cannot be modified
+        "fn f(parts: &vec[string]) -> i64 { push(parts, \"x\"); return 0; } fn main() { let p = split(\"a\", \",\"); print(f(&p)); }",
+        "fn f(parts: &vec[string]) -> i64 { let q = parts; return 0; } fn main() { let p = split(\"a\", \",\"); print(f(&p)); }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-fs-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
         fs::write(&path, source).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
         fs::remove_file(path).unwrap();

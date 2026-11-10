@@ -32,13 +32,15 @@
 
 `read_file(path) -> string` 读取整个文件为拥有字符串；`write_file(path, content) -> i64` 写入并返回字节数；两者借用参数，路径为 UTF-8（Windows 经 UTF-16 宽字符 API，非 ASCII 路径可用），失败以行列位置报告运行时错误。`bytes(s) -> vec` 把字符串按字节转为向量，用于字节级处理。`contains(s, sub) -> bool` 子串搜索（平台优化实现，借用两参数，空子串为真）；`slice(s, start, end) -> string` 返回拥有副本，越界以位置报告。字符串现在携带长度（`len`/`slice` 为 O(1)），缓冲区仍以 NUL 结尾供 C 互操作；`len`/`bytes` 按长度精确计数（含嵌入 NUL）。`read_file`/`write_file`/`bytes`/`contains`/`slice` 为保留名。
 
+**目录与路径**：`try_list_dir(path) -> DirResult` 返回目录下的条目名（不含 `.` 与 `..`，按字节序排序），失败返回 `Err(描述)`；`path_exists(path) -> bool`、`path_is_dir(path) -> bool` 只做查询。三者都接受拥有字符串或视图。
+
 ## 固定长度数组
 
 `let a = [1, 2];` 声明不可变数组，`var a = [1, 2];` 声明可变数组。数组元素是整数表达式，自左向右求值；数组长度为 1 至 4096，只允许声明时使用数组字面量，不支持数组整体赋值、按值传参、返回或嵌套数组。`a[i]` 读取，`a[i] = value;` 需要可变数组。下标须为整数，负数或大于等于长度时程序报告下标位置并以非零状态退出；写入先计算并检查下标，再计算右侧。`len(a)` 是编译期常量（要求裸数组变量）。优化构建保持相同检查。
 
 ## 函数
 
-`fn add(a: i64, b: i64) -> i64 { return a + b; }` 定义函数；返回类型可为 `i64`、`bool`、`string` 或 `vec`；参数类型可为 `i64`、`bool`、`string`（按值，移动）、`vec`（按值，移动）、`&vec`（只读借用）或 `&[i64; N]`（只读借用数组），最多 64 个。实参从左到右求值；字符串实参移动所有权。函数可以在调用点之前或之后定义，支持自递归和相互递归。所有路径必须明确返回值；编译器目前保守地只认可直接 `return` 或 `if`/`else` 两个分支均返回。`main` 不接受参数或 `return`。`len` 是内置函数，不能被重新定义。递归深度受系统栈限制。
+`fn add(a: i64, b: i64) -> i64 { return a + b; }` 定义函数；返回类型可为 `i64`、`bool`、`string` 或 `vec`；参数类型可为 `i64`、`bool`、`string`（按值，移动）、`vec`（按值，移动）、`&vec`（只读借用）、`&vec[string]`（只读借用字符串向量）、`&string`（只读借用字符串，绑定为视图）、枚举或结构体（按值，移动）或 `&[i64; N]`（只读借用数组），最多 64 个。`&string` 调用点直接写实参（`f(name)`、`f("literal")`、`f(view)`），不移动也不复制，函数体内按视图规则使用（含 `+` 拼接，会复制）。借用值没有独立存储：`let q = 借来的参数;` 被拒绝，借用只能作为参数或 `match` 绑定存在。实参从左到右求值；字符串实参移动所有权。函数可以在调用点之前或之后定义，支持自递归和相互递归。所有路径必须明确返回值；编译器目前保守地只认可直接 `return` 或 `if`/`else` 两个分支均返回。`main` 不接受参数或 `return`。`len` 是内置函数，不能被重新定义。递归深度受系统栈限制。
 
 ## 只读数组参数
 
@@ -62,15 +64,15 @@
 
 ## 可恢复错误与数字转换
 
-程序预置三个结果枚举（无需导入，变体顺序固定）：`ReadResult{Ok(string), Err(string)}`、`WriteResult{Ok(i64), Err(string)}`、`IntResult{Ok(i64), Err(string)}`。可失败内建：`try_read_file(path) -> ReadResult`、`try_write_file(path, content) -> WriteResult`（成功返回写入字节数）、`parse_int(text) -> IntResult`。失败返回 `Err` 负载的错误描述，**不终止进程**；`read_file`/`write_file` 仍是失败即终止的不可恢复版本。`parse_int` 严格按十进制：可选 `+`/`-`、只允许 ASCII 数字、整串必须消费完、正负分别以 `9223372036854775807`/`-9223372036854775808` 为界，其余情况均为 `Err`。`to_string(i64) -> string` 是十进制格式化，与 `parse_int` 构成往返。
+程序预置四个结果枚举（无需导入，变体顺序固定）：`ReadResult{Ok(string), Err(string)}`、`WriteResult{Ok(i64), Err(string)}`、`IntResult{Ok(i64), Err(string)}`、`DirResult{Ok(vec[string]), Err(string)}`。可失败内建：`try_read_file(path) -> ReadResult`、`try_write_file(path, content) -> WriteResult`（成功返回写入字节数）、`parse_int(text) -> IntResult`。失败返回 `Err` 负载的错误描述，**不终止进程**；`read_file`/`write_file` 仍是失败即终止的不可恢复版本。`parse_int` 严格按十进制：可选 `+`/`-`、只允许 ASCII 数字、整串必须消费完、正负分别以 `9223372036854775807`/`-9223372036854775808` 为界，其余情况均为 `Err`。`to_string(i64) -> string` 是十进制格式化，与 `parse_int` 构成往返。
 
-结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`parse_int`/`to_string` 与三个结果类型名均为保留名。
+结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`parse_int`/`to_string` 与四个结果类型名均为保留名。
 
 ## 枚举与模式匹配
 
-`enum Shape { Circle(i64), Rect(i64, i64), Empty }` 声明枚举：变体可带 0–16 个位置负载，负载类型限于 `i64`、`bool`、`string`（因此枚举不能自包含，不存在递归布局）。变体名在同一枚举内唯一，枚举名与结构体、内置名冲突时报错；与结构体一样，只能在同文件内先声明后使用。构造 `Shape::Circle(3)`、`Shape::Rect(4, 5)`、`Shape::Empty`；负载个数必须与声明一致，`string` 负载按移动传入。
+`enum Shape { Circle(i64), Rect(i64, i64), Empty }` 声明枚举：变体可带 0–16 个位置负载，负载类型限于 `i64`、`bool`、`string`、`vec`、`vec[string]`（因此枚举不能自包含，不存在递归布局）。变体名在同一枚举内唯一，枚举名与结构体、内置名冲突时报错；与结构体一样，只能在同文件内先声明后使用。构造 `Shape::Circle(3)`、`Shape::Rect(4, 5)`、`Shape::Empty`；负载个数必须与声明一致，`string` 负载按移动传入。
 
-`match 变量 { Shape::Circle(r) => { ... } Shape::Rect(w, h) => { ... } Shape::Empty => { ... } }` 是语句：主题必须是**裸枚举变量**，每个变体必须恰好出现一次（穷尽性；缺一个变体、重复匹配或写错枚举名都报错），不支持通配符与嵌套模式。分支绑定是只读的：`i64`/`bool` 负载按值拷贝，`string` 负载绑定为 `string view`（同视图规则，不能移动、不能 `+`，可用 `len`/`contains`/`slice`/`==`/`print`）。匹配期间主题被借用：不能移动或整体赋值，改绑其他变量不受影响。分支体内的 `break`/`continue` 作用于最内层循环，而不是 `match`。
+`match 变量 { Shape::Circle(r) => { ... } Shape::Rect(w, h) => { ... } Shape::Empty => { ... } }` 是语句：主题必须是**裸枚举变量**，每个变体必须恰好出现一次（穷尽性；缺一个变体、重复匹配或写错枚举名都报错），不支持通配符与嵌套模式。分支绑定是只读的：`i64`/`bool` 负载按值拷贝，`string` 负载绑定为 `string view`，`vec` 绑定为 `&vec`，`vec[string]` 绑定为 `&vec[string]`——都不能被移出枚举，视图可用 `len`/`contains`/`slice`/`==`/`print`/`+`，借用向量可 `len`/索引/`for-in`/继续借用。匹配期间主题被借用：不能移动或整体赋值，改绑其他变量不受影响。分支体内的 `break`/`continue` 作用于最内层循环，而不是 `match`。
 
 枚举是拥有型值：赋值、按值传参、`return` 都移动整个枚举，移动后使用被编译期拒绝；作用域退出、提前返回与跳转路径按当前变体释放负载，`string` 负载因此不会泄漏或双重释放。给枚举变量整体赋值时先释放旧负载再移入新值。枚举可用于函数参数与返回类型，也可作为结构体字段。枚举整体不能被 `print` 或比较。
 

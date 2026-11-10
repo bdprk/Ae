@@ -153,6 +153,11 @@ static ae_string *ae_strvec_get(ae_strvec *v, int64_t index, size_t line, size_t
     ae_strvec_index(index, v->len, line, column);
     return &v->data[index];
 }
+// Borrowed string vectors (&vec[string]) read elements through this accessor.
+static const ae_string *ae_strvec_get_const(const ae_strvec *v, int64_t index, size_t line, size_t column) {
+    ae_strvec_index(index, v->len, line, column);
+    return &v->data[index];
+}
 static void ae_strvec_release(ae_strvec *v) {
     for (int64_t i = 0; i < v->len; i++) ae_str_release(&v->data[i]);
     free(v->data);
@@ -341,15 +346,30 @@ static void ae_vec_forfeit(ae_vec *v) {
 // non-ASCII paths behave like the rest of the platform layer.
 #ifdef _WIN32
 #include <windows.h>
+// UTF-8 to UTF-16 for the wide-character Win32 APIs; callers free the result.
+static wchar_t *ae_widen(const char *text) {
+    const int len = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
+    if (len <= 0) return NULL;
+    wchar_t *wide = malloc((size_t)len * sizeof(wchar_t));
+    if (!wide) return NULL;
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, wide, len);
+    return wide;
+}
+// UTF-16 to a fresh UTF-8 buffer of `len` units; returns NULL on failure.
+static char *ae_narrow(const wchar_t *text, int len) {
+    if (len <= 0) return NULL;
+    const int size = WideCharToMultiByte(CP_UTF8, 0, text, len, NULL, 0, NULL, NULL);
+    if (size <= 0) return NULL;
+    char *narrow = malloc((size_t)size + 1);
+    if (!narrow) return NULL;
+    WideCharToMultiByte(CP_UTF8, 0, text, len, narrow, size, NULL, NULL);
+    narrow[size] = 0;
+    return narrow;
+}
 static FILE *ae_fopen(const char *path, const char *mode) {
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
-    int mlen = MultiByteToWideChar(CP_UTF8, 0, mode, -1, NULL, 0);
-    if (wlen <= 0 || mlen <= 0) return NULL;
-    wchar_t *wpath = malloc((size_t)wlen * sizeof(wchar_t));
-    wchar_t *wmode = malloc((size_t)mlen * sizeof(wchar_t));
+    wchar_t *wpath = ae_widen(path);
+    wchar_t *wmode = ae_widen(mode);
     if (!wpath || !wmode) { free(wpath); free(wmode); return NULL; }
-    MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, wlen);
-    MultiByteToWideChar(CP_UTF8, 0, mode, -1, wmode, mlen);
     FILE *f = _wfopen(wpath, wmode);
     free(wpath);
     free(wmode);
