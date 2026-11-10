@@ -3772,6 +3772,13 @@ fn ae_symbols(text: &str) -> Vec<String> {
     found
 }
 
+/// Marker on every runtime function whose Windows branch needs a declaration
+/// from `<windows.h>`. The marker rides along with the function unit, so
+/// pruning removes it exactly when the last such function is removed.
+const WIN32_HEADER_MARKER: &str = "/* win32-header */";
+const WIN32_HEADER_INCLUDE: &str = "#include <windows.h>";
+const WIN32_HEADER_OMITTED: &str = "/* windows.h omitted */";
+
 /// Keep only runtime functions reachable from the program. Roots are the
 /// symbols in the program suffix plus every symbol in the always-retained
 /// non-function text (macro bodies and static initialisers can call functions
@@ -3810,6 +3817,17 @@ fn prune_runtime(prefix: &str, suffix: &str) -> (String, usize) {
     let mut out = String::new();
     for (name, text) in &units {
         if name.is_none() || name.as_ref().is_some_and(|n| keep.contains(n)) { out.push_str(text); }
+    }
+    // The <windows.h> include lives in a non-function unit, so pruning alone
+    // keeps it even when every Win32-dependent function was removed. Parsing
+    // that header costs ~545 ms on Windows (measured), pure overhead for a
+    // program that never calls the Win32 layer. Check the runtime part only:
+    // user code is appended afterwards and must never influence this decision.
+    // Failure mode is conservative: a missing marker only costs an unnecessary
+    // header parse; a wrongly dropped header is a compile error, never a
+    // silent behaviour change.
+    if !out.contains(WIN32_HEADER_MARKER) {
+        out = out.replacen(WIN32_HEADER_INCLUDE, WIN32_HEADER_OMITTED, 1);
     }
     let runtime_len = out.len();
     out.push_str(suffix);
@@ -4068,5 +4086,52 @@ mod tests {
     }
     #[test] fn arithmetic_and_variables_compile() {
         assert!(compile("fn main() { let x = 2; var y = x + 3 * 4; y = y / 2; print(y); }").is_ok());
+    }
+    #[test] fn prune_runtime_drops_unneeded_windows_header() {
+        let prefix = concat!(
+            "#ifdef _WIN32\n",
+            "#ifndef WIN32_LEAN_AND_MEAN\n",
+            "#define WIN32_LEAN_AND_MEAN\n",
+            "#endif\n",
+            "#include <windows.h>\n",
+            "#endif\n",
+            "static void ae_plain(void) { }\n",
+            "static void ae_win(void) { /* win32-header */ }\n",
+        );
+        let (plain, len) = prune_runtime(prefix, "int main(void) { ae_plain(); return 0; }\n");
+        assert!(plain[..len].contains(WIN32_HEADER_OMITTED), "header should be dropped");
+        assert!(!plain[..len].contains(WIN32_HEADER_INCLUDE), "include line must be gone");
+        assert!(!plain.contains("ae_win"), "unreachable Win32 function must be pruned");
+
+        let (win, len) = prune_runtime(prefix, "int main(void) { ae_win(); return 0; }\n");
+        assert!(win[..len].contains(WIN32_HEADER_INCLUDE), "header must stay for Win32 functions");
+        assert!(win[..len].contains(WIN32_HEADER_MARKER));
+    }
+    #[test] fn every_win32_dependent_runtime_function_is_marked() {
+        // Audit only: this token list does not drive the build. A future Win32
+        // helper added without the marker either keeps the header (harmless) or
+        // fails to compile with a missing declaration, which the generated-C
+        // suite catches. A missing marker can never change runtime behaviour.
+        const WIN32_DECLS: &[&str] = &[
+            "wchar_t", "MultiByteToWideChar", "WideCharToMultiByte", "CP_UTF8",
+            "FILETIME", "GetSystemTimeAsFileTime", "GetEnvironmentVariableW",
+            "GetCurrentDirectoryW", "GetFileAttributesW", "WIN32_FIND_DATAW",
+            "WIN32_FILE_ATTRIBUTE_DATA", "FindFirstFileW", "CreateProcessW",
+            "STARTUPINFOW", "GetLastError", "RemoveDirectoryW", "DeleteFileW",
+            "CreateDirectoryW", "MoveFileExW", "SetCurrentDirectoryW",
+        ];
+        let sources = [("runtime.c", include_str!("runtime.c")), ("runtime_ex.c", include_str!("runtime_ex.c"))];
+        assert!(sources[0].1.contains(WIN32_HEADER_INCLUDE), "include line must still exist in runtime.c");
+        let mut checked = 0usize;
+        for (file, source) in sources {
+            for (name, text) in runtime_units(source) {
+                let Some(name) = name else { continue; };
+                if !WIN32_DECLS.iter().any(|needle| text.contains(needle)) { continue; }
+                checked += 1;
+                assert!(text.contains(WIN32_HEADER_MARKER),
+                    "{file}: {name} uses a Win32 declaration but has no {WIN32_HEADER_MARKER} marker");
+            }
+        }
+        assert!(checked >= 16, "expected at least 16 Win32-dependent functions, found {checked}");
     }
 }

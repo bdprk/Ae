@@ -59,7 +59,7 @@ static AE_STATUS_RESULT ae_status_failed(ae_string message) {
 // whole seconds, so now_s exists to compare against it without dividing on
 // every call. Both are i64: the epoch range fits comfortably, and negative
 // values (before 1970) stay meaningful.
-static int64_t ae_now_ms(void) {
+static int64_t ae_now_ms(void) { /* win32-header */
 #ifdef _WIN32
     FILETIME ft;
     GetSystemTimeAsFileTime(&ft);
@@ -153,7 +153,7 @@ static AE_WRITE_RESULT ae_try_append_file(const char *path, ae_strview content, 
 // Environment lookup. A variable that is set but empty is Ok(""), a variable
 // that does not exist is Err: collapsing the two would silently turn "PATH is
 // empty" into "PATH is missing".
-static AE_READ_RESULT ae_try_env(const char *name, size_t line, size_t column) {
+static AE_READ_RESULT ae_try_env(const char *name, size_t line, size_t column) { /* win32-header */
     if (name[0] == 0) {
         AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("variable name is empty", line, column) } } };
         return out;
@@ -280,7 +280,7 @@ static AE_READ_RESULT ae_try_read_stdin(size_t line, size_t column) {
 
 // Current working directory, in the same `/`-separated form the rest of the
 // language uses for paths.
-static AE_READ_RESULT ae_try_cwd(size_t line, size_t column) {
+static AE_READ_RESULT ae_try_cwd(size_t line, size_t column) { /* win32-header */
 #ifdef _WIN32
     const DWORD needed = GetCurrentDirectoryW(0, NULL);
     if (needed == 0) {
@@ -538,7 +538,7 @@ static AE_INT_RESULT ae_f64_to_i64(double value, size_t line, size_t column) {
     return out;
 }
 
-static bool ae_path_exists(const char *path, size_t line, size_t column) {
+static bool ae_path_exists(const char *path, size_t line, size_t column) { /* win32-header */
     (void)line; (void)column;
 #ifdef _WIN32
     wchar_t *wide = ae_widen(path);
@@ -552,7 +552,7 @@ static bool ae_path_exists(const char *path, size_t line, size_t column) {
 #endif
 }
 
-static bool ae_path_is_dir(const char *path, size_t line, size_t column) {
+static bool ae_path_is_dir(const char *path, size_t line, size_t column) { /* win32-header */
     (void)line; (void)column;
 #ifdef _WIN32
     wchar_t *wide = ae_widen(path);
@@ -588,7 +588,7 @@ static void ae_strvec_reverse(ae_strvec *v) {
         v->data[j] = swap;
     }
 }
-static AE_DIR_RESULT ae_try_list_dir(const char *path, size_t line, size_t column) {
+static AE_DIR_RESULT ae_try_list_dir(const char *path, size_t line, size_t column) { /* win32-header */
     ae_strvec names = ae_strvec_new(line, column);
 #ifdef _WIN32
     const size_t length = strlen(path);
@@ -722,7 +722,7 @@ static ae_string ae_path_parent(ae_strview path, size_t line, size_t column) {
 // ---- Metadata ---------------------------------------------------------------
 // Size in bytes, modification time in seconds since the Unix epoch, and whether
 // the target is a directory. Failure is a value, never a silent zero size.
-static AE_FILE_RESULT ae_try_file_info(const char *path, size_t line, size_t column) {
+static AE_FILE_RESULT ae_try_file_info(const char *path, size_t line, size_t column) { /* win32-header */
 #ifdef _WIN32
     wchar_t *wide = ae_widen(path);
     if (!wide) {
@@ -780,7 +780,7 @@ static AE_STATUS_RESULT ae_try_copy_file(const char *from, const char *to, size_
     return ae_status_ok();
 }
 
-static AE_STATUS_RESULT ae_try_rename_path(const char *from, const char *to, size_t line, size_t column) {
+static AE_STATUS_RESULT ae_try_rename_path(const char *from, const char *to, size_t line, size_t column) { /* win32-header */
 #ifdef _WIN32
     errno = 0;
     wchar_t *source = ae_widen(from);
@@ -804,7 +804,7 @@ static AE_STATUS_RESULT ae_try_rename_path(const char *from, const char *to, siz
 // Removes a file. Directories are refused on both platforms: POSIX remove()
 // would also delete an empty directory, and reporting the same outcome on two
 // platforms matters more than the extra convenience.
-static AE_STATUS_RESULT ae_try_remove_file(const char *path, size_t line, size_t column) {
+static AE_STATUS_RESULT ae_try_remove_file(const char *path, size_t line, size_t column) { /* win32-header */
     if (ae_path_is_dir(path, line, column)) {
         return ae_status_failed(ae_str_from("cannot remove a directory with try_remove_file", line, column));
     }
@@ -826,7 +826,7 @@ static AE_STATUS_RESULT ae_try_remove_file(const char *path, size_t line, size_t
 
 // Returns an empty string on success, or the failure text. Keeping the message
 // as the return value lets the caller decide whether a race is acceptable.
-static ae_string ae_make_one_dir(const char *path, size_t line, size_t column) {
+static ae_string ae_make_one_dir(const char *path, size_t line, size_t column) { /* win32-header */
     ae_string none = { NULL, 0 };
 #ifdef _WIN32
     wchar_t *wide = ae_widen(path);
@@ -876,7 +876,7 @@ static AE_STATUS_RESULT ae_try_create_dir(const char *path, size_t line, size_t 
 // directory. It is a result value for the same reason the rest are - the
 // target may be gone or unreadable - and no undo is provided, so callers keep
 // the old cwd() if they intend to come back.
-static AE_STATUS_RESULT ae_set_cwd(const char *path, size_t line, size_t column) {
+static AE_STATUS_RESULT ae_set_cwd(const char *path, size_t line, size_t column) { /* win32-header */
 #ifdef _WIN32
     wchar_t *wide = ae_widen(path);
     if (!wide) return ae_status_failed(ae_str_from("out of memory", line, column));
@@ -894,7 +894,7 @@ static AE_STATUS_RESULT ae_set_cwd(const char *path, size_t line, size_t column)
 
 // Removes an empty directory. Recursive removal is deliberately absent: a
 // helper that silently deletes a tree is the easiest way to lose data.
-static AE_STATUS_RESULT ae_try_remove_dir(const char *path, size_t line, size_t column) {
+static AE_STATUS_RESULT ae_try_remove_dir(const char *path, size_t line, size_t column) { /* win32-header */
 #ifdef _WIN32
     wchar_t *wide = ae_widen(path);
     if (!wide) return ae_status_failed(ae_str_from("out of memory", line, column));
@@ -1533,7 +1533,7 @@ static AE_COMMAND_RESULT ae_run_command(const char *program, const ae_strvec *ar
     return out;
 }
 #else
-static AE_COMMAND_RESULT ae_run_command(const char *program, const ae_strvec *args, size_t line, size_t column) {
+static AE_COMMAND_RESULT ae_run_command(const char *program, const ae_strvec *args, size_t line, size_t column) { /* win32-header */
     // Quotes and trailing backslashes are refused instead of escaped: guessing
     // CreateProcess's quoting rules wrong silently changes what the child runs.
     for (int64_t i = 0; i < args->len; i++) {

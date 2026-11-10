@@ -1,0 +1,17 @@
+{
+  "c_compile_ms": 301.571,
+  "executable_bytes": 64195,
+  "full_runtime_c_bytes": 109721,
+  "full_runtime_c_compile_ms": 1387.578,
+  "generated_c_bytes": 20352,
+  "header_baseline_c_bytes": 20349,
+  "header_baseline_c_compile_ms": 945.582,
+  "runs": 3,
+  "scenarios": {
+    "cold_build_ms": 429.737,
+    "implementation_edit_ms": 510.366,
+    "interface_edit_ms": 539.029,
+    "unchanged_build_ms": 111.023
+  },
+  "tool": "bench/build_timings.py"
+}

@@ -1,0 +1,63 @@
+AE Linux native verification, 2026-11-10 (ADR-39)
+Scope: conditional <windows.h> inclusion after reachable-runtime pruning
+
+Platform
+  OS: Debian 13, Linux 6.18.54-instabox x86_64, 4 vCPU
+  C compiler: gcc (Debian 14.2.0-19) 14.2.0
+  Rust: cargo / rustc 1.99.0
+  Sanitizers: AddressSanitizer + UndefinedBehaviorSanitizer available
+
+Source tree
+  The remote tree has no .git. Synchronised from the local working tree
+  immediately after commit f4c1e11 (W3 stage 1), plus the then-uncommitted
+  ADR-39 changes: src/, tests/, scripts/, examples/, docs/, Cargo.toml,
+  Cargo.lock and bench/*.py. The docs/ copy predates the ADR-39 prose edits,
+  which do not affect any compiled artefact or test.
+
+Commands (run from ~/ae-lang)
+  cargo build --locked
+  cargo test --locked
+  python3 scripts/verify_generated_c.py --leak
+  python3 scripts/verify_generated_c.py --sanitize
+  python3 bench/build_timings.py --runs 3 --header-baseline
+  ae check on every examples/*.ae
+  ae deps examples/modules/main.ae
+  ae emit-c examples/float_math.ae / examples/file_tidy.ae
+
+Results
+  cargo-test.log: 11 unit + 136 integration tests, 0 failures
+  verify-c-leak.log: 24 generated-C cases PASS, every program exits at the
+    glibc baseline of 0 live allocation blocks
+  verify-c-sanitize.log: 24 cases PASS, zero AddressSanitizer / UBSan reports
+  examples-check.log: empty, every examples/*.ae passes check
+  generated-c-header-check.txt: float_math.ae omits <windows.h>,
+    file_tidy.ae keeps it, print(1) generated C is 20,352 bytes
+  generated-c-syntax.log: all 31 examples/*.ae generated C files pass
+    -std=c11 -pedantic-errors -Werror=return-type -fsyntax-only;
+    11 include the header, 20 omit it (same split as Windows)
+  deps-output.txt: identical to the Windows file after CRLF/LF normalization
+
+Measured build effect (this machine, wall clock, gcc -std=c11 -O0)
+  c_compile_ms (header omitted):        31.396
+  header_baseline_c_compile_ms:         31.998
+  Difference: 0.6 ms, inside measurement noise.
+
+  Four build scenarios (ms): cold 36.248 | unchanged 4.617 |
+    implementation_edit 36.522 | interface_edit 36.129
+  generated C (print(1)): 20,352 bytes, byte-identical size to Windows
+  -O0 executable: 17,168 bytes
+
+  This is the expected platform asymmetry and is itself evidence: Linux never
+  preprocesses the #ifdef _WIN32 branch, so removing its include cannot change
+  the compile cost. The ~545-980 ms saving is Windows-only. It is not a
+  generated-C size effect and must not be reported as a Linux improvement.
+
+Boundaries (do not overstate)
+  - The generated C text is identical on both platforms; the header decision
+    depends on which runtime capabilities the program reaches, not on the
+    host OS.
+  - No Win32 declarations were hand-written; W6 is NOT implemented and no
+    ABI assumption was introduced.
+  - No new cache kind, no resident process, no safety check was disabled.
+  - A missing marker would fail at C compile time (explicit), never silently
+    change runtime behaviour; an extra marker only costs one header parse.

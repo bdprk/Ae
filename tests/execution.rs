@@ -272,6 +272,31 @@ fn emitted_c_passes_strict_return_type_check() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 }
 #[test]
+fn windows_header_is_included_only_when_the_program_needs_it() {
+    // A pure-computation program must not pay for parsing <windows.h>; a
+    // program that reaches the file layer must still have every declaration.
+    // Both generated units have to pass strict C11 syntax checking.
+    let cc = std::env::var_os("AE_CC").unwrap_or_else(|| "gcc".into());
+    let cases = [
+        ("examples/float_math.ae", false),
+        ("examples/file_tidy.ae", true),
+        ("examples/run_tool.ae", true),
+    ];
+    for (example, needs_header) in cases {
+        let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(example);
+        let generated = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-c").arg(&source).output().unwrap();
+        assert!(generated.status.success(), "{example}: {}", String::from_utf8_lossy(&generated.stderr));
+        let text = String::from_utf8(generated.stdout).unwrap();
+        assert_eq!(text.contains("#include <windows.h>"), needs_header, "{example}: unexpected header decision");
+        assert_eq!(text.contains("windows.h omitted"), !needs_header, "{example}: unexpected omission comment");
+        let path = std::env::temp_dir().join(format!("ae-win-header-{}-{}.c", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, text).unwrap();
+        let checked = Command::new(&cc).args(["-std=c11", "-pedantic-errors", "-Werror=return-type", "-fsyntax-only"]).arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(checked.status.success(), "{example}: {}", String::from_utf8_lossy(&checked.stderr));
+    }
+}
+#[test]
 fn forward_calls_and_mutual_recursion_work_in_both_build_modes() {
     let source = "fn main() { print(even(10)); print(odd(10)); } fn even(n: i64) -> i64 { if n == 0 { return 1; } else { return odd(n - 1); } } fn odd(n: i64) -> i64 { if n == 0 { return 0; } else { return even(n - 1); } }";
     let path = std::env::temp_dir().join(format!("ae-forward-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));

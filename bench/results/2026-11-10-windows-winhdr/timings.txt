@@ -1,0 +1,29 @@
+AE Windows build timings, 2026-11-10 (ADR-39)
+
+Three independent runs of:
+  python bench/build_timings.py --runs 3 --header-baseline
+      --full-c bench/results/2026-11-10-windows-w3/baseline-full-runtime.c
+
+All values are wall-clock milliseconds unless noted. The machine was under
+variable load during this session; only the within-run with/without-header
+comparison is a causal measurement. Do not compare absolute values with the
+2026-11-10-windows-w3 archive.
+
+run   with_header_ms   without_header_ms   saved_ms   ratio
+1               980.9               252.6      728.4    3.88
+2               945.6               301.6      644.0    3.14
+3              1296.4               319.6      976.8    4.06
+
+median with_header_ms    980.9
+median without_header_ms 301.6
+
+Four build scenarios (median of three runs, ms):
+  cold_build_ms                  435.9
+  implementation_edit_ms         510.4
+  interface_edit_ms              482.0
+  unchanged_build_ms             160.0
+
+generated C bytes (print(1)): 20352
+executable bytes (-O0):       64195
+
+timings.json is run 2 (closest to the medians); timings-runs.json holds all three raw runs.

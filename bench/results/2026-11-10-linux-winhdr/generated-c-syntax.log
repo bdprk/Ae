@@ -1,0 +1,33 @@
+examples=31 with_header=11 without_header=20
+  arithmetic.ae            omit       21317 bytes  syntax=OK
+  arrays.ae                omit       21255 bytes  syntax=OK
+  borrow.ae                omit       21286 bytes  syntax=OK
+  concat.ae                omit       27615 bytes  syntax=OK
+  constraints.ae           omit       23622 bytes  syntax=OK
+  control-flow.ae          omit       20961 bytes  syntax=OK
+  copy_notes.ae            include    53167 bytes  syntax=OK
+  dir_report.ae            include    47255 bytes  syntax=OK
+  enums.ae                 omit       32754 bytes  syntax=OK
+  file_tidy.ae             include    55959 bytes  syntax=OK
+  find_files.ae            include    33717 bytes  syntax=OK
+  find_text.ae             omit       25205 bytes  syntax=OK
+  float_math.ae            omit       35258 bytes  syntax=OK
+  functions.ae             omit       21275 bytes  syntax=OK
+  generic_borrow.ae        omit       29384 bytes  syntax=OK
+  generic_fn.ae            omit       25691 bytes  syntax=OK
+  grep.ae                  include    23675 bytes  syntax=OK
+  grep_cli.ae              include    31229 bytes  syntax=OK
+  hello.ae                 omit       20353 bytes  syntax=OK
+  json_report.ae           include    65518 bytes  syntax=OK
+  loops.ae                 omit       22122 bytes  syntax=OK
+  maybe.ae                 omit       34755 bytes  syntax=OK
+  option_propagate.ae      omit       29962 bytes  syntax=OK
+  pairs.ae                 omit       24998 bytes  syntax=OK
+  pipe_stats.ae            omit       30575 bytes  syntax=OK
+  run_tool.ae              include    36900 bytes  syntax=OK
+  strings.ae               omit       22977 bytes  syntax=OK
+  sum_numbers.ae           include    36025 bytes  syntax=OK
+  text_preview.ae          include    33673 bytes  syntax=OK
+  vectors.ae               omit       25969 bytes  syntax=OK
+  word_count.ae            include    39732 bytes  syntax=OK
+all generated C files pass strict C11 syntax checking

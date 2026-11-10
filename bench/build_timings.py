@@ -11,6 +11,11 @@ actually waits for; `AE_TIMINGS=1` gives the per-stage breakdown.
 The script does not compare against a "full runtime" baseline by itself. Pass
 `--full-c PATH` with an `emit-c` dump from a build without runtime pruning to
 also measure the C compiler's isolated cost on both texts.
+
+`--header-baseline` restores `<windows.h>` in the *same* generated C (ADR-39)
+and times both texts back to back. This is the only honest way to isolate the
+header cost: cross-session wall-clock numbers on this machine drift by 30% or
+more, and Linux never preprocesses the Windows branch at all.
 """
 import argparse
 import json
@@ -26,6 +31,8 @@ import time
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 EXE = ROOT / "target" / "debug" / ("ae.exe" if os.name == "nt" else "ae")
 PLACEHOLDER = "fn main() { print(1); }"
+OMITTED = "/* windows.h omitted */"
+HEADER = "#include <windows.h>"
 
 
 def elapsed_ms(fn):
@@ -53,6 +60,8 @@ def main():
     ap.add_argument("--json", dest="json_path", help="write the measurements here")
     ap.add_argument("--runs", type=int, default=3, help="repeats per timed scenario")
     ap.add_argument("--full-c", dest="full_c", help="unpruned emit-c dump for a C-compiler comparison")
+    ap.add_argument("--header-baseline", action="store_true",
+                    help="also time the same generated C with <windows.h> restored")
     args = ap.parse_args()
     if not EXE.is_file():
         sys.exit(f"missing compiler: {EXE} (run cargo build --locked first)")
@@ -110,6 +119,27 @@ def main():
                 data["c_compile_ms"] = round(median_ms(lambda: subprocess.run(
                     [cc, "-std=c11", "-O0", str(cfile), "-o", str(binary)], capture_output=True), args.runs), 3)
                 data["executable_bytes"] = binary.stat().st_size
+                if args.header_baseline:
+                    raw = cfile.read_bytes()
+                    needle = OMITTED.encode("ascii")
+                    if needle in raw:
+                        # Byte-level replacement: text mode would normalise
+                        # CRLF and change both the size and the file gcc sees.
+                        restored = raw.replace(needle, HEADER.encode("ascii"), 1)
+                        with_header = tmp / "with_header.c"
+                        with_header.write_bytes(restored)
+                        data["header_baseline_c_bytes"] = len(restored)
+                        check = subprocess.run(
+                            [cc, "-std=c11", "-O0", str(with_header), "-o", str(binary)],
+                            capture_output=True)
+                        if check.returncode == 0:
+                            data["header_baseline_c_compile_ms"] = round(median_ms(lambda: subprocess.run(
+                                [cc, "-std=c11", "-O0", str(with_header), "-o", str(binary)],
+                                capture_output=True), args.runs), 3)
+                        else:
+                            data["header_baseline_c_compile_error"] = check.stderr.decode(errors="replace")[:400]
+                    else:
+                        data["header_baseline_skipped"] = "generated C still includes <windows.h>"
             else:
                 data["c_compile_error"] = result.stderr.decode(errors="replace")[:400]
             if args.full_c:

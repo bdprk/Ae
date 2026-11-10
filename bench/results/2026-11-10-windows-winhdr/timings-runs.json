@@ -1,0 +1,84 @@
+{
+  "median": {
+    "c_compile_ms": 301.571,
+    "executable_bytes": 64195,
+    "full_runtime_c_compile_ms": 1387.578,
+    "generated_c_bytes": 20352,
+    "header_baseline_c_bytes": 20349,
+    "header_baseline_c_compile_ms": 980.945,
+    "scenarios": {
+      "cold_build_ms": 435.947,
+      "implementation_edit_ms": 510.366,
+      "interface_edit_ms": 481.968,
+      "unchanged_build_ms": 159.976
+    }
+  },
+  "note": "three independent invocations of --runs 3 --header-baseline; median is taken over the three run-level numbers",
+  "ratio_per_run": [
+    3.884,
+    3.136,
+    4.056
+  ],
+  "runs": [
+    {
+      "c_compile_ms": 252.579,
+      "executable_bytes": 64195,
+      "full_runtime_c_bytes": 109721,
+      "full_runtime_c_compile_ms": 1138.233,
+      "generated_c_bytes": 20352,
+      "header_baseline_c_bytes": 20349,
+      "header_baseline_c_compile_ms": 980.945,
+      "run": 1,
+      "runs": 3,
+      "scenarios": {
+        "cold_build_ms": 435.947,
+        "implementation_edit_ms": 376.628,
+        "interface_edit_ms": 348.989,
+        "unchanged_build_ms": 159.976
+      },
+      "tool": "bench/build_timings.py"
+    },
+    {
+      "c_compile_ms": 301.571,
+      "executable_bytes": 64195,
+      "full_runtime_c_bytes": 109721,
+      "full_runtime_c_compile_ms": 1387.578,
+      "generated_c_bytes": 20352,
+      "header_baseline_c_bytes": 20349,
+      "header_baseline_c_compile_ms": 945.582,
+      "run": 2,
+      "runs": 3,
+      "scenarios": {
+        "cold_build_ms": 429.737,
+        "implementation_edit_ms": 510.366,
+        "interface_edit_ms": 539.029,
+        "unchanged_build_ms": 111.023
+      },
+      "tool": "bench/build_timings.py"
+    },
+    {
+      "c_compile_ms": 319.597,
+      "executable_bytes": 64195,
+      "full_runtime_c_bytes": 109721,
+      "full_runtime_c_compile_ms": 2106.219,
+      "generated_c_bytes": 20352,
+      "header_baseline_c_bytes": 20349,
+      "header_baseline_c_compile_ms": 1296.383,
+      "run": 3,
+      "runs": 3,
+      "scenarios": {
+        "cold_build_ms": 597.338,
+        "implementation_edit_ms": 615.666,
+        "interface_edit_ms": 481.968,
+        "unchanged_build_ms": 186.884
+      },
+      "tool": "bench/build_timings.py"
+    }
+  ],
+  "saved_ms_per_run": [
+    728.366,
+    644.011,
+    976.786
+  ],
+  "tool": "bench/build_timings.py"
+}

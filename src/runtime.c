@@ -491,14 +491,15 @@ static void ae_vec_reverse(ae_vec *v) {
 #ifdef _WIN32
 // The full windows.h pulls in winsock, RPC, GDI and shell declarations that
 // this runtime never uses. Measured on WinLibs GCC 16.2: parsing the plain
-// header costs ~690 ms, with this define ~520 ms. Every generated program pays
-// that cost at build time, so keep the header surface minimal.
+// header costs ~690 ms, with this define ~520 ms. The runtime pruner drops
+// this include entirely when no retained function needs a Win32 declaration,
+// so pure-computation programs do not pay for it at build time.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
 // UTF-8 to UTF-16 for the wide-character Win32 APIs; callers free the result.
-static wchar_t *ae_widen(const char *text) {
+static wchar_t *ae_widen(const char *text) { /* win32-header */
     const int len = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
     if (len <= 0) return NULL;
     wchar_t *wide = ae_alloc_try((size_t)len * sizeof(wchar_t));
@@ -507,7 +508,7 @@ static wchar_t *ae_widen(const char *text) {
     return wide;
 }
 // UTF-16 to a fresh UTF-8 buffer of `len` units; returns NULL on failure.
-static char *ae_narrow(const wchar_t *text, int len) {
+static char *ae_narrow(const wchar_t *text, int len) { /* win32-header */
     if (len <= 0) return NULL;
     const int size = WideCharToMultiByte(CP_UTF8, 0, text, len, NULL, 0, NULL, NULL);
     if (size <= 0) return NULL;
@@ -517,7 +518,7 @@ static char *ae_narrow(const wchar_t *text, int len) {
     narrow[size] = 0;
     return narrow;
 }
-static FILE *ae_fopen(const char *path, const char *mode) {
+static FILE *ae_fopen(const char *path, const char *mode) { /* win32-header */
     wchar_t *wpath = ae_widen(path);
     wchar_t *wmode = ae_widen(mode);
     if (!wpath || !wmode) { ae_free(wpath); ae_free(wmode); return NULL; }
