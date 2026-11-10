@@ -2664,3 +2664,98 @@ fn find_reports_a_byte_offset_or_an_error_value() {
         assert!(err.contains(expected), "{source}: {err}");
     }
 }
+
+#[test]
+fn float_arithmetic_prints_a_canonical_form() {
+    let source = r#"fn mean(values: &vec) -> f64 {
+    var total = 0.0;
+    for i in 0..len(values) { total = total + to_f64(values[i]); }
+    return total / to_f64(len(values));
+}
+fn main() {
+    let data = vec[2, 4, 4, 4, 5, 5, 7, 9];
+    print(mean(&data));
+    print(1.0 / 3.0);
+    print(0.1 + 0.2);
+    print(0.1 + 0.2 == 0.3);
+    print(1000.0);
+    print(-0.0);
+    print(1e16);
+    print(0.0001);
+    let huge = 1e308 * 10.0;
+    print(huge);
+    print(huge - huge);
+    print(to_string(3.14));
+    let whole = to_i64(5.0);
+    match whole { IntResult::Ok(n) => { print(n); } IntResult::Err(reason) => { print(reason); } }
+    let fraction = to_i64(0.1 + 0.2);
+    match fraction { IntResult::Ok(n) => { print(n); } IntResult::Err(reason) => { print(reason); } }
+    let not_finite = to_i64(huge);
+    match not_finite { IntResult::Ok(n) => { print(n); } IntResult::Err(reason) => { print(reason); } }
+    let too_large = to_i64(1e30);
+    match too_large { IntResult::Ok(n) => { print(n); } IntResult::Err(reason) => { print(reason); } }
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "5.0\n0.3333333333333333\n0.30000000000000004\nfalse\n1000.0\n-0.0\n1e+16\n1e-4\ninf\nnan\n3.14\n5\nf64 value is not an exact integer\nf64 value is not finite\nf64 value is outside the i64 range\n"
+    );
+}
+
+#[test]
+fn float_exponents_and_fields_resolve_without_mixing() {
+    let source = r#"struct Point { x: f64, y: f64 }
+enum Reading { Value(f64), Missing }
+fn add[T: Add](a: T, b: T) -> T { return a + b; }
+fn main() {
+    let p = Point { x: 1.5, y: -2.5 };
+    print(p.x + p.y);
+    let r = Reading::Value(0.25);
+    match r { Reading::Value(v) => { print(v * 4.0); } Reading::Missing => { print(0.0); } }
+    print(add[f64](1.25, 2.75));
+    let maybe = Option[f64]::Some(0.5);
+    match maybe { Option::Some(v) => { print(v); } Option::None => { print(0.0); } }
+    print(2.5e-3);
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "-1.0\n1.0\n4.0\n0.5\n0.0025\n");
+}
+
+#[test]
+fn float_rejections_keep_conversions_explicit() {
+    for (source, expected) in [
+        ("fn main() { print(1 + 2.0); }", "mixed i64/f64 arithmetic"),
+        ("fn main() { print(5.0 % 2.0); }", "operands only"),
+        ("fn main() { if 1.0 { print(1); } }", "boolean"),
+        ("fn main() { print(1.0e400); }", "not finite"),
+        ("fn main() { print(1.0e-400); }", "underflows"),
+        ("fn main() { let v = vec[1.0]; }", "must be i64"),
+        ("fn main() { print(to_f64(1.0)); }", "expects an i64"),
+        ("fn main() { print(to_i64(1)); }", "expects an f64"),
+        ("fn main() { print(to_string(true)); }", "expects an i64 or f64"),
+        ("fn main() { let x = vec[1]; print(x[0.5]); }", "index"),
+        ("fn main() { let x = 1.0; x = 2; }", "cannot assign"),
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-float-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted invalid program: {source}");
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(err.contains(expected), "{source}: {err}");
+    }
+}
+
+#[test]
+fn float_runtime_guards_report_instead_of_rounding() {
+    for (source, expected) in [
+        ("fn main() { print(to_f64(9007199254740993)); }", "would lose precision"),
+        ("fn main() { let z = 0.0; print(1.0 / z); }", "f64 division by zero"),
+    ] {
+        let output = execute(source);
+        assert!(!output.status.success(), "{source}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains(expected), "{source}: {}", String::from_utf8_lossy(&output.stderr));
+    }
+}

@@ -1,0 +1,38 @@
+// Mean and variance over a fixed sample. Every i64/f64 crossing is explicit:
+// `to_f64` for the counts, `to_i64` where an exact integer is required (and it
+// reports rather than truncates when the value is not one).
+fn mean(values: &vec) -> f64 {
+    var total = 0.0;
+    for i in 0..len(values) { total = total + to_f64(values[i]); }
+    return total / to_f64(len(values));
+}
+
+fn variance(values: &vec, center: f64) -> f64 {
+    var total = 0.0;
+    for i in 0..len(values) {
+        let gap = to_f64(values[i]) - center;
+        total = total + gap * gap;
+    }
+    return total / to_f64(len(values));
+}
+
+fn main() {
+    let samples = vec[2, 4, 4, 4, 5, 5, 7, 9];
+    let center = mean(&samples);
+    print("count " + to_string(len(samples)));
+    print("mean " + to_string(center));
+    print("variance " + to_string(variance(&samples, center)));
+    print("share " + to_string(to_f64(samples[3]) / to_f64(len(samples))));
+    print("third " + to_string(1.0 / 3.0));
+
+    let exact = to_i64(center);
+    match exact {
+        IntResult::Ok(n) => { print("exact " + to_string(n)); }
+        IntResult::Err(reason) => { print("exact failed: " + reason); }
+    }
+    let approximate = to_i64(center + 0.5);
+    match approximate {
+        IntResult::Ok(n) => { print("exact " + to_string(n)); }
+        IntResult::Err(reason) => { print("exact failed: " + reason); }
+    }
+}

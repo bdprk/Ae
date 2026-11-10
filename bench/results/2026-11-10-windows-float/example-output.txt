@@ -1,0 +1,7 @@
+count 8
+mean 5.0
+variance 4.0
+share 0.5
+third 0.3333333333333333
+exact 5
+exact failed: f64 value is not an exact integer

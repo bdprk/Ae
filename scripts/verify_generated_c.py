@@ -75,6 +75,9 @@ def run():
         # find returns an IntResult: the Err branch allocates an error string
         # that the enum release must give back exactly once.
         ("find_text.ae", b"4\n13\nsubstring not found\n0\n7", True),
+        # f64: one canonical text form on every platform, explicit conversions,
+        # and a checked division that reports x/0.0 instead of returning inf.
+        ("float_math.ae", b"count 8\nmean 5.0\nvariance 4.0\nshare 0.5\nthird 0.3333333333333333\nexact 5\nexact failed: f64 value is not an exact integer", True),
         ("json_report.ae", (
             "ready\n"
             "wrote 175 bytes\n"

@@ -8,6 +8,7 @@
 // with Ok at variant index 0 and Err at index 1.
 
 #include <errno.h>
+#include <math.h>
 #include <time.h>
 #ifndef _WIN32
 #include <dirent.h>
@@ -400,6 +401,141 @@ static ae_string ae_to_string(int64_t value, size_t line, size_t column) {
     const int length = snprintf(buffer, sizeof buffer, "%" PRId64, value);
     if (length < 0) ae_fail("cannot format integer", line, column);
     return ae_str_from_len(buffer, (int64_t)length, line, column);
+}
+
+// ---- f64 text (ADR-37) ------------------------------------------------------
+// One spelling on every platform. `%g` alone is not enough: UCRT writes a NaN
+// as "-nan(ind)" while glibc writes "-nan", and exponent widths have differed
+// between CRTs. So specials are written here, and finite values are rendered by
+// the shortest precision that round-trips, choosing the shorter of fixed and
+// scientific notation (ties go to fixed). This is a canonical form, not the
+// shortest possible decimal: 0.1 prints as 0.1, 1.0 as 1.0, 1/3 with the 17
+// digits needed to get the same bits back.
+static size_t ae_f64_fixed(double value, char *out, size_t cap) {
+    for (int decimals = 0; decimals <= 17; decimals++) {
+        const int written = snprintf(out, cap, "%.*f", decimals, value);
+        if (written < 0 || (size_t)written >= cap) return 0;
+        if (strtod(out, NULL) != value) continue;
+        size_t length = (size_t)written;
+        char *dot = memchr(out, '.', length);
+        if (dot) {
+            char *end = out + length;
+            // Keep one fractional digit: "1.0" reads as a float, "1." does not.
+            while (end > dot + 2 && end[-1] == '0') end -= 1;
+            length = (size_t)(end - out);
+        }
+        return length;
+    }
+    return 0;
+}
+
+static size_t ae_f64_scientific(double value, char *out, size_t cap) {
+    for (int digits = 1; digits <= 17; digits++) {
+        const int written = snprintf(out, cap, "%.*e", digits - 1, value);
+        if (written < 0 || (size_t)written >= cap) return 0;
+        if (strtod(out, NULL) == value) return (size_t)written;
+    }
+    return 0;
+}
+
+// Rewrites "1.5e-005" as "1.5e-5": lowercase marker, sign always present, and
+// no leading zeros in the exponent. Both CRTs already agree on this for the
+// values tested, but the language must not depend on that agreement.
+static size_t ae_f64_exponent_form(char *text, size_t length) {
+    char *marker = memchr(text, 'e', length);
+    if (!marker) marker = memchr(text, 'E', length);
+    if (!marker) return length;
+    const size_t mantissa = (size_t)(marker - text);
+    char sign = '+';
+    size_t at = mantissa + 1;
+    if (at < length && (text[at] == '+' || text[at] == '-')) { sign = text[at]; at += 1; }
+    while (at < length && text[at] == '0') at += 1;
+    size_t cursor = mantissa;
+    text[cursor++] = 'e';
+    text[cursor++] = sign;
+    if (at == length) {
+        text[cursor++] = '0';
+    } else {
+        while (at < length) text[cursor++] = text[at++];
+    }
+    return cursor;
+}
+
+static size_t ae_f64_text(double value, char *out, size_t cap) {
+    if (isnan(value)) { memcpy(out, "nan", 3); return 3; }
+    if (isinf(value)) {
+        const char *text = value < 0.0 ? "-inf" : "inf";
+        const size_t length = strlen(text);
+        memcpy(out, text, length);
+        return length;
+    }
+    char fixed[64];
+    char scientific[64];
+    // Beyond 1e17 fixed notation needs more than 64 bytes; skip it there
+    // instead of truncating a value that would then fail to round-trip.
+    const size_t fixed_length = (value > -1e17 && value < 1e17) ? ae_f64_fixed(value, fixed, sizeof fixed) : 0;
+    const size_t scientific_length = ae_f64_scientific(value, scientific, sizeof scientific);
+    char *chosen = fixed;
+    size_t length = fixed_length;
+    if (scientific_length > 0 && (fixed_length == 0 || scientific_length < fixed_length)) {
+        chosen = scientific;
+        length = scientific_length;
+    }
+    if (length == 0) { memcpy(out, "nan", 3); return 3; }
+    length = ae_f64_exponent_form(chosen, length);
+    const bool plain = !memchr(chosen, '.', length) && !memchr(chosen, 'e', length);
+    memcpy(out, chosen, length);
+    if (plain && length + 2 <= cap) {
+        out[length++] = '.';
+        out[length++] = '0';
+    }
+    return length;
+}
+
+static ae_string ae_f64_to_string(double value, size_t line, size_t column) {
+    char buffer[96];
+    const size_t length = ae_f64_text(value, buffer, sizeof buffer);
+    return ae_str_from_len(buffer, (int64_t)length, line, column);
+}
+
+static void ae_f64_print(double value) {
+    char buffer[96];
+    const size_t length = ae_f64_text(value, buffer, sizeof buffer);
+    if (fwrite(buffer, 1, length, stdout) != length || fputc('\n', stdout) == EOF) ae_fail("output error", 0, 0);
+}
+
+static double ae_f64_div(double a, double b, size_t line, size_t column) {
+    // Same rule as integer division: zero is a reported failure, never a
+    // silent infinity. Non-finite results from overflow are still IEEE values.
+    if (b == 0.0) ae_fail("f64 division by zero", line, column);
+    return a / b;
+}
+
+static double ae_f64_from_i64(int64_t value, size_t line, size_t column) {
+    // Every integer up to 2^53 is exact; beyond that the conversion would
+    // round silently, so it is refused instead of approximated.
+    if (value > INT64_C(9007199254740992) || value < -INT64_C(9007199254740992)) {
+        ae_fail("i64 to f64 conversion would lose precision", line, column);
+    }
+    return (double)value;
+}
+
+static AE_INT_RESULT ae_f64_to_i64(double value, size_t line, size_t column) {
+    if (!isfinite(value)) {
+        AE_INT_RESULT bad = { AE_INT_ERR, { .v1 = { ae_str_from("f64 value is not finite", line, column) } } };
+        return bad;
+    }
+    if (value < -9223372036854775808.0 || value >= 9223372036854775808.0) {
+        AE_INT_RESULT bad = { AE_INT_ERR, { .v1 = { ae_str_from("f64 value is outside the i64 range", line, column) } } };
+        return bad;
+    }
+    const int64_t converted = (int64_t)value;
+    if ((double)converted != value) {
+        AE_INT_RESULT bad = { AE_INT_ERR, { .v1 = { ae_str_from("f64 value is not an exact integer", line, column) } } };
+        return bad;
+    }
+    AE_INT_RESULT out = { AE_INT_OK, { .v0 = { converted } } };
+    return out;
 }
 
 static bool ae_path_exists(const char *path, size_t line, size_t column) {

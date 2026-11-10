@@ -1,0 +1,38 @@
+AE Linux native verification, 2026-11-10 (W2: f64)
+Scope: ADR-37 (f64 type, explicit conversions, checked division, canonical text)
+Source: the Windows repository at the W2 commit, synced as source files only
+        (src/, tests/, scripts/, examples/, docs/, Cargo.toml, Cargo.lock, bench/run.py).
+        The remote checkout has no .git; the commit identifies the exact tree.
+
+Platform
+  OS: Debian GNU/Linux 13 (trixie)
+  Kernel: Linux 6.18.54-instabox x86_64
+  C compiler: gcc (Debian 14.2.0-19) 14.2.0
+  Rust: rustc 1.99.0
+  Python: 3.13.5
+  CPU / memory: 4 vCPU / 7964 MiB
+  Locale: en_US.UTF-8
+  Sanitizers: gcc -fsanitize=address,undefined
+
+Commands (run from the remote checkout root)
+  cargo test --locked
+  python3 scripts/verify_generated_c.py --sanitize
+  python3 scripts/verify_generated_c.py --leak
+  ae run examples/float_math.ae
+
+Results
+  cargo-test.log: 9 unit + 133 integration tests, 0 failures, no warnings
+  verify-c-sanitize.log: 24 generated-C cases PASS, no ASan/UBSan report
+  verify-c-leak.log: 24 generated-C cases PASS, all at the 0-block glibc baseline
+  float_math.ae output is byte-identical to the Windows output after line-ending
+  normalization (LF vs CRLF): the text comes from the runtime formatter, not
+  from the C library's printf.
+
+Resource measurements
+  emit-c: trivial program 109,721 bytes; float_math.ae 116,494 bytes
+    (identical to Windows: the generated C text is platform-independent)
+  build --release: float_math.ae 21,576 bytes
+
+Not covered here
+  Performance benchmarks, macOS/ARM64/musl, and any capability added after this
+  commit. This directory is a correctness/safety verification log.

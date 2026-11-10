@@ -1,0 +1,30 @@
+AE Windows local verification, 2026-11-10 (W2: f64)
+Scope: ADR-37 (f64 type, explicit conversions, checked division, canonical text)
+
+Platform
+  OS: Windows x86-64 (native, MinGW-W64 UCRT toolchain)
+  C compiler: gcc.exe (MinGW-W64 x86_64-ucrt-posix-seh) 16.2.0
+  Rust: cargo 1.99.1
+  AddressSanitizer: unavailable on MinGW; allocation counting uses -Wl,--wrap
+
+Commands (run from the repository root)
+  cargo test --locked
+  python scripts/verify_generated_c.py --leak
+  ae run examples/float_math.ae
+
+Results
+  cargo-test.log: 9 unit + 133 integration tests, 0 failures
+  verify-c-leak.log: 24 generated-C cases PASS, every program exits at the
+    UCRT baseline of 2 live allocation blocks (float_math.ae included, so
+    to_string/to_i64 allocate and release exactly once)
+  example-output.txt: the float_math.ae output after CRLF normalization
+
+Resource measurements (this machine)
+  emit-c: trivial program 109,721 bytes; float_math.ae 116,494 bytes
+    (+6,773 bytes for the f64 formatter and conversions)
+  build --release: float_math.ae 70,467 bytes; find_text.ae 66,904 bytes
+    (+~3.6 KB, mostly the snprintf/strtod path)
+
+Not covered here
+  Linux run (archived separately), performance, and any capability added after
+  this commit. This directory is a correctness/safety verification log.

@@ -3,7 +3,7 @@ use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Kind {
-    Ident(String), Number(i64), Text(String), Fn, Let, Var, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
+    Ident(String), Number(i64), Float(f64), Text(String), Fn, Let, Var, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, Struct,
     Enum, Match, ColonColon, FatArrow, Question, Eof,
@@ -12,12 +12,13 @@ enum Kind {
 struct Token { kind: Kind, offset: usize, line: usize, column: usize }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, String, StrView, Vec, StrVec, VecRef, StrVecRef, Map, Array(usize), Struct(usize), Enum(&'static str, usize) }
+enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecRef, StrVecRef, Map, Array(usize), Struct(usize), Enum(&'static str, usize) }
 impl Type {
     fn name(self) -> String {
         match self {
             Type::Int => "i64".to_owned(),
             Type::Bool => "bool".to_owned(),
+            Type::F64 => "f64".to_owned(),
             Type::String => "string".to_owned(),
             Type::StrView => "string view".to_owned(),
             Type::Vec => "vec".to_owned(),
@@ -34,6 +35,7 @@ impl Type {
     fn c_temp(self) -> String {
         match self {
             Type::Bool => "bool ".to_owned(),
+            Type::F64 => "double ".to_owned(),
             Type::String => "ae_string ".to_owned(),
             Type::StrView => "ae_strview ".to_owned(),
             Type::Vec => "ae_vec ".to_owned(),
@@ -61,7 +63,7 @@ const MAX_ENUM_TYPES: usize = 256;
 const MAX_STRUCT_TYPES: usize = 256;
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
-const RESERVED: &[&str] = &["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "find", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "run_command", "set_cwd"];
+const RESERVED: &[&str] = &["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "find", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "run_command", "set_cwd", "to_f64", "to_i64"];
 // Provisional prelude: fallible operations report failure as values instead of
 // terminating the process (§4.5). These enums are registered before any user
 // type, so a program can name them without importing anything. They are
@@ -173,7 +175,38 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
         } else if c.is_ascii_digit() {
             i += 1;
             while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
-            Kind::Number(source[start..i].parse().map_err(|_| lex_error(source, start, "integer literal exceeds i64 maximum"))?)
+            // A fraction needs a digit after the dot: `1..2` is a range and
+            // `1.field` would be a field access, so neither may become a float.
+            let mut floating = false;
+            if i + 1 < bytes.len() && bytes[i] == b'.' && bytes[i + 1].is_ascii_digit() {
+                floating = true;
+                i += 1;
+                while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
+            }
+            // An exponent also makes the literal a float: `1e3` is 1000.0.
+            if i < bytes.len() && (bytes[i] == b'e' || bytes[i] == b'E') {
+                let mut exponent = i + 1;
+                if exponent < bytes.len() && (bytes[exponent] == b'+' || bytes[exponent] == b'-') { exponent += 1; }
+                if exponent < bytes.len() && bytes[exponent].is_ascii_digit() {
+                    floating = true;
+                    i = exponent;
+                    while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
+                }
+            }
+            let text = &source[start..i];
+            if floating {
+                let value: f64 = text.parse().map_err(|_| lex_error(source, start, "invalid float literal"))?;
+                if !value.is_finite() { return Err(lex_error(source, start, "float literal is not finite")); }
+                // Rounding a nonzero literal down to zero would silently replace
+                // the value the user wrote, so it is rejected instead of stored.
+                let mantissa = text.split(['e', 'E']).next().unwrap_or(text);
+                if value == 0.0 && mantissa.bytes().any(|b| b.is_ascii_digit() && b != b'0') {
+                    return Err(lex_error(source, start, "float literal underflows to zero"));
+                }
+                Kind::Float(value)
+            } else {
+                Kind::Number(text.parse().map_err(|_| lex_error(source, start, "integer literal exceeds i64 maximum"))?)
+            }
         } else if ["==", "!=", "<=", ">=", "->", "&&", "||", "..", "=>", "::"].iter().any(|op| source[i..].starts_with(op)) {
             i += 2;
             match &source[start..i] { "==" => Kind::EqEq, "!=" => Kind::NotEq, "<=" => Kind::LessEq, ">=" => Kind::GreaterEq, "->" => Kind::Arrow, "&&" => Kind::And, "||" => Kind::Or, ".." => Kind::DotDot, "=>" => Kind::FatArrow, "::" => Kind::ColonColon, _ => unreachable!() }
@@ -204,7 +237,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), SetCwd(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Trim(Box<Expr>, usize, usize), StartsWith(Box<Expr>, Box<Expr>), EndsWith(Box<Expr>, Box<Expr>),
+enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Box<Expr>, Type, usize, usize), FloatToString(Box<Expr>, usize, usize), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), SetCwd(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Trim(Box<Expr>, usize, usize), StartsWith(Box<Expr>, Box<Expr>), EndsWith(Box<Expr>, Box<Expr>),
     TryAppendFile(Box<Expr>, Box<Expr>, Type, usize, usize), Env(Box<Expr>, Type, usize, usize), JsonGet(Box<Expr>, Box<Expr>, Type, usize, usize), JsonInt(Box<Expr>, Box<Expr>, Type, usize, usize), JsonBool(Box<Expr>, Box<Expr>, Type, usize, usize), JsonLen(Box<Expr>, Box<Expr>, Type, usize, usize), JsonHas(Box<Expr>, Box<Expr>, usize, usize), Find(Box<Expr>, Box<Expr>, Type, usize, usize), ReadStdin(Type, usize, usize), Cwd(Type, usize, usize), StrVecNew(usize, usize), RunCommand(Box<Expr>, usize, Type, usize, usize), NowMs, NowS, Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 // A map reachable without a move: either a variable slot or a field of one.
 #[derive(Debug)]
@@ -275,18 +308,18 @@ impl Bound {
     }
     fn allows(self, ty: Type) -> bool {
         match self {
-            Bound::Copy => matches!(ty, Type::Int | Type::Bool),
-            Bound::Eq => matches!(ty, Type::Int | Type::Bool | Type::String),
-            Bound::Ord => matches!(ty, Type::Int),
-            Bound::Add => matches!(ty, Type::Int | Type::String),
+            Bound::Copy => matches!(ty, Type::Int | Type::Bool | Type::F64),
+            Bound::Eq => matches!(ty, Type::Int | Type::Bool | Type::String | Type::F64),
+            Bound::Ord => matches!(ty, Type::Int | Type::F64),
+            Bound::Add => matches!(ty, Type::Int | Type::String | Type::F64),
         }
     }
     fn allowed_types(self) -> &'static str {
         match self {
-            Bound::Copy => "i64, bool",
-            Bound::Eq => "i64, bool, string",
-            Bound::Ord => "i64",
-            Bound::Add => "i64, string",
+            Bound::Copy => "i64, bool, f64",
+            Bound::Eq => "i64, bool, string, f64",
+            Bound::Ord => "i64, f64",
+            Bound::Add => "i64, string, f64",
         }
     }
 }
@@ -347,6 +380,7 @@ impl<'a> Parser<'a> {
         if self.expression_nodes > 128 { return Err(self.fail("expression complexity limit exceeded (128)")); }
         let mut lhs = match self.current().clone() {
             Kind::Number(n) => { self.pos += 1; (Expr::Number(n), Type::Int) }
+            Kind::Float(x) => { self.pos += 1; (Expr::FloatLit(x), Type::F64) }
             Kind::True => { self.pos += 1; (Expr::BoolLit(true), Type::Bool) }
             Kind::False => { self.pos += 1; (Expr::BoolLit(false), Type::Bool) }
             Kind::Text(text) => {
@@ -359,8 +393,8 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
                 // Operands bind tighter than any binary operator: -a * b is (-a) * b.
                 let (operand, ty) = self.expression(6, false)?;
-                if ty != Type::Int { return Err(self.fail("unary '-' requires an integer operand")); }
-                (Expr::Neg(Box::new(operand), line, column), Type::Int)
+                if !matches!(ty, Type::Int | Type::F64) { return Err(self.fail("unary '-' requires an i64 or f64 operand")); }
+                (Expr::Neg(Box::new(operand), line, column), ty)
             }
             Kind::Bang => {
                 self.pos += 1;
@@ -786,9 +820,28 @@ impl<'a> Parser<'a> {
                     let (line, col) = (vline, vcol);
                     self.take(Kind::LParen)?;
                     let (value, value_ty) = self.expression(0, false)?;
-                    if value_ty != Type::Int { return Err(self.fail("to_string expects an i64")); }
+                    let builtin = match value_ty {
+                        Type::Int => Expr::ToString(Box::new(value), line, col),
+                        Type::F64 => Expr::FloatToString(Box::new(value), line, col),
+                        _ => return Err(self.fail("to_string expects an i64 or f64")),
+                    };
                     self.take(Kind::RParen)?;
-                    (Expr::ToString(Box::new(value), line, col), Type::String)
+                    (builtin, Type::String)
+                } else if name == "to_f64" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    let (value, value_ty) = self.expression(0, false)?;
+                    if value_ty != Type::Int { return Err(self.fail("to_f64 expects an i64")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::ToF64(Box::new(value), line, col), Type::F64)
+                } else if name == "to_i64" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    let ty = self.prelude_type("IntResult");
+                    self.take(Kind::LParen)?;
+                    let (value, value_ty) = self.expression(0, false)?;
+                    if value_ty != Type::F64 { return Err(self.fail("to_i64 expects an f64")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::ToI64(Box::new(value), ty, line, col), ty)
                 } else if matches!(name.as_str(), "read_file" | "write_file" | "bytes" | "contains" | "starts_with" | "ends_with" | "slice" | "split" | "trim") && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     self.pos += 1;
@@ -966,12 +1019,13 @@ impl<'a> Parser<'a> {
                 Kind::EqEq | Kind::NotEq | Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq => {
                     let comparable = match (lhs_ty, rhs_ty) {
                         (Type::Int, Type::Int) => true,
+                        (Type::F64, Type::F64) => true,
                         (Type::Bool, Type::Bool) => op == Kind::EqEq || op == Kind::NotEq,
                         (Type::String | Type::StrView, Type::String | Type::StrView) => op == Kind::EqEq || op == Kind::NotEq,
                         _ => false,
                     };
                     if !comparable {
-                        return Err(self.fail("comparison requires two integers, or two strings/views with == or !="));
+                        return Err(self.fail("comparison requires two i64, two f64, or two strings/views with == or !="));
                     }
                     // String/view equality gets a dedicated node so emission
                     // never confuses it with C pointer comparison.
@@ -998,8 +1052,18 @@ impl<'a> Parser<'a> {
                     Type::String
                 }
                 _ => {
-                    if lhs_ty != Type::Int || rhs_ty != Type::Int { return Err(self.fail("arithmetic requires integer operands")); }
-                    Type::Int
+                    if lhs_ty == Type::F64 || rhs_ty == Type::F64 {
+                        if lhs_ty != Type::F64 || rhs_ty != Type::F64 {
+                            return Err(self.fail("mixed i64/f64 arithmetic is not allowed; convert one side explicitly with to_f64 or to_i64"));
+                        }
+                        if op == Kind::Percent {
+                            return Err(self.fail("'%' is defined for i64 operands only"));
+                        }
+                        Type::F64
+                    } else {
+                        if lhs_ty != Type::Int || rhs_ty != Type::Int { return Err(self.fail("arithmetic requires integer operands")); }
+                        Type::Int
+                    }
                 }
             };
             lhs = (Expr::Binary(Box::new(lhs_expr), op, Box::new(rhs), line, column, ty), ty);
@@ -1014,6 +1078,7 @@ impl<'a> Parser<'a> {
         if let Some(&concrete) = self.subst.get(&name) { return Ok(concrete); }
         match name.as_str() {
             "i64" => Ok(Type::Int),
+            "f64" => Ok(Type::F64),
             "bool" => Ok(Type::Bool),
             "string" => Ok(Type::String),
             "vec" => {
@@ -1258,8 +1323,8 @@ impl<'a> Parser<'a> {
         let fty = self.named_type()?;
         // Payloads stay flat: a variant may carry scalars, strings or a vector,
         // but not a struct or another enum (no layout recursion).
-        if !matches!(fty, Type::Int | Type::Bool | Type::String | Type::Vec | Type::StrVec) {
-            return Err(self.fail("enum variant payloads must be i64, bool, string, vec, vec[string], or a type parameter"));
+        if !matches!(fty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec) {
+            return Err(self.fail("enum variant payloads must be i64, bool, f64, string, vec, vec[string], or a type parameter"));
         }
         Ok(Payload::Concrete(fty))
     }
@@ -1293,8 +1358,8 @@ impl<'a> Parser<'a> {
     // reason variant payloads are: no recursion and no hidden layout.
     fn type_argument(&mut self) -> Result<Type, String> {
         let ty = self.named_type()?;
-        if !matches!(ty, Type::Int | Type::Bool | Type::String | Type::Vec | Type::StrVec) {
-            return Err(self.fail("type arguments must be i64, bool, string, vec, or vec[string]"));
+        if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec) {
+            return Err(self.fail("type arguments must be i64, bool, f64, string, vec, or vec[string]"));
         }
         Ok(ty)
     }
@@ -2246,7 +2311,7 @@ impl<'a> Parser<'a> {
                     } else {
                         // print borrows its value; only `+` consumes strings.
                         let (value, ty) = self.expression(0, false)?;
-                        if !matches!(ty, Type::Int | Type::Bool | Type::String | Type::StrView) {
+                        if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView) {
                             return Err(self.fail(&format!("cannot print a value of type {}", ty.name())));
                         }
                         Printed::Expr(value)
@@ -2405,9 +2470,36 @@ impl Emitted {
     fn moved(id: usize, ty: Type, text: String) -> Self { Emitted { text, ty, owned: true, moves: vec![(id, ty)], materialized: true } }
 }
 
+// Rust's Debug formatting is the shortest decimal that round-trips and always
+// carries a '.' or an exponent, so it is a valid C double literal. Non-finite
+// values never reach here: the lexer rejects them (ADR-37).
+fn c_float_literal(value: f64) -> String {
+    let text = format!("{value:?}");
+    if text.contains(['.', 'e', 'E']) { text } else { format!("{text}.0") }
+}
+
 fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> Emitted {
     let emitted = match expr {
         Expr::Number(n) => Emitted::value(format!("INT64_C({n})"), Type::Int),
+        Expr::FloatLit(x) => Emitted::value(c_float_literal(*x), Type::F64),
+        Expr::ToF64(value, line, column) => {
+            let t = emit_expr(value, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    double t{id} = ae_f64_from_i64({}, {line}, {column});\n", t.text));
+            Emitted { text: format!("t{id}"), ty: Type::F64, owned: false, moves: t.moves, materialized: true }
+        }
+        Expr::ToI64(value, ty, line, column) => {
+            let t = emit_expr(value, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_f64_to_i64({}, {line}, {column});\n", ty.c_temp(), t.text));
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::FloatToString(value, line, column) => {
+            let t = emit_expr(value, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_f64_to_string({}, {line}, {column});\n", t.text));
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
         Expr::BoolLit(b) => Emitted::value(if *b { "true" } else { "false" }.to_owned(), Type::Bool),
         Expr::StrLit(text, line, column) => Emitted {
             text: format!("ae_str_from(\"{text}\", {line}, {column})"),
@@ -2505,7 +2597,11 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
         }
         Expr::Neg(a, line, column) => {
             let t = emit_expr(a, out, next, false);
-            Emitted { text: format!("ae_neg({}, {line}, {column})", t.text), ty: Type::Int, owned: false, moves: t.moves, materialized: false }
+            if t.ty == Type::F64 {
+                Emitted { text: format!("-({})", t.text), ty: Type::F64, owned: false, moves: t.moves, materialized: false }
+            } else {
+                Emitted { text: format!("ae_neg({}, {line}, {column})", t.text), ty: Type::Int, owned: false, moves: t.moves, materialized: false }
+            }
         }
         Expr::Not(a) => {
             let t = emit_expr(a, out, next, false);
@@ -3008,6 +3104,10 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
         }
         Expr::Binary(a, op, b, line, column, _) => {
             let l = emit_expr(a, out, next, false); let r = emit_expr(b, out, next, false);
+            // f64 arithmetic maps to the C operators: no overflow trapping, no
+            // fast-math, and division goes through a checked helper so `x / 0.0`
+            // is a reported failure instead of a silent infinity (ADR-37).
+            let floating = l.ty == Type::F64;
             let text = match op {
                 Kind::EqEq => format!("{} == {}", l.text, r.text),
                 Kind::NotEq => format!("{} != {}", l.text, r.text),
@@ -3015,6 +3115,10 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
                 Kind::LessEq => format!("{} <= {}", l.text, r.text),
                 Kind::Greater => format!("{} > {}", l.text, r.text),
                 Kind::GreaterEq => format!("{} >= {}", l.text, r.text),
+                Kind::Plus if floating => format!("{} + {}", l.text, r.text),
+                Kind::Minus if floating => format!("{} - {}", l.text, r.text),
+                Kind::Star if floating => format!("{} * {}", l.text, r.text),
+                Kind::Slash if floating => format!("ae_f64_div({}, {}, {line}, {column})", l.text, r.text),
                 Kind::Plus => format!("ae_add({}, {}, {line}, {column})", l.text, r.text),
                 Kind::Minus => format!("ae_sub({}, {}, {line}, {column})", l.text, r.text),
                 Kind::Star => format!("ae_mul({}, {}, {line}, {column})", l.text, r.text),
@@ -3022,7 +3126,13 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
                 Kind::Percent => format!("ae_mod({}, {}, {line}, {column})", l.text, r.text),
                 _ => unreachable!(),
             };
-            let ty = if matches!(op, Kind::EqEq | Kind::NotEq | Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq) { Type::Bool } else { Type::Int };
+            let ty = if matches!(op, Kind::EqEq | Kind::NotEq | Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq) {
+                Type::Bool
+            } else if floating {
+                Type::F64
+            } else {
+                Type::Int
+            };
             Emitted { text, ty, owned: false, moves: Vec::new(), materialized: false }
         }
     };
@@ -3090,6 +3200,7 @@ fn emit_print(printed: &Printed, out: &mut String, next: &mut usize) {
                     if t.owned { drop_owned_temp(out, &t); }
                 }
                 Type::Bool => out.push_str(&format!("    if (printf(\"%s\\n\", {} ? \"true\" : \"false\") < 0) ae_fail(\"output error\", 0, 0);\n", t.text)),
+                Type::F64 => out.push_str(&format!("    ae_f64_print({});\n", t.text)),
                 _ => out.push_str(&format!("    if (printf(\"%\" PRId64 \"\\n\", {}) < 0) ae_fail(\"output error\", 0, 0);\n", t.text)),
             }
         }
@@ -3287,6 +3398,7 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                         match pty {
                             Type::String => out.push_str(&format!("    ae_strview v{bid} = AE_VIEW({member});\n")),
                             Type::Bool => out.push_str(&format!("    bool v{bid} = {member};\n")),
+                            Type::F64 => out.push_str(&format!("    double v{bid} = {member};\n")),
                             // Vector payloads bind as read-only borrows of the slot.
                             Type::Vec => out.push_str(&format!("    const ae_vec *v{bid} = &{member};\n")),
                             Type::StrVec => out.push_str(&format!("    const ae_strvec *v{bid} = &{member};\n")),
@@ -3411,6 +3523,7 @@ fn c_type_field(ty: Type) -> String {
     match ty {
         Type::Int => "int64_t".to_owned(),
         Type::Bool => "bool".to_owned(),
+        Type::F64 => "double".to_owned(),
         Type::String => "ae_string".to_owned(),
         Type::StrView => "ae_strview".to_owned(),
         Type::Vec => "ae_vec".to_owned(),
@@ -3427,6 +3540,7 @@ fn c_type(ty: Type, id: usize, declaration: bool) -> String {
     match ty {
         Type::Int => format!("int64_t v{id}"),
         Type::Bool => format!("bool v{id}"),
+        Type::F64 => format!("double v{id}"),
         Type::String => format!("ae_string v{id}"),
         Type::StrView => format!("ae_strview v{id}"),
         Type::Vec => format!("ae_vec v{id}"),
@@ -3447,6 +3561,7 @@ fn c_type(ty: Type, id: usize, declaration: bool) -> String {
 fn c_return(ty: Type) -> String {
     match ty {
         Type::Bool => "bool".to_owned(),
+        Type::F64 => "double".to_owned(),
         Type::String => "ae_string".to_owned(),
         Type::StrView => "ae_strview".to_owned(),
         Type::Vec => "ae_vec".to_owned(),
