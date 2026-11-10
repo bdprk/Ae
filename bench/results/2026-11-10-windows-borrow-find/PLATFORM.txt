@@ -20,7 +20,15 @@ Results
   examples: all entry programs pass `check`; modules/report.ae and modules/words.ae
     are library files with no main, which is expected
 
-Not covered here
+Not covered here (at the time this run was archived)
   Linux native run, Linux --sanitize, and byte-for-byte comparison of every example
   on Linux. Until those are archived, ADR-35/36 stay "Windows verified" only.
   This directory is a verification log, not a performance benchmark.
+
+Update (same day, W1 closed)
+  The matching Linux run is archived in bench/results/2026-11-10-linux-borrow-find/:
+  9 unit + 129 integration tests, 23 --sanitize cases and 23 --leak cases all PASS,
+  no sanitizer report, 0 live allocation blocks at exit. ADR-35/36 are now
+  verified on both platforms. The two new examples match after line-ending
+  normalization (LF vs CRLF); "byte-for-byte" was an inaccurate claim and was
+  corrected in docs/platform-matrix.md.

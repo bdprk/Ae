@@ -1,0 +1,39 @@
+AE Linux native verification, 2026-11-10 (W1 backfill)
+Scope: ADR-35 (generic &T borrow, read-only borrow forwarding) and ADR-36 (find -> IntResult)
+Source: the Windows repository at commit 2e26000, synced as source files only
+        (src/, tests/, scripts/, examples/, docs/, Cargo.toml, Cargo.lock, bench/run.py).
+        The remote checkout has no .git; the commit above identifies the exact tree.
+
+Platform
+  OS: Debian GNU/Linux 13 (trixie)
+  Kernel: Linux 6.18.54-instabox x86_64
+  C compiler: gcc (Debian 14.2.0-19) 14.2.0
+  Rust: rustc 1.99.0
+  Python: 3.13.5
+  CPU / memory: 4 vCPU / 7964 MiB
+  Locale: en_US.UTF-8
+  Sanitizers: gcc -fsanitize=address,undefined
+
+Commands (run from the remote checkout root)
+  cargo test --locked
+  python3 scripts/verify_generated_c.py --sanitize
+  python3 scripts/verify_generated_c.py --leak
+  ae check <each file in examples/*.ae>
+
+Results
+  cargo-test.log: 9 unit + 129 integration tests, 0 failures, no warnings
+  verify-c-sanitize.log: 23 generated-C cases PASS, no AddressSanitizer or UBSan report
+  verify-c-leak.log: 23 generated-C cases PASS, every program exits at the
+    glibc baseline of 0 live allocation blocks (including generic_borrow.ae
+    and the Err branch of find_text.ae)
+  examples: every entry program passes `check`
+
+Example output comparison
+  generic_borrow.ae and find_text.ae produce identical text on both platforms
+  after normalizing the line ending: Linux emits LF, Windows emits CRLF because
+  stdout is in text mode. This is a known platform difference, not a byte-for-byte
+  identity; the platform matrix was corrected to say so.
+
+Not covered here
+  Performance benchmarks, and any capability added after commit 2e26000.
+  This directory is a correctness/safety verification log, not a benchmark.

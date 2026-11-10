@@ -357,7 +357,7 @@
   - **`gettimeofday`**：同样是 POSIX，问题一样。
   - **`time(NULL)` 秒级足够**：`now_ms` 的存在意义就是毫秒，退化成秒会让 `now_ms` 名不副实。
   - **只在 Linux 上加 `-D_POSIX_C_SOURCE`**：那会让「同一份源码在两平台需要不同编译参数」，比修运行时更糟。
-- 结果：修正后 Linux 上 `cargo test --locked` **9 单元 + 117 端到端全部通过**；`python3 scripts/verify_generated_c.py --sanitize --leak` 16 个示例全部 PASS，分配计数 **`blocks=0 bytes=0`**（glibc 的启动分配比 Windows UCRT 少，因此基线为 0，比 Windows 的 2 更严格）；示例输出与 Windows 逐字节一致。`\r` 转义由 `standard_input_arrives_as_bytes_without_newline_translation` 覆盖（`a\r\nb` 读回长度 4 且含 `\r`）。
+- 结果：修正后 Linux 上 `cargo test --locked` **9 单元 + 117 端到端全部通过**；`python3 scripts/verify_generated_c.py --sanitize --leak` 16 个示例全部 PASS，分配计数 **`blocks=0 bytes=0`**（glibc 的启动分配比 Windows UCRT 少，因此基线为 0，比 Windows 的 2 更严格）；示例输出与 Windows 在行尾归一化后一致（当时记作「逐字节一致」，2026-11-10 核对该表述并修正为归一化后一致）。`\r` 转义由 `standard_input_arrives_as_bytes_without_newline_translation` 覆盖（`a\r\nb` 读回长度 4 且含 `\r`）。
 
 ## ADR-26：JSON 路径查询（只读）
 
@@ -530,7 +530,7 @@
   - **给结构体/枚举加 `&Struct` 借用**：需要新的字段访问与释放边界，单独设计。
   - **让 `&T` 覆盖 `map`**：`map_*` 走 `MapPlace`（变量或字段），不是参数借用，混在一起会产生两套所有权规则。
   - **在声明处检查 `&T`**：与「函数体在实例化时才解析」一致，未被调用的泛型声明不做检查；这是既有代价，不为一处语法破例。
-- 后果与限制：同一个泛型模板用不同 `T` 实例化时，调用点的实参形状随 `T` 变化（`size_of[string](text)` 与 `size_of[vec](&numbers)`），文档必须写清楚；因此「泛型体内再把 `&T` 参数转交给另一个 `&T` 模板」目前只对 `string` 形状可靠，其它形状要在调用点按具体类型写。新增 `examples/generic_borrow.ae`、1 个端到端测试（3 种实例化、2 条转发链、8 个必须被拒绝的写法）、1 个生成 C 分配计数用例。
+- 后果与限制：同一个泛型模板用不同 `T` 实例化时，调用点的实参形状随 `T` 变化（`size_of[string](text)` 与 `size_of[vec](&numbers)`），文档必须写清楚；因此「泛型体内再把 `&T` 参数转交给另一个 `&T` 模板」目前只对 `string` 形状可靠，其它形状要在调用点按具体类型写。新增 `examples/generic_borrow.ae`、1 个端到端测试（3 种实例化、2 条转发链、8 个必须被拒绝的写法）、1 个生成 C 分配计数用例。Windows 验证见 `bench/results/2026-11-10-windows-borrow-find/`；W1 的 Linux 回填（同提交树 `2e26000`）见 `bench/results/2026-11-10-linux-borrow-find/`，9 单元 + 129 集成、23 个 `--sanitize` 与 23 个 `--leak` 用例全部通过、无净化器报告、退出分配块数为 0，本 ADR 至此为双平台验证。
 
 ## ADR-36：`find` 用结果值返回字节下标，不引入哨兵
 
@@ -546,4 +546,4 @@
   - **返回 `-1` / `bool`**：前者是哨兵，后者丢掉位置信息。
   - **`rfind`、正则、多模式、码点下标**：需要新的语义与测试面，等真实工作流提出需求。
   - **顺手把 `contains` 改成同样的 `memchr` 实现**：`ae_contains` 现在用 `strstr`，遇到嵌入 NUL 会在第一个 NUL 处停止；`find` 不会。两者行为不同必须如实标注，但改 `contains` 属于独立语义变更，要有单独的基准与回归，不塞进本轮。
-- 后果与限制：最坏情况 O(n·m)（`memchr` 跳过首字节不匹配的位置，常见文本接近线性），没有 Boyer–Moore 之类的预处理，也不分配表；长模式 + 大量重复首字节时不如成熟搜索库，文档不宣称是最优实现。`contains` 与 `find` 在含嵌入 NUL 的字符串上结论可能不同，这是已知且已记录的差异。错误文本固定，不随平台 `strerror` 变化。新增 `examples/find_text.ae`、1 个端到端测试（含 UTF-8 字节偏移与 4 个拒绝用例）、1 个生成 C 分配计数用例（验证 `Err` 负载被释放）。
+- 后果与限制：最坏情况 O(n·m)（`memchr` 跳过首字节不匹配的位置，常见文本接近线性），没有 Boyer–Moore 之类的预处理，也不分配表；长模式 + 大量重复首字节时不如成熟搜索库，文档不宣称是最优实现。`contains` 与 `find` 在含嵌入 NUL 的字符串上结论可能不同，这是已知且已记录的差异。错误文本固定，不随平台 `strerror` 变化。新增 `examples/find_text.ae`、1 个端到端测试（含 UTF-8 字节偏移与 4 个拒绝用例）、1 个生成 C 分配计数用例（验证 `Err` 负载被释放）。同提交树的 Linux 回填（W1，见 `bench/results/2026-11-10-linux-borrow-find/`）把本 ADR 升为双平台验证：ASan/UBSan 无报告，`Err` 分支的退出分配块数同为 0。本轮还纠正了一处表述：两平台示例输出只在**行尾归一化后**一致（Windows stdout 文本模式输出 CRLF），平台矩阵已据此改写。
