@@ -12,7 +12,7 @@ each round (not randomized). Cold/hot refers only to the AE
 content-addressed cache: with --cold every AE build gets a fresh empty cache
 directory; the external toolchains' own caches are uncontrolled.
 
-Two workloads are available:
+Three workloads are available:
 
 * `sum` — a million checked additions; the languages are AE, Go and Rust.
 * `text` — read a generated 3 MiB text file, split it on spaces, and report the
@@ -20,6 +20,12 @@ Two workloads are available:
   because text processing is the case the design plan compares against Python,
   with the caveat that its runtime includes interpreter start-up and that its
   "build" is nothing at all.
+* `map` — a fixed-seed LCG feeds a million draws into a 10000-key
+  `map[string, i64]` histogram, then a count-weighted checksum reads every
+  bucket and `len` reports how many keys were reached. Python is included
+  because dict counting is the container workload the design plan compares
+  against Python. The checksum cannot be computed from the draw or key count
+  alone, so every draw and every lookup is exercised.
 """
 import argparse
 import hashlib
@@ -149,14 +155,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--release", action="store_true", help="use AE -O2 and Rust opt-level=2")
     parser.add_argument("--cold", action="store_true", help="give every build a fresh empty AE cache (measures real compiles)")
-    parser.add_argument("--workload", choices=("sum", "text", "all"), default="all")
+    parser.add_argument("--workload", choices=("sum", "text", "map", "all"), default="all")
     options = parser.parse_args()
     call(["cargo", "build", "--release", "--locked"], cwd=ROOT)
     suffix = ".exe" if os.name == "nt" else ""
     compiler = ROOT / "target" / "release" / ("ae" + suffix)
     cc = os.environ.get("AE_CC", "gcc")
     cpu_method = None if _resource is None else "resource.getrusage(RUSAGE_CHILDREN) deltas between calls, direct children only"
-    workloads = ("sum", "text") if options.workload == "all" else (options.workload,)
+    workloads = ("sum", "text", "map") if options.workload == "all" else (options.workload,)
     report = {
         "note": ("Exploratory same-host measurements with external toolchain caches uncontrolled. AE uses GCC -O2 "
                  "and Rust opt-level=2 in release, otherwise both use no optimization; Go uses its default; Python is "
@@ -182,7 +188,8 @@ def main():
         write_text_input(text_input)
         report["inputs"] = {"text_input_bytes": text_input.stat().st_size, "text_input_lines": TEXT_LINES,
                             "sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                                       for p in sorted(BENCH.glob("sum.*")) + sorted(BENCH.glob("text.*"))}}
+                                       for p in sorted(BENCH.glob("sum.*")) + sorted(BENCH.glob("text.*"))
+                                       + sorted(BENCH.glob("map.*"))}}
         for workload in workloads:
             report["results"][workload] = run_workload(workload, tmp, compiler, options)
     print(json.dumps(report, indent=2))

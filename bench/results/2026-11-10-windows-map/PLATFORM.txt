@@ -1,0 +1,58 @@
+map 容器负载 · Windows 归档（2026-11-10）
+
+## 源码树身份
+提交 45b7026（"Share lexed tokens per source file instead of cloning per
+generic declaration"）+ 与本归档同批提交的 bench/map.{ae,go,py,rs}、
+bench/run.py 与 bench/README.md 改动（工作树内完成，随后一并提交）。
+
+## 平台
+- OS: Windows 10.0.26100（run.py 记录字符串 "Windows-10-10.0.26100-SP0"），AMD64
+- CPU: Intel64 Family 6 Model 141（run.py 记录字符串）
+- go 1.26.0 windows/amd64；rustc 1.99.1 (58cf8f9c3 2026-10-13)；
+  gcc 16.2.0 (MinGW-W64 x86_64-ucrt-posix-seh, Brecht Sanders, r3)；Python 3.10.11
+
+## 命令（工作目录 = 仓库根）
+- python bench/run.py --workload map            > run-map-dev.json      2> run-map-dev.stderr
+- python bench/run.py --release --workload map  > run-map-release.json  2> run-map-release.stderr
+每模式 5 次重复、轮内跨语言交错；脚本先 cargo build --release 编译 AE
+编译器本身（stderr 里两条 "Finished" 即此步骤，非被测程序构建）。
+
+## 负载定义
+固定种子 LCG（x = x*48271 mod 2147483647，种子 1234567）抽 1,000,000 次，
+写入 10000 个 "k<n>" 字符串键的 map[string,i64] 直方图；再以计数 * (i+1)
+加权校验和读完全部 10000 桶。校验和无法从抽取数/键数推出，每次抽取与查找
+不可省略。四份孪生程序（map.ae / map.go / map.py / map.rs）语义逐点对应，
+缺键处理一致（首见计 1 / 校验和贡献 0）。
+
+## 结果摘要（中位数，原始值在两个 JSON）
+                    dev: build / run / 峰值MB / 产物B        release: build / run / 峰值MB / 产物B
+  AE  61.1 ms / 353.9 ms / 4.69 / 72,925      64.5 ms / 258.2 ms / 4.68 / 71,945
+  Go     614.6 ms / 197.5 ms / 11.36 / 2,463,232  595.8 ms / 184.9 ms / 11.14 / 2,463,232
+  Rust   238.4 ms / 346.2 ms / 4.86 / 174,592     392.5 ms / 184.9 ms / 4.84 / 136,704
+  Python    —    / 492.0 ms / 10.70 / 681(源码)      —    / 488.4 ms / 10.68 / 681(源码)
+四语言输出逐字节一致（行尾归一化后比较，脚本内断言）：
+  draws=1000000 / keys=10000 / distinct=10000 / total=1000000 / checksum=5001661237
+
+## 观察（只报方向与量级，不作排名）
+1. 运行时间：release 模式 AE 258 ms 慢于 Go / Rust 的 185 ms（约 1.4×）；
+   dev 模式 AE 354 ms 与 Rust dev 346 ms 相当、慢于 Go 198 ms。方向：
+   AE 的 map 路径（哈希 + 每键字符串拷贝）尚有优化空间，未定位热点。
+2. 运行峰值内存：AE 4.7 MB ≈ Rust 4.8 MB < Python 10.7 MB < Go 11.4 MB。
+   这是 map 路径内存表现良好的第一个数据点——与 text 负载（AE 峰值
+   明显高于 Rust，split 每令牌分配）结论不同；两条负载各说各的，不互相推翻。
+3. 热缓存构建 61–65 ms：这是内容寻址缓存命中路径的时间，按 §20.4 第 5 条
+   不得当作编译速度证据；本轮未跑 --cold。
+4. 产物体积：Go 2.46 MB 远大于 Rust 137 KB / AE 72 KB（release）。
+
+## 已知差异 / 归一化规则
+- CPU 时间在 Windows 上为 null（无 getrusage；Linux 归档才会有）。
+- 构建峰值只含编译器驱动直接子进程，gcc 的 cc1/as/ld 与 rustc codegen
+  孙代进程不计入；该字段语义是「驱动峰值」而非整棵构建树峰值。
+- 输出比较先做 CRLF→LF 归一化（AE 在 Windows 上以文本模式写 stdout）。
+- AE 构建复用内容寻址缓存（本轮未加 --cold）；外部工具链缓存不受控；
+  温度、电源、频率未记录。
+
+## 未覆盖
+Linux 侧孪生归档（需 Linux 机器跑同一脚本）、--cold 冷构建计时、
+构建整树峰值（job object）、热点定位与优化、与 Gojo/Python 的可发布对比。
+本归档是探索性测量，不构成任何性能结论的发布证据。

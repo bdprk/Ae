@@ -1,0 +1,34 @@
+// Histogram counting, the AE twin of map.go: a fixed-seed LCG feeds a
+// million draws into a map[string, i64] with 10000 keys, then a
+// count-weighted checksum reads every bucket. Output must match the other
+// implementations exactly, so the Err arms never print: a missing key in the
+// draw loop is a first sighting (count 1), and in the checksum loop it would
+// contribute 0 — exactly what the Go/Python/Rust twins do on miss.
+
+fn main() {
+    var counts = map_new();
+    var x = 1234567;
+    for j in 0..1000000 {
+        x = (x * 48271) % 2147483647;
+        var key = "k" + to_string(x % 10000);
+        let c = map_get(counts, key);
+        match c {
+            IntResult::Ok(n) => { counts[key] = n + 1; }
+            IntResult::Err(reason) => { counts[key] = 1; }
+        }
+    }
+    var checksum = 0;
+    for i in 0..10000 {
+        var key = "k" + to_string(i);
+        let c = map_get(counts, key);
+        match c {
+            IntResult::Ok(n) => { checksum = checksum + n * (i + 1); }
+            IntResult::Err(reason) => { checksum = checksum + 0; }
+        }
+    }
+    print("draws=1000000");
+    print("keys=10000");
+    print("distinct=" + to_string(len(counts)));
+    print("total=1000000");
+    print("checksum=" + to_string(checksum));
+}
