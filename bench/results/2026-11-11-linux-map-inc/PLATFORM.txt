@@ -1,0 +1,30 @@
+map_inc 计数内建 · Linux 回填归档（2026-11-11）
+
+## 源码树身份
+提交 b9610d0（ADR-46），tar 管道同步到 ~/ae-mapinc；验证由 nohup
+后台任务在沙箱内完成（SSH 证书窗口短，任务不受连接影响）。
+
+## 平台
+instabox-node 沙箱：Debian 13，内核 6.18.54-instabox，x86-64，4 vCPU；
+gcc 14.2.0-19；rustc 1.99.0（环境见 env.txt）。
+
+## 命令（沙箱内后台执行，工作目录 = ~/ae-mapinc）
+- cargo build --locked && cargo test --locked
+- cargo build --release --locked
+- python3 scripts/verify_generated_c.py --leak
+- python3 scripts/verify_generated_c.py --sanitize
+- target/release/ae run bench/map-inc.ae
+- target/release/ae run examples/map_count.ae
+全部输出在 mapinc-all.log。
+
+## 结果摘要
+- cargo test：31 单元 + 151 集成全通过（与 Windows 同数，含 3 个新 map_inc 集成）。
+- 净化器 + 泄漏：52 个用例 PASS（26 --leak + 26 --sanitize，含新
+  map_count.ae），退出分配块 0（glibc 基线），无 ASan/UBSan 报告。
+- bench/map-inc.ae 与 examples/map_count.ae 输出正确（checksum 一致、
+  计数 c=3/d=1）。
+
+## 结论与边界
+ADR-46 在 Linux 上正确性验证通过，升级为**双平台验证**。
+API 形状的性能对照（-11.2%）在 Windows 归档（同二进制交错），
+绝对时间不跨平台比较。

@@ -757,4 +757,4 @@
   - **产物/缓存体积**：`ae_map_inc` 被引用才保留（ADR-38 裁剪）；`examples/map_count.ae` 进入生成 C 用例集（25 → 26）。
   - **安全语义**：place 的 moved 检查与 `map_get` 同源；`--leak` 26 用例 Windows 基线仍 2 块。
 - 边界：`map_inc` 只覆盖 i64 值的计数递增（当前 map 的唯一值类型）；负 delta 合法（可以递减，减到负也合法）；`bench/map.ae` 四语言孪生**不改**——孪生必须逐点对应，map_inc 的收益由专门的 `map-inc.ae` 对照承载，两个归档分开陈述。
-- 验证：Windows 31 单元 + 151 集成（新增 3 个 map_inc 集成）全通过；`--leak` 26 用例（含 `map_count.ae`）基线 2 块；Linux 后台取证（`bench/results/2026-11-11-linux-map-inc/`）。
+- 验证：Windows 31 单元 + 151 集成（新增 3 个 map_inc 集成）全通过；`--leak` 26 用例（含 `map_count.ae`）基线 2 块；Linux 后台取证：31 + 151 全通过、52 用例 PASS（含 map_count）、`--leak` 0 块、净化器无报告，见 `bench/results/2026-11-11-linux-map-inc/`。**双平台验证。**
