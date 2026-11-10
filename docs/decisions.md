@@ -318,3 +318,43 @@
   - **`exit` 不释放直接退出**：实现更简单，但会让「有序退出」与「出错退出」的可见行为不一致，且分配计数校验无法覆盖带 `exit` 的程序。
   - **`exit` 允许字符串/枚举状态**：退出状态是整数，不接受其他类型可以省掉一层「怎么转换」的规则。
 - 后果与限制：`exit` 之后同块内的语句虽不可达但仍需语法正确（没有可达性分析，也没有「未使用变量」告警）；不检查状态码范围，负数与大于 255 的值会被截断；没有 `atexit`/清理钩子；子进程与信号不在此列（属于进程 API）。`examples/grep_cli.ae` 改为使用 0/1/2 三种状态，新增 3 个端到端测试（状态码与刷新、只 `exit` 的函数、状态码类型拒绝）。
+
+## ADR-24：标准输入与工作目录
+
+- 背景：`grep_cli.ae` 想支持 `grep pattern -`（从管道读），`pipe_stats.ae` 这种「统计上一个命令输出」的工具是 Unix 管道的日常形态；而没有 `cwd()`，程序只能打印相对路径，输出「./a.txt」这类无法直接使用的碎片。两者都属于阶段 E「进程与 I/O」的第一层，且都不需要新类型。
+- 决策：
+  1. `read_stdin() -> ReadResult`：读**全部**标准输入并返回原始字节串；读失败返回 `Err(原因)`，读到空输入返回 `Ok("")`。
+  2. Windows 上先把 `stdin` 切成二进制模式（`_setmode(_fileno(stdin), _O_BINARY)`），因此 `\r\n` **原样保留**，不做 CRLF 翻译。
+  3. 缓冲区按倍增扩容（起始 4 KiB），`ferror` 时返回 `Err`；读取过程中不做 UTF-8 校验，与 `read_file` 同一口径（语言把字节串当 `string` 用，字符边界只在 `slice`/`utf8_*` 处检查）。
+  4. `cwd() -> ReadResult`：返回当前工作目录的绝对路径，分隔符统一为 `/`（与 `path_join`/`path_parent` 一致），Windows 下把 `\` 逐字符换成 `/`。
+- 理由：标准输入返回 `ReadResult` 而不是「直接给字符串」，是因为管道另一端可能出错（`EPIPE`、设备错误），静默返回空串会让程序把「读失败」当成「没有输入」——这正是方案里「I/O 不能静默丢错」那条底线。二进制模式是硬要求：`println` 风格的 CRLF 翻译会让 `len(input)` 在 Windows 上比 Linux 少，同一段统计代码两平台给出不同数字，而这种差异极难在事后发现。`cwd` 统一 `/` 让路径拼接的结果在两平台可读且可直接传给 `try_*` 系列（它们本身接受 `/`）。
+- 已排除的做法：
+  - **逐行读取（`read_line`）**：需要流式句柄或迭代器协议，当前 `read_stdin` 一次读全已经覆盖管道统计与 `grep`；逐行会引入「什么时候关闭」「缓冲区归谁」的问题。
+  - **`read_stdin` 返回 `string` 并在失败时终止**：与 `read_file` 的既有设计冲突（那里是可恢复的）。
+  - **`cwd` 返回 `string` 而非结果**：`getcwd` 会失败（目录被删除、权限变化），返回裸字符串就必然要在失败时编造一个值。
+  - **`cwd` 保留 Windows 反斜杠**：与 `path_*` 的 `/` 约定冲突，且反斜杠在字符串里还要转义。
+  - **改变工作目录 `set_cwd`**：与 `set_env` 一起属于进程状态，需要单独设计（相对路径解析、并发语义），本次不做。
+- 后果与限制：`read_stdin` 会把整个输入读进内存，超大输入（GB 级）不合适；没有超时与部分读取；不能与 `args()` 之外的方式感知「输入是终端还是管道」（将来可加 `is_tty`）；`cwd` 不做符号链接解析（返回 `getcwd` 的路径，可能含链接）；Windows 上 `cwd()` 的结果不含盘符大小写归一。新增 3 个端到端测试（二进制字节数与 `\r` 保留、空输入、`cwd` 可用性）与 `examples/pipe_stats.ae`；`grep_cli.ae` 支持 `-` 读标准输入。
+
+## ADR-25：Linux 全量验证与严格 ISO C 修正
+
+- 背景：`docs/platform-matrix.md` 此前只有 2026-11-10 的一次 Linux 记录，而其后新增的能力（哈希表、UTF-8 边界、分配器接口、`pub` 可见性、循环移动规则、泛型枚举、排序/时钟/环境变量/追加写入、`exit`、`read_stdin`/`cwd`）全部只有 Windows 本机证据。在 Debian 13（GCC 14.2.0、rustc 1.99.0、4 vCPU / 7.8 GB）上重跑 `cargo test --locked`，**117 个端到端测试里 91 个失败**，全部卡在同一处编译错误：
+
+  ```
+  program.c: In function 'ae_now_ms':
+  error: implicit declaration of function 'clock_gettime'
+  error: 'CLOCK_REALTIME' undeclared
+  ```
+
+- 根因：测试与 `verify_generated_c.py` 都用 `-std=c11 -pedantic-errors` 编译生成的 C。`-std=c11` 会定义 `__STRICT_ANSI__`，glibc 的 `features.h` 因此不启用 `_DEFAULT_SOURCE`/`_POSIX_C_SOURCE`，`<time.h>` 里的 `clock_gettime` 与 `CLOCK_REALTIME`（POSIX，需要 `_POSIX_C_SOURCE >= 199309L`）就不可见。Windows 走 `GetSystemTimeAsFileTime` 分支，所以本机从未暴露。这是**只有真正在 Linux 上跑才会发现**的问题——正是本轮跨平台验证的价值。
+- 决策：
+  1. POSIX 分支改用 `timespec_get(&ts, TIME_UTC)`（ISO C11 标准接口），不再依赖任何特性宏；毫秒换算与取整规则不变。
+  2. 不采用「在生成文件顶部 `#define _POSIX_C_SOURCE 200809L`」的修法。
+  3. 字符串转义集合增加 `\r`（此前只允许 `\n \t \\ \"`）。
+- 理由：`timespec_get` 是 C11 的一部分，在严格模式下天然可见，生成文件继续是「纯 ISO C11」，不需要用户为编译 AE 产物而关心 glibc 特性宏——这条性质本身就是 ADR-1（生成 C11）的承诺之一。相反，注入 `_POSIX_C_SOURCE` 会污染宿主的编译单元：若用户把生成代码 `#include` 进自己的项目，或换用 musl/BSD，宏的语义就成了新的平台依赖。`\r` 之所以补齐，是因为标准输入与 `split(text, "\r\n")` 处理 CRLF 文本时没有它就无法写出字面量（C 的 `"\r"` 本来就合法，只是前端拒绝了这个拼写）。
+- 已排除的做法：
+  - **`_POSIX_C_SOURCE` 宏**：见上，把平台依赖从运行时搬到了编译命令行。
+  - **`gettimeofday`**：同样是 POSIX，问题一样。
+  - **`time(NULL)` 秒级足够**：`now_ms` 的存在意义就是毫秒，退化成秒会让 `now_ms` 名不副实。
+  - **只在 Linux 上加 `-D_POSIX_C_SOURCE`**：那会让「同一份源码在两平台需要不同编译参数」，比修运行时更糟。
+- 结果：修正后 Linux 上 `cargo test --locked` **9 单元 + 117 端到端全部通过**；`python3 scripts/verify_generated_c.py --sanitize --leak` 16 个示例全部 PASS，分配计数 **`blocks=0 bytes=0`**（glibc 的启动分配比 Windows UCRT 少，因此基线为 0，比 Windows 的 2 更严格）；示例输出与 Windows 逐字节一致。`\r` 转义由 `standard_input_arrives_as_bytes_without_newline_translation` 覆盖（`a\r\nb` 读回长度 4 且含 `\r`）。

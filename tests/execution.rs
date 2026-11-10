@@ -414,9 +414,12 @@ fn assert_passes_and_fails_at_the_right_location() {
 }
 #[test]
 fn print_handles_strings_with_escapes_and_unicode() {
-    let output = execute("fn main() { print(\"hello, world\"); print(\"tab\\there\"); print(\"中文 😀\"); print(\"quote\\\"inside\"); }");
+    let output = execute("fn main() { print(\"hello, world\"); print(\"tab\\there\"); print(\"中文 😀\"); print(\"quote\\\"inside\"); print(len(\"a\\rb\")); print(\"back\\\\slash\"); }");
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "hello, world\ntab\there\n中文 😀\nquote\"inside\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "hello, world\ntab\there\n中文 😀\nquote\"inside\n3\nback\\slash\n");
+    // `\r` is three bytes only when it lands in the middle of a line: a lone
+    // carriage return at the end of printed text would be swallowed by the
+    // terminal, so the length assertion above is the real check.
     for source in ["fn main() { print(\"bad \\q\"); }", "fn main() { print(\"open }", "fn main() { print(\"a\nb\"); }"] {
         let path = std::env::temp_dir().join(format!("ae-str-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
         fs::write(&path, source).unwrap();
@@ -2095,4 +2098,60 @@ fn exit_rejects_non_integer_status_codes() {
         fs::remove_file(path).unwrap();
         assert!(!output.status.success(), "accepted invalid program: {source}");
     }
+}
+fn execute_with_stdin(source: &str, input: &[u8]) -> std::process::Output {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("ae-stdin-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, source).unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("run")
+        .arg(&path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.as_mut().unwrap().write_all(input).unwrap();
+    let output = child.wait_with_output().unwrap();
+    fs::remove_file(path).unwrap();
+    output
+}
+#[test]
+fn standard_input_arrives_as_bytes_without_newline_translation() {
+    let source = r#"fn main() {
+    let input = read_stdin();
+    match input {
+        ReadResult::Ok(text) => { print(len(text)); print(contains(text, "\r")); }
+        ReadResult::Err(reason) => { print("cannot read: " + reason); }
+    }
+}"#;
+    let output = execute_with_stdin(source, b"a\r\nb");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "4\ntrue\n");
+    // Nothing on the other end is an empty read, not a failure.
+    let output = execute_with_stdin(source, b"");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "0\nfalse\n");
+}
+#[test]
+fn working_directory_is_a_usable_path() {
+    let output = execute(r#"fn main() {
+    let here = cwd();
+    match here {
+        ReadResult::Ok(path) => { print(path_is_dir(path)); print(len(path) > 1); }
+        ReadResult::Err(reason) => { print("cannot tell: " + reason); }
+    }
+}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "true\ntrue\n");
+}
+#[test]
+fn the_pipe_stats_example_counts_a_piped_stream() {
+    let source = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/examples/pipe_stats.ae")).unwrap();
+    let output = execute_with_stdin(&source, "中文行\nshort\n".as_bytes());
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "bytes 16\ncharacters 10\nlines 2\nlongest line 5\n"
+    );
 }

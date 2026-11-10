@@ -4,7 +4,7 @@
 
 ## 词法与结构
 
-源文件采用 UTF-8。标识符由 ASCII 字母或下划线开头，后续可包含数字；关键字保留（`fn let var print if else while for in return break continue assert true false use struct enum match`）。文件顶部可写 `use "相对路径.ae";` 引入其他文件：按导入文件所在目录解析、深度优先加载、环导入报错；函数名跨文件唯一，`main` 全程序唯一（库文件无需 main）。跨文件可见的顶层项必须写 `pub`（`pub fn`/`pub struct`/`pub enum`），未标记的项只在本文件内可见，见下文「模块与可见性」。空白分隔词元，`//` 注释延伸至行尾。字符串字面量用双引号，支持 `\n`、`\t`、`\\`、`\"` 转义，不允许原始换行或 NUL。程序有且仅有一个 `fn main() { ... }`，也可定义其他函数。语句以分号结束。
+源文件采用 UTF-8。标识符由 ASCII 字母或下划线开头，后续可包含数字；关键字保留（`fn let var print if else while for in return break continue assert true false use struct enum match`）。文件顶部可写 `use "相对路径.ae";` 引入其他文件：按导入文件所在目录解析、深度优先加载、环导入报错；函数名跨文件唯一，`main` 全程序唯一（库文件无需 main）。跨文件可见的顶层项必须写 `pub`（`pub fn`/`pub struct`/`pub enum`），未标记的项只在本文件内可见，见下文「模块与可见性」。空白分隔词元，`//` 注释延伸至行尾。字符串字面量用双引号，支持 `\n`、`\t`、`\r`、`\\`、`\"` 转义，不允许原始换行或 NUL。程序有且仅有一个 `fn main() { ... }`，也可定义其他函数。语句以分号结束。
 
 ## 值与计算
 
@@ -119,6 +119,24 @@
 `env(name) -> ReadResult`：存在返回 `Ok(值)`，不存在返回 `Err("variable not set")`，**存在但为空**返回 `Ok("")`——「空」与「没有」是两件不同的事，混为一谈会让 `PATH=""` 悄悄变成「没有 PATH」。空名字报 `Err("variable name is empty")`。环境变量只读：没有 `set_env`，也没有枚举。
 
 `try_append_file(path, text) -> WriteResult` 以追加模式写入并返回字节数；`try_write_file` 仍然整体覆盖。每次调用都会开合文件，写很多小行时应先拼成一个字符串再一次写入。`sort`/`reverse`/`now_ms`/`now_s`/`env`/`try_append_file` 为保留名。
+
+## 标准输入与工作目录
+
+`read_stdin() -> ReadResult` 读入**全部**标准输入并返回原始字节：输入为空返回 `Ok("")`，读取失败返回 `Err(原因)`。内容不做换行翻译（Windows 上先把 `stdin` 切成二进制模式），所以 `a\r\nb` 读回来是 4 个字节而不是 3 个——`len`、`bytes`、`split` 看到的就是磁盘/管道上的真实字节。读取时不校验 UTF-8，与 `read_file` 一致；`slice`/`utf8_*` 仍然按码点检查边界。整个输入会驻留内存，超大流不适合。
+
+```ae
+fn main() {
+    let input = read_stdin();
+    match input {
+        ReadResult::Ok(text) => { print(len(text)); print(utf8_len(text)); }
+        ReadResult::Err(reason) => { print("cannot read: " + reason); exit(2); }
+    }
+}
+```
+
+`cwd() -> ReadResult` 返回当前工作目录的绝对路径，分隔符统一为 `/`（与 `path_join`/`path_parent` 同一口径），可继续传给 `path_join` 或 `try_*` 系列。`getcwd` 会失败（目录被删除、权限变化），所以是结果值而不是裸字符串。不解析符号链接，也没有 `set_cwd`。
+
+`grep_cli.ae` 与 `pipe_stats.ae` 是两个验收示例：前者把 `-` 当作「从标准输入读」，后者统计管道字节/字符/行/最长行（`cat notes.txt | ae run examples/pipe_stats.ae`）。
 
 ## 哈希表
 

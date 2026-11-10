@@ -60,7 +60,7 @@ const PRELUDE: &str = "<prelude>";
 const MAX_ENUM_TYPES: usize = 256;
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
-const RESERVED: [&str; 50] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit"];
+const RESERVED: [&str; 52] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd"];
 // Provisional prelude: fallible operations report failure as values instead of
 // terminating the process (§4.5). These enums are registered before any user
 // type, so a program can name them without importing anything. They are
@@ -140,8 +140,8 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                     b'\n' | b'\0' => return Err(lex_error(source, i, "string literals must not contain raw newlines or NUL; use escapes")),
                     b'\\' => {
                         let escaped = bytes.get(i + 1).copied();
-                        if !matches!(escaped, Some(b'n' | b't' | b'\\' | b'"')) {
-                            return Err(lex_error(source, i, "unsupported string escape; allowed: \\n \\t \\\\ \\\""));
+                        if !matches!(escaped, Some(b'n' | b't' | b'r' | b'\\' | b'"')) {
+                            return Err(lex_error(source, i, "unsupported string escape; allowed: \\n \\t \\r \\\\ \\\""));
                         }
                         i += 2;
                     }
@@ -198,7 +198,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
 enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Trim(Box<Expr>, usize, usize), StartsWith(Box<Expr>, Box<Expr>), EndsWith(Box<Expr>, Box<Expr>),
-    TryAppendFile(Box<Expr>, Box<Expr>, Type, usize, usize), Env(Box<Expr>, Type, usize, usize), NowMs, NowS, Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+    TryAppendFile(Box<Expr>, Box<Expr>, Type, usize, usize), Env(Box<Expr>, Type, usize, usize), ReadStdin(Type, usize, usize), Cwd(Type, usize, usize), NowMs, NowS, Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 // A map reachable without a move: either a variable slot or a field of one.
 #[derive(Debug)]
 enum MapPlace { Var(usize), Field(usize, String) }
@@ -526,6 +526,12 @@ impl<'a> Parser<'a> {
                     if !matches!(variable_ty, Type::String | Type::StrView) { return Err(self.fail("env expects a string variable name")); }
                     self.take(Kind::RParen)?;
                     (Expr::Env(Box::new(variable), ty, line, col), ty)
+                } else if (name == "read_stdin" || name == "cwd") && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    let ty = self.prelude_type("ReadResult");
+                    self.take(Kind::LParen)?;
+                    self.take(Kind::RParen)?;
+                    (if name == "read_stdin" { Expr::ReadStdin(ty, line, col) } else { Expr::Cwd(ty, line, col) }, ty)
                 } else if (name == "now_ms" || name == "now_s") && *self.current() == Kind::LParen {
                     self.take(Kind::LParen)?;
                     self.take(Kind::RParen)?;
@@ -2312,6 +2318,16 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let id = *next; *next += 1;
             out.push_str(&format!("    {}t{id} = ae_try_env({}.ptr, {line}, {col});\n", ty.c_temp(), v.text));
             if v.owned { drop_owned_temp(out, &v); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::ReadStdin(ty, line, col) => {
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_read_stdin({line}, {col});\n", ty.c_temp()));
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Cwd(ty, line, col) => {
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_cwd({line}, {col});\n", ty.c_temp()));
             Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
         }
         Expr::NowMs => {

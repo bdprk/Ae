@@ -12,6 +12,10 @@
 #ifndef _WIN32
 #include <dirent.h>
 #include <sys/stat.h>
+#include <unistd.h>
+#else
+#include <io.h>
+#include <fcntl.h>
 #endif
 
 #define AE_READ_RESULT ae_e0
@@ -54,8 +58,11 @@ static int64_t ae_now_ms(void) {
     // 100-nanosecond ticks since 1601 -> milliseconds since 1970.
     return ticks / 10000 - 11644473600000LL;
 #else
+    // timespec_get is ISO C11, so the generated file still compiles under
+    // -std=c11 -pedantic-errors without defining a feature-test macro;
+    // clock_gettime would need _POSIX_C_SOURCE and is hidden by strict mode.
     struct timespec ts;
-    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return 0;
+    if (timespec_get(&ts, TIME_UTC) != TIME_UTC) return 0;
     return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
 #endif
 }
@@ -207,6 +214,120 @@ static AE_READ_RESULT ae_try_env(const char *name, size_t line, size_t column) {
         return out;
     }
     AE_READ_RESULT out = { AE_READ_OK, { .v0 = { ae_str_from(value, line, column) } } };
+    return out;
+#endif
+}
+
+// Everything on standard input, read as bytes. Windows starts in text mode,
+// which would turn CRLF into LF and make the byte count differ between
+// platforms, so the descriptor is switched to binary first. The buffer grows by
+// doubling; a fully read pipe returns however much arrived, which is not an
+// error -- "no input" and "failed to read input" must stay distinguishable.
+static AE_READ_RESULT ae_try_read_stdin(size_t line, size_t column) {
+#ifdef _WIN32
+    _setmode(_fileno(stdin), _O_BINARY);
+#endif
+    size_t capacity = 8192;
+    size_t length = 0;
+    char *buffer = ae_alloc_try(capacity);
+    if (!buffer) {
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("out of memory", line, column) } } };
+        return out;
+    }
+    errno = 0;
+    for (;;) {
+        if (length == capacity) {
+            if (capacity > ((size_t)-1) / 2) {
+                ae_free(buffer);
+                AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("input too large", line, column) } } };
+                return out;
+            }
+            char *grown = ae_alloc_try(capacity * 2);
+            if (!grown) {
+                ae_free(buffer);
+                AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("out of memory", line, column) } } };
+                return out;
+            }
+            memcpy(grown, buffer, length);
+            ae_free(buffer);
+            buffer = grown;
+            capacity = capacity * 2;
+        }
+        const size_t got = fread(buffer + length, 1, capacity - length, stdin);
+        length = length + got;
+        if (got == 0) break;
+    }
+    if (ferror(stdin)) {
+        const int code = errno;
+        ae_free(buffer);
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_io_message(code, line, column) } } };
+        return out;
+    }
+    ae_string text = ae_str_from_len(buffer, (int64_t)length, line, column);
+    ae_free(buffer);
+    AE_READ_RESULT out = { AE_READ_OK, { .v0 = { text } } };
+    return out;
+}
+
+// Current working directory, in the same `/`-separated form the rest of the
+// language uses for paths.
+static AE_READ_RESULT ae_try_cwd(size_t line, size_t column) {
+#ifdef _WIN32
+    const DWORD needed = GetCurrentDirectoryW(0, NULL);
+    if (needed == 0) {
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_status_message("cannot read working directory", (unsigned long)GetLastError(), line, column) } } };
+        return out;
+    }
+    wchar_t *buffer = ae_alloc_try((size_t)needed * sizeof(wchar_t));
+    if (!buffer) {
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("out of memory", line, column) } } };
+        return out;
+    }
+    const DWORD length = GetCurrentDirectoryW(needed, buffer);
+    if (length == 0 || length >= needed) {
+        ae_free(buffer);
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_status_message("cannot read working directory", (unsigned long)GetLastError(), line, column) } } };
+        return out;
+    }
+    char *utf8 = ae_narrow(buffer, (int)length);
+    ae_free(buffer);
+    if (!utf8) {
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("out of memory", line, column) } } };
+        return out;
+    }
+    ae_string raw = ae_str_from(utf8, line, column);
+    ae_free(utf8);
+    // Unify separators so path_join and friends see one form.
+    for (int64_t i = 0; i < raw.len; i++) if (raw.ptr[i] == '\\') raw.ptr[i] = '/';
+    AE_READ_RESULT out = { AE_READ_OK, { .v0 = { raw } } };
+    return out;
+#else
+    size_t capacity = 256;
+    char *buffer = ae_alloc_try(capacity);
+    if (!buffer) {
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("out of memory", line, column) } } };
+        return out;
+    }
+    while (!getcwd(buffer, capacity)) {
+        if (errno != ERANGE || capacity > ((size_t)-1) / 2) {
+            const int code = errno;
+            ae_free(buffer);
+            AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_io_message(code, line, column) } } };
+            return out;
+        }
+        char *grown = ae_alloc_try(capacity * 2);
+        if (!grown) {
+            ae_free(buffer);
+            AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("out of memory", line, column) } } };
+            return out;
+        }
+        ae_free(buffer);
+        buffer = grown;
+        capacity = capacity * 2;
+    }
+    ae_string text = ae_str_from(buffer, line, column);
+    ae_free(buffer);
+    AE_READ_RESULT out = { AE_READ_OK, { .v0 = { text } } };
     return out;
 #endif
 }

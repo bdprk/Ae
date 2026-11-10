@@ -1,0 +1,32 @@
+// A filter: reads standard input and reports what arrived. Composing with a
+// pipe is the point -- `ae run pipe_stats.ae < notes.txt` or
+// `type notes.txt | pipe_stats`. Byte, line and character counts differ for
+// non-ASCII text, so both are printed.
+
+fn longest_line(text: &string) -> i64 {
+    let all = lines(text);
+    var longest = 0;
+    for line in all {
+        let characters = utf8_len(line);
+        if characters > longest {
+            longest = characters;
+        }
+    }
+    return longest;
+}
+
+fn main() {
+    let input = read_stdin();
+    match input {
+        ReadResult::Ok(text) => {
+            print("bytes " + to_string(len(text)));
+            print("characters " + to_string(utf8_len(text)));
+            print("lines " + to_string(len(lines(text))));
+            print("longest line " + to_string(longest_line(text)));
+        }
+        ReadResult::Err(reason) => {
+            print("cannot read standard input: " + reason);
+            exit(2);
+        }
+    }
+}

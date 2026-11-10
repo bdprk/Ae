@@ -1,7 +1,15 @@
-// Command-line grep: PATTERN and FILE come from program arguments.
+// Command-line grep: PATTERN and FILE come from program arguments, and FILE
+// may be "-" for standard input, so the tool can sit in a pipeline.
 // Usage (after `ae build`): grep_cli PATTERN FILE
 // Exit status: 0 when something matched, 1 when nothing did, 2 on misuse --
 // the convention every shell pipeline expects.
+
+fn read_source(name: &string) -> ReadResult {
+    if name == "-" {
+        return read_stdin();
+    }
+    return try_read_file(name);
+}
 
 fn main() {
     let a = args();
@@ -9,7 +17,7 @@ fn main() {
         print("usage: grep_cli PATTERN FILE");
         exit(2);
     }
-    let text = try_read_file(a[2]);
+    let text = read_source(a[2]);
     match text {
         ReadResult::Ok(content) => {
             let n = count_lines_with(content, a[1]);
