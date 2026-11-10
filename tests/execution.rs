@@ -2271,3 +2271,53 @@ fn cache_prunes_entries_beyond_the_configured_limit() {
     assert!(after.contains("limit: none"), "{after}");
     let _ = fs::remove_dir_all(&dir);
 }
+#[test]
+fn string_vectors_start_empty_and_copy_borrowed_elements() {
+    // `args()` hands back owned strings, but indexing it gives a borrow. Pushing
+    // a borrow must copy it: moving the element would empty the slot it was read
+    // from, and the vector would free the same buffer twice on the way out.
+    let source = r#"fn main() {
+    let argv = args();
+    var copy = strvec_new();
+    for i in 0..len(argv) { push(copy, argv[i]); }
+    print(len(copy));
+    print(len(argv));
+    print(join(copy, "|") == join(argv, "|"));
+}"#;
+    let path = std::env::temp_dir().join(format!("ae-strvec-copy-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("run").arg(&path).arg("--").arg("one").arg("two").output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "3\n3\ntrue\n");
+}
+
+#[test]
+fn run_command_reports_status_and_output() {
+    // One child invocation that must exist on both platforms, plus one program
+    // name that cannot exist: a failed start is an Err, a non-zero exit is not.
+    let (program, arguments) = if cfg!(windows) {
+        ("cmd", vec!["/c", "echo", "child-ok"])
+    } else {
+        ("sh", vec!["-c", "echo child-ok"])
+    };
+    let pushes = arguments.iter().map(|a| format!("    push(argv, \"{a}\");\n")).collect::<String>();
+    let source = format!(r#"fn main() {{
+    var argv = strvec_new();
+{pushes}    let result = run_command("{program}", argv);
+    match result {{
+        CommandResult::Ok(code, out) => {{ print(code); print(contains(out, "child-ok")); }}
+        CommandResult::Err(reason) => {{ print("failed: " + reason); }}
+    }}
+    var empty = strvec_new();
+    let missing = run_command("ae-no-such-program-on-path", empty);
+    match missing {{
+        CommandResult::Ok(code, out) => {{ print("unexpected " + to_string(code)); }}
+        CommandResult::Err(reason) => {{ print(contains(reason, "cannot start")); }}
+    }}
+}}"#);
+    let output = execute(&source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "0\ntrue\ntrue\n");
+}

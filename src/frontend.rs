@@ -60,7 +60,7 @@ const PRELUDE: &str = "<prelude>";
 const MAX_ENUM_TYPES: usize = 256;
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
-const RESERVED: [&str; 57] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has"];
+const RESERVED: [&str; 59] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "run_command"];
 // Provisional prelude: fallible operations report failure as values instead of
 // terminating the process (§4.5). These enums are registered before any user
 // type, so a program can name them without importing anything. They are
@@ -80,6 +80,9 @@ fn prelude_enums() -> (Vec<EnumDef>, HashMap<String, usize>) {
         // JSON answers: a document field can be a flag, so booleans need their
         // own result shape (there is no "true" placeholder like 0 or "").
         ("BoolResult", vec![("Ok", vec![Type::Bool]), ("Err", vec![Type::String])]),
+        // A finished child process: a non-zero status is a result, not an
+        // error, so the status travels in Ok next to the output it produced.
+        ("CommandResult", vec![("Ok", vec![Type::Int, Type::String]), ("Err", vec![Type::String])]),
     ];
     let mut enums = Vec::new();
     let mut names = HashMap::new();
@@ -201,7 +204,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
 enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Trim(Box<Expr>, usize, usize), StartsWith(Box<Expr>, Box<Expr>), EndsWith(Box<Expr>, Box<Expr>),
-    TryAppendFile(Box<Expr>, Box<Expr>, Type, usize, usize), Env(Box<Expr>, Type, usize, usize), JsonGet(Box<Expr>, Box<Expr>, Type, usize, usize), JsonInt(Box<Expr>, Box<Expr>, Type, usize, usize), JsonBool(Box<Expr>, Box<Expr>, Type, usize, usize), JsonLen(Box<Expr>, Box<Expr>, Type, usize, usize), JsonHas(Box<Expr>, Box<Expr>, usize, usize), ReadStdin(Type, usize, usize), Cwd(Type, usize, usize), NowMs, NowS, Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+    TryAppendFile(Box<Expr>, Box<Expr>, Type, usize, usize), Env(Box<Expr>, Type, usize, usize), JsonGet(Box<Expr>, Box<Expr>, Type, usize, usize), JsonInt(Box<Expr>, Box<Expr>, Type, usize, usize), JsonBool(Box<Expr>, Box<Expr>, Type, usize, usize), JsonLen(Box<Expr>, Box<Expr>, Type, usize, usize), JsonHas(Box<Expr>, Box<Expr>, usize, usize), ReadStdin(Type, usize, usize), Cwd(Type, usize, usize), StrVecNew(usize, usize), RunCommand(Box<Expr>, usize, Type, usize, usize), NowMs, NowS, Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 // A map reachable without a move: either a variable slot or a field of one.
 #[derive(Debug)]
 enum MapPlace { Var(usize), Field(usize, String) }
@@ -223,7 +226,7 @@ enum Argument { Value(Expr), Borrow(usize, bool), View(Expr) } // Borrow bool: p
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
-enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), Sort(usize, bool, usize, usize), Reverse(usize, bool, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), MapPut(MapPlace, Expr, Expr, usize, usize), Propagate(Expr, Type, Vec<Type>, Option<(usize, Type)>, Vec<(usize, Type)>), Break, Continue(Option<usize>), Exit(Expr, Vec<(usize, Type)>), Frees(Vec<(usize, Type)>) }
+enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), Sort(usize, bool, usize, usize), Reverse(usize, bool, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize, bool), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize, bool), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), MapPut(MapPlace, Expr, Expr, usize, usize), Propagate(Expr, Type, Vec<Type>, Option<(usize, Type)>, Vec<(usize, Type)>), Break, Continue(Option<usize>), Exit(Expr, Vec<(usize, Type)>), Frees(Vec<(usize, Type)>) }
 #[derive(Debug)]
 struct Function { id: usize, params: Vec<(usize, Type)>, body: Vec<Statement>, is_main: bool, returns: Type }
 fn returns(stmts: &[Statement]) -> bool {
@@ -535,6 +538,28 @@ impl<'a> Parser<'a> {
                     self.take(Kind::LParen)?;
                     self.take(Kind::RParen)?;
                     (if name == "read_stdin" { Expr::ReadStdin(ty, line, col) } else { Expr::Cwd(ty, line, col) }, ty)
+                } else if name == "strvec_new" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    self.take(Kind::RParen)?;
+                    (Expr::StrVecNew(line, col), Type::StrVec)
+                } else if name == "run_command" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    let ty = self.prelude_type("CommandResult");
+                    self.take(Kind::LParen)?;
+                    let (program, program_ty) = self.expression(0, false)?;
+                    if !matches!(program_ty, Type::String | Type::StrView) { return Err(self.fail("run_command expects a string program name")); }
+                    self.take(Kind::Comma)?;
+                    // Like join, the argument vector is borrowed, never moved:
+                    // the callee only reads the elements during the call.
+                    let (args, args_ty) = self.expression(0, false)?;
+                    let vid = match (&args, args_ty) {
+                        (Expr::Variable(id, Type::StrVec, _, _), Type::StrVec) => *id,
+                        _ => return Err(self.fail("run_command expects a bare vec[string] variable for its arguments")),
+                    };
+                    if self.moved.contains(&vid) { return Err(self.fail("cannot use a moved vector in run_command")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::RunCommand(Box::new(program), vid, ty, line, col), ty)
                 } else if (name == "json_get" || name == "json_int" || name == "json_bool" || name == "json_len" || name == "json_has") && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     let ty = match name.as_str() {
@@ -1594,11 +1619,13 @@ impl<'a> Parser<'a> {
                         if name == "push" {
                             self.take(Kind::Comma)?;
                             let (value, value_ty) = self.expression(0, ty == Type::StrVec)?;
-                            let ok = match ty { Type::Vec => value_ty == Type::Int, _ => value_ty == Type::String };
+                            // A borrow is fine: the element is a copy, so a view
+                            // can be stored without outliving its source.
+                            let ok = match ty { Type::Vec => value_ty == Type::Int, _ => matches!(value_ty, Type::String | Type::StrView) };
                             if !ok { return Err(self.fail(&format!("vector elements must be {}", if ty == Type::Vec { "i64" } else { "string" }))); }
                             self.take(Kind::RParen)?; self.take(Kind::Semi)?;
                             if ty == Type::StrVec {
-                                result.push(Statement::StrVecPush(id, value, line, col));
+                                result.push(Statement::StrVecPush(id, value, line, col, value_ty == Type::StrView));
                             } else {
                                 result.push(Statement::VecPush(id, value, line, col));
                             }
@@ -1661,8 +1688,8 @@ impl<'a> Parser<'a> {
                         if index_ty != Type::Int { return Err(self.fail("vector index must be an integer")); }
                         self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
                         let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
-                        if value_ty != Type::String { return Err(self.fail("vector elements must be string")); }
-                        result.push(Statement::StrVecStore(id, index, value, line, col));
+                        if !matches!(value_ty, Type::String | Type::StrView) { return Err(self.fail("vector elements must be string")); }
+                        result.push(Statement::StrVecStore(id, index, value, line, col, value_ty == Type::StrView));
                     } else if ty == Type::Vec && *self.current() == Kind::LBracket {
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
                         let (index, index_ty) = self.expression(0, false)?;
@@ -2391,6 +2418,18 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             if v.owned { drop_owned_temp(out, &v); }
             Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
         }
+        Expr::RunCommand(program, vid, ty, line, col) => {
+            out.push_str(&format!("    if (!v{vid}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+            let p = emit_expr(program, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_run_command({}.ptr, &v{vid}, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::StrVecNew(line, col) => Emitted {
+            text: format!("ae_strvec_new({line}, {col})"),
+            ty: Type::StrVec, owned: true, moves: Vec::new(), materialized: false,
+        },
         Expr::ReadStdin(ty, line, col) => {
             let id = *next; *next += 1;
             out.push_str(&format!("    {}t{id} = ae_try_read_stdin({line}, {col});\n", ty.c_temp()));
@@ -2757,24 +2796,29 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                 let value = emit_expr(value, out, next, false);
                 out.push_str(&format!("    v{id}.data[t{checked}] = {};\n", value.text));
             }
-            Statement::StrVecPush(id, value, line, col) => {
+            Statement::StrVecPush(id, value, line, col, borrowed) => {
                 out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
-                let value = emit_expr(value, out, next, true);
-                out.push_str(&format!("    ae_strvec_push(&v{id}, {}, {line}, {col});\n", value.text));
+                // A borrowed element is copied into the vector; only an owned
+                // string is moved, because moving a view would empty the slot
+                // it was read from.
+                let value = emit_expr(value, out, next, !*borrowed);
+                let text = if *borrowed { format!("ae_str_copy_view(AE_VIEW({}), {line}, {col})", value.text) } else { value.text.clone() };
+                out.push_str(&format!("    ae_strvec_push(&v{id}, {text}, {line}, {col});\n"));
                 null_moves(out, &value.moves);
             }
             Statement::StrVecPop(id, line, col) => {
                 out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
                 out.push_str(&format!("    ae_strvec_pop(&v{id}, {line}, {col});\n"));
             }
-            Statement::StrVecStore(id, index, value, line, col) => {
+            Statement::StrVecStore(id, index, value, line, col, borrowed) => {
                 out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
                 let i = emit_expr(index, out, next, false);
                 let checked = *next; *next += 1;
                 out.push_str(&format!("    int64_t t{checked} = ae_strvec_index({}, v{id}.len, {line}, {col});\n", i.text));
-                let value = emit_expr(value, out, next, true);
+                let value = emit_expr(value, out, next, !*borrowed);
+                let text = if *borrowed { format!("ae_str_copy_view(AE_VIEW({}), {line}, {col})", value.text) } else { value.text.clone() };
                 out.push_str(&format!("    ae_str_release(&v{id}.data[t{checked}]);\n"));
-                out.push_str(&format!("    v{id}.data[t{checked}] = {};\n", value.text));
+                out.push_str(&format!("    v{id}.data[t{checked}] = {text};\n"));
                 null_moves(out, &value.moves);
             }
             Statement::FieldStore(id, fname, fty, value) => {

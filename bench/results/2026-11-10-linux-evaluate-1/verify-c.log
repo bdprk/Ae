@@ -33,3 +33,4 @@ PASS main.ae
 PASS text_preview.ae
   leak blocks=0 bytes=0
 PASS bounds.ae
+verify-exit=0

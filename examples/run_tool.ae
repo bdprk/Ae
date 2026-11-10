@@ -1,0 +1,27 @@
+// A thin wrapper around any program on the machine: it forwards its own
+// arguments, waits for the child, and reports the exit status with whatever the
+// child printed (stdout and stderr share one stream, so the order is kept).
+// Run it as: ae run examples/run_tool.ae -- git --version
+
+fn main() {
+    let argv = args();
+    if len(argv) < 2 {
+        print("usage: run_tool <program> [args...]");
+        exit(2);
+    }
+    var command = strvec_new();
+    for i in 2..len(argv) {
+        push(command, argv[i]);
+    }
+    let result = run_command(argv[1], command);
+    match result {
+        CommandResult::Ok(code, out) => {
+            print("status " + to_string(code));
+            print(out);
+        }
+        CommandResult::Err(reason) => {
+            print("cannot run " + argv[1] + ": " + reason);
+            exit(1);
+        }
+    }
+}

@@ -11,7 +11,9 @@
 #include <time.h>
 #ifndef _WIN32
 #include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #else
 #include <io.h>
@@ -39,6 +41,9 @@
 #define AE_BOOL_RESULT ae_e6
 #define AE_BOOL_OK AE_E6_0
 #define AE_BOOL_ERR AE_E6_1
+#define AE_COMMAND_RESULT ae_e7
+#define AE_COMMAND_OK AE_E7_0
+#define AE_COMMAND_ERR AE_E7_1
 
 static AE_STATUS_RESULT ae_status_ok(void) {
     AE_STATUS_RESULT out = { AE_STATUS_OK, { { 0 } } };
@@ -1239,3 +1244,220 @@ static bool ae_json_has(const char *doc_text, int64_t doc_size, const char *path
     char why[192];
     return ae_json_locate(doc.ptr, doc.len, path.ptr, path.len, &vs, &ve, &kind, why, sizeof why, line, column) == AE_JSON_OK;
 }
+
+// ---- Child processes (ADR-29) ----------------------------------------------
+// The child's stdout and stderr share one pipe: a program that reports its
+// failure on stderr still comes back in the order it was written, and the
+// parent never has to drain two pipes at once (which deadlocks as soon as one
+// of them fills). A non-zero exit status is a result, not an error.
+static AE_COMMAND_RESULT ae_command_failed(ae_string message) {
+    AE_COMMAND_RESULT out = { AE_COMMAND_ERR, { .v1 = { message } } };
+    return out;
+}
+#ifndef _WIN32
+static AE_COMMAND_RESULT ae_run_command(const char *program, const ae_strvec *args, size_t line, size_t column) {
+    int fds[2];
+    if (pipe(fds) != 0) return ae_command_failed(ae_io_message(errno, line, column));
+    // A second pipe carries the exec failure back: closing on exec (CLOEXEC)
+    // turns "exec worked" into EOF, so the parent can tell "could not start the
+    // program" apart from "the program chose to exit 127".
+    int errors[2];
+    if (pipe(errors) != 0) {
+        const int code = errno;
+        close(fds[0]);
+        close(fds[1]);
+        return ae_command_failed(ae_io_message(code, line, column));
+    }
+    (void)fcntl(errors[1], F_SETFD, FD_CLOEXEC);
+    const pid_t pid = fork();
+    if (pid < 0) {
+        const int code = errno;
+        close(fds[0]);
+        close(fds[1]);
+        close(errors[0]);
+        close(errors[1]);
+        return ae_command_failed(ae_io_message(code, line, column));
+    }
+    if (pid == 0) {
+        // Child: point both streams at the pipe, then become the program.
+        // _exit skips the parent's stdio buffers and atexit work.
+        if (dup2(fds[1], STDOUT_FILENO) < 0 || dup2(fds[1], STDERR_FILENO) < 0) _exit(127);
+        close(fds[0]);
+        close(fds[1]);
+        close(errors[0]);
+        char **argv = ae_alloc_try(sizeof(char *) * (size_t)(args->len + 2));
+        if (!argv) _exit(127);
+        argv[0] = (char *)program;
+        for (int64_t i = 0; i < args->len; i++) argv[i + 1] = args->data[i].ptr;
+        argv[args->len + 1] = NULL;
+        execvp(program, argv);
+        const int code = errno;
+        (void)!write(errors[1], &code, sizeof code);
+        _exit(127);
+    }
+    close(fds[1]);
+    close(errors[1]);
+    int exec_error = 0;
+    ssize_t reported = 0;
+    do {
+        reported = read(errors[0], &exec_error, sizeof exec_error);
+    } while (reported < 0 && errno == EINTR);
+    close(errors[0]);
+    if (reported == (ssize_t)sizeof exec_error) {
+        close(fds[0]);
+        int ignored = 0;
+        while (waitpid(pid, &ignored, 0) < 0 && errno == EINTR) {}
+        return ae_command_failed(ae_status_message("cannot start the program", (unsigned long)exec_error, line, column));
+    }
+    int64_t capacity = 4096;
+    int64_t length = 0;
+    char *buffer = ae_alloc((size_t)capacity + 1, line, column);
+    for (;;) {
+        if (length == capacity) {
+            char *grown = ae_alloc((size_t)capacity * 2 + 1, line, column);
+            memcpy(grown, buffer, (size_t)length);
+            ae_free(buffer);
+            buffer = grown;
+            capacity = capacity * 2;
+        }
+        const ssize_t got = read(fds[0], buffer + length, (size_t)(capacity - length));
+        if (got < 0) {
+            if (errno == EINTR) continue;
+            const int code = errno;
+            ae_free(buffer);
+            close(fds[0]);
+            return ae_command_failed(ae_io_message(code, line, column));
+        }
+        if (got == 0) break;
+        length += got;
+    }
+    close(fds[0]);
+    buffer[length] = 0;
+    int status = 0;
+    for (;;) {
+        if (waitpid(pid, &status, 0) >= 0) break;
+        if (errno != EINTR) {
+            const int code = errno;
+            ae_free(buffer);
+            return ae_command_failed(ae_io_message(code, line, column));
+        }
+    }
+    // A signal is reported the way a shell reports it (128 + number), so the
+    // caller sees one integer either way.
+    const int64_t code = WIFEXITED(status) ? (int64_t)WEXITSTATUS(status)
+                                           : (int64_t)(128 + (WIFSIGNALED(status) ? WTERMSIG(status) : 0));
+    ae_string output = { buffer, length };
+    AE_COMMAND_RESULT out = { AE_COMMAND_OK, { .v0 = { code, output } } };
+    return out;
+}
+#else
+static AE_COMMAND_RESULT ae_run_command(const char *program, const ae_strvec *args, size_t line, size_t column) {
+    // Quotes and trailing backslashes are refused instead of escaped: guessing
+    // CreateProcess's quoting rules wrong silently changes what the child runs.
+    for (int64_t i = 0; i < args->len; i++) {
+        const ae_string arg = args->data[i];
+        for (int64_t k = 0; k < arg.len; k++) {
+            if (arg.ptr[k] == '"') return ae_command_failed(ae_str_from("command arguments must not contain a double quote", line, column));
+        }
+        if (arg.len > 0 && arg.ptr[arg.len - 1] == '\\') return ae_command_failed(ae_str_from("command arguments must not end with a backslash", line, column));
+    }
+    for (const char *c = program; *c; c++) {
+        if (*c == '"') return ae_command_failed(ae_str_from("the program name must not contain a double quote", line, column));
+    }
+    // Build the command line in UTF-8 first: the quoting characters are ASCII,
+    // so one conversion at the end is enough.
+    int64_t width = (int64_t)strlen(program) + 3;
+    for (int64_t i = 0; i < args->len; i++) width += args->data[i].len + 3;
+    char *command = ae_alloc((size_t)width, line, column);
+    int64_t at = 0;
+    command[at++] = '"';
+    for (const char *c = program; *c; c++) command[at++] = *c;
+    command[at++] = '"';
+    for (int64_t i = 0; i < args->len; i++) {
+        const ae_string arg = args->data[i];
+        int spaced = 0;
+        for (int64_t k = 0; k < arg.len; k++) {
+            if (arg.ptr[k] == ' ' || arg.ptr[k] == '\t') { spaced = 1; break; }
+        }
+        // Quote only what has to be quoted. A shell that re-parses its own
+        // command line treats a quoted flag as part of the command name, so
+        // quoting every argument breaks the commonest helper program there is.
+        command[at++] = ' ';
+        if (spaced) command[at++] = '"';
+        memcpy(command + at, arg.ptr, (size_t)arg.len);
+        at += arg.len;
+        if (spaced) command[at++] = '"';
+    }
+    command[at] = 0;
+
+    SECURITY_ATTRIBUTES sa;
+    ZeroMemory(&sa, sizeof sa);
+    sa.nLength = sizeof sa;
+    sa.bInheritHandle = TRUE;
+    HANDLE read_end = NULL;
+    HANDLE write_end = NULL;
+    if (!CreatePipe(&read_end, &write_end, &sa, 0)) {
+        ae_free(command);
+        return ae_command_failed(ae_status_message("cannot create a pipe", (unsigned long)GetLastError(), line, column));
+    }
+    SetHandleInformation(read_end, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOW si;
+    ZeroMemory(&si, sizeof si);
+    si.cb = sizeof si;
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = write_end;
+    si.hStdError = write_end;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&pi, sizeof pi);
+    wchar_t *wide = ae_widen(command);
+    ae_free(command);
+    if (!wide) {
+        CloseHandle(read_end);
+        CloseHandle(write_end);
+        return ae_command_failed(ae_str_from("out of memory", line, column));
+    }
+    const BOOL started = CreateProcessW(NULL, wide, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    const DWORD failure = started ? 0 : GetLastError();
+    ae_free(wide);
+    CloseHandle(write_end);
+    if (!started) {
+        CloseHandle(read_end);
+        return ae_command_failed(ae_status_message("cannot start the program", (unsigned long)failure, line, column));
+    }
+    CloseHandle(pi.hThread);
+    int64_t capacity = 4096;
+    int64_t length = 0;
+    char *buffer = ae_alloc((size_t)capacity + 1, line, column);
+    for (;;) {
+        if (length == capacity) {
+            char *grown = ae_alloc((size_t)capacity * 2 + 1, line, column);
+            memcpy(grown, buffer, (size_t)length);
+            ae_free(buffer);
+            buffer = grown;
+            capacity = capacity * 2;
+        }
+        DWORD got = 0;
+        const int64_t room = capacity - length;
+        if (!ReadFile(read_end, buffer + length, (DWORD)(room > 0x7FFFFFFF ? 0x7FFFFFFF : room), &got, NULL)) {
+            const DWORD code = GetLastError();
+            if (code == ERROR_BROKEN_PIPE) break;
+            ae_free(buffer);
+            CloseHandle(read_end);
+            CloseHandle(pi.hProcess);
+            return ae_command_failed(ae_status_message("cannot read the program output", (unsigned long)code, line, column));
+        }
+        if (got == 0) break;
+        length += (int64_t)got;
+    }
+    CloseHandle(read_end);
+    buffer[length] = 0;
+    WaitForSingleObject(pi.hProcess, INFINITE);
+    DWORD status = 0;
+    GetExitCodeProcess(pi.hProcess, &status);
+    CloseHandle(pi.hProcess);
+    ae_string output = { buffer, length };
+    AE_COMMAND_RESULT out = { AE_COMMAND_OK, { .v0 = { (int64_t)status, output } } };
+    return out;
+}
+#endif

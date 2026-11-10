@@ -1,10 +1,5 @@
 Linux instabox-evaluate-1 6.18.54-instabox #1 SMP PREEMPT_DYNAMIC 2026-09-25 00:00:00 UTC x86_64 GNU/Linux
-PRETTY_NAME="Debian GNU/Linux 13 (trixie)"
 gcc (Debian 14.2.0-19) 14.2.0
-cargo 1.99.0 (5f94df478 2026-08-27)
 rustc 1.99.0 (b940084d7 2026-09-28)
-Python 3.13.5
 4
-               total        used        free      shared  buff/cache   available
-Mem:            7964        1612        5579        1102        2114        6351
-/dev/root        16G  4.1G   11G  28% /
+MemTotal:        8155564 kB

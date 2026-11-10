@@ -82,15 +82,15 @@
 
 ## 可恢复错误与数字转换
 
-程序预置七个结果枚举（无需导入，变体顺序固定）：`ReadResult{Ok(string), Err(string)}`、`WriteResult{Ok(i64), Err(string)}`、`IntResult{Ok(i64), Err(string)}`、`DirResult{Ok(vec[string]), Err(string)}`、`FileResult{Ok(i64, i64, bool), Err(string)}`、`StatusResult{Ok, Err(string)}`、`BoolResult{Ok(bool), Err(string)}`。可失败内建：`try_read_file(path) -> ReadResult`、`try_write_file(path, content) -> WriteResult`（成功返回写入字节数）、`parse_int(text) -> IntResult`。失败返回 `Err` 负载的错误描述，**不终止进程**；`read_file`/`write_file` 仍是失败即终止的不可恢复版本。`parse_int` 严格按十进制：可选 `+`/`-`、只允许 ASCII 数字、整串必须消费完、正负分别以 `9223372036854775807`/`-9223372036854775808` 为界，其余情况均为 `Err`。`to_string(i64) -> string` 是十进制格式化，与 `parse_int` 构成往返。
+程序预置八个结果枚举（无需导入，变体顺序固定，编号 0–7）：`ReadResult{Ok(string), Err(string)}`、`WriteResult{Ok(i64), Err(string)}`、`IntResult{Ok(i64), Err(string)}`、`DirResult{Ok(vec[string]), Err(string)}`、`FileResult{Ok(i64, i64, bool), Err(string)}`、`StatusResult{Ok, Err(string)}`、`BoolResult{Ok(bool), Err(string)}`、`CommandResult{Ok(i64, string), Err(string)}`。可失败内建：`try_read_file(path) -> ReadResult`、`try_write_file(path, content) -> WriteResult`（成功返回写入字节数）、`parse_int(text) -> IntResult`。失败返回 `Err` 负载的错误描述，**不终止进程**；`read_file`/`write_file` 仍是失败即终止的不可恢复版本。`parse_int` 严格按十进制：可选 `+`/`-`、只允许 ASCII 数字、整串必须消费完、正负分别以 `9223372036854775807`/`-9223372036854775808` 为界，其余情况均为 `Err`。`to_string(i64) -> string` 是十进制格式化，与 `parse_int` 构成往返。
 
-结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string`/`map_new`/`map_get`/`map_has`/`map_remove`/`keys`/`utf8_len`/`utf8_prefix` 与六个结果类型名均为保留名。
+结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string`/`map_new`/`map_get`/`map_has`/`map_remove`/`keys`/`utf8_len`/`utf8_prefix`/`strvec_new`/`run_command` 与八个结果类型名均为保留名。
 
 ## 错误传播 `?`
 
 `let x = 调用()?;` 与 `调用()?;` 是传播语句：结果枚举处于 `Err` 时，先释放当前函数内所有仍存活的拥有型变量，再把这个结果值本身返回给调用者；处于 `Ok` 时，`let` 形式把唯一的负载移出并绑定（`Ok` 必须恰好一个负载），裸语句形式则释放负载后继续。裸语句是语言里唯一的「表达式语句」，且**必须以 `?` 结尾**，因此不存在「静默丢弃返回值」的写法。
 
-可传播的类型必须形如 `{ Ok(...), Err(string) }`（`Ok` 在前、`Err` 在后），七个预置结果枚举都满足；自定义枚举照此形状同样可用。传播要求外层函数返回**同一个**枚举类型，`main` 里不能传播；一个函数只能传播一个结果族，跨族（例如 `try_list_dir` 的 `DirResult` 与 `try_copy_file` 的 `StatusResult`）必须在边界处用 `match` 转换。`?` 是语句而非表达式，不能出现在更大的表达式里。
+可传播的类型必须形如 `{ Ok(...), Err(string) }`（`Ok` 在前、`Err` 在后），八个预置结果枚举都满足；自定义枚举照此形状同样可用。传播要求外层函数返回**同一个**枚举类型，`main` 里不能传播；一个函数只能传播一个结果族，跨族（例如 `try_list_dir` 的 `DirResult` 与 `try_copy_file` 的 `StatusResult`）必须在边界处用 `match` 转换。`?` 是语句而非表达式，不能出现在更大的表达式里。
 
 ## 路径代数与文件元数据
 
@@ -137,6 +137,31 @@ fn main() {
 `cwd() -> ReadResult` 返回当前工作目录的绝对路径，分隔符统一为 `/`（与 `path_join`/`path_parent` 同一口径），可继续传给 `path_join` 或 `try_*` 系列。`getcwd` 会失败（目录被删除、权限变化），所以是结果值而不是裸字符串。不解析符号链接，也没有 `set_cwd`。
 
 `grep_cli.ae` 与 `pipe_stats.ae` 是两个验收示例：前者把 `-` 当作「从标准输入读」，后者统计管道字节/字符/行/最长行（`cat notes.txt | ae run examples/pipe_stats.ae`）。
+
+## 空字符串向量与子进程执行
+
+`strvec_new() -> vec[string]` 造一个空的 `vec[string]`。`let v = vec[];` 推不出元素类型时会被当成 i64 向量，所以「先空后逐个 push」的字符串向量必须用它起步。
+
+`run_command(program, args) -> CommandResult` 启动一个子进程并等它结束：`program` 是 `string`/视图，`args` 必须是**裸 `vec[string]` 变量**且未移动（不复制、不取视图，调用期间借用）。成功返回 `CommandResult::Ok(status, output)`，`status` 是退出码、`output` 是 stdout 与 stderr **合并**后的全部文本（不设上限，读完为止）；程序根本起不来（找不到文件、无执行权限）返回 `Err(原因)`——这是唯一算「失败」的情形。
+
+```ae
+fn main() {
+    let argv = args();
+    var command = strvec_new();
+    for i in 2..len(argv) { push(command, argv[i]); }
+    let result = run_command("git", command);
+    match result {
+        CommandResult::Ok(status, output) => { print(status); print(output); }
+        CommandResult::Err(reason) => { print("cannot start: " + reason); exit(1); }
+    }
+}
+```
+
+退出码非零**不是** `Err`：子进程正常退出但报告失败，和你自己的程序 `exit(3)` 是一回事，把两者混在一起会让「命令没跑起来」和「命令跑了但失败了」无法区分。被信号杀死时 POSIX 报 `128 + 信号号`（与 shell 的 `$?` 一致）；Windows 直接给 `GetExitCodeProcess` 的退出码。
+
+两个平台都**不**隐式经过 shell：`program` 被直接执行，所以 Windows 上想用 `echo`、`dir` 这类内建命令得自己写 `run_command("cmd", ["/c", "echo", ...])`。Windows 的参数规则取自 `CreateProcessW` 的引号约定，但故意留了保守边界：只有含空格/制表符的参数才加引号（给每个参数都加会让 `cmd` 把引号当成命令名的一部分），含 `"` 或以 `\` 结尾的参数直接报 `Err` 而不是猜——把 `CreateProcess` 的转义规则猜错会静默改变子进程收到的内容，那比启动失败危险得多。
+
+子进程**继承**当前标准输入（两个平台都一样），所以它能读到的内容和你自己调 `read_stdin()` 抢的是同一个流，谁先读谁拿到——想让子进程完全不吃输入，就把它接到空文件上再启动本程序。除此之外没有可调项：不能设置环境变量、工作目录或超时。输出一次性读进内存，长时间高吞吐的命令会占满内存；需要流式处理时当前语言还不支持。示例见 `examples/run_tool.ae`（把自身参数转发给子进程）。
 
 ## JSON 路径查询
 
