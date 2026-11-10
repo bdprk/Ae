@@ -860,12 +860,60 @@ fn strvec_elements_are_borrow_only_and_push_pop_work() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "2\n3\nthree\n2\nONE\ntrue\n");
     for source in [
         "fn main() { let v = split(\"a\", \",\"); let s = v[0] + \"!\"; print(s); }",
-        "fn main() { let v = split(\"a\", \",\"); let w = v[0]; print(len(w)); }",
+        "fn main() { var v = split(\"a\", \",\"); let w = v[0]; pop(v); print(len(w)); }",
+        "fn main() { let v = split(\"a\", \",\"); let w = v[0]; let x = v; }",
         "fn main() { let v = split(\"a\", \",\"); print(v); }",
         "fn split(s: string, x: string) -> i64 { return 1; } fn main() {}",
         "fn args() -> i64 { return 1; } fn main() {}",
     ] {
         let path = std::env::temp_dir().join(format!("ae-sv-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "{source}");
+    }
+}
+#[test]
+fn slice_views_are_zero_copy_and_borrow_tracked() {
+    let source = "fn main() { let t = \"the quick brown fox\"; let q = slice_view(t, 4, 9); print(q); print(len(q)); print(contains(q, \"quick\")); print(q == \"quick\"); let head = slice_view(t, 0, 3); print(head); print(slice(head, 0, 2)); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "quick\n5\ntrue\ntrue\nthe\nth\n");
+    // Out-of-bounds views fail at runtime with the source location.
+    let oob = execute("fn main() { let t = \"abc\"; let v = slice_view(t, 0, 9); print(len(v)); }");
+    assert!(!oob.status.success());
+    assert!(String::from_utf8_lossy(&oob.stderr).contains("string index out of bounds"));
+    for source in [
+        // moving or reassigning a borrowed base is an error
+        "fn main() { let t = \"abc\"; let v = slice_view(t, 0, 1); let w = t; print(len(v)); }",
+        "fn main() { var t = \"abc\"; let v = slice_view(t, 0, 1); t = \"x\"; print(len(v)); }",
+        // slice_view needs a bare string variable
+        "fn main() { let v = slice_view(\"abc\", 0, 1); print(len(v)); }",
+        // views cannot be concatenated
+        "fn main() { let t = \"abc\"; let v = slice_view(t, 0, 1); print(v + \"x\"); }",
+        // views cannot be returned (no lifetime tracking across functions)
+        "fn grab() -> ? { let t = \"abc\"; return slice_view(t, 0, 1); } fn main() {}",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-view-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "{source}");
+    }
+}
+#[test]
+fn for_in_iterates_string_vector_elements_as_views() {
+    let source = "fn main() { let parts = split(\"alpha,beta,gamma\", \",\"); var total = 0; for w in parts { total = total + len(w); print(w); if contains(w, \"eta\") { print(1); } else { print(0); } } print(total); for w in parts { if w == \"beta\" { print(w); } } }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "alpha\n0\nbeta\n1\ngamma\n0\n14\nbeta\n");
+    // The container cannot be modified or moved while iterated.
+    for source in [
+        "fn main() { let v = split(\"a,b\", \",\"); for w in v { push(v, \"x\"); } }",
+        "fn main() { let v = split(\"a,b\", \",\"); for w in v { let held = v; } }",
+        "fn main() { let v = split(\"a,b\", \",\"); for w in v { pop(v); } }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-forin-sv-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
         fs::write(&path, source).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
         fs::remove_file(path).unwrap();

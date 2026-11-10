@@ -11,13 +11,14 @@ enum Kind {
 struct Token { kind: Kind, offset: usize, line: usize, column: usize }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, String, Vec, StrVec, VecRef, Array(usize), Struct(usize) }
+enum Type { Int, Bool, String, StrView, Vec, StrVec, VecRef, Array(usize), Struct(usize) }
 impl Type {
     fn name(self) -> String {
         match self {
             Type::Int => "i64".to_owned(),
             Type::Bool => "bool".to_owned(),
             Type::String => "string".to_owned(),
+            Type::StrView => "string view".to_owned(),
             Type::Vec => "vec".to_owned(),
             Type::StrVec => "vec[string]".to_owned(),
             Type::VecRef => "&vec".to_owned(),
@@ -29,6 +30,7 @@ impl Type {
         match self {
             Type::Bool => "bool ".to_owned(),
             Type::String => "ae_string ".to_owned(),
+            Type::StrView => "ae_strview ".to_owned(),
             Type::Vec => "ae_vec ".to_owned(),
             Type::StrVec => "ae_strvec ".to_owned(),
             Type::Struct(k) => format!("ae_t{k} "),
@@ -43,7 +45,7 @@ impl Type {
 }
 enum MoveKind { Var(usize), Field, StrVecElement }
 // Built-in names are reserved so their semantics stay unambiguous.
-const RESERVED: [&str; 12] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join"];
+const RESERVED: [&str; 13] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view"];
 
 fn location(source: &str, offset: usize) -> (usize, usize) {
     let prefix = &source[..offset];
@@ -138,7 +140,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 #[derive(Debug)]
 enum Argument { Value(Expr), Borrow(usize, bool) } // bool: borrow of a vec struct (pass &slot) vs array (decays)
 #[derive(Debug)]
@@ -159,7 +161,7 @@ struct StructDef { name: String, fields: Vec<(String, Type)> }
 
 type SharedFunctions = HashMap<String, (usize, Vec<Type>, Type)>;
 
-struct Parser<'a> { file: String, source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, scopes: Vec<Vec<(usize, Type)>> }
+struct Parser<'a> { file: String, source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>> }
 impl<'a> Parser<'a> {
     fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
     fn fail(&self, message: &str) -> String { error(&self.file, self.source, self.tokens[self.pos].offset, message) }
@@ -291,10 +293,32 @@ impl<'a> Parser<'a> {
                         None => {
                             let (operand, ty) = self.expression(0, false)?;
                             self.take(Kind::RParen)?;
-                            if !matches!(ty, Type::String | Type::Vec | Type::StrVec | Type::VecRef) { return Err(self.fail("len expects a string, vec, or array variable")); }
+                            if !matches!(ty, Type::String | Type::StrView | Type::Vec | Type::StrVec | Type::VecRef) { return Err(self.fail("len expects a string, vec, or array variable")); }
                             (Expr::Len(Box::new(operand), line, col), Type::Int)
                         }
                     }
+                } else if name == "slice_view" && *self.current() == Kind::LParen {
+                    self.take(Kind::LParen)?;
+                    let (base, base_ty) = self.expression(0, false)?;
+                    let vid = match (&base, base_ty) {
+                        (Expr::Variable(id, Type::String, _, _), Type::String) => *id,
+                        _ => return Err(self.fail("slice_view expects a bare string variable (views borrow their base)")),
+                    };
+                    if self.moved.contains(&vid) { return Err(self.fail("cannot use a moved string in slice_view")); }
+                    self.take(Kind::Comma)?;
+                    let (start, start_ty) = self.expression(0, false)?;
+                    if start_ty != Type::Int { return Err(self.fail("slice_view start must be i64")); }
+                    self.take(Kind::Comma)?;
+                    let (end, end_ty) = self.expression(0, false)?;
+                    if end_ty != Type::Int { return Err(self.fail("slice_view end must be i64")); }
+                    self.take(Kind::RParen)?;
+                    // The base may not move or be reassigned while a view of
+                    // it can still be read (until this scope ends).
+                    let depth = self.scopes.len();
+                    if !self.borrows.iter().any(|&(id, _)| id == vid) {
+                        self.borrows.push((vid, depth));
+                    }
+                    (Expr::SliceView(vid, Box::new(start), Box::new(end), 0, 0), Type::StrView)
                 } else if name == "join" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     self.take(Kind::LParen)?;
@@ -307,7 +331,7 @@ impl<'a> Parser<'a> {
                     if self.moved.contains(&vid) { return Err(self.fail("cannot use a moved vector in join")); }
                     self.take(Kind::Comma)?;
                     let (sep, sep_ty) = self.expression(0, false)?;
-                    if sep_ty != Type::String { return Err(self.fail("join expects a string separator")); }
+                    if !matches!(sep_ty, Type::String | Type::StrView) { return Err(self.fail("join expects a string or string view separator")); }
                     self.take(Kind::RParen)?;
                     (Expr::Join(vid, Box::new(sep), line, col), Type::String)
                 } else if name == "args" && *self.current() == Kind::LParen {
@@ -319,7 +343,7 @@ impl<'a> Parser<'a> {
                     let (line, col) = (vline, vcol);
                     self.pos += 1;
                     let (first, first_ty) = self.expression(0, false)?;
-                    if first_ty != Type::String { return Err(self.fail(&format!("{name} expects a string argument"))); }
+                    if !matches!(first_ty, Type::String | Type::StrView) { return Err(self.fail(&format!("{name} expects a string or string view argument"))); }
                     let builtin = if name == "read_file" {
                         self.take(Kind::RParen)?;
                         Expr::ReadFile(Box::new(first), line, col)
@@ -344,13 +368,13 @@ impl<'a> Parser<'a> {
                     } else if name == "contains" {
                         self.take(Kind::Comma)?;
                         let (second, second_ty) = self.expression(0, false)?;
-                        if second_ty != Type::String { return Err(self.fail("contains expects a string pattern")); }
+                        if !matches!(second_ty, Type::String | Type::StrView) { return Err(self.fail("contains expects a string or string view pattern")); }
                         self.take(Kind::RParen)?;
                         Expr::Contains(Box::new(first), Box::new(second), line, col)
                     } else {
                         self.take(Kind::Comma)?;
                         let (second, second_ty) = self.expression(0, false)?;
-                        if second_ty != Type::String { return Err(self.fail("write_file expects a string content")); }
+                        if !matches!(second_ty, Type::String | Type::StrView) { return Err(self.fail("write_file expects a string or string view content")); }
                         self.take(Kind::RParen)?;
                         Expr::WriteFile(Box::new(first), Box::new(second), line, col)
                     };
@@ -400,11 +424,12 @@ impl<'a> Parser<'a> {
                         self.take(Kind::RBracket)?;
                         (Expr::Index(id, len, Box::new(index), line, col), Type::Int)
                     } else if ty == Type::StrVec && *self.current() == Kind::LBracket {
+                        if self.borrows.iter().any(|&(bid, _)| bid == id) { return Err(self.fail(&format!("cannot modify '{name}' while it is borrowed"))); }
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
                         let (index, index_ty) = self.expression(0, false)?;
                         if index_ty != Type::Int { return Err(self.fail("vector index must be an integer")); }
                         self.take(Kind::RBracket)?;
-                        (Expr::StrVecIndex(id, Box::new(index), line, col), Type::String)
+                        (Expr::StrVecIndex(id, Box::new(index), line, col), Type::StrView)
                     } else if (ty == Type::Vec || ty == Type::VecRef) && *self.current() == Kind::LBracket {
                         // Vec variables may also be used bare (moves, len);
                         // indexing is optional. Borrowed vectors are read-only.
@@ -442,7 +467,12 @@ impl<'a> Parser<'a> {
         if moving {
             let move_target = match (&lhs.0, lhs.1) {
                 (_, ty) if !ty.owned() => None,
-                (Expr::Variable(id, _, _, _), _) => Some(MoveKind::Var(*id)),
+                (Expr::Variable(id, _, _, _), _) => {
+                    if self.borrows.iter().any(|&(bid, _)| bid == *id) {
+                        return Err(self.fail("cannot move a value while it is borrowed"));
+                    }
+                    Some(MoveKind::Var(*id))
+                }
                 (Expr::Field(_, _, fty), _) if fty.owned() => Some(MoveKind::Field),
                 (Expr::StrVecIndex(_, _, _, _), _) => Some(MoveKind::StrVecElement),
                 _ => None,
@@ -476,12 +506,17 @@ impl<'a> Parser<'a> {
                     Type::Bool
                 }
                 Kind::EqEq | Kind::NotEq | Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq => {
-                    if lhs_ty != rhs_ty || !matches!(lhs_ty, Type::Int | Type::String) {
-                        return Err(self.fail("comparison requires two integers or two strings"));
+                    let comparable = match (lhs_ty, rhs_ty) {
+                        (Type::Int, Type::Int) => true,
+                        (Type::String | Type::StrView, Type::String | Type::StrView) => op == Kind::EqEq || op == Kind::NotEq,
+                        _ => false,
+                    };
+                    if !comparable {
+                        return Err(self.fail("comparison requires two integers, or two strings/views with == or !="));
                     }
-                    // String equality gets a dedicated node so emission never
-                    // confuses it with C pointer comparison.
-                    if (op == Kind::EqEq || op == Kind::NotEq) && lhs_ty == Type::String {
+                    // String/view equality gets a dedicated node so emission
+                    // never confuses it with C pointer comparison.
+                    if (op == Kind::EqEq || op == Kind::NotEq) && matches!(lhs_ty, Type::String | Type::StrView) {
                         lhs = (Expr::StrEq(Box::new(lhs_expr), Box::new(rhs), op == Kind::NotEq), Type::Bool);
                         continue;
                     }
@@ -706,10 +741,45 @@ impl<'a> Parser<'a> {
         // stay safe.
         let owned: Vec<(usize, Type)> = scope.iter().filter(|(_, ty)| ty.owned()).copied().collect();
         if !owned.is_empty() { result.push(Statement::Frees(owned)); }
-        // Moved markers for names that left scope are no longer meaningful.
+        // Moved markers for names that left scope are no longer meaningful,
+        // and borrows recorded in this scope end with it.
         let live: std::collections::HashSet<usize> = self.names.values().map(|&(id, _, _)| id).collect();
         self.moved.retain(|id| live.contains(id));
+        let depth_now = self.scopes.len();
+        self.borrows.retain(|&(_, depth)| depth <= depth_now);
         Ok(result)
+    }
+    // Views borrow their base: element reads and slice_views of variable
+    // bases register the owner so it cannot be modified or moved while a
+    // view can still be read.
+    fn record_borrow_bases(&mut self, e: &Expr) {
+        match e {
+            Expr::StrVecIndex(id, idx, _, _) => {
+                if !self.borrows.iter().any(|&(bid, _)| bid == *id) {
+                    self.borrows.push((*id, self.scopes.len()));
+                }
+                self.record_borrow_bases(idx);
+            }
+            Expr::SliceView(_, a, b, _, _) => { self.record_borrow_bases(a); self.record_borrow_bases(b); }
+            Expr::StructLit(_, values) => { for v in values { self.record_borrow_bases(v); } }
+            Expr::Binary(a, _, b, _, _, _) => { self.record_borrow_bases(a); self.record_borrow_bases(b); }
+            Expr::Neg(a, _, _) | Expr::Not(a) | Expr::Len(a, _, _) => self.record_borrow_bases(a),
+            Expr::Index(_, _, a, _, _) => self.record_borrow_bases(a),
+            Expr::VecIndex(_, a, _, _, _) => self.record_borrow_bases(a),
+            Expr::Call(_, args, _) => {
+                for arg in args {
+                    match arg {
+                        Argument::Value(e) => self.record_borrow_bases(e),
+                        Argument::Borrow(_, _) => {}
+                    }
+                }
+            }
+            Expr::Contains(a, b, _, _) | Expr::Split(a, b, _, _) | Expr::StrEq(a, b, _) => { self.record_borrow_bases(a); self.record_borrow_bases(b); }
+            Expr::WriteFile(a, b, _, _) | Expr::Slice(_, a, b, _, _) => { self.record_borrow_bases(a); self.record_borrow_bases(b); }
+            Expr::Join(_, sep, _, _) => self.record_borrow_bases(sep),
+            Expr::Field(base, _, _) => self.record_borrow_bases(base),
+            _ => {}
+        }
     }
     fn live_owned(&self) -> Vec<(usize, Type)> {
         self.scopes.iter().flatten().filter(|(_, ty)| ty.owned()).map(|&(id, ty)| (id, ty)).collect()
@@ -755,6 +825,7 @@ impl<'a> Parser<'a> {
                     self.names.insert(name.clone(), (id, mutable, ty));
                     self.scopes.last_mut().unwrap().push((id, ty));
                     declared.push(name);
+                    if let Statement::Declare(_, init) = &stmt { self.record_borrow_bases(init); }
                     result.push(stmt);
                 }
                 Kind::Ident(name) => {
@@ -768,6 +839,7 @@ impl<'a> Parser<'a> {
                         if self.moved.contains(&id) { return Err(self.fail(&format!("cannot use '{target}' because it was moved"))); }
                         if !matches!(ty, Type::Vec | Type::StrVec) { return Err(self.fail(&format!("{name} expects a vec, found {}", ty.name()))); }
                         if !mutable { return Err(self.fail(&format!("cannot modify immutable variable '{target}'"))); }
+                        if self.borrows.iter().any(|&(bid, _)| bid == id) { return Err(self.fail(&format!("cannot modify '{target}' while it is borrowed"))); }
                         if name == "push" {
                             self.take(Kind::Comma)?;
                             let (value, value_ty) = self.expression(0, ty == Type::StrVec)?;
@@ -833,6 +905,9 @@ impl<'a> Parser<'a> {
                             continue;
                         }
                         // Whole-struct assignment moves a fresh value in.
+                        if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                            return Err(self.fail(&format!("cannot assign to '{name}' while it is borrowed")));
+                        }
                         self.take(Kind::Equal)?;
                         let moved_before = self.moved.contains(&id);
                         let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
@@ -843,6 +918,9 @@ impl<'a> Parser<'a> {
                         self.moved.remove(&id);
                         result.push(Statement::Assign(id, value, true));
                     } else {
+                        if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                            return Err(self.fail(&format!("cannot assign to '{name}' while it is borrowed")));
+                        }
                         self.take(Kind::Equal)?;
                         let moved_before = self.moved.contains(&id);
                         let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
@@ -897,8 +975,9 @@ impl<'a> Parser<'a> {
                         // `for x in vec-variable` iterates owned elements by
                         // value: desugars to a hidden range loop plus an
                         // immutable element declaration per iteration.
-                        let v_id = match (&first, first_ty) {
-                            (Expr::Variable(id, Type::Vec, _, _), Type::Vec) => *id,
+                        let (v_id, elem_ty) = match (&first, first_ty) {
+                            (Expr::Variable(id, Type::Vec, _, _), Type::Vec) => (*id, Type::Int),
+                            (Expr::Variable(id, Type::StrVec, _, _), Type::StrVec) => (*id, Type::StrView),
                             _ => return Err(self.fail("for-in needs a bare vec variable or an int range (start..end)")),
                         };
                         if self.loop_depth >= 64 { return Err(self.fail("loop nesting limit exceeded (64)")); }
@@ -908,20 +987,27 @@ impl<'a> Parser<'a> {
                         let var = self.next_var; self.next_var += 1;
                         let label = self.next_label; self.next_label += 1;
                         self.loop_depth += 1;
-                        self.scopes.push(vec![(var, Type::Int), (counter, Type::Int), (end_var, Type::Int)]);
+                        self.scopes.push(vec![(var, elem_ty), (counter, Type::Int), (end_var, Type::Int)]);
                         self.loop_scopes.push(self.scopes.len());
                         self.loop_labels.push(Some(label));
-                        self.names.insert(var_name.clone(), (var, false, Type::Int));
+                        self.names.insert(var_name.clone(), (var, false, elem_ty));
+                        // The container is borrowed for the whole loop.
+                        let container_depth = self.scopes.len();
+                        self.borrows.push((v_id, container_depth));
                         let body = self.block();
                         self.loop_labels.pop();
                         self.loop_scopes.pop();
                         self.scopes.pop().unwrap();
                         self.loop_depth -= 1;
                         self.names.remove(&var_name);
+                        self.borrows.retain(|&(id, _)| id != v_id);
                         let mut body = body?;
                         if self.moved.contains(&v_id) { return Err(self.fail(&format!("cannot move the vector being iterated (a move of it happens in this loop)"))); }
                         // Per-iteration element binding, then the user's body.
-                        let element = Expr::VecIndex(v_id, Box::new(Expr::Variable(counter, Type::Int, line, col)), line, col, false);
+                        let element = match elem_ty {
+                            Type::StrView => Expr::StrVecIndex(v_id, Box::new(Expr::Variable(counter, Type::Int, line, col)), line, col),
+                            _ => Expr::VecIndex(v_id, Box::new(Expr::Variable(counter, Type::Int, line, col)), line, col, false),
+                        };
                         body.insert(0, Statement::Declare(var, element));
                         result.push(Statement::Declare(end_var, Expr::Len(Box::new(first), line, col)));
                         result.push(Statement::Declare(counter, Expr::Number(0)));
@@ -981,7 +1067,7 @@ impl<'a> Parser<'a> {
                     } else {
                         // print borrows its value; only `+` consumes strings.
                         let (value, ty) = self.expression(0, false)?;
-                        if !matches!(ty, Type::Int | Type::Bool | Type::String) {
+                        if !matches!(ty, Type::Int | Type::Bool | Type::String | Type::StrView) {
                             return Err(self.fail(&format!("cannot print a value of type {}", ty.name())));
                         }
                         Printed::Expr(value)
@@ -1098,7 +1184,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let t = emit_expr(e, out, next, false);
             let id = *next; *next += 1;
             let call = match t.ty {
-                Type::String => format!("ae_str_len({}, {line}, {col})", t.text),
+                Type::String | Type::StrView => format!("ae_str_len(AE_VIEW({}), {line}, {col})", t.text),
                 Type::StrVec => format!("ae_strvec_len({}, {line}, {col})", t.text),
                 _ => format!("ae_vec_len({}, {line}, {col})", t.text),
             };
@@ -1125,14 +1211,14 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let p = emit_expr(path, out, next, false);
             let c = emit_expr(content, out, next, false);
             let id = *next; *next += 1;
-            out.push_str(&format!("    int64_t t{id} = ae_write_file({}, {}, {line}, {col});
+            out.push_str(&format!("    int64_t t{id} = ae_write_file({}, AE_VIEW({}), {line}, {col});
 ", p.text, c.text));
             Emitted { text: format!("t{id}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::Bytes(e, line, col) => {
             let t = emit_expr(e, out, next, false);
             let id = *next; *next += 1;
-            out.push_str(&format!("    ae_vec t{id} = ae_bytes({}, {line}, {col});
+            out.push_str(&format!("    ae_vec t{id} = ae_bytes(AE_VIEW({}), {line}, {col});
 ", t.text));
             Emitted { text: format!("t{id}"), ty: Type::Vec, owned: true, moves: Vec::new(), materialized: true }
         }
@@ -1141,7 +1227,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let st = emit_expr(start, out, next, false);
             let en = emit_expr(end, out, next, false);
             let id = *next; *next += 1;
-            out.push_str(&format!("    ae_string t{id} = ae_slice({}, {}, {}, {line}, {col});
+            out.push_str(&format!("    ae_string t{id} = ae_slice(AE_VIEW({}), {}, {}, {line}, {col});
 ", t.text, st.text, en.text));
             if t.owned { drop_owned_temp(out, &t); }
             Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
@@ -1150,7 +1236,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let h = emit_expr(haystack, out, next, false);
             let n = emit_expr(needle, out, next, false);
             let id = *next; *next += 1;
-            out.push_str(&format!("    bool t{id} = ae_contains({}, {}, {line}, {col});
+            out.push_str(&format!("    bool t{id} = ae_contains(AE_VIEW({}), AE_VIEW({}), {line}, {col});
 ", h.text, n.text));
             if h.owned { drop_owned_temp(out, &h); }
             if n.owned { drop_owned_temp(out, &n); }
@@ -1175,6 +1261,18 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let i = emit_expr(index, out, next, false);
             // Elements are borrow-only: the pointer view never owns.
             Emitted { text: format!("(*ae_strvec_get(&v{id}, {}, {line}, {col}))", i.text), ty: Type::String, owned: false, moves: i.moves, materialized: true }
+        }
+        Expr::SliceView(vid, start, end, line, col) => {
+            // The base is a borrowed bare string variable; it cannot move or
+            // be reassigned while the view exists (borrow tracker).
+            let st = emit_expr(start, out, next, false);
+            let en = emit_expr(end, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    if (!v{vid}.ptr) ae_fail(\"use of moved string\", {line}, {col});
+"));
+            out.push_str(&format!("    ae_strview t{id} = ae_slice_view(AE_VIEW(v{vid}), {}, {}, {line}, {col});
+", st.text, en.text));
+            Emitted { text: format!("t{id}"), ty: Type::StrView, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::Join(vid, sep, line, col) => {
             out.push_str(&format!("    if (!v{vid}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
@@ -1212,7 +1310,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let l = emit_expr(a, out, next, false);
             let r = emit_expr(b, out, next, false);
             let id = *next; *next += 1;
-            let cmp = format!("ae_str_eq({}, {})", l.text, r.text);
+            let cmp = format!("ae_str_eq(AE_VIEW({}), AE_VIEW({}))", l.text, r.text);
             let text = if *negated { format!("!{cmp}") } else { cmp };
             out.push_str(&format!("    bool t{id} = {text};
 "));
@@ -1301,8 +1399,9 @@ fn emit_print(printed: &Printed, out: &mut String, next: &mut usize) {
         Printed::Expr(e) => {
             let t = emit_expr(e, out, next, false);
             match t.ty {
-                Type::String => {
-                    out.push_str(&format!("    if (fwrite({}.ptr, 1, (size_t){}.len, stdout) != (size_t){}.len || fputc('\\n', stdout) == EOF) ae_fail(\"output error\", 0, 0);\n", t.text, t.text, t.text));
+                Type::String | Type::StrView => {
+                    let pv = *next; *next += 1;
+                    out.push_str(&format!("    ae_strview t{pv} = AE_VIEW({}); if (fwrite(t{pv}.ptr, 1, (size_t)t{pv}.len, stdout) != (size_t)t{pv}.len || fputc('\\n', stdout) == EOF) ae_fail(\"output error\", 0, 0);\n", t.text));
                     if t.owned { drop_owned_temp(out, &t); }
                 }
                 Type::Bool => out.push_str(&format!("    if (printf(\"%s\\n\", {} ? \"true\" : \"false\") < 0) ae_fail(\"output error\", 0, 0);\n", t.text)),
@@ -1446,7 +1545,7 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
 struct Program { files: Vec<Vec<Function>>, structs: Vec<StructDef> }
 
 fn make_parser<'a>(file: &str, source: &'a str, tokens: Vec<Token>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>) -> Parser<'a> {
-    Parser { file: file.to_owned(), source, tokens, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), scopes: Vec::new() }
+    Parser { file: file.to_owned(), source, tokens, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new() }
 }
 
 // Leading `use "path";` headers. Parsed from tokens before the Parser owns
@@ -1539,6 +1638,7 @@ fn c_type_field(ty: Type) -> String {
         Type::Int => "int64_t".to_owned(),
         Type::Bool => "bool".to_owned(),
         Type::String => "ae_string".to_owned(),
+        Type::StrView => "ae_strview".to_owned(),
         Type::Vec => "ae_vec".to_owned(),
         Type::StrVec => "ae_strvec".to_owned(),
         Type::Struct(k) => format!("ae_t{k}"),
@@ -1551,6 +1651,7 @@ fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Int => format!("int64_t v{id}"),
         Type::Bool => format!("bool v{id}"),
         Type::String => format!("ae_string v{id}"),
+        Type::StrView => format!("ae_strview v{id}"),
         Type::Vec => format!("ae_vec v{id}"),
         Type::StrVec => format!("ae_strvec v{id}"),
         Type::Struct(k) => format!("ae_t{k} v{id}"),

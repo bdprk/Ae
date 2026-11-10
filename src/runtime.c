@@ -45,6 +45,11 @@ static size_t ae_index(int64_t index, size_t len, size_t line, size_t column) {
 // moves copy the struct and forfeit the slot; releases are idempotent so
 // overlapping release paths can never double-free.
 typedef struct { char *ptr; int64_t len; } ae_string;
+// Borrowed string view (ADR-8): zero-copy, never released. Views point into
+// an owning buffer; the compile-time borrow tracker keeps the base alive.
+typedef struct { const char *ptr; int64_t len; } ae_strview;
+#define AE_VIEW(s) ((ae_strview){(s).ptr, (s).len})
+
 static ae_string ae_str_from(const char *text, size_t line, size_t column) {
     size_t n = strlen(text);
     char *copy = malloc(n + 1);
@@ -65,14 +70,19 @@ static ae_string ae_str_cat(ae_string a, ae_string b, size_t line, size_t column
 }
 static void ae_str_release(ae_string *slot) { free(slot->ptr); slot->ptr = NULL; slot->len = 0; }
 static void ae_str_forfeit(ae_string *slot) { slot->ptr = NULL; slot->len = 0; }
-static bool ae_str_eq(ae_string a, ae_string b) {
+static bool ae_str_eq(ae_strview a, ae_strview b) {
     return a.len == b.len && (a.len == 0 || memcmp(a.ptr, b.ptr, (size_t)a.len) == 0);
 }
-static int64_t ae_str_len(ae_string s, size_t line, size_t column) {
+static int64_t ae_str_len(ae_strview s, size_t line, size_t column) {
     (void)line; (void)column;
     return s.len;
 }
-static ae_string ae_slice(ae_string s, int64_t start, int64_t end, size_t line, size_t column) {
+static ae_strview ae_slice_view(ae_strview s, int64_t start, int64_t end, size_t line, size_t column) {
+    if (start < 0 || end < start || end > s.len) ae_fail("string index out of bounds", line, column);
+    ae_strview r = { s.ptr + start, end - start };
+    return r;
+}
+static ae_string ae_slice(ae_strview s, int64_t start, int64_t end, size_t line, size_t column) {
     if (start < 0 || end < start || end > s.len) ae_fail("string index out of bounds", line, column);
     char *out = malloc((size_t)(end - start) + 1);
     if (!out) ae_fail("out of memory", line, column);
@@ -81,7 +91,7 @@ static ae_string ae_slice(ae_string s, int64_t start, int64_t end, size_t line, 
     ae_string r = { out, end - start };
     return r;
 }
-static bool ae_contains(ae_string haystack, ae_string needle, size_t line, size_t column) {
+static bool ae_contains(ae_strview haystack, ae_strview needle, size_t line, size_t column) {
     // strstr carries the platform's optimized substring search; buffers are
     // NUL-terminated so embedded-NUL truncation matches len/bytes semantics.
     (void)line; (void)column;
@@ -297,14 +307,14 @@ static ae_string ae_read_file(const char *path, size_t line, size_t column) {
     ae_string out = { buffer, (int64_t)size };
     return out;
 }
-static int64_t ae_write_file(ae_string path, ae_string content, size_t line, size_t column) {
+static int64_t ae_write_file(ae_string path, ae_strview content, size_t line, size_t column) {
     FILE *f = ae_fopen(path.ptr, "wb");
     if (!f) ae_fail("cannot write file", line, column);
     size_t written = fwrite(content.ptr, 1, (size_t)content.len, f);
     if (fclose(f) != 0 || written != (size_t)content.len) ae_fail("cannot write file", line, column);
     return (int64_t)written;
 }
-static ae_vec ae_bytes(ae_string s, size_t line, size_t column) {
+static ae_vec ae_bytes(ae_strview s, size_t line, size_t column) {
     ae_vec v = ae_vec_new(line, column);
     for (int64_t i = 0; i < s.len; i++) {
         ae_vec_push(&v, (int64_t)(unsigned char)s.ptr[i], line, column);
