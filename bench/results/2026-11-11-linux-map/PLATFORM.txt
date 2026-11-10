@@ -6,8 +6,8 @@ map 容器负载 · Linux 归档（2026-11-11）
 
 ## 平台
 - instabox-node 沙箱：Debian 13，内核 6.18.54-instabox，x86-64，4 vCPU / 7.8 GB
-- gcc 14.2.0-19；rustc 1.99.0 (b940084d7)；Python 3.13.5；go 未安装于该沙箱？
-  ——已安装并参与对照（版本见 JSON `versions` 字段）
+- gcc 14.2.0-19；rustc 1.99.0 (b940084d7)；Python 3.13.5；go 1.27.1 linux/amd64
+  （四语言全部在本沙箱参与对照，版本另见 JSON `versions` 字段）
 
 ## 命令（工作目录 = ~/ae-fmt-test）
 - python3 bench/run.py --workload map            > run-map-dev.json / .stderr
