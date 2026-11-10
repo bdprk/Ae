@@ -681,7 +681,7 @@
   - **安全语义**：未关闭任何检查；fmt 不判断语义，`check` 仍是唯一语义门槛。
   - **fmt 自身**：35 文件 × 2 次共约 300 ms（含每次进程启动，≈4 ms/次）。
 - 边界：v1 不重排行结构、不重对齐尾注释、不折叠连续空行、不做目录递归与配置文件；这些是明确取舍，不是完整格式化器已完成。不宣称「语义错误文件被 fmt 修复」——fmt 只动空白。
-- 验证：Windows 27 单元 + 145 集成全通过（新增 12 单元 + 6 集成）；`scripts/fmt_acceptance.py` 对 35 个示例（含 3 个模块，在临时副本上，仓库文件不动）验证 emit-c 数字归一化逐行一致 + 二次 fmt 逐字节幂等，`changed_files = []`（全部示例已在规范风格内，fmt 对现役代码是 no-op）；手工字节级复制对照 diff 零差异。日志与 JSON 见 `bench/results/2026-11-10-windows-fmt/`。**Linux 回填未做，当前为「单平台验证」。**
+- 验证：Windows 27 单元 + 145 集成全通过（新增 12 单元 + 6 集成）；`scripts/fmt_acceptance.py` 对 35 个示例（含 3 个模块，在临时副本上，仓库文件不动）验证 emit-c 数字归一化逐行一致 + 二次 fmt 逐字节幂等，`changed_files = []`（全部示例已在规范风格内，fmt 对现役代码是 no-op）；手工字节级复制对照 diff 零差异。日志与 JSON 见 `bench/results/2026-11-10-windows-fmt/`。**2026-11-11 Linux 回填完成**：提交 `5d153d4` 在 instabox-node（Debian 13 / GCC 14.2.0 / rustc 1.99.0）cargo test 31 + 148 全通过、净化器与 `--leak` 干净、`fmt_acceptance.py` 35 文件 changed=0 且幂等、32 个独立示例 + 模块根 check OK，见 `bench/results/2026-11-11-linux-fmt-test/`；现为**双平台验证**。
 
 ## ADR-43：测试走文本合成的 main，前端零语义改动
 
@@ -702,4 +702,4 @@
   - **产物/缓存体积**：合成源走既有内容寻址缓存，键含合成文本哈希，无新缓存种类。
   - **安全语义**：未关闭任何检查；合成 main 与用户代码一起通过完整 check 与移动/借用规则。
 - 边界：v1 只收集入口文件的测试（模块文件里的 `test_*` 不收集，模块仍是纯模块）；无过滤、无并行、无 `--list`、无 `--release`；测试签名固定 `() -> i64`。不宣称「测试框架已完成」——这是一个最小驱动，断言仍只有 `assert` 与结果值。
-- 验证：Windows 31 单元 + 148 集成全通过（新增 4 单元 + 3 集成）；三路径冒烟（通过 / 返回 3 → exit 3 / panic → exit 1 带位置）与模块协用（`use` 的 `pub fn` 被测试调用）见集成测试与 `bench/results/2026-11-10-windows-test/smoke.log`；`tests_demo/strings_test.ae` 是随仓库的演示套件（3 测试全过，exit 0）。**Linux 回填未做，当前为「单平台验证」。**
+- 验证：Windows 31 单元 + 148 集成全通过（新增 4 单元 + 3 集成）；三路径冒烟（通过 / 返回 3 → exit 3 / panic → exit 1 带位置）与模块协用（`use` 的 `pub fn` 被测试调用）见集成测试与 `bench/results/2026-11-10-windows-test/smoke.log`；`tests_demo/strings_test.ae` 是随仓库的演示套件（3 测试全过，exit 0）。**2026-11-11 Linux 回填完成**：同一提交树在 instabox-node 上 31 单元 + 148 集成全通过，test 三路径（通过 / 返回 3 → exit 3 / panic → exit 1 带位置）与 Windows 逐字一致，见 `bench/results/2026-11-11-linux-fmt-test/`；现为**双平台验证**。

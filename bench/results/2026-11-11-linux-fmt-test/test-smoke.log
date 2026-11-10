@@ -1,0 +1,19 @@
+$ ae test demo.ae
+RUN test_add
+PASS test_add
+RUN test_fail
+FAIL test_fail
+exit=3
+$ ae test panic.ae
+ae:2:5: assertion failed
+RUN test_panic
+exit=1
+$ ae test tests_demo/strings_test.ae
+RUN test_concat
+PASS test_concat
+RUN test_utf8_len
+PASS test_utf8_len
+RUN test_checked_division_is_reported
+PASS test_checked_division_is_reported
+ok: 3 passed
+exit=0

@@ -1,0 +1,48 @@
+W5 fmt + test · Linux 回填归档（2026-11-11）
+
+## 源码树身份
+提交 5d153d4（"Add a test runner that synthesizes main instead of touching
+the front end"），`git archive 5d153d4 | gzip | ssh instabox-node
+'tar -xzf -'` 同步到 ~/ae-fmt-test（远端无 .git；本归档与该提交同批入库，
+由 git 历史确定源码身份）。上一提交为 fd3149f（fmt）。
+
+## 平台
+- instabox-node 沙箱（证书 2026-11-11T01:01+08:00 前有效，用
+  `instabox ssh-cert node` 刷新；前一张证书 15:08Z 过期曾导致连接被拒）
+- Debian 13，内核 6.18.54-instabox，x86-64，4 vCPU / 7.8 GB
+- gcc 14.2.0-19；rustc 1.99.0 (b940084d7)；Python 3.13.5
+
+## 命令（工作目录 = ~/ae-fmt-test）
+- cargo build --locked && cargo test --locked          > cargo-test.log
+- cargo build --release --locked
+- python3 scripts/verify_generated_c.py --leak          > verify-c.log（=== 分隔）
+- python3 scripts/verify_generated_c.py --sanitize      （同上）
+- python3 -I scripts/fmt_acceptance.py --json /tmp/ae-fmt-test/fmt-acceptance.json
+- ae test 冒烟（demo.ae 通过+返回3 / panic.ae assert 失败）
+  与 ae test tests_demo/strings_test.ae             > test-smoke.log
+- for f in examples/*.ae: ae check $f（32 个独立示例）+ 
+  ae check examples/modules/main.ae                 > examples-check.log
+- uname/rustc/gcc/python/nproc                          > env.txt
+
+## 结果摘要
+- cargo test：31 单元 + 148 集成全通过（与 Windows 同数）。
+- verify_generated_c：--leak 全部用例 PASS、退出分配块 0（glibc 基线）；
+  --sanitize 全部用例 PASS、无 ASan/UBSan 报告。
+- fmt 验收：35 个文件（含 3 模块副本）emit-c「每行忽略数字」逐行一致 +
+  二次 fmt 逐字节幂等，changed_files = []；总 fmt 23.0 ms（含进程启动，
+  明显低于 Windows 的 ~300 ms——两平台绝对值不可比，量级一致即可）。
+- test 冒烟：三条路径与 Windows 逐字一致（PASS → ok: N passed / exit 0；
+  返回 3 → FAIL + exit 3；assert → ae:2:5: assertion failed + exit 1）；
+  tests_demo 3 测试全过。
+- 全部 32 个独立 examples check OK；模块根 main.ae check OK。
+
+## 结论
+ADR-42（fmt）与 ADR-43（test）升级为**双平台验证**：同一提交树在两平台
+各跑一次全套正确性命令，结果一致（fmt 幂等与语义保持、test 三路径退出码、
+净化器与分配计数干净）。
+
+## 已知差异 / 未覆盖
+- fmt 总耗时的两平台绝对值不可比（进程模型不同），只记量级。
+- 净化器与 --leak 仅在本平台跑（MinGW 无 ASan 运行时），与既有归档限制一致。
+- test v1 的边界（只收集入口文件测试、失败即停、无 --release）两平台相同。
+- 远端目录 ~/ae-fmt-test 为本归档专用，未触碰 ~/ae-lang（并发工作流使用）。
