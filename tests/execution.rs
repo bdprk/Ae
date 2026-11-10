@@ -3047,3 +3047,86 @@ fn fmt_preserves_comment_and_string_bytes_end_to_end() {
     assert!(out.lines().any(|l| l == "7"), "{out}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn test_runner_reports_pass_fail_and_panic_with_exit_codes() {
+    let dir = unique_temp_dir("runner");
+    let ae = || Command::new(env!("CARGO_BIN_EXE_ae"));
+
+    let passing = dir.join("pass.ae");
+    fs::write(&passing, "fn test_add() -> i64 {\n    assert(2 + 2 == 4);\n    return 0;\n}\n\nfn test_len() -> i64 {\n    if len(\"abc\") != 3 { return 1; }\n    return 0;\n}\n").unwrap();
+    let output = ae().arg("test").arg(&passing).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(stdout, "RUN test_add\nPASS test_add\nRUN test_len\nPASS test_len\nok: 2 passed\n");
+
+    // A test returning a non-zero value fails the suite with that code, and
+    // tests after it do not run.
+    let failing = dir.join("fail.ae");
+    fs::write(&failing, "fn test_first() -> i64 {\n    return 0;\n}\n\nfn test_second() -> i64 {\n    return 3;\n}\n\nfn test_third() -> i64 {\n    return 0;\n}\n").unwrap();
+    let output = ae().arg("test").arg(&failing).output().unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert!(stdout.contains("PASS test_first"), "{stdout}");
+    assert!(stdout.contains("FAIL test_second"), "{stdout}");
+    assert!(!stdout.contains("RUN test_third"), "{stdout}");
+    assert!(!stdout.contains("ok:"), "{stdout}");
+
+    // A panicking test keeps the existing failure behaviour: location on
+    // stderr, exit status 1.
+    let panicking = dir.join("panic.ae");
+    fs::write(&panicking, "fn test_boom() -> i64 {\n    assert(1 == 2);\n    return 0;\n}\n").unwrap();
+    let output = ae().arg("test").arg(&panicking).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("assertion failed"), "{}", String::from_utf8_lossy(&output.stderr));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_runner_refuses_malformed_suites_and_cleans_up() {
+    let dir = unique_temp_dir("refuse");
+    let ae = || Command::new(env!("CARGO_BIN_EXE_ae"));
+    for broken in [
+        // A main is a program, not a suite.
+        "fn main() { print(1); }\nfn test_a() -> i64 { return 0; }\n",
+        // No test functions at all.
+        "fn helper() -> i64 { return 1; }\n",
+        // Wrong signature: params.
+        "fn test_a(x: i64) -> i64 { return x; }\n",
+        // Wrong signature: return type.
+        "fn test_a() -> string { return \"s\"; }\n",
+        // Generic tests are not supported in v1.
+        "fn test_a[T]() -> i64 { return 0; }\n",
+    ] {
+        let input = dir.join("suite.ae");
+        fs::write(&input, broken).unwrap();
+        let output = ae().arg("test").arg(&input).output().unwrap();
+        assert!(!output.status.success(), "ae test accepted {broken:?}");
+        assert!(!String::from_utf8_lossy(&output.stderr).is_empty());
+        // The staged copy next to the input must be gone on every path.
+        let leftovers: Vec<_> = fs::read_dir(&dir).unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with(".ae-test-"))
+            .collect();
+        assert!(leftovers.is_empty(), "staging files left behind: {leftovers:?}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_runner_works_with_modules_and_finds_failures_there() {
+    // Tests in the entry file may call helpers from used modules; module
+    // files stay plain modules (their tests are not collected in v1).
+    let dir = unique_temp_dir("mods");
+    let modules = dir.join("modules");
+    fs::create_dir(&modules).unwrap();
+    fs::write(modules.join("lib.ae"), "pub fn twice(x: i64) -> i64 { return x + x; }\n").unwrap();
+    fs::write(modules.join("main_t.ae"),
+        "use \"lib.ae\";\n\nfn test_twice() -> i64 {\n    if twice(21) != 42 { return 1; }\n    return 0;\n}\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("test").arg(modules.join("main_t.ae")).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(stdout, "RUN test_twice\nPASS test_twice\nok: 1 passed\n");
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -1,0 +1,42 @@
+W5 test 子命令 · Windows 归档（2026-11-10）
+
+## 源码树身份
+提交 fd3149f（"Add a whitespace-only idempotent formatter ..."）
++ 与本归档同批提交的 src/harness.rs、src/main.rs、src/frontend.rs
+（可见性放宽）、tests/execution.rs、文档。
+
+## 平台
+- Windows 10.0.26100，AMD64，Intel64 Family 6 Model 141
+- rustc 1.99.1 (58cf8f9c3 2026-10-13)；gcc 16.2.0 (MinGW-W64 ucrt)
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked                          > cargo-test.log
+- cargo build --release --locked
+- 冒烟（> smoke.log，文件在系统临时目录）：
+  ae test demo.ae    # 1 过 + 1 返回 3 → FAIL + exit 3
+  ae test panic.ae   # assert 失败 → stderr 位置 + exit 1
+
+## 结果摘要
+- cargo test：31 单元 + 148 集成全通过（fmt 轮基线 27 + 145；新增 4 单元
+  （发现顺序/签名拒绝/缺 main 拒绝/合成文本）与 3 集成（三路径退出码、
+  非法套件拒绝 + 暂存清理、模块协用））。
+- 冒烟：三条失败/通过路径行为符合设计——
+  通过：RUN/PASS/「ok: N passed」+ exit 0；
+  返回非零：FAIL + 该值为退出码，后续测试不运行；
+  panic：既有 ae:行:列 消息 + exit 1。
+- 暂存清理：非法套件与正常运行后，输入目录均无 .ae-test-* 残留
+  （集成测试断言）。
+
+## 设计要点（详见 ADR-43）
+- 约定 `fn test_<名称>() -> i64`：0 = 通过，非零 = 失败并作为退出码；
+  签名不符的 test_* 是显式错误而非静默跳过。
+- 零前端语义改动：token 级扫描发现测试（复用编译器词法器）→ 文本合成
+  main 追加到同目录副本 → 走既有 check/生成 C/缓存/运行管线。
+- 文件定义 main、无测试函数、泛型测试：全部拒绝并给出约定说明。
+- 失败即停是 v1 行为（go test 会继续跑），已在文档写明。
+
+## 已知差异 / 未覆盖
+- Linux 回填未做：当前状态「单平台验证」。
+- v1 只收集入口文件的测试（模块文件里的 test_* 不收集）；不过滤、
+  不并行、无 --list；`--release` 未接入。
+- 编译器冷构建时间变化未测（改动为加法：新模块 + 一个分支 + 可见性放宽）。

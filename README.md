@@ -17,6 +17,7 @@ cargo test
 cargo run -- check examples/hello.ae
 cargo run -- emit-c examples/hello.ae
 cargo run -- fmt examples/hello.ae
+cargo run -- test tests_demo/strings_test.ae   # 约定：fn test_<名称>() -> i64，0 为通过
 cargo run -- run examples/hello.ae
 cargo run -- run examples/enums.ae
 cargo run -- run examples/concat.ae

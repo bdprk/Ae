@@ -2,10 +2,11 @@ use std::{env, ffi::{OsStr, OsString}, fs, path::{Path, PathBuf}, process::{Comm
 
 mod fmt;
 mod frontend;
+mod harness;
 mod sha256;
 use frontend::compile_path;
 
-const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae fmt <source.ae>\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--release]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae>\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--release]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -247,6 +248,20 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
             eprintln!("ae timing: fmt_ms={:.3} (changed={changed})", started.elapsed().as_secs_f64() * 1000.0);
         }
         return Ok(0);
+    }
+    if cmd == "test" {
+        if args.len() != 2 { return Err(USAGE.into()); }
+        let started = Instant::now();
+        // The staged copy is dropped (and deleted) on every path below.
+        let program = harness::prepare(Path::new(&args[1]))?;
+        let c = compile_path(&program.staging)?;
+        let dir = TempDir::create(&env::temp_dir())?;
+        let exe = build_c(&c, &dir.0, false, true)?;
+        let status = Command::new(&exe).status().map_err(|e| format!("cannot start test program: {e}"))?;
+        if timings_enabled() {
+            eprintln!("ae timing: test_ms={:.3} tests={}", started.elapsed().as_secs_f64() * 1000.0, program.tests.len());
+        }
+        return Ok(status.code().and_then(|n| u8::try_from(n).ok()).unwrap_or(1));
     }
     if cmd == "deps" {
         if args.len() != 2 { return Err(USAGE.into()); }

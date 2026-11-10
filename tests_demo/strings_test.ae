@@ -1,0 +1,21 @@
+// Demo suite for `ae test`: every `fn test_<name>() -> i64` runs in
+// declaration order. Return 0 to pass, any other value to fail with that
+// exit code; assert failures keep their location and exit status 1.
+
+fn test_concat() -> i64 {
+    let greeting = "ae" + "ther";
+    if greeting != "ae" { return 1; }
+    return 0;
+}
+
+fn test_utf8_len() -> i64 {
+    if utf8_len("中文") != 2 { return 1; }
+    return 0;
+}
+
+fn test_checked_division_is_reported() -> i64 {
+    // A checked failure inside a test keeps the existing behaviour:
+    // message with line and column on stderr, exit status 1.
+    assert(6 / 2 == 3);
+    return 0;
+}

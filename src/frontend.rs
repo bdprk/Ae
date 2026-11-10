@@ -3,14 +3,14 @@ use std::path::Path;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
-enum Kind {
+pub(crate) enum Kind {
     Ident(String), Number(i64), Float(f64), Text(String), Fn, Let, Var, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, Struct,
     Enum, Match, ColonColon, FatArrow, Question, Eof,
 }
 #[derive(Debug, Clone)]
-struct Token { kind: Kind, offset: usize, line: usize, column: usize }
+pub(crate) struct Token { pub(crate) kind: Kind, pub(crate) offset: usize, pub(crate) line: usize, pub(crate) column: usize }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecRef, StrVecRef, Map, Array(usize), Struct(usize), Enum(&'static str, usize) }
@@ -158,7 +158,7 @@ fn error(file: &str, source: &str, offset: usize, message: &str) -> String {
     // In-memory sources carry no file name; keep those diagnostics compact.
     if file.is_empty() { format!("{line}:{column}: {message}") } else { format!("{file}:{line}:{column}: {message}") }
 }
-fn lex(source: &str) -> Result<Vec<Token>, String> {
+pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
     let bytes = source.as_bytes();
     let mut i = 0;
     let mut result = Vec::new();
