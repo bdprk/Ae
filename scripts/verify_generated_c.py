@@ -66,6 +66,9 @@ def run():
         # Constraints: one body is emitted for several argument lists, so each
         # instantiation must release its own string parameters exactly once.
         ("constraints.ae", b"5\nae\n9\ntrue\n7\nfalse", True),
+        # Option propagation: a None returns early, a discarded Some payload
+        # (string and vec) is released exactly once on the successful path.
+        ("option_propagate.ae", b"found!\nnone\nalways\nnone\n1\nnone\n3\nnone", True),
         ("json_report.ae", (
             "ready\n"
             "wrote 175 bytes\n"

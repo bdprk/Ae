@@ -1067,6 +1067,65 @@ fn main() {
 }
 
 #[test]
+fn question_mark_propagates_none_as_well_as_err() {
+    // An Option has the same two-variant shape as a result: None is returned
+    // to the caller, Some binds its payload. A bare `call()?;` discards the
+    // payload, which must still be released exactly once.
+    let source = r#"fn maybe_find(flag: bool) -> Option[string] {
+    if flag { return Option[string]::Some("found"); }
+    return Option[string]::None();
+}
+fn upper(flag: bool) -> Option[string] { let text = maybe_find(flag)?; return Option[string]::Some(text + "!"); }
+fn discard(flag: bool) -> Option[string] { maybe_find(flag)?; return Option[string]::Some("always"); }
+fn maybe_numbers(flag: bool) -> Option[vec] {
+    if flag { return Option[vec]::Some(vec[1, 2, 3]); }
+    return Option[vec]::None();
+}
+fn count_numbers(flag: bool) -> Option[vec] { maybe_numbers(flag)?; return Option[vec]::Some(vec[9]); }
+fn keep_numbers(flag: bool) -> Option[vec] { let items = maybe_numbers(flag)?; return Option[vec]::Some(items); }
+enum Maybe { Some(string), None }
+fn make_maybe() -> Maybe { return Maybe::Some("custom"); }
+fn use_maybe() -> Maybe { let v = make_maybe()?; return Maybe::Some(v); }
+fn main() {
+    let a = upper(true);
+    match a { Option::Some(s) => { print(s); } Option::None => { print("none"); } }
+    let b = upper(false);
+    match b { Option::Some(s) => { print(s); } Option::None => { print("none"); } }
+    let c = discard(true);
+    match c { Option::Some(s) => { print(s); } Option::None => { print("none"); } }
+    let d = discard(false);
+    match d { Option::Some(s) => { print(s); } Option::None => { print("none"); } }
+    let e = count_numbers(true);
+    match e { Option::Some(items) => { print(len(items)); } Option::None => { print("none"); } }
+    let f = count_numbers(false);
+    match f { Option::Some(items) => { print(len(items)); } Option::None => { print("none"); } }
+    let g = keep_numbers(true);
+    match g { Option::Some(items) => { print(len(items)); } Option::None => { print("none"); } }
+    let h = keep_numbers(false);
+    match h { Option::Some(items) => { print(len(items)); } Option::None => { print("none"); } }
+    let m = use_maybe();
+    match m { Maybe::Some(s) => { print(s); } Maybe::None => { print("none"); } }
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "found!\nnone\nalways\nnone\n1\nnone\n3\nnone\ncustom\n");
+    for source in [
+        "enum Weird { A(i64), B(i64) } fn f() -> Weird { return Weird::A(1); } fn g() -> Weird { let v = f()?; return Weird::A(v); } fn main() { print(1); }",
+        "fn f() -> Option[i64] { return Option[i64]::None(); } fn main() { let v = f()?; print(v); }",
+        "enum Maybe { Some(i64, i64), None } fn f() -> Maybe { return Maybe::Some(1, 2); } fn g() -> Maybe { let v = f()?; return Maybe::Some(v, 2); } fn main() { print(1); }",
+        "enum Maybe { Some(i64), None(string) } fn f() -> Maybe { return Maybe::Some(1); } fn g() -> Maybe { let v = f()?; return Maybe::Some(v); } fn main() { print(1); }",
+        "fn f() -> Option[string] { return Option[string]::None(); } fn g() -> Option[i64] { let v = f()?; return Option[i64]::Some(1); } fn main() { print(1); }",
+        "fn f() -> Option[string] { return Option[string]::None(); } fn g() -> Option[string] { f(); return Option[string]::Some(\"x\"); } fn main() { print(1); }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-option-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "{source}");
+    }
+}
+
+#[test]
 fn split_and_args_produce_string_vectors() {
     let source = "fn main() { let parts = split(\"a,b,,c\", \",\"); print(len(parts)); print(parts[0]); print(len(parts[2])); let whole = split(\"hello\", \",\"); print(len(whole)); print(whole[0]); var empties = 0; for i in 0..len(parts) { if len(parts[i]) == 0 { empties = empties + 1; } } print(empties); print(join(parts, \"-\")); print(join(parts, \"\")); let a = args(); print(len(a) >= 1); }";
     let output = execute(source);

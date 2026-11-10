@@ -2241,11 +2241,20 @@ impl<'a> Parser<'a> {
     fn propagate_statement(&mut self, value: Expr, ty: Type, binding: Option<usize>) -> Result<(Statement, Option<Type>), String> {
         let eid = match ty {
             Type::Enum(_, eid) => eid,
-            _ => return Err(self.fail(&format!("'?' needs a result value, found {}", ty.name()))),
+            _ => return Err(self.fail(&format!("'?' needs a result or option value, found {}", ty.name()))),
         };
         let def = self.enums[eid].clone();
-        if def.variants.len() != 2 || def.variants[0].0 != "Ok" || def.variants[1].0 != "Err" || def.variants[1].1 != [Type::String] {
-            return Err(self.fail(&format!("'?' needs an enum shaped {{ Ok(...), Err(string) }}, and '{}' is not one", def.name)));
+        // Both two-variant shapes can be propagated: a result hands its Err
+        // back, an Option hands its None back. Neither variant has to be a
+        // prelude enum - a user enum with the same shape behaves identically.
+        let result_shaped = def.variants.len() == 2
+            && def.variants[0].0 == "Ok" && def.variants[1].0 == "Err"
+            && def.variants[1].1 == [Type::String];
+        let option_shaped = def.variants.len() == 2
+            && def.variants[0].0 == "Some" && def.variants[1].0 == "None"
+            && def.variants[1].1.is_empty() && def.variants[0].1.len() == 1;
+        if !result_shaped && !option_shaped {
+            return Err(self.fail(&format!("'?' needs an enum shaped {{ Ok(...), Err(string) }} or {{ Some(T), None }}, and '{}' is not one", def.name)));
         }
         if self.in_main || self.return_type != ty {
             return Err(self.fail(&format!("'?' needs the enclosing function to return {}, so the failure can be handed on", def.name)));
@@ -2254,7 +2263,7 @@ impl<'a> Parser<'a> {
         let bound = match binding {
             Some(id) => {
                 if fields.len() != 1 {
-                    return Err(self.fail(&format!("'{}::Ok' carries {} values; a binding `let` needs exactly one (use a bare statement to discard)", def.name, fields.len())));
+                    return Err(self.fail(&format!("'{}::{}' carries {} values; a binding `let` needs exactly one (use a bare statement to discard)", def.name, def.variants[0].0, fields.len())));
                 }
                 Some((id, fields[0]))
             }
@@ -2980,6 +2989,19 @@ fn release_var(out: &mut String, id: usize, ty: Type) {
         _ => out.push_str(&format!("    ae_str_release(&v{id});\n")),
     }
 }
+// Release one enum payload or struct field in place, addressed by an arbitrary
+// C lvalue. Propagation discards Ok/Some payloads it does not bind, and those
+// payloads may be any owned type, not just strings (ADR-34).
+fn release_member(out: &mut String, member: &str, ty: Type) {
+    match ty {
+        Type::Vec => out.push_str(&format!("    ae_vec_release(&{member});\n")),
+        Type::StrVec => out.push_str(&format!("    ae_strvec_release(&{member});\n")),
+        Type::Map => out.push_str(&format!("    ae_map_release(&{member});\n")),
+        Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&{member});\n")),
+        Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_release(&{member});\n")),
+        _ => out.push_str(&format!("    ae_str_release(&{member});\n")),
+    }
+}
 // An owned temporary (not a named slot) that a statement has finished using.
 fn drop_owned_temp(out: &mut String, emitted: &Emitted) {
     match emitted.ty {
@@ -3191,12 +3213,7 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                     None => {
                         for (index, field) in fields.iter().enumerate() {
                             if !field.owned() { continue; }
-                            let member = format!("{}.u.v0.p{index}", t.text);
-                            match field {
-                                Type::Vec => out.push_str(&format!("    ae_vec_release(&{member});\n")),
-                                Type::StrVec => out.push_str(&format!("    ae_strvec_release(&{member});\n")),
-                                _ => out.push_str(&format!("    ae_str_release(&{member});\n")),
-                            }
+                            release_member(out, &format!("{}.u.v0.p{index}", t.text), *field);
                         }
                     }
                 }

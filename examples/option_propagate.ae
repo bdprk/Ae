@@ -1,0 +1,77 @@
+// ? works on Option[T] just as it does on a result enum: None is handed back
+// to the caller immediately, Some binds its payload. Both variants release
+// exactly what they own.
+fn maybe_find(flag: bool) -> Option[string] {
+    if flag { return Option[string]::Some("found"); }
+    return Option[string]::None();
+}
+
+fn upper(flag: bool) -> Option[string] {
+    let text = maybe_find(flag)?;
+    return Option[string]::Some(text + "!");
+}
+
+fn discard(flag: bool) -> Option[string] {
+    maybe_find(flag)?;
+    return Option[string]::Some("always");
+}
+
+fn maybe_numbers(flag: bool) -> Option[vec] {
+    if flag { return Option[vec]::Some(vec[1, 2, 3]); }
+    return Option[vec]::None();
+}
+
+fn count_numbers(flag: bool) -> Option[vec] {
+    maybe_numbers(flag)?;
+    return Option[vec]::Some(vec[9]);
+}
+
+// Binding a vec payload moves it out of the option; rewrapping must not
+// release it twice.
+fn keep_numbers(flag: bool) -> Option[vec] {
+    let items = maybe_numbers(flag)?;
+    return Option[vec]::Some(items);
+}
+
+fn main() {
+    let a = upper(true);
+    match a {
+        Option::Some(s) => { print(s); }
+        Option::None => { print("none"); }
+    }
+    let b = upper(false);
+    match b {
+        Option::Some(s) => { print(s); }
+        Option::None => { print("none"); }
+    }
+    let c = discard(true);
+    match c {
+        Option::Some(s) => { print(s); }
+        Option::None => { print("none"); }
+    }
+    let d = discard(false);
+    match d {
+        Option::Some(s) => { print(s); }
+        Option::None => { print("none"); }
+    }
+    let e = count_numbers(true);
+    match e {
+        Option::Some(items) => { print(len(items)); }
+        Option::None => { print("none"); }
+    }
+    let f = count_numbers(false);
+    match f {
+        Option::Some(items) => { print(len(items)); }
+        Option::None => { print("none"); }
+    }
+    let g = keep_numbers(true);
+    match g {
+        Option::Some(items) => { print(len(items)); }
+        Option::None => { print("none"); }
+    }
+    let h = keep_numbers(false);
+    match h {
+        Option::Some(items) => { print(len(items)); }
+        Option::None => { print("none"); }
+    }
+}

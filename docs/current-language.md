@@ -86,11 +86,11 @@
 
 结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string`/`map_new`/`map_get`/`map_has`/`map_remove`/`keys`/`utf8_len`/`utf8_prefix`/`strvec_new`/`run_command` 与八个结果类型名均为保留名。
 
-## 错误传播 `?`
+## 错误与「可能没有」传播 `?`
 
-`let x = 调用()?;` 与 `调用()?;` 是传播语句：结果枚举处于 `Err` 时，先释放当前函数内所有仍存活的拥有型变量，再把这个结果值本身返回给调用者；处于 `Ok` 时，`let` 形式把唯一的负载移出并绑定（`Ok` 必须恰好一个负载），裸语句形式则释放负载后继续。裸语句是语言里唯一的「表达式语句」，且**必须以 `?` 结尾**，因此不存在「静默丢弃返回值」的写法。
+`let x = 调用()?;` 与 `调用()?;` 是传播语句：结果枚举处于 `Err`（或 Option 处于 `None`）时，先释放当前函数内所有仍存活的拥有型变量，再把这个结果值本身返回给调用者；处于成功变体（`Ok`/`Some`）时，`let` 形式把唯一的负载移出并绑定（成功变体必须恰好一个负载），裸语句形式则释放负载后继续。裸语句是语言里唯一的「表达式语句」，且**必须以 `?` 结尾**，因此不存在「静默丢弃返回值」的写法。
 
-可传播的类型必须形如 `{ Ok(...), Err(string) }`（`Ok` 在前、`Err` 在后），八个预置结果枚举都满足；自定义枚举照此形状同样可用。传播要求外层函数返回**同一个**枚举类型，`main` 里不能传播；一个函数只能传播一个结果族，跨族（例如 `try_list_dir` 的 `DirResult` 与 `try_copy_file` 的 `StatusResult`）必须在边界处用 `match` 转换。`?` 是语句而非表达式，不能出现在更大的表达式里。
+可传播的类型是两种两变体形状之一，变体名与顺序固定：`{ Ok(...), Err(string) }`（八个预置结果枚举都满足，自定义枚举照此形状同样可用）或 `{ Some(T), None }`（预置 `Option[T]` 满足，自定义同形枚举同样可用）。成功负载可以是任意拥有型（`string`、`vec`、结构体、枚举），失败路径丢弃时按类型的释放例程释放。传播要求外层函数返回**同一个**枚举类型，`main` 里不能传播；一个函数只能传播一个结果族，跨族（例如 `try_list_dir` 的 `DirResult` 与 `try_copy_file` 的 `StatusResult`）必须在边界处用 `match` 转换。`?` 是语句而非表达式，不能出现在更大的表达式里。
 
 ## 路径代数与文件元数据
 
@@ -232,7 +232,7 @@ fn port(config: &string) -> i64 {
 
 `match` 的模式写**声明名**而不是实例化名：`Option[string]` 与 `Option[i64]` 的值都用 `Option::Some(v)` / `Option::None` 匹配，`v` 的实际类型由被匹配值的类型决定（`string` 负载仍按视图绑定）。穷尽性、借用规则、移动语义与普通枚举完全一致。
 
-预置 `Option[T] { Some(T), None }` 对所有文件公开，意思是「可能没有的值」：`fn find(text: &string, needle: &string) -> Option[i64]` 比用 `-1` 或空串当哨兵清楚得多，因为哨兵无法与真实的 `-1`、真实存在的空行区分。注意 `?` 只作用于 `Ok`/`Err` 形状的结果枚举，`Option` 需要用 `match` 取出（见 [ADR-21](decisions.md)）。
+预置 `Option[T] { Some(T), None }` 对所有文件公开，意思是「可能没有的值」：`fn find(text: &string, needle: &string) -> Option[i64]` 比用 `-1` 或空串当哨兵清楚得多，因为哨兵无法与真实的 `-1`、真实存在的空行区分。`?` 同样作用于 `Option`：`None` 原样返回给调用者，`Some` 绑定负载（见 [ADR-21](decisions.md) 与 [ADR-34](decisions.md)）。
 
 每个程序最多 256 个枚举类型（含预置与全部实例化），超出时在实例化处报错；这是代码体积预算，不是最终限制。
 
