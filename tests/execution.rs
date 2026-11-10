@@ -666,8 +666,9 @@ fn modules_import_transitively_and_reject_cycles_or_conflicts() {
     let dir = std::env::temp_dir().join(format!("ae-mod-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(dir.join("sub")).unwrap();
-    fs::write(dir.join("lib.ae"), "use \"sub/deep.ae\";\nfn twice(x: i64) -> i64 { return x * 2; }\nfn quad(x: i64) -> i64 { return twice(twice(x)); }\n").unwrap();
-    fs::write(dir.join("sub/deep.ae"), "fn base() -> i64 { return 3; }\n").unwrap();
+    // Cross-file names need `pub`; `hidden` stays private on purpose.
+    fs::write(dir.join("lib.ae"), "use \"sub/deep.ae\";\npub fn twice(x: i64) -> i64 { return x * 2; }\npub fn quad(x: i64) -> i64 { return twice(twice(x)); }\nfn hidden() -> i64 { return 0; }\n").unwrap();
+    fs::write(dir.join("sub/deep.ae"), "pub fn base() -> i64 { return 3; }\n").unwrap();
     let main_file = dir.join("main.ae");
     let executable = dir.join(if cfg!(windows) { "prog.exe" } else { "prog" });
     let build_with = |text: &str, out: &std::path::Path| {
@@ -680,6 +681,17 @@ fn modules_import_transitively_and_reject_cycles_or_conflicts() {
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     let output = Command::new(&executable).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "3\n12\n");
+    // A name that exists but is not exported is rejected, not silently filtered.
+    let result = build_with("use \"lib.ae\";\nfn main() { print(hidden()); }", &executable);
+    assert!(!result.status.success());
+    let err = String::from_utf8_lossy(&result.stderr).to_string();
+    assert!(err.contains("'hidden' is private to") && err.contains("mark it 'pub'"), "{err}");
+    // A private type cannot appear in an exported signature either.
+    fs::write(dir.join("leaky.ae"), "struct Secret { n: i64 }\npub fn reveal(s: Secret) -> i64 { return s.n; }\n").unwrap();
+    let result = build_with("use \"leaky.ae\";\nfn main() { print(1); }", &executable);
+    assert!(!result.status.success());
+    let err = String::from_utf8_lossy(&result.stderr).to_string();
+    assert!(err.contains("exposes private struct 'Secret'"), "{err}");
     // Cycles are rejected with a diagnostic.
     fs::write(dir.join("cycle1.ae"), "use \"cycle2.ae\";\nfn a() -> i64 { return 1; }\nfn main() { print(a()); }").unwrap();
     fs::write(dir.join("cycle2.ae"), "use \"cycle1.ae\";\nfn b() -> i64 { return 2; }\n").unwrap();
@@ -1723,4 +1735,34 @@ fn allocation_failure_reports_the_operation_location() {
     // A malformed limit is ignored rather than silently disabling the program.
     let malformed = execute_with_env(source, &[("AE_ALLOC_LIMIT", "lots")]);
     assert!(malformed.status.success(), "{}", String::from_utf8_lossy(&malformed.stderr));
+}
+#[test]
+fn private_items_stay_inside_their_file() {
+    let dir = std::env::temp_dir().join(format!("ae-priv-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("lib.ae"), "struct Hidden { n: i64 }\nenum Mood { Calm, Loud }\nfn secret() -> i64 { return 7; }\npub fn open() -> i64 { return 8; }\npub struct Shown { v: i64 }\n").unwrap();
+    let main_file = dir.join("main.ae");
+    let check = |body: &str| {
+        fs::write(&main_file, format!("use \"lib.ae\";\nfn main() {{ {body} }}")).unwrap();
+        Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&main_file).output().unwrap()
+    };
+    let ok = check("let s = Shown { v: 1 }; print(open() + s.v);");
+    assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+    for (body, expected) in [
+        ("print(secret());", "function 'secret' is private to"),
+        ("let h = Hidden { n: 1 }; print(h.n);", "struct 'Hidden' is private to"),
+        ("let m = Mood::Calm; print(open());", "enum 'Mood' is private to"),
+    ] {
+        let output = check(body);
+        assert!(!output.status.success(), "accepted: {body}");
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(err.contains(expected), "{body}: {err}");
+    }
+    // A file sees its own private items, so the library itself compiles.
+    fs::write(dir.join("alone.ae"), "struct Hidden { n: i64 }\nfn secret() -> i64 { return 7; }\nfn main() { let h = Hidden { n: secret() }; print(h.n); }").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(dir.join("alone.ae")).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "7");
+    fs::remove_dir_all(dir).unwrap();
 }

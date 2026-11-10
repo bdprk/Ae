@@ -44,6 +44,9 @@ def run():
         ("word_count.ae", b"distinct 8\nbrown 1\ndog 1\nfox 2\njumps 1\nlazy 1\nover 1\nquick 1\nthe 3", True),
         # Character-safe truncation: every cut lands on a UTF-8 boundary, so the
         # ellipsis is never preceded by half a character.
+        # Two modules and a private helper: only `pub` items are reachable, and
+        # the import graph is resolved relative to the entry file.
+        ("modules/main.ae", b"a=3\nb=2\nc=1\n3 entries, 6 words", True),
         ("text_preview.ae", (
             "这是一行很长的中文文本，用于演示按字符而…\n"
             "short line\n"

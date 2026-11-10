@@ -1,0 +1,9 @@
+// Formatting helpers shared by every report.
+
+pub fn line(name: &string, count: i64) -> string {
+    return name + "=" + to_string(count);
+}
+
+pub fn summary(entries: i64, total: i64) -> string {
+    return to_string(entries) + " entries, " + to_string(total) + " words";
+}

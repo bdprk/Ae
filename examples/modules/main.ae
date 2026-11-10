@@ -1,0 +1,21 @@
+// Two modules, one program: `words.ae` counts, `report.ae` formats.
+
+use "words.ae";
+use "report.ae";
+
+fn main() {
+    let counts = count_words("a b a c b a");
+    let names = keys(counts);
+    var total = 0;
+    for name in names {
+        let seen = map_get(counts, name);
+        match seen {
+            IntResult::Ok(n) => {
+                print(line(name, n));
+                total = total + n;
+            }
+            IntResult::Err(reason) => { print("missing " + reason); }
+        }
+    }
+    print(summary(len(names), total));
+}

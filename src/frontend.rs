@@ -52,8 +52,11 @@ impl Type {
     }
 }
 enum MoveKind { Var(usize), Field, StrVecElement }
+// Names owned by the prelude rather than by any file on disk.
+const PRELUDE: &str = "<prelude>";
 // Built-in names are reserved so their semantics stay unambiguous.
-const RESERVED: [&str; 39] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix"];
+// `pub` is reserved too: it is only meaningful before a top-level item.
+const RESERVED: [&str; 40] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub"];
 // Provisional prelude: fallible operations report failure as values instead of
 // terminating the process (§4.5). These enums are registered before any user
 // type, so a program can name them without importing anything. They are
@@ -75,7 +78,7 @@ fn prelude_enums() -> (Vec<EnumDef>, HashMap<String, usize>) {
     let mut names = HashMap::new();
     for (name, variants) in defs {
         names.insert(name.to_owned(), enums.len());
-        enums.push(EnumDef { name, variants: variants.into_iter().map(|(v, fields)| (v.to_owned(), fields)).collect() });
+        enums.push(EnumDef { name, variants: variants.into_iter().map(|(v, fields)| (v.to_owned(), fields)).collect(), file: PRELUDE.to_owned(), public: true });
     }
     (enums, names)
 }
@@ -210,16 +213,21 @@ fn returns(stmts: &[Statement]) -> bool {
     })
 }
 #[derive(Debug, Clone)]
-struct StructDef { name: String, fields: Vec<(String, Type)> }
+struct StructDef { name: String, fields: Vec<(String, Type)>, file: String, public: bool }
 // Enum layouts are closed: variants carry a fixed field list, and the first
 // version restricts payload fields to i64/bool/string so no enum can contain
 // itself and every payload has a trivial release.
 #[derive(Debug, Clone)]
-struct EnumDef { name: &'static str, variants: Vec<(String, Vec<Type>)> }
+struct EnumDef { name: &'static str, variants: Vec<(String, Vec<Type>)>, file: String, public: bool }
 #[derive(Debug)]
 struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 
-type SharedFunctions = HashMap<String, (usize, Vec<Type>, Type)>;
+// A function signature as seen by importers. `file` and `public` let a call
+// site reject a name that exists but was not exported (ADR-18).
+#[derive(Debug, Clone)]
+struct Signature { id: usize, params: Vec<Type>, ret: Type, file: String, public: bool }
+
+type SharedFunctions = HashMap<String, Signature>;
 
 struct Parser<'a> { file: String, source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>> }
 impl<'a> Parser<'a> {
@@ -305,6 +313,7 @@ impl<'a> Parser<'a> {
                     self.pos += 1;
                     let vname = self.identifier()?;
                     let def = self.enums[eid].clone();
+                    self.require_public("enum", def.name, &def.file, def.public)?;
                     let vidx = def.variants.iter().position(|(n, _)| *n == vname)
                         .ok_or_else(|| self.fail(&format!("enum '{}' has no variant '{}'", def.name, vname)))?;
                     let fields = def.variants[vidx].1.clone();
@@ -329,6 +338,7 @@ impl<'a> Parser<'a> {
                     }
                     (Expr::EnumLit(def.name, eid, vidx, values), Type::Enum(def.name, eid))
                 } else if let Some(&sid) = self.struct_names.get(&name) {
+                    self.require_public("struct", &self.structs[sid].name, &self.structs[sid].file, self.structs[sid].public)?;
                     if *self.current() == Kind::LBrace {
                         // Construction: Name { field: expr, ... } - fields may
                         // appear in any order, each exactly once.
@@ -665,7 +675,11 @@ impl<'a> Parser<'a> {
                     let ty = match name.as_str() { "write_file" => Type::Int, "bytes" => Type::Vec, "contains" => Type::Bool, "split" => Type::StrVec, _ => Type::String };
                     (builtin, ty)
                 } else if *self.current() == Kind::LParen {
-                    let (id, types, ret) = self.functions.get(&name).cloned().ok_or_else(|| error(&self.file, self.source, name_offset, &format!("unknown function '{name}'")))?;
+                    let signature = self.functions.get(&name).cloned().ok_or_else(|| error(&self.file, self.source, name_offset, &format!("unknown function '{name}'")))?;
+                    if !signature.public && signature.file != PRELUDE && signature.file != self.file {
+                        return Err(error(&self.file, self.source, name_offset, &format!("function '{name}' is private to {} (mark it 'pub' to export it)", signature.file)));
+                    }
+                    let (id, types, ret) = (signature.id, signature.params.clone(), signature.ret);
                     self.pos += 1;
                     let mut args = Vec::new();
                     if *self.current() != Kind::RParen {
@@ -862,15 +876,23 @@ impl<'a> Parser<'a> {
                 Ok(Type::Map)
             }
             other => match self.struct_names.get(other) {
-                Some(&id) => Ok(Type::Struct(id)),
+                Some(&id) => {
+                    let def = &self.structs[id];
+                    self.require_public("struct", &def.name.clone(), &def.file.clone(), def.public)?;
+                    Ok(Type::Struct(id))
+                }
                 None => match self.enum_names.get(other) {
-                    Some(&id) => Ok(Type::Enum(self.enums[id].name, id)),
+                    Some(&id) => {
+                        let (name, file, public) = (self.enums[id].name, self.enums[id].file.clone(), self.enums[id].public);
+                        self.require_public("enum", name, &file, public)?;
+                        Ok(Type::Enum(name, id))
+                    }
                     None => Err(self.fail(&format!("unknown type '{}'", other))),
                 },
             },
         }
     }
-    fn parse_enum_def(&mut self) -> Result<(), String> {
+    fn parse_enum_def(&mut self, public: bool) -> Result<(), String> {
         self.pos += 1;
         let name = self.identifier()?;
         if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{}' is a built-in name and cannot be an enum", name))); }
@@ -913,10 +935,10 @@ impl<'a> Parser<'a> {
         // diagnostics can print the declared name.
         let interned: &'static str = Box::leak(name.clone().into_boxed_str());
         self.enum_names.insert(name, id);
-        self.enums.push(EnumDef { name: interned, variants });
+        self.enums.push(EnumDef { name: interned, variants, file: self.file.clone(), public });
         Ok(())
     }
-    fn parse_struct_def(&mut self) -> Result<(), String> {
+    fn parse_struct_def(&mut self, public: bool) -> Result<(), String> {
         self.pos += 1;
         let name = self.identifier()?;
         if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{}' is a built-in name and cannot be a struct", name))); }
@@ -935,7 +957,7 @@ impl<'a> Parser<'a> {
         self.take(Kind::RBrace)?;
         let id = self.structs.len();
         self.struct_names.insert(name.clone(), id);
-        self.structs.push(StructDef { name, fields });
+        self.structs.push(StructDef { name, fields, file: self.file.clone(), public });
         Ok(())
     }
     // Arrays are borrowed read-only; strings and scalars pass by value.
@@ -980,6 +1002,30 @@ impl<'a> Parser<'a> {
     fn skip_uses(&mut self) {
         while *self.current() == Kind::Use { self.pos += 3; }
     }
+    // `pub` marks an item as importable from other files. It is consumed by the
+    // declaration passes, never by expression parsing.
+    fn take_pub(&mut self) -> bool {
+        let is_pub = matches!(self.current(), Kind::Ident(name) if name == "pub");
+        if is_pub { self.pos += 1; }
+        is_pub
+    }
+    // Cross-file access check: an item defined in another file must be exported.
+    // Prelude names are public by construction, and a file always sees its own.
+    fn check_export_types(&self, name: &str, params: &[Type], ret: Type) -> Result<(), String> {
+        for ty in params.iter().copied().chain(std::iter::once(ret)) {
+            let (kind, type_name, public) = match ty {
+                Type::Struct(id) => ("struct", self.structs[id].name.clone(), self.structs[id].public),
+                Type::Enum(_, id) => ("enum", self.enums[id].name.to_owned(), self.enums[id].public),
+                _ => continue,
+            };
+            if !public { return Err(self.fail(&format!("public function '{name}' exposes private {kind} '{type_name}'"))); }
+        }
+        Ok(())
+    }
+    fn require_public(&self, kind: &str, name: &str, file: &str, public: bool) -> Result<(), String> {
+        if public || file == PRELUDE || file == self.file { return Ok(()); }
+        Err(self.fail(&format!("{kind} '{name}' is private to {file} (mark it 'pub' to export it)")))
+    }
     // Second pass skips struct bodies (already collected, must not re-register).
     fn skip_struct_def(&mut self) {
         self.pos += 2; // 'struct' Name
@@ -1013,8 +1059,9 @@ impl<'a> Parser<'a> {
     fn collect_functions(&mut self, next_id: &mut usize) -> Result<(), String> {
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::Eof {
-            if *self.current() == Kind::Struct { self.parse_struct_def()?; continue; }
-            if *self.current() == Kind::Enum { self.parse_enum_def()?; continue; }
+            let public = self.take_pub();
+            if *self.current() == Kind::Struct { self.parse_struct_def(public)?; continue; }
+            if *self.current() == Kind::Enum { self.parse_enum_def(public)?; continue; }
             self.take(Kind::Fn)?;
             let name = self.identifier()?;
             if !seen.insert(name.clone()) { return Err(self.fail(&format!("duplicate function '{name}'"))); }
@@ -1043,7 +1090,11 @@ impl<'a> Parser<'a> {
             } else {
                 self.take(Kind::Arrow)?;
                 let ret = self.return_annotation()?;
-                if self.functions.insert(name.clone(), (id, types, ret)).is_some() {
+                // A public signature may not name a type importers cannot see;
+                // catching it here beats a puzzling error at every call site.
+                if public { self.check_export_types(&name, &types, ret)?; }
+                let signature = Signature { id, params: types, ret, file: self.file.clone(), public };
+                if self.functions.insert(name.clone(), signature).is_some() {
                     return Err(self.fail(&format!("duplicate function '{name}' (already defined in an imported file)")));
                 }
             }
@@ -1068,6 +1119,7 @@ impl<'a> Parser<'a> {
         let mut result = Vec::new();
         let mut main_found = false;
         while *self.current() != Kind::Eof {
+            self.take_pub();
             if *self.current() == Kind::Struct { self.skip_struct_def(); continue; }
             if *self.current() == Kind::Enum { self.skip_enum_def(); continue; }
             self.take(Kind::Fn)?;
