@@ -30,7 +30,7 @@
 
 ## 文件与字符串工具
 
-`read_file(path) -> string` 读取整个文件为拥有字符串；`write_file(path, content) -> i64` 写入并返回字节数；两者借用参数，路径为 UTF-8（Windows 经 UTF-16 宽字符 API，非 ASCII 路径可用），失败以行列位置报告运行时错误。`bytes(s) -> vec` 把字符串按字节转为向量，用于字节级处理。`contains(s, sub) -> bool` 子串搜索（平台优化实现，借用两参数，空子串为真）；`slice(s, start, end) -> string` 返回拥有副本，越界以位置报告。字符串现在携带长度（`len`/`slice` 为 O(1)），缓冲区仍以 NUL 结尾供 C 互操作；`len`/`bytes` 按长度精确计数（含嵌入 NUL）。`read_file`/`write_file`/`bytes`/`contains`/`slice` 为保留名。
+`read_file(path) -> string` 读取整个文件为拥有字符串；`write_file(path, content) -> i64` 写入并返回字节数；两者借用参数，路径为 UTF-8（Windows 经 UTF-16 宽字符 API，非 ASCII 路径可用），失败以行列位置报告运行时错误。`bytes(s) -> vec` 把字符串按字节转为向量，用于字节级处理。`contains(s, sub) -> bool` 子串搜索（平台优化实现，借用两参数，空子串为真）；`starts_with(s, prefix) -> bool` 与 `ends_with(s, suffix) -> bool` 按字节比较前后缀（空串为真），因此判断扩展名要用 `ends_with(name, ".txt")`，`contains` 会把 `a.txt.bak` 也算命中；`trim(s) -> string` 返回去掉首尾 ASCII 空白（空格、`\t`、`\n`、`\r`、`\v`、`\f`）的拥有副本，它只在字符边界处裁剪，不会切坏多字节字符；`slice(s, start, end) -> string` 返回拥有副本，越界以位置报告。字符串现在携带长度（`len`/`slice` 为 O(1)），缓冲区仍以 NUL 结尾供 C 互操作；`len`/`bytes` 按长度精确计数（含嵌入 NUL）。`read_file`/`write_file`/`bytes`/`contains`/`starts_with`/`ends_with`/`trim`/`slice` 为保留名。
 
 **目录与路径**：`try_list_dir(path) -> DirResult` 返回目录下的条目名（不含 `.` 与 `..`，按字节序排序），失败返回 `Err(描述)`；`path_exists(path) -> bool`、`path_is_dir(path) -> bool` 只做查询。三者都接受拥有字符串或视图。
 

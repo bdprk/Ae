@@ -1780,3 +1780,37 @@ fn private_items_stay_inside_their_file() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "7");
     fs::remove_dir_all(dir).unwrap();
 }
+#[test]
+fn trim_and_prefix_checks_work_on_bytes() {
+    let output = execute(r#"fn main() {
+    print("[" + trim("  padded \n") + "]");
+    print(trim("   ") == "");
+    print(trim("中文  "));
+    print(starts_with("notes.txt", "note"));
+    print(starts_with("notes.txt", "x"));
+    print(ends_with("notes.txt", ".txt"));
+    print(ends_with("a.txt.bak", ".txt"));
+    print(starts_with("x", "") && ends_with("x", ""));
+    print(ends_with("abc", "abcd"));
+}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "[padded]\ntrue\n中文\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\n"
+    );
+}
+#[test]
+fn trim_and_prefix_checks_reject_wrong_argument_types() {
+    for source in [
+        "fn main() { print(trim(1)); }",
+        "fn main() { print(starts_with(1, \"a\")); }",
+        "fn main() { print(ends_with(\"a\", 2)); }",
+        "fn main() { print(starts_with(\"a\")); }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-trim-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted invalid program: {source}");
+    }
+}

@@ -56,7 +56,7 @@ enum MoveKind { Var(usize), Field, StrVecElement }
 const PRELUDE: &str = "<prelude>";
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
-const RESERVED: [&str; 40] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub"];
+const RESERVED: [&str; 43] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with"];
 // Provisional prelude: fallible operations report failure as values instead of
 // terminating the process (§4.5). These enums are registered before any user
 // type, so a program can name them without importing anything. They are
@@ -177,7 +177,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Trim(Box<Expr>, usize, usize), StartsWith(Box<Expr>, Box<Expr>, usize, usize), EndsWith(Box<Expr>, Box<Expr>, usize, usize), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 // A map reachable without a move: either a variable slot or a field of one.
 #[derive(Debug)]
 enum MapPlace { Var(usize), Field(usize, String) }
@@ -633,7 +633,7 @@ impl<'a> Parser<'a> {
                     if value_ty != Type::Int { return Err(self.fail("to_string expects an i64")); }
                     self.take(Kind::RParen)?;
                     (Expr::ToString(Box::new(value), line, col), Type::String)
-                } else if matches!(name.as_str(), "read_file" | "write_file" | "bytes" | "contains" | "slice" | "split") && *self.current() == Kind::LParen {
+                } else if matches!(name.as_str(), "read_file" | "write_file" | "bytes" | "contains" | "starts_with" | "ends_with" | "slice" | "split" | "trim") && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     self.pos += 1;
                     let (first, first_ty) = self.expression(0, false)?;
@@ -644,6 +644,9 @@ impl<'a> Parser<'a> {
                     } else if name == "bytes" {
                         self.take(Kind::RParen)?;
                         Expr::Bytes(Box::new(first), line, col)
+                    } else if name == "trim" {
+                        self.take(Kind::RParen)?;
+                        Expr::Trim(Box::new(first), line, col)
                     } else if name == "slice" {
                         self.take(Kind::Comma)?;
                         let (start, start_ty) = self.expression(0, false)?;
@@ -659,12 +662,16 @@ impl<'a> Parser<'a> {
                         if !matches!(second_ty, Type::String | Type::StrView) { return Err(self.fail("split expects a string or string view separator")); }
                         self.take(Kind::RParen)?;
                         Expr::Split(Box::new(first), Box::new(second), line, col)
-                    } else if name == "contains" {
+                    } else if matches!(name.as_str(), "contains" | "starts_with" | "ends_with") {
                         self.take(Kind::Comma)?;
                         let (second, second_ty) = self.expression(0, false)?;
-                        if !matches!(second_ty, Type::String | Type::StrView) { return Err(self.fail("contains expects a string or string view pattern")); }
+                        if !matches!(second_ty, Type::String | Type::StrView) { return Err(self.fail(&format!("{name} expects a string or string view pattern"))); }
                         self.take(Kind::RParen)?;
-                        Expr::Contains(Box::new(first), Box::new(second), line, col)
+                        match name.as_str() {
+                            "contains" => Expr::Contains(Box::new(first), Box::new(second), line, col),
+                            "starts_with" => Expr::StartsWith(Box::new(first), Box::new(second), line, col),
+                            _ => Expr::EndsWith(Box::new(first), Box::new(second), line, col),
+                        }
                     } else {
                         self.take(Kind::Comma)?;
                         let (second, second_ty) = self.expression(0, false)?;
@@ -672,7 +679,7 @@ impl<'a> Parser<'a> {
                         self.take(Kind::RParen)?;
                         Expr::WriteFile(Box::new(first), Box::new(second), line, col)
                     };
-                    let ty = match name.as_str() { "write_file" => Type::Int, "bytes" => Type::Vec, "contains" => Type::Bool, "split" => Type::StrVec, _ => Type::String };
+                    let ty = match name.as_str() { "write_file" => Type::Int, "bytes" => Type::Vec, "contains" | "starts_with" | "ends_with" => Type::Bool, "split" => Type::StrVec, _ => Type::String };
                     (builtin, ty)
                 } else if *self.current() == Kind::LParen {
                     let signature = self.functions.get(&name).cloned().ok_or_else(|| error(&self.file, self.source, name_offset, &format!("unknown function '{name}'")))?;
@@ -1931,6 +1938,31 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             if h.owned { drop_owned_temp(out, &h); }
             if n.owned { drop_owned_temp(out, &n); }
             Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::StartsWith(s, prefix, line, col) => {
+            let h = emit_expr(s, out, next, false);
+            let p = emit_expr(prefix, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    bool t{id} = ae_starts_with(AE_VIEW({}), AE_VIEW({}));\n", h.text, p.text));
+            if h.owned { drop_owned_temp(out, &h); }
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::EndsWith(s, suffix, line, col) => {
+            let h = emit_expr(s, out, next, false);
+            let p = emit_expr(suffix, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    bool t{id} = ae_ends_with(AE_VIEW({}), AE_VIEW({}));\n", h.text, p.text));
+            if h.owned { drop_owned_temp(out, &h); }
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Trim(s, line, col) => {
+            let t = emit_expr(s, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_trim(AE_VIEW({}), {line}, {col});\n", t.text));
+            if t.owned { drop_owned_temp(out, &t); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
         }
         Expr::Split(s, sep, line, col) => {
             let h = emit_expr(s, out, next, false);

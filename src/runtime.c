@@ -164,6 +164,20 @@ static ae_string ae_slice(ae_strview s, int64_t start, int64_t end, size_t line,
     ae_string r = { out, end - start };
     return r;
 }
+// ASCII whitespace, matching what a text file usually contains. Trimming is
+// deliberately byte-oriented: it never removes part of a multi-byte character
+// (no UTF-8 continuation byte is whitespace).
+static bool ae_is_space(unsigned char byte) {
+    return byte == ' ' || byte == '\t' || byte == '\n' || byte == '\r' || byte == '\v' || byte == '\f';
+}
+// Prefix/suffix tests compare bytes, so a suffix check like ends_with(name,
+// ".txt") cannot be fooled by a name such as "a.txt.bak" the way contains() can.
+static bool ae_starts_with(ae_strview s, ae_strview prefix) {
+    return prefix.len <= s.len && (prefix.len == 0 || memcmp(s.ptr, prefix.ptr, (size_t)prefix.len) == 0);
+}
+static bool ae_ends_with(ae_strview s, ae_strview suffix) {
+    return suffix.len <= s.len && (suffix.len == 0 || memcmp(s.ptr + (s.len - suffix.len), suffix.ptr, (size_t)suffix.len) == 0);
+}
 static bool ae_contains(ae_strview haystack, ae_strview needle, size_t line, size_t column) {
     // strstr carries the platform's optimized substring search; buffers are
     // NUL-terminated so embedded-NUL truncation matches len/bytes semantics.
@@ -209,6 +223,15 @@ static ae_string ae_utf8_prefix(ae_strview s, int64_t n, size_t line, size_t col
         seen = seen + 1;
     }
     return ae_str_from_len(s.ptr, at, line, column);
+}
+// Leading and trailing whitespace removed, as a fresh owned string. The result
+// is always a valid slice of the input, so it cannot split a character.
+static ae_string ae_trim(ae_strview s, size_t line, size_t column) {
+    int64_t start = 0;
+    int64_t end = s.len;
+    while (start < end && ae_is_space((unsigned char)s.ptr[start])) start = start + 1;
+    while (end > start && ae_is_space((unsigned char)s.ptr[end - 1])) end = end - 1;
+    return ae_str_from_len(s.ptr + start, end - start, line, column);
 }
 
 // Owned vector of owned strings. Elements are borrow-only reads.
