@@ -871,6 +871,56 @@ fn struct_fields_release_on_all_exit_paths() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "0\npayload\n5\n");
 }
 #[test]
+fn generic_structs_instantiate_one_layout_per_argument_list() {
+    // The declaration is a shape; each argument list is a type. Two uses of the
+    // same list share one layout (so they are interchangeable), and different
+    // lists never mix.
+    let source = r#"struct Pair[K, V] { left: K, right: V }
+struct Tag { name: string, n: i64 }
+fn read(p: Pair[i64, string]) -> i64 {
+    print(p.right);
+    return p.left;
+}
+fn main() {
+    var p = Pair[string, i64] { left: "a", right: 1 };
+    p.right = p.right + 1;
+    print(p.left);
+    print(p.right);
+    let t = Pair[i64, Tag] { left: 5, right: Tag { name: "t", n: 9 } };
+    print(t.left);
+    print(t.right.name);
+    let mixed = Pair[i64, string] { left: 7, right: "seven" };
+    print(read(mixed));
+    let nested = Pair[string, Pair[string, string]] { left: "x", right: Pair[string, string] { left: "y", right: "z" } };
+    print(nested.right.left);
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "a\n2\n5\nt\nseven\n7\ny\n");
+    for source in [
+        // Too few type arguments, and a generic name without any.
+        "struct P[T] { f: T } fn main() { let p = P[string, i64] { f: \"a\" }; }",
+        "struct P[T] { f: T } fn main() { let p = P { f: \"a\" }; }",
+        // A different argument list is a different type.
+        "struct P[T] { f: T } fn take(p: P[string]) -> i64 { return 1; } fn main() { print(take(P[i64] { f: 2 })); }",
+        // The field keeps its declared parameter type.
+        "struct P[T] { f: T } fn main() { let p = P[string] { f: 1 }; }",
+        // A generic declaration still owns its name.
+        "struct P[T] { f: T } struct P { g: i64 } fn main() {}",
+        "struct P[T] { f: T } enum P { A } fn main() {}",
+        // No recursive layout: the name is not in scope inside its own body.
+        "struct P[T] { next: P[T] } fn main() {}",
+        // Type parameters are single uppercase letters.
+        "struct P[a] { f: a } fn main() {}",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-generic-struct-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "{source}");
+    }
+}
+#[test]
 fn split_and_args_produce_string_vectors() {
     let source = "fn main() { let parts = split(\"a,b,,c\", \",\"); print(len(parts)); print(parts[0]); print(len(parts[2])); let whole = split(\"hello\", \",\"); print(len(whole)); print(whole[0]); var empties = 0; for i in 0..len(parts) { if len(parts[i]) == 0 { empties = empties + 1; } } print(empties); print(join(parts, \"-\")); print(join(parts, \"\")); let a = args(); print(len(a) >= 1); }";
     let output = execute(source);
@@ -1897,7 +1947,7 @@ fn invalid_generic_enums_are_rejected() {
         ("fn main() { let a = Option; }", "'Option' is a generic enum"),
         ("fn main() { let a = Option[i64, i64]::Some(1); }", "takes 1 type argument(s), found 2"),
         ("struct P { x: i64 }\nfn main() { let a = Option[P]::None; }", "type arguments must be i64"),
-        ("struct B[T] { v: i64 }\nfn main() { print(1); }", "generic structs are not supported"),
+        ("struct B[T, T] { v: i64 }\nfn main() { print(1); }", "duplicate type parameter"),
         ("enum P[t] { A(t) }\nfn main() { print(1); }", "type parameters are single uppercase letters"),
         ("enum Option { Here, Gone }\nfn main() { print(1); }", "duplicate enum 'Option'"),
         ("enum P[T] { A(T), B(T) }\nfn main() { let p = P[i64]::A(1); match p { P::A(v) => { print(v); } } }", "match is not exhaustive"),

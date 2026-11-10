@@ -57,6 +57,9 @@ def run():
         # JSON path queries: a member, a nested member, an array element, an
         # escaped \u sequence, a null, a missing name and a type mismatch all
         # come back as values, and the document is read from disk.
+        # Generic structs: each argument list is a distinct layout, and the
+        # nested string fields must be released exactly once.
+        ("pairs.ae", b"id=7\n1\none\n2\nin\nner", True),
         ("json_report.ae", (
             "ready\n"
             "wrote 175 bytes\n"

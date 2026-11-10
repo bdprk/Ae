@@ -1,0 +1,24 @@
+// A generic struct is a shape, not a layout: each argument list creates one
+// concrete struct, so Pair[string, i64] and Pair[i64, Label] never mix, while
+// two uses of the same list share one layout and can name the same parameter
+// type in a function.
+struct Pair[K, V] { left: K, right: V }
+struct Label { name: string, at: i64 }
+
+fn describe(left: &string, right: i64) -> string {
+    return left + "=" + to_string(right);
+}
+
+fn main() {
+    let id = Pair[string, i64] { left: "id", right: 7 };
+    print(describe(id.left, id.right));
+
+    let one = Pair[i64, Label] { left: 1, right: Label { name: "one", at: 2 } };
+    print(one.left);
+    print(one.right.name);
+    print(one.right.at);
+
+    let nested = Pair[string, Pair[string, string]] { left: "outer", right: Pair[string, string] { left: "in", right: "ner" } };
+    print(nested.right.left);
+    print(nested.right.right);
+}

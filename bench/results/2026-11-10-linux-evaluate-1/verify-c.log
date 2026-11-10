@@ -24,6 +24,8 @@ PASS word_count.ae
   leak blocks=0 bytes=0
 PASS dir_report.ae
   leak blocks=0 bytes=0
+PASS pairs.ae
+  leak blocks=0 bytes=0
 PASS json_report.ae
   leak blocks=0 bytes=0
 PASS maybe.ae

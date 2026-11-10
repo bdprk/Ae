@@ -58,6 +58,7 @@ const PRELUDE: &str = "<prelude>";
 // layout is a tag enum plus one struct per payload variant, so an unbounded
 // instantiation count is a real code-size hazard (ADR-21).
 const MAX_ENUM_TYPES: usize = 256;
+const MAX_STRUCT_TYPES: usize = 256;
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
 const RESERVED: [&str; 59] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "run_command"];
@@ -258,9 +259,14 @@ enum Payload { Concrete(Type), Param(usize) }
 // EnumDef because a declaration has no layout: only instantiations do.
 #[derive(Debug, Clone)]
 struct GenericEnum { name: String, params: Vec<String>, variants: Vec<(String, Vec<Payload>)>, file: String, public: bool }
-// Instantiated generic enums, keyed by declaration and arguments (ADR-21).
+// `struct Pair[K, V] { left: K, right: V }` before it is instantiated. Same
+// reason as GenericEnum: a declaration is a shape, not a layout.
+#[derive(Debug, Clone)]
+struct GenericStruct { name: String, params: Vec<String>, fields: Vec<(String, Payload)>, file: String, public: bool }
+// Instantiated generic enums and structs, keyed by declaration and arguments
+// (ADR-21, ADR-30).
 #[derive(Default)]
-struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize> }
+struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize> }
 #[derive(Debug)]
 struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 
@@ -368,37 +374,30 @@ impl<'a> Parser<'a> {
                     self.take(Kind::RBracket)?;
                     let eid = self.instantiate_enum(gid, args, name_offset)?;
                     self.enum_literal(eid, name_offset)?
+                } else if self.generics.struct_names.contains_key(&name) && *self.current() == Kind::LBracket {
+                    // Generic struct literal: the arguments pick the layout, so
+                    // Pair[string, i64] and Pair[i64, i64] are different types.
+                    let gid = self.generics.struct_names[&name];
+                    self.pos += 1;
+                    let mut args = Vec::new();
+                    loop {
+                        args.push(self.named_type()?);
+                        if *self.current() != Kind::Comma { break; }
+                        self.pos += 1;
+                    }
+                    self.take(Kind::RBracket)?;
+                    let sid = self.instantiate_struct(gid, args, name_offset)?;
+                    self.require_public("struct", &self.structs[sid].name.clone(), &self.structs[sid].file.clone(), self.structs[sid].public)?;
+                    if *self.current() != Kind::LBrace {
+                        return Err(error(&self.file, self.source, name_offset, &format!("'{}' is a struct; construct it with '{}{{ ... }}'", self.structs[sid].name.clone(), self.structs[sid].name.clone())));
+                    }
+                    return self.struct_literal(sid, name_offset);
                 } else if let Some(&sid) = self.struct_names.get(&name) {
                     self.require_public("struct", &self.structs[sid].name, &self.structs[sid].file, self.structs[sid].public)?;
                     if *self.current() == Kind::LBrace {
-                        // Construction: Name { field: expr, ... } - fields may
-                        // appear in any order, each exactly once.
-                        self.pos += 1;
-                        let def_fields = self.structs[sid].fields.clone();
-                        let mut slots: Vec<Option<Expr>> = (0..def_fields.len()).map(|_| None).collect();
-                        let mut seen = std::collections::HashSet::new();
-                        while *self.current() != Kind::RBrace {
-                            let fname = self.identifier()?;
-                            let fidx = def_fields.iter().position(|(n, _)| *n == fname)
-                                .ok_or_else(|| self.fail(&format!("struct '{}' has no field '{}'", name, fname)))?;
-                            if !seen.insert(fname.clone()) { return Err(self.fail(&format!("field '{}' specified twice", fname))); }
-                            self.take(Kind::Colon)?;
-                            let (value, vty) = self.expression(0, true)?;
-                            if vty != def_fields[fidx].1 { return Err(self.fail(&format!("field '{}' must be {}", fname, def_fields[fidx].1.name()))); }
-                            slots[fidx] = Some(value);
-                            if *self.current() == Kind::Comma { self.pos += 1; }
-                        }
-                        self.take(Kind::RBrace)?;
-                        let mut values = Vec::new();
-                        for (i, slot) in slots.into_iter().enumerate() {
-                            match slot {
-                                Some(v) => values.push(v),
-                                None => return Err(error(&self.file, self.source, name_offset, &format!("missing field '{}' in '{}' construction", def_fields[i].0, name))),
-                            }
-                        }
-                        // Early return: no postfix on a fresh literal; wrap in
+                        // A fresh literal takes no postfix; wrap it in
                         // parentheses for field access.
-                        return Ok((Expr::StructLit(sid, values), Type::Struct(sid)));
+                        return self.struct_literal(sid, name_offset);
                     } else if *self.current() == Kind::LParen {
                         return Err(self.fail(&format!("'{}' is a struct, not a function", name)));
                     } else {
@@ -1022,6 +1021,24 @@ impl<'a> Parser<'a> {
                     self.require_public("enum", def.name, &def.file.clone(), def.public)?;
                     return Ok(Type::Enum(def.name, eid));
                 }
+                if let Some(&gid) = self.generics.struct_names.get(other) {
+                    if *self.current() != Kind::LBracket {
+                        return Err(self.fail(&format!("'{other}' is a generic struct; write its type arguments, e.g. {other}[string]")));
+                    }
+                    let offset = self.tokens[self.pos].offset;
+                    self.pos += 1;
+                    let mut args = Vec::new();
+                    loop {
+                        args.push(self.named_type()?);
+                        if *self.current() != Kind::Comma { break; }
+                        self.pos += 1;
+                    }
+                    self.take(Kind::RBracket)?;
+                    let sid = self.instantiate_struct(gid, args, offset)?;
+                    let def = &self.structs[sid];
+                    self.require_public("struct", &def.name.clone(), &def.file.clone(), def.public)?;
+                    return Ok(Type::Struct(sid));
+                }
                 match self.struct_names.get(other) {
                 Some(&id) => {
                     let def = &self.structs[id];
@@ -1071,13 +1088,42 @@ impl<'a> Parser<'a> {
         }
         Ok((Expr::EnumLit(def.name, eid, vidx, values), Type::Enum(def.name, eid)))
     }
+    // `Name { field: expr, ... }` once the layout is known. Fields may appear
+    // in any order but each exactly once; owned fields are moved in.
+    fn struct_literal(&mut self, sid: usize, offset: usize) -> Result<(Expr, Type), String> {
+        let name = self.structs[sid].name.clone();
+        self.take(Kind::LBrace)?;
+        let def_fields = self.structs[sid].fields.clone();
+        let mut slots: Vec<Option<Expr>> = (0..def_fields.len()).map(|_| None).collect();
+        let mut seen = std::collections::HashSet::new();
+        while *self.current() != Kind::RBrace {
+            let fname = self.identifier()?;
+            let fidx = def_fields.iter().position(|(n, _)| *n == fname)
+                .ok_or_else(|| self.fail(&format!("struct '{}' has no field '{}'", name, fname)))?;
+            if !seen.insert(fname.clone()) { return Err(self.fail(&format!("field '{}' specified twice", fname))); }
+            self.take(Kind::Colon)?;
+            let (value, vty) = self.expression(0, true)?;
+            if vty != def_fields[fidx].1 { return Err(self.fail(&format!("field '{}' must be {}", fname, def_fields[fidx].1.name()))); }
+            slots[fidx] = Some(value);
+            if *self.current() == Kind::Comma { self.pos += 1; }
+        }
+        self.take(Kind::RBrace)?;
+        let mut values = Vec::new();
+        for (i, slot) in slots.into_iter().enumerate() {
+            match slot {
+                Some(v) => values.push(v),
+                None => return Err(error(&self.file, self.source, offset, &format!("missing field '{}' in '{}' construction", def_fields[i].0, name))),
+            }
+        }
+        Ok((Expr::StructLit(sid, values), Type::Struct(sid)))
+    }
     // `enum Name { ... }` or `enum Name[T, U] { ... }`. A generic declaration
     // produces no layout at all; only instantiations do (ADR-21).
     fn parse_enum_def(&mut self, public: bool) -> Result<(), String> {
         self.pos += 1;
         let name = self.identifier()?;
         if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{}' is a built-in name and cannot be an enum", name))); }
-        if self.struct_names.contains_key(&name) { return Err(self.fail(&format!("'{}' is already a struct", name))); }
+        if self.struct_names.contains_key(&name) || self.generics.struct_names.contains_key(&name) { return Err(self.fail(&format!("'{}' is already a struct", name))); }
         if self.enum_names.contains_key(&name) || self.generics.names.contains_key(&name) { return Err(self.fail(&format!("duplicate enum '{}'", name))); }
         let params = self.type_params()?;
         self.take(Kind::LBrace)?;
@@ -1192,27 +1238,73 @@ impl<'a> Parser<'a> {
         }
         Ok(ty)
     }
+    // A field type in a generic declaration: a type parameter, or any named
+    // type (which may itself be an instantiation such as `Option[string]`).
+    fn field_type(&mut self, params: &[String]) -> Result<Payload, String> {
+        if let Kind::Ident(name) = self.current() {
+            if let Some(index) = params.iter().position(|p| p == name) {
+                self.pos += 1;
+                return Ok(Payload::Param(index));
+            }
+        }
+        Ok(Payload::Concrete(self.named_type()?))
+    }
+    // One C layout per (declaration, argument) pair, generated on first use.
+    fn instantiate_struct(&mut self, gid: usize, args: Vec<Type>, offset: usize) -> Result<usize, String> {
+        let def = self.generics.struct_defs[gid].clone();
+        if args.len() != def.params.len() {
+            return Err(error(&self.file, self.source, offset, &format!("'{}' takes {} type argument(s), found {}", def.name, def.params.len(), args.len())));
+        }
+        let key = format!("{gid}:{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
+        if let Some(&sid) = self.generics.struct_done.get(&key) { return Ok(sid); }
+        if self.structs.len() >= MAX_STRUCT_TYPES {
+            return Err(error(&self.file, self.source, offset, &format!("generic instantiation budget exceeded ({MAX_STRUCT_TYPES} struct types) at '{}'", def.name)));
+        }
+        let fields: Vec<(String, Type)> = def.fields.iter().map(|(fname, payload)| {
+            let ty = match payload {
+                Payload::Concrete(ty) => *ty,
+                Payload::Param(index) => args[*index],
+            };
+            (fname.clone(), ty)
+        }).collect();
+        let display = format!("{}[{}]", def.name, args.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "));
+        let sid = self.structs.len();
+        self.structs.push(StructDef { name: display, fields, file: def.file, public: def.public });
+        self.generics.struct_done.insert(key, sid);
+        Ok(sid)
+    }
     fn parse_struct_def(&mut self, public: bool) -> Result<(), String> {
         self.pos += 1;
         let name = self.identifier()?;
         if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{}' is a built-in name and cannot be a struct", name))); }
-        if self.struct_names.contains_key(&name) { return Err(self.fail(&format!("duplicate struct '{}'", name))); }
-        if *self.current() == Kind::LBracket { return Err(self.fail("generic structs are not supported yet; generic enums are (e.g. Option[string])")); }
+        if self.struct_names.contains_key(&name) || self.generics.struct_names.contains_key(&name) { return Err(self.fail(&format!("duplicate struct '{}'", name))); }
+        if self.enum_names.contains_key(&name) || self.generics.names.contains_key(&name) { return Err(self.fail(&format!("'{}' is already an enum", name))); }
+        let params = self.type_params()?;
         self.take(Kind::LBrace)?;
-        let mut fields: Vec<(String, Type)> = Vec::new();
+        let mut fields: Vec<(String, Payload)> = Vec::new();
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::RBrace {
             let fname = self.identifier()?;
             if !seen.insert(fname.clone()) { return Err(self.fail(&format!("duplicate field '{}' in struct '{}'", fname, name))); }
             self.take(Kind::Colon)?;
-            let fty = self.named_type()?;
+            let fty = self.field_type(&params)?;
             fields.push((fname, fty));
             if *self.current() == Kind::Comma { self.pos += 1; }
         }
         self.take(Kind::RBrace)?;
-        let id = self.structs.len();
-        self.struct_names.insert(name.clone(), id);
-        self.structs.push(StructDef { name, fields, file: self.file.clone(), public });
+        if params.is_empty() {
+            let id = self.structs.len();
+            self.struct_names.insert(name.clone(), id);
+            let concrete = fields.into_iter().map(|(fname, payload)| (fname, match payload {
+                Payload::Concrete(ty) => ty,
+                Payload::Param(_) => unreachable!("a non-generic struct has no type parameters"),
+            })).collect();
+            self.structs.push(StructDef { name, fields: concrete, file: self.file.clone(), public });
+        } else {
+            let gid = self.generics.struct_defs.len();
+            self.generics.struct_names.insert(name.clone(), gid);
+            self.generics.struct_defs.push(GenericStruct { name, params, fields, file: self.file.clone(), public });
+        }
         Ok(())
     }
     // Arrays are borrowed read-only; strings and scalars pass by value.
@@ -1284,6 +1376,7 @@ impl<'a> Parser<'a> {
     // Second pass skips struct bodies (already collected, must not re-register).
     fn skip_struct_def(&mut self) {
         self.pos += 2; // 'struct' Name
+        self.skip_type_params();
         self.pos += 1; // the opening brace
         let mut depth = 1usize;
         while depth > 0 {
