@@ -138,6 +138,36 @@ static ae_string ae_str_cat(ae_string a, ae_string b, size_t line, size_t column
 // a literal is not an owned value, so it is neither copied into the heap
 // first nor freed afterwards; the result owns one new buffer. strlen on a
 // literal folds to a constant, so the length costs nothing.
+// Formats an i64 into a caller-owned buffer (always >= 24 bytes) and returns
+// the length. Same formatter as ae_to_string, minus the heap round-trip:
+// a temp that dies inside one expression never needs to own memory.
+static int64_t ae_int_to_buf(int64_t value, char *buffer, size_t line, size_t column) {
+    const int length = snprintf(buffer, 24, "%" PRId64, value);
+    if (length < 0 || length >= 24) ae_fail("cannot format integer", line, column);
+    return length;
+}
+// `"lit" + to_string(n)` with the digits formatted on the stack: the result
+// owns one buffer, and neither the literal nor the digits touch the allocator.
+static ae_string ae_str_cat_lit_buf(const char *lit, const char *digits, int64_t len, size_t line, size_t column) {
+    const size_t n = strlen(lit);
+    if (len > INT64_MAX - (int64_t)n) ae_fail("string too long", line, column);
+    char *out = ae_alloc(n + (size_t)len + 1, line, column);
+    memcpy(out, lit, n);
+    memcpy(out + n, digits, (size_t)len);
+    out[n + len] = 0;
+    ae_string s = { out, (int64_t)n + len };
+    return s;
+}
+// `to_string(n) + "lit"`: the digits go in front, same zero-alloc rule.
+static ae_string ae_str_cat_buf_lit(const char *digits, int64_t len, const char *lit, size_t line, size_t column) {
+    const size_t n = strlen(lit);
+    if (len > INT64_MAX - (int64_t)n) ae_fail("string too long", line, column);
+    char *out = ae_alloc((size_t)len + n + 1, line, column);
+    memcpy(out, digits, (size_t)len);
+    memcpy(out + len, lit, n + 1);
+    ae_string s = { out, len + (int64_t)n };
+    return s;
+}
 static ae_string ae_str_cat_lit_left(const char *lit, ae_string b, size_t line, size_t column) {
     const size_t n = strlen(lit);
     if (b.len > (int64_t)(INT64_MAX - (int64_t)n)) { ae_free(b.ptr); ae_fail("string too long", line, column); }

@@ -3322,7 +3322,24 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
                 format!("ae_str_copy_view(AE_VIEW({}), {line}, {column})", part.text)
             };
             let id = *next; *next += 1;
+            // A `to_string(i64)` on the other side also skips the allocator:
+            // the digits are formatted into a stack buffer that dies with the
+            // expression, so `"k" + to_string(n)` performs one allocation in
+            // total. Same formatter, same value, no owned temporary.
+            let digits_of = |part: &Expr, out: &mut String, next: &mut usize| -> Option<String> {
+                if let Expr::ToString(inner, _, _) = part {
+                    let v = emit_expr(inner, out, next, false);
+                    debug_assert_eq!(v.ty, Type::Int);
+                    return Some(v.text);
+                }
+                None
+            };
             if let Expr::StrLit(text, _, _) = a.as_ref() {
+                if let Some(value) = digits_of(b, out, next) {
+                    out.push_str(&format!("    char buf{id}[24];\n    const int64_t dlen{id} = ae_int_to_buf({value}, buf{id}, {line}, {column});\n"));
+                    out.push_str(&format!("    ae_string t{id} = ae_str_cat_lit_buf(\"{text}\", buf{id}, dlen{id}, {line}, {column});\n"));
+                    return Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true };
+                }
                 let r = emit_expr(b, out, next, true);
                 let right = owned_part(&r);
                 out.push_str(&format!("    ae_string t{id} = ae_str_cat_lit_left(\"{text}\", {right}, {line}, {column});\n"));
@@ -3330,6 +3347,11 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
                 return Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true };
             }
             if let Expr::StrLit(text, _, _) = b.as_ref() {
+                if let Some(value) = digits_of(a, out, next) {
+                    out.push_str(&format!("    char buf{id}[24];\n    const int64_t dlen{id} = ae_int_to_buf({value}, buf{id}, {line}, {column});\n"));
+                    out.push_str(&format!("    ae_string t{id} = ae_str_cat_buf_lit(buf{id}, dlen{id}, \"{text}\", {line}, {column});\n"));
+                    return Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true };
+                }
                 let l = emit_expr(a, out, next, true);
                 let left = owned_part(&l);
                 out.push_str(&format!("    ae_string t{id} = ae_str_cat_lit_right({left}, \"{text}\", {line}, {column});\n"));

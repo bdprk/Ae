@@ -1,0 +1,75 @@
+{
+ "map": {
+  "old": {
+   "runs": [
+    263.9,
+    180.8,
+    182.1,
+    179.8,
+    175.6,
+    175.3,
+    174.5,
+    176.8,
+    175.1
+   ],
+   "median_ms": 176.8
+  },
+  "new": {
+   "runs": [
+    203.0,
+    150.2,
+    151.0,
+    149.8,
+    152.5,
+    140.4,
+    152.7,
+    230.3,
+    209.7
+   ],
+   "median_ms": 152.5
+  }
+ },
+ "v2_strings": {
+  "old": {
+   "runs": [
+    223.3,
+    175.3,
+    137.5,
+    132.0,
+    134.5,
+    124.6,
+    122.4,
+    123.2,
+    121.2
+   ],
+   "median_ms": 132.0
+  },
+  "new": {
+   "runs": [
+    148.7,
+    87.2,
+    87.7,
+    88.1,
+    85.8,
+    88.2,
+    88.7,
+    87.4,
+    88.7
+   ],
+   "median_ms": 88.1
+  }
+ },
+ "note": "old = commit e77eec6 (ADR-44 only), new = e77eec6 + stack-buffer to_string fusion. Same script, interleaved per program, 9 runs each, outputs byte-identical. New-side map runs show thermal outliers (230/210) \u2014 medians reported, raw values kept.",
+ "cumulative_from_first_baseline": {
+  "map_variant_ms": [
+   199.3,
+   177.1,
+   152.5
+  ],
+  "v2_strings_ms": [
+   151.0,
+   119.6,
+   88.1
+  ]
+ }
+}
