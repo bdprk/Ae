@@ -235,6 +235,39 @@ static ae_strvec ae_lines(ae_strview s, size_t line, size_t column) {
     return out;
 }
 
+// count_lines_with(text, pattern): newline-delimited line count where the
+// line contains the pattern. Single pass, zero allocations; line search
+// uses memchr for first-byte skipping.
+static int ae_line_contains(const char *h, int64_t hl, ae_strview pat) {
+    if (pat.len == 0) return 1;
+    if (pat.len > hl) return 0;
+    const char first = pat.ptr[0];
+    int64_t i = 0;
+    while (i + pat.len <= hl) {
+        const char *hit = memchr(h + i, first, (size_t)(hl - i - pat.len + 1));
+        if (!hit) return 0;
+        i = (int64_t)(hit - h);
+        if (memcmp(h + i, pat.ptr, (size_t)pat.len) == 0) return 1;
+        i = i + 1;
+    }
+    return 0;
+}
+static int64_t ae_count_lines_with(ae_strview s, ae_strview pat, size_t line, size_t column) {
+    if (s.len == 0) return 0;
+    int64_t count = 0;
+    const char *p = s.ptr;
+    int64_t remain = s.len;
+    while (remain > 0) {
+        const char *nl = memchr(p, 0x0a, (size_t)remain);
+        int64_t llen = nl ? (int64_t)(nl - p) : remain;
+        if (ae_line_contains(p, llen, pat)) count = count + 1;
+        if (!nl) break;
+        remain -= llen + 1;
+        p += llen + 1;
+    }
+    return count;
+}
+
 // Program arguments bridge: the generated main records argc/argv here.
 static int64_t ae_argc_g = 0;
 static char **ae_argv_g = NULL;

@@ -45,7 +45,7 @@ impl Type {
 }
 enum MoveKind { Var(usize), Field, StrVecElement }
 // Built-in names are reserved so their semantics stay unambiguous.
-const RESERVED: [&str; 14] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines"];
+const RESERVED: [&str; 15] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with"];
 
 fn location(source: &str, offset: usize) -> (usize, usize) {
     let prefix = &source[..offset];
@@ -140,7 +140,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 #[derive(Debug)]
 enum Argument { Value(Expr), Borrow(usize, bool) } // bool: borrow of a vec struct (pass &slot) vs array (decays)
 #[derive(Debug)]
@@ -319,6 +319,16 @@ impl<'a> Parser<'a> {
                         self.borrows.push((vid, depth));
                     }
                     (Expr::SliceView(vid, Box::new(start), Box::new(end), 0, 0), Type::StrView)
+                } else if name == "count_lines_with" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    let (text, text_ty) = self.expression(0, false)?;
+                    if !matches!(text_ty, Type::String | Type::StrView) { return Err(self.fail("count_lines_with expects a string or string view")); }
+                    self.take(Kind::Comma)?;
+                    let (pat, pat_ty) = self.expression(0, false)?;
+                    if !matches!(pat_ty, Type::String | Type::StrView) { return Err(self.fail("count_lines_with expects a string or string view pattern")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::CountLinesWith(Box::new(text), Box::new(pat), line, col), Type::Int)
                 } else if name == "lines" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     self.take(Kind::LParen)?;
@@ -1296,6 +1306,15 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
 ", t.text));
             if t.owned { drop_owned_temp(out, &t); }
             Emitted { text: format!("t{id}"), ty: Type::StrVec, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::CountLinesWith(s, pat, line, col) => {
+            let t = emit_expr(s, out, next, false);
+            let pt = emit_expr(pat, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{id} = ae_count_lines_with(AE_VIEW({}), AE_VIEW({}), {line}, {col});\n", t.text, pt.text));
+            if t.owned { drop_owned_temp(out, &t); }
+            if pt.owned { drop_owned_temp(out, &pt); }
+            Emitted { text: format!("t{id}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::StructLit(sid, values) => {
             let mut parts = Vec::new();

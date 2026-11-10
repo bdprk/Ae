@@ -1,0 +1,13 @@
+// Command-line grep: PATTERN and FILE come from program arguments.
+// Usage (after `ae build`): grep_cli PATTERN FILE
+
+fn main() {
+    let a = args();
+    if len(a) >= 3 {
+        let text = read_file(a[2]);
+        let n = count_lines_with(text, a[1]);
+        print(n);
+    } else {
+        print("usage: grep_cli PATTERN FILE");
+    }
+}
