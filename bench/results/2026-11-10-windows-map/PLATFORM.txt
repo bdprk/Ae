@@ -1,9 +1,9 @@
 map 容器负载 · Windows 归档（2026-11-10）
 
 ## 源码树身份
-提交 45b7026（ADR-41「Share lexed tokens per source file…」）+ 与本归档同批
-提交的 bench/map.{ae,go,py,rs}、bench/run.py、bench/README.md 改动（工作树内
-完成，随后一并提交，因此 git 历史即精确源码）。
+基线提交 45b7026（ADR-41）之上：e285898（map 负载与 harness 接入，含
+bench/map.{ae,go,py,rs}、run.py、README.md）+ 001cf1b（本归档的证据文件与
+这份 PLATFORM.txt 的重写）。本归档与该两提交同树，git 历史即精确源码。
 
 ## 平台
 - OS: Windows 10.0.26100（run.py 记录字符串 "Windows-10-10.0.26100-SP0"），AMD64
