@@ -1,10 +1,33 @@
 // File search: counts lines containing a pattern (workload B baseline).
-// Line boundaries come from bytes(); matching uses the platform's
-// optimized substring search via contains().
+// Bytes come from bytes(); matching is a naive per-line scan.
+fn line_has(data: &vec, start: i64, end: i64, pat: &vec) -> bool {
+    let plen = len(pat);
+    if plen == 0 {
+        return true;
+    }
+    var i = start;
+    while i + plen <= end {
+        var j = 0;
+        var ok = true;
+        while j < plen {
+            if data[i + j] != pat[j] {
+                ok = false;
+                break;
+            }
+            j = j + 1;
+        }
+        if ok {
+            return true;
+        }
+        i = i + 1;
+    }
+    return false;
+}
 
 fn main() {
     let text = read_file("bench-input.txt");
     let data = bytes(text);
+    let pat = bytes("ae");
     let n = len(data);
     var line_start = 0;
     var matches = 0;
@@ -12,7 +35,7 @@ fn main() {
     for i in 0..n {
         if data[i] == 10 {
             lines = lines + 1;
-            if contains(slice(text, line_start, i), "ae") {
+            if line_has(&data, line_start, i, &pat) {
                 matches = matches + 1;
             }
             line_start = i + 1;
@@ -20,7 +43,7 @@ fn main() {
     }
     if n > line_start {
         lines = lines + 1;
-        if contains(slice(text, line_start, n), "ae") {
+        if line_has(&data, line_start, n, &pat) {
             matches = matches + 1;
         }
     }
