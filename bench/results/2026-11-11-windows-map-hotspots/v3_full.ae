@@ -1,0 +1,15 @@
+// Hotspot decomposition, variant 3: the full map.ae workload.
+fn main() {
+    var counts = map_new();
+    var x = 1234567;
+    for j in 0..1000000 {
+        x = (x * 48271) % 2147483647;
+        var key = "k" + to_string(x % 10000);
+        let c = map_get(counts, key);
+        match c {
+            IntResult::Ok(n) => { counts[key] = n + 1; }
+            IntResult::Err(reason) => { counts[key] = 1; }
+        }
+    }
+    print(len(counts));
+}

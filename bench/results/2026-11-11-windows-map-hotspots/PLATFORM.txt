@@ -1,0 +1,33 @@
+map 负载热点分解 · Windows 归档（2026-11-11）
+
+## 源码树身份
+提交 b78c282 工作树（诊断变体是临时程序，不进 examples；三个 .ae 源随归档）。
+
+## 平台
+Windows 10.0.26100 / gcc 16.2.0 MinGW ucrt / ae release (-O2) / 热缓存。
+
+## 命令
+- 对每个变体：ae build <变体>.ae -o <变体>.exe --release；运行 7 次取中位数。
+- 变体源与 timing.json 同目录。变体是诊断程序，不是基准孪生：
+  v1 = LCG + 受检算术；v2 = v1 + 每次抽取构造键字符串；v3 = v2 + map_get/map_put。
+  v3 打印 len(counts) 而非完整校验和，总数与 run.py 的 map.ae 不可比。
+
+## 结果（中位数 ms）
+  v1_arith    12.2   （受检算术可忽略）
+  v2_strings 164.5   （+152.3：字符串构造）
+  v3_full    199.3   （+34.8：map get/put，含双哈希与键拷贝）
+
+## 归因
+map 负载慢于 Go/Rust 的主因是**每迭代的字符串构造（76%）**，不是 map 操作。
+与 text 负载的已知结论（split 每令牌分配）同根因：字符串分配路径。
+读码确认的分配链（每次抽取）：
+  1. 字面量 "k" 每次求值 ae_str_from → 1 次堆分配 + 释放（发射器逐字面量内联）；
+  2. to_string：snprintf 栈上格式化后 ae_str_from_len → 1 次堆分配；
+  3. "+"：ae_str_cat 分配结果 + 两次 memcpy + 释放两个操作数；
+  4. map_put 复制键 → 1 次堆分配；外加 map_get/map_put 各一次 FNV 哈希。
+假设 H1–H4 与下一个单一可测变更（发射器融合「字面量 + 字符串」，
+ae_str_cat_lit_left/right，消除第 1 项）记录在 timing.json。
+
+## 未覆盖
+Linux 侧对照（沙箱证书过期，待新证书）；profiler 级确认（本归档是
+变体差值法 + 读码）；优化本身的收益测量（后续 ADR）。

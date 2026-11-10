@@ -1,0 +1,30 @@
+{
+  "note": "Hotspot decomposition of the map workload on Windows, release builds, 7-run medians. Diagnostic variants, not benchmark twins: each variant drops a component, so the differences attribute cost, and the totals are not comparable to run.py's map.ae numbers (different program tail).",
+  "platform": "Windows 10.0.26100, gcc 16.2.0 MinGW ucrt, ae release (-O2), hot cache",
+  "variants": {
+    "v1_arith": {
+      "median_ms": 12.2,
+      "desc": "LCG + checked arithmetic only"
+    },
+    "v2_strings": {
+      "median_ms": 164.5,
+      "desc": "+ key construction: string literal + to_string per draw"
+    },
+    "v3_full": {
+      "median_ms": 199.3,
+      "desc": "+ map_get/map_put (the map.ae workload body)"
+    }
+  },
+  "attribution_ms": {
+    "arithmetic": 12.2,
+    "string_construction": 152.3,
+    "map_operations": 34.8
+  },
+  "hypotheses": [
+    "H1: ae_to_string always heap-allocates its result (snprintf to stack, then ae_str_from_len)",
+    "H2: ae_str_cat allocates the result and memcpies both operands (1 alloc + 2 memcpy + 2 frees)",
+    "H3: every evaluation of a string literal emits ae_str_from, i.e. one heap alloc + free per literal per iteration (confirmed by reading the emitter: Expr::StrLit => ae_str_from(...))",
+    "H4: map_get + map_put hash the key twice and put copies the key (bounded by the 34.8 ms bucket)"
+  ],
+  "next_single_change": "Fuse literal + string concat in the emitter: ae_str_cat_lit_left/right that never allocate or free the literal operand. Removes H3's alloc+free per concat-with-literal without touching types or ownership semantics."
+}
