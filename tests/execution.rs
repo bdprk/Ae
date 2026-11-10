@@ -634,15 +634,29 @@ fn vector_misuse_is_rejected_at_compile_time() {
     }
 }
 #[test]
-fn vector_use_after_move_is_caught_at_runtime_in_loops() {
-    // The move happens after the read within one iteration; the null-check
-    // backstop catches the second iteration instead of misbehaving.
-    let source = "fn main() { var v = vec[1, 2]; while len(v) > 0 { print(v[0]); let w = v; } }";
-    let output = execute(source);
-    assert!(!output.status.success());
-    let err = String::from_utf8_lossy(&output.stderr);
-    assert!(err.contains("use of moved vector"), "{err}");
-    assert!(err.contains("1"), "{err}");
+fn moving_an_outer_value_inside_a_loop_is_rejected() {
+    // The body runs again, so a value moved out of an outer variable would be
+    // read after the move on the next iteration. Without a fixed point over the
+    // body the compiler rejects the move instead of relying on the runtime
+    // sentinel (ADR-20).
+    for source in [
+        "fn main() { var v = vec[1, 2]; while len(v) > 0 { print(v[0]); let w = v; } }",
+        "fn main() { var s = \"x\"; var i = 0; while i < 2 { let t = s; print(len(t)); i = i + 1; } }",
+        "fn main() { var s = \"x\"; for i in 0..2 { let t = s; print(len(t)); } }",
+        "fn main() { let v = vec[1]; var s = \"x\"; for x in v { let t = s; print(len(t)); } }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-loop-move-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted a move inside a loop: {source}");
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(err.contains("inside a loop body") && err.contains("re-initialize"), "{err}");
+    }
+    // Re-initializing before the body ends keeps the next iteration valid.
+    let output = execute("fn main() { var s = \"x\"; var i = 0; while i < 2 { print(len(s)); s = \"yy\"; i = i + 1; } print(s); }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "1\n2\nyy\n");
 }
 #[test]
 fn returning_a_live_owned_local_keeps_the_buffer_valid() {

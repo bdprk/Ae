@@ -1235,6 +1235,22 @@ impl<'a> Parser<'a> {
     fn live_owned(&self) -> Vec<(usize, Type)> {
         self.scopes.iter().flatten().filter(|(_, ty)| ty.owned()).map(|&(id, ty)| (id, ty)).collect()
     }
+    // A loop body runs again, so a value moved out of a variable declared
+    // outside the loop must be re-initialized before the body ends; otherwise
+    // the next iteration would read a moved-from handle. Without a fixed point
+    // over the body (ADR-20) the move is rejected instead of guessed at.
+    fn close_loop_moves(&mut self, base: usize, before: std::collections::HashSet<usize>, offset: usize) -> Result<(), String> {
+        let after = std::mem::replace(&mut self.moved, before.clone());
+        let outer: Vec<usize> = self.scopes[..base.min(self.scopes.len())].iter().flatten().map(|&(id, _)| id).collect();
+        for id in &after {
+            // Values already moved before the loop are not this body's doing.
+            if before.contains(id) || !outer.contains(id) { continue; }
+            let name = self.names.iter().find(|(_, (vid, _, _))| vid == id).map(|(n, _)| n.clone()).unwrap_or_else(|| "?".to_owned());
+            return Err(error(&self.file, self.source, offset, &format!("cannot move '{name}' inside a loop body: the next iteration would read it after the move (re-initialize it before the body ends)")));
+        }
+        // Moves of loop-local values die with the body; nothing to merge.
+        Ok(())
+    }
     // break/continue leave the loop body: only owned values declared inside it die.
     fn loop_local_owned(&self) -> Vec<(usize, Type)> {
         let base = *self.loop_scopes.last().unwrap_or(&0);
@@ -1481,23 +1497,26 @@ impl<'a> Parser<'a> {
                 Kind::If => result.push(self.if_statement()?),
                 Kind::Match => result.push(self.match_statement()?),
                 Kind::While => {
+                    let loop_offset = self.tokens[self.pos].offset;
                     self.pos += 1;
                     let (condition, ty) = self.expression(0, false)?;
                     if ty != Type::Bool { return Err(self.fail("condition must be a boolean expression")); }
                     if self.loop_depth >= 64 { return Err(self.fail("loop nesting limit exceeded (64)")); }
                     self.loop_depth += 1;
-                    self.loop_scopes.push(self.scopes.len());
+                    let base = self.scopes.len();
+                    let moved_before = self.moved.clone();
+                    self.loop_scopes.push(base);
                     self.loop_labels.push(None);
                     let body = self.block();
                     self.loop_labels.pop();
                     self.loop_scopes.pop();
                     self.loop_depth -= 1;
-                    // Moves inside the body poison uses after the loop; uses
-                    // before the move inside the body are caught at runtime by
-                    // the null check on every string read.
-                    result.push(Statement::While(condition, body?));
+                    let body = body?;
+                    self.close_loop_moves(base, moved_before, loop_offset)?;
+                    result.push(Statement::While(condition, body));
                 }
                 Kind::For => {
+                    let loop_offset = self.tokens[self.pos].offset;
                     self.pos += 1;
                     let var_name = self.identifier()?;
                     if RESERVED.contains(&var_name.as_str()) { return Err(self.fail(&format!("'{var_name}' is a built-in name and cannot be a loop variable"))); }
@@ -1524,6 +1543,8 @@ impl<'a> Parser<'a> {
                         let var = self.next_var; self.next_var += 1;
                         let label = self.next_label; self.next_label += 1;
                         self.loop_depth += 1;
+                        let base = self.scopes.len();
+                        let moved_before = self.moved.clone();
                         self.scopes.push(vec![(var, elem_ty), (counter, Type::Int), (end_var, Type::Int)]);
                         self.loop_scopes.push(self.scopes.len());
                         self.loop_labels.push(Some(label));
@@ -1540,6 +1561,7 @@ impl<'a> Parser<'a> {
                         self.borrows.retain(|&(id, _)| id != v_id);
                         let mut body = body?;
                         if self.moved.contains(&v_id) { return Err(self.fail(&format!("cannot move the vector being iterated (a move of it happens in this loop)"))); }
+                        self.close_loop_moves(base, moved_before, loop_offset)?;
                         // Per-iteration element binding, then the user's body.
                         let element = match elem_ty {
                             Type::StrView => Expr::StrVecIndex(v_id, Box::new(Expr::Variable(counter, Type::Int, line, col)), line, col, by_ref),
@@ -1562,6 +1584,8 @@ impl<'a> Parser<'a> {
                     let var = self.next_var; self.next_var += 1;
                     let label = self.next_label; self.next_label += 1;
                     self.loop_depth += 1;
+                    let base = self.scopes.len();
+                    let moved_before = self.moved.clone();
                     self.scopes.push(vec![(var, Type::Int)]);
                     self.loop_scopes.push(self.scopes.len());
                     self.loop_labels.push(Some(label));
@@ -1573,6 +1597,7 @@ impl<'a> Parser<'a> {
                     self.loop_depth -= 1;
                     self.names.remove(&var_name);
                     let body = body?;
+                    self.close_loop_moves(base, moved_before, loop_offset)?;
                     debug_assert!(for_scope.iter().all(|(_, ty)| *ty != Type::String));
                     // Bounds evaluate once, left to right, before any iteration.
                     result.push(Statement::Declare(var, first));
