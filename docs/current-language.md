@@ -118,7 +118,7 @@
 
 `env(name) -> ReadResult`：存在返回 `Ok(值)`，不存在返回 `Err("variable not set")`，**存在但为空**返回 `Ok("")`——「空」与「没有」是两件不同的事，混为一谈会让 `PATH=""` 悄悄变成「没有 PATH」。空名字报 `Err("variable name is empty")`。环境变量只读：没有 `set_env`，也没有枚举。
 
-`try_append_file(path, text) -> WriteResult` 以追加模式写入并返回字节数；`try_write_file` 仍然整体覆盖。每次调用都会开合文件，写很多小行时应先拼成一个字符串再一次写入。`sort`/`reverse`/`now_ms`/`now_s`/`env`/`try_append_file` 为保留名。
+`try_append_file(path, text) -> WriteResult` 以追加模式写入并返回字节数；`try_write_file` 仍然整体覆盖。每次调用都会开合文件，写很多小行时应先拼成一个字符串再一次写入。`sort`/`reverse`/`now_ms`/`now_s`/`env`/`try_append_file`/`set_cwd` 为保留名。
 
 ## 标准输入与工作目录
 
@@ -134,7 +134,28 @@ fn main() {
 }
 ```
 
-`cwd() -> ReadResult` 返回当前工作目录的绝对路径，分隔符统一为 `/`（与 `path_join`/`path_parent` 同一口径），可继续传给 `path_join` 或 `try_*` 系列。`getcwd` 会失败（目录被删除、权限变化），所以是结果值而不是裸字符串。不解析符号链接，也没有 `set_cwd`。
+`cwd() -> ReadResult` 返回当前工作目录的绝对路径，分隔符统一为 `/`（与 `path_join`/`path_parent` 同一口径），可继续传给 `path_join` 或 `try_*` 系列。`getcwd` 会失败（目录被删除、权限变化），所以是结果值而不是裸字符串。不解析符号链接。
+
+`set_cwd(path) -> StatusResult` 改变**整个进程**的工作目录：此后所有相对路径（包括 `run_command` 启动的子进程）都相对新目录解析。它没有撤销机制，要回原处就先用 `cwd()` 存下绝对路径。目标不存在或无权限时返回 `Err`，目录不变——不会出现「部分成功」的状态。这是一个全局副作用，函数签名无法表达，因此只在明确要「进入某目录再操作」时使用；能传绝对路径的地方优先传绝对路径。
+
+```ae
+fn main() {
+    let saved = cwd();
+    let entered = set_cwd("out");
+    match entered {
+        StatusResult::Ok => { print("entered"); }
+        StatusResult::Err(reason) => { print("cannot enter: " + reason); exit(1); }
+    }
+    // 这里的相对路径都在 out 下。
+    let listing = try_list_dir(".");
+    match listing {
+        DirResult::Ok(names) => { print(len(names)); }
+        DirResult::Err(reason) => { print(reason); }
+    }
+}
+```
+
+没有 `set_env`：`setenv` 属于 POSIX，在 `-std=c11 -pedantic-errors` 下不可见，而注入 `_POSIX_C_SOURCE` 会破坏「同一份 C 在任何严格 C11 编译器上都能编译」这条约束（见 [ADR-25](decisions.md)）。需要给子进程换环境时，目前只能在命令里显式传（例如 `env` 程序）。
 
 `grep_cli.ae` 与 `pipe_stats.ae` 是两个验收示例：前者把 `-` 当作「从标准输入读」，后者统计管道字节/字符/行/最长行（`cat notes.txt | ae run examples/pipe_stats.ae`）。
 

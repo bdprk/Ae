@@ -980,6 +980,49 @@ fn main() {
     }
 }
 #[test]
+fn changing_the_working_directory_moves_relative_paths() {
+    // set_cwd is a process-wide mutation: after it, relative paths resolve
+    // against the new directory, and the previous one stays reachable only
+    // because the test saved it.
+    let root = std::env::temp_dir().join(format!("ae-cwd-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::create_dir(&root).unwrap();
+    let inner = root.join("inner");
+    let literal = |p: &std::path::Path| p.display().to_string().replace('\\', "\\\\");
+    let source = format!(r#"fn main() {{
+    let made = try_create_dir("{inner}");
+    match made {{
+        StatusResult::Ok => {{ print("created"); }}
+        StatusResult::Err(reason) => {{ print("create failed"); }}
+    }}
+    let moved = set_cwd("{inner}");
+    match moved {{
+        StatusResult::Ok => {{ print("moved"); }}
+        StatusResult::Err(reason) => {{ print("move failed"); }}
+    }}
+    let written = try_write_file("inside.txt", "data");
+    match written {{
+        WriteResult::Ok(count) => {{ print(count); }}
+        WriteResult::Err(reason) => {{ print("write failed"); }}
+    }}
+    print(path_exists("inside.txt"));
+    let back = set_cwd("{root}");
+    match back {{
+        StatusResult::Ok => {{ print("back"); }}
+        StatusResult::Err(reason) => {{ print("back failed"); }}
+    }}
+    print(path_exists("inner/inside.txt"));
+    let missing = set_cwd("{inner}/absent");
+    match missing {{
+        StatusResult::Ok => {{ print("unexpected success"); }}
+        StatusResult::Err(reason) => {{ print("missing directory is an error"); }}
+    }}
+}}"#, inner = literal(&inner), root = literal(&root));
+    let output = execute(&source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "created\nmoved\n4\ntrue\nback\ntrue\nmissing directory is an error\n");
+    fs::remove_dir_all(&root).unwrap();
+}
+#[test]
 fn split_and_args_produce_string_vectors() {
     let source = "fn main() { let parts = split(\"a,b,,c\", \",\"); print(len(parts)); print(parts[0]); print(len(parts[2])); let whole = split(\"hello\", \",\"); print(len(whole)); print(whole[0]); var empties = 0; for i in 0..len(parts) { if len(parts[i]) == 0 { empties = empties + 1; } } print(empties); print(join(parts, \"-\")); print(join(parts, \"\")); let a = args(); print(len(a) >= 1); }";
     let output = execute(source);

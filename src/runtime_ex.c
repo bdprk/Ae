@@ -710,6 +710,27 @@ static AE_STATUS_RESULT ae_try_create_dir(const char *path, size_t line, size_t 
     return ae_status_ok();
 }
 
+// Changes the process working directory. This is a global mutation: every
+// later relative path, including a child process's, resolves against the new
+// directory. It is a result value for the same reason the rest are - the
+// target may be gone or unreadable - and no undo is provided, so callers keep
+// the old cwd() if they intend to come back.
+static AE_STATUS_RESULT ae_set_cwd(const char *path, size_t line, size_t column) {
+#ifdef _WIN32
+    wchar_t *wide = ae_widen(path);
+    if (!wide) return ae_status_failed(ae_str_from("out of memory", line, column));
+    const BOOL ok = SetCurrentDirectoryW(wide);
+    const unsigned long status = ok ? 0UL : (unsigned long)GetLastError();
+    ae_free(wide);
+    if (!ok) return ae_status_failed(ae_status_message("cannot change the working directory", status, line, column));
+    return ae_status_ok();
+#else
+    errno = 0;
+    if (chdir(path) != 0) return ae_status_failed(ae_io_message(errno, line, column));
+    return ae_status_ok();
+#endif
+}
+
 // Removes an empty directory. Recursive removal is deliberately absent: a
 // helper that silently deletes a tree is the easiest way to lose data.
 static AE_STATUS_RESULT ae_try_remove_dir(const char *path, size_t line, size_t column) {
