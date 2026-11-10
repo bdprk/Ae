@@ -1,0 +1,43 @@
+// A realistic script: sum the integers in a file, reporting recoverable errors
+// as values instead of aborting. Usage: sum_numbers <file>
+
+fn main() {
+    let parts = args();
+    if len(parts) < 2 {
+        print("usage: sum_numbers <file>");
+    } else {
+        let opened = try_read_file(parts[1]);
+        match opened {
+            ReadResult::Ok(text) => {
+                let rows = lines(text);
+                var total = 0;
+                var count = 0;
+                var bad = 0;
+                for row in rows {
+                    let parsed = parse_int(row);
+                    match parsed {
+                        IntResult::Ok(value) => {
+                            total = total + value;
+                            count = count + 1;
+                        }
+                        IntResult::Err(reason) => {
+                            // Blank lines are not errors worth reporting.
+                            if len(row) > 0 { bad = bad + 1; }
+                        }
+                    }
+                }
+                print("total " + to_string(total));
+                print("count " + to_string(count));
+                print("skipped " + to_string(bad));
+                let saved = try_write_file(parts[1] + ".summary", "total " + to_string(total) + "\n");
+                match saved {
+                    WriteResult::Ok(written) => { print("wrote " + to_string(written) + " bytes"); }
+                    WriteResult::Err(reason) => { print("write failed: " + slice(reason, 0, len(reason))); }
+                }
+            }
+            ReadResult::Err(reason) => {
+                print("cannot read: " + slice(reason, 0, len(reason)));
+            }
+        }
+    }
+}

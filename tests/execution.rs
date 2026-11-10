@@ -858,8 +858,12 @@ fn strvec_elements_are_borrow_only_and_push_pop_work() {
     let output = execute(source);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "2\n3\nthree\n2\nONE\ntrue\n");
+    // A borrowed element may be concatenated: the result copies it and the
+    // element stays valid and owned by the vector.
+    let joined = execute("fn main() { let v = split(\"a\", \",\"); let s = v[0] + \"!\"; print(s); print(v[0]); }");
+    assert!(joined.status.success(), "{}", String::from_utf8_lossy(&joined.stderr));
+    assert_eq!(String::from_utf8_lossy(&joined.stdout).replace("\r\n", "\n"), "a!\na\n");
     for source in [
-        "fn main() { let v = split(\"a\", \",\"); let s = v[0] + \"!\"; print(s); }",
         "fn main() { var v = split(\"a\", \",\"); let w = v[0]; pop(v); print(len(w)); }",
         "fn main() { let v = split(\"a\", \",\"); let w = v[0]; let x = v; }",
         "fn main() { let v = split(\"a\", \",\"); print(v); }",
@@ -889,8 +893,8 @@ fn slice_views_are_zero_copy_and_borrow_tracked() {
         "fn main() { var t = \"abc\"; let v = slice_view(t, 0, 1); t = \"x\"; print(len(v)); }",
         // slice_view needs a bare string variable
         "fn main() { let v = slice_view(\"abc\", 0, 1); print(len(v)); }",
-        // views cannot be concatenated
-        "fn main() { let t = \"abc\"; let v = slice_view(t, 0, 1); print(v + \"x\"); }",
+        // a view cannot be moved into a function that owns its argument
+        "fn take(s: string) -> i64 { return len(s); } fn main() { let t = \"abc\"; let v = slice_view(t, 0, 1); print(take(v)); }",
         // views cannot be returned (no lifetime tracking across functions)
         "fn grab() -> ? { let t = \"abc\"; return slice_view(t, 0, 1); } fn main() {}",
     ] {
@@ -1089,10 +1093,116 @@ fn invalid_enum_programs_are_rejected() {
         ("enum E { A } fn main() { let E = 1; print(E); }", "names an enum"),
         ("enum E { A } fn main() { let x = 1; match x { E::A => { print(1); } } }", "bare enum variable"),
         ("enum E { A } fn main() { let x = E::A; let y = x; match x { E::A => { print(1); } } }", "moved"),
-        ("enum E { A(string) } fn main() { let x = E::A(\"s\"); match x { E::A(t) => { let u = t + \"x\"; print(u); } } }", "two strings"),
+        ("enum E { A(string) } fn take(s: string) -> i64 { return len(s); } fn main() { let x = E::A(\"s\"); match x { E::A(t) => { print(take(t)); } } }", "must be string"),
     ];
     for (source, expected) in cases {
         let message = check_rejects(source);
         assert!(message.contains(expected), "{source}\n  expected '{expected}', got '{message}'");
+    }
+}
+
+#[test]
+fn prelude_results_report_recoverable_errors() {
+    let source = r#"fn main() {
+    let parsed = parse_int("42");
+    match parsed {
+        IntResult::Ok(value) => { print(value + 1); }
+        IntResult::Err(reason) => { print("bad"); }
+    }
+    let rejected = parse_int("12x");
+    match rejected {
+        IntResult::Ok(value) => { print(value); }
+        IntResult::Err(reason) => { print(len(reason) > 0); }
+    }
+    let empty = parse_int("");
+    match empty {
+        IntResult::Ok(value) => { print(value); }
+        IntResult::Err(reason) => { print("empty rejected"); }
+    }
+    let huge = parse_int("9223372036854775808");
+    match huge {
+        IntResult::Ok(value) => { print(value); }
+        IntResult::Err(reason) => { print("overflow rejected"); }
+    }
+    let lowest = parse_int("-9223372036854775808");
+    match lowest {
+        IntResult::Ok(value) => { print(value + 1); }
+        IntResult::Err(reason) => { print("bad"); }
+    }
+    print(to_string(0 - 1234));
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "43\ntrue\nempty rejected\noverflow rejected\n-9223372036854775807\n-1234\n");
+}
+#[test]
+fn fallible_file_io_reports_errors_as_values() {
+    let dir = std::env::temp_dir().join(format!("ae-fallible-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::create_dir(&dir).unwrap();
+    let data = dir.join("data.txt");
+    let summary = dir.join("summary.txt");
+    let missing = dir.join("missing.txt");
+    let literal = |p: &std::path::Path| p.display().to_string().replace('\\', "\\\\");
+    let source = format!(r#"fn main() {{
+    let opened = try_read_file("{data}");
+    match opened {{
+        ReadResult::Ok(text) => {{ print(len(text)); }}
+        ReadResult::Err(reason) => {{ print("unexpected failure"); }}
+    }}
+    let absent = try_read_file("{missing}");
+    match absent {{
+        ReadResult::Ok(text) => {{ print("unexpected success"); }}
+        ReadResult::Err(reason) => {{ print(len(reason) > 0); }}
+    }}
+    let saved = try_write_file("{summary}", "ok");
+    match saved {{
+        WriteResult::Ok(written) => {{ print(written); }}
+        WriteResult::Err(reason) => {{ print("write failed"); }}
+    }}
+}}"#, data = literal(&data), missing = literal(&missing), summary = literal(&summary));
+    fs::write(&data, "hello").unwrap();
+    let output = execute(&source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "5\ntrue\n2\n");
+    assert_eq!(fs::read_to_string(&summary).unwrap(), "ok");
+    fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn concatenation_copies_borrowed_strings() {
+    // A borrowed string (field, element, view) must be copied by `+` and stay
+    // valid: handing it to str_cat directly would double-free its buffer.
+    let source = r#"struct Label { text: string }
+fn main() {
+    let label = Label { text: "field" };
+    print(label.text + "/tail");
+    print(label.text);
+    let base = "abcdef";
+    let view = slice_view(base, 1, 4);
+    print("[" + view + "]");
+    print(view);
+    let parts = split("a-b-c", "-");
+    print(parts[0] + "!" + parts[2]);
+    print(parts[1]);
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "field/tail\nfield\n[bcd]\nbcd\na!c\nb\n");
+}
+#[test]
+fn invalid_prelude_usage_is_rejected() {
+    for source in [
+        "fn main() { let r = try_read_file(1); print(1); }",
+        "fn main() { let r = try_write_file(\"a\", 1); print(1); }",
+        "fn main() { let r = parse_int(1); print(1); }",
+        "fn main() { print(to_string(\"x\")); }",
+        "fn main() { print(to_string(true)); }",
+        "fn main() { let r = try_read_file(\"a\", \"b\"); print(1); }",
+        "enum ReadResult { A } fn main() { print(1); }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-prelude-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted invalid program: {source}");
     }
 }

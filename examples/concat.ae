@@ -1,0 +1,21 @@
+// Concatenation must never consume a borrowed string: struct fields, vector
+// elements and views are all read-only, so `+` copies them into the result and
+// leaves the original usable.
+
+struct Label {
+    text: string,
+}
+
+fn main() {
+    let l = Label { text: "field" };
+    print(l.text + "/tail");
+    let base = "abcdef";
+    let v = slice_view(base, 1, 4);
+    print("[" + v + "]");
+    // The borrows are still valid after the concatenation above.
+    print(v);
+    print(l.text);
+    let parts = split("a-b-c", "-");
+    print(parts[0] + "!" + parts[2]);
+    print(parts[1]);
+}

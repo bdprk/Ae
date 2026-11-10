@@ -108,6 +108,11 @@ static ae_string ae_str_from_len(const char *p, int64_t n, size_t line, size_t c
     ae_string out = { copy, n };
     return out;
 }
+// Concatenation may not consume a borrowed view, so views are copied into the
+// new buffer first. The view itself stays valid and untouched.
+static ae_string ae_str_copy_view(ae_strview s, size_t line, size_t column) {
+    return ae_str_from_len(s.ptr, s.len, line, column);
+}
 
 // Owned vector of owned strings. Elements are borrow-only reads.
 typedef struct { ae_string *data; int64_t len; int64_t cap; } ae_strvec;
