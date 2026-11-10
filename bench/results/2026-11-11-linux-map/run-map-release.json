@@ -1,0 +1,227 @@
+{
+  "note": "Exploratory same-host measurements with external toolchain caches uncontrolled. AE uses GCC -O2 and Rust opt-level=2 in release, otherwise both use no optimization; Go uses its default; Python is not compiled and its run time includes interpreter start-up. Flags do not imply equivalent optimization. Runtime includes process start-up; repetitions are interleaved across languages per round, not randomized; temperature and frequency not recorded. Peak memory is the OS high-water mark of the direct child, sampled every millisecond while it runs, so a child that exits between samples reports nothing and a build that spawns grandchildren (gcc, rustc codegen) reports only the driver's peak. AE builds reuse its content-addressed cache unless --cold gives every build a fresh empty cache dir.",
+  "cpu_method": "resource.getrusage(RUSAGE_CHILDREN) deltas between calls, direct children only",
+  "peak_method": "Linux /proc/<pid>/status VmHWM",
+  "mode": "release",
+  "platform": "Linux-6.18.54-instabox-x86_64-with-glibc2.41",
+  "machine": "x86_64",
+  "processor": "",
+  "versions": {
+    "go": "go version go1.27.1 linux/amd64",
+    "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+    "cc": "gcc (Debian 14.2.0-19) 14.2.0",
+    "python": "3.13.5"
+  },
+  "repetitions": 5,
+  "results": {
+    "map": {
+      "ae": {
+        "build_ms": [
+          160.331836,
+          5.109066,
+          3.688246,
+          3.835637,
+          4.606476
+        ],
+        "build_cpu_ms": [
+          136.24,
+          3.894999999999982,
+          3.532000000000153,
+          3.451999999999771,
+          3.33600000000024
+        ],
+        "build_peak_mb": [
+          3.3515625,
+          3.3046875,
+          3.41796875,
+          3.4296875,
+          3.34375
+        ],
+        "build_median_ms": 4.606476,
+        "build_cpu_median_ms": 3.532000000000153,
+        "build_peak_median_mb": 3.3515625,
+        "run_ms": [
+          78.811464,
+          81.477672,
+          81.988841,
+          84.14719,
+          81.741422
+        ],
+        "run_cpu_ms": [
+          77.17399999999998,
+          81.03800000000001,
+          80.86100000000033,
+          82.82999999999993,
+          80.32900000000018
+        ],
+        "run_peak_mb": [
+          2.265625,
+          2.3046875,
+          2.41796875,
+          2.421875,
+          2.37109375
+        ],
+        "run_median_ms": 81.741422,
+        "run_cpu_median_ms": 80.86100000000033,
+        "run_peak_median_mb": 2.37109375,
+        "shipped_bytes": 22272,
+        "output": "draws=1000000\nkeys=10000\ndistinct=10000\ntotal=1000000\nchecksum=5001661237"
+      },
+      "go": {
+        "build_ms": [
+          117.066072,
+          141.333643,
+          129.662692,
+          120.26462,
+          139.094684
+        ],
+        "build_cpu_ms": [
+          170.41600000000003,
+          185.202,
+          166.96699999999964,
+          148.40700000000015,
+          169.57100000000037
+        ],
+        "build_peak_mb": [
+          20.50390625,
+          21.70703125,
+          20.8671875,
+          21.015625,
+          20.84765625
+        ],
+        "build_median_ms": 129.662692,
+        "build_cpu_median_ms": 169.57100000000037,
+        "build_peak_median_mb": 20.8671875,
+        "run_ms": [
+          70.101331,
+          65.448845,
+          74.235728,
+          68.930812,
+          72.524589
+        ],
+        "run_cpu_ms": [
+          78.71299999999997,
+          64.80700000000002,
+          82.13200000000006,
+          72.7470000000003,
+          75.06700000000001
+        ],
+        "run_peak_mb": [
+          7.05859375,
+          6.8515625,
+          7.19921875,
+          7.57421875,
+          7.19140625
+        ],
+        "run_median_ms": 70.101331,
+        "run_cpu_median_ms": 75.06700000000001,
+        "run_peak_median_mb": 7.19140625,
+        "shipped_bytes": 2347553,
+        "output": "draws=1000000\nkeys=10000\ndistinct=10000\ntotal=1000000\nchecksum=5001661237"
+      },
+      "rust": {
+        "build_ms": [
+          167.440711,
+          172.849806,
+          179.68875,
+          187.999613,
+          188.591443
+        ],
+        "build_cpu_ms": [
+          177.77999999999997,
+          180.31500000000005,
+          185.79399999999987,
+          185.96099999999979,
+          192.86099999999988
+        ],
+        "build_peak_mb": [
+          118.8203125,
+          118.8046875,
+          120.23046875,
+          116.46484375,
+          117.015625
+        ],
+        "build_median_ms": 179.68875,
+        "build_cpu_median_ms": 185.79399999999987,
+        "build_peak_median_mb": 118.8046875,
+        "run_ms": [
+          57.634092,
+          57.497362,
+          60.72907,
+          61.383969,
+          56.359813
+        ],
+        "run_cpu_ms": [
+          57.149,
+          56.80600000000004,
+          59.090000000000146,
+          60.75400000000036,
+          55.972999999999956
+        ],
+        "run_peak_mb": [
+          3.07421875,
+          2.96484375,
+          3.00390625,
+          2.99609375,
+          3.05859375
+        ],
+        "run_median_ms": 57.634092,
+        "run_cpu_median_ms": 57.149,
+        "run_peak_median_mb": 3.00390625,
+        "shipped_bytes": 4563704,
+        "output": "draws=1000000\nkeys=10000\ndistinct=10000\ntotal=1000000\nchecksum=5001661237"
+      },
+      "python": {
+        "build_ms": null,
+        "build_cpu_ms": null,
+        "build_peak_mb": null,
+        "build_median_ms": null,
+        "build_cpu_median_ms": null,
+        "build_peak_median_mb": null,
+        "run_ms": [
+          252.944709,
+          258.508485,
+          252.542679,
+          266.773637,
+          253.397219
+        ],
+        "run_cpu_ms": [
+          251.41899999999998,
+          257.7539999999999,
+          251.3499999999999,
+          265.3669999999993,
+          251.16800000000012
+        ],
+        "run_peak_mb": [
+          9.3046875,
+          9.37890625,
+          9.3125,
+          9.3046875,
+          9.40234375
+        ],
+        "run_median_ms": 253.397219,
+        "run_cpu_median_ms": 251.41899999999998,
+        "run_peak_median_mb": 9.3125,
+        "shipped_bytes": 705,
+        "output": "draws=1000000\nkeys=10000\ndistinct=10000\ntotal=1000000\nchecksum=5001661237"
+      }
+    }
+  },
+  "inputs": {
+    "text_input_bytes": 2588890,
+    "text_input_lines": 50000,
+    "sha256": {
+      "sum.ae": "543f7673223ac0b29a18388d1bb52a62eddcc742bf22f634ecd8bde2c68aaa3d",
+      "sum.go": "05d8bc536027d3cdb9a9d9b178bc5deff35f691f6aad369c574a6cb17d32e6b4",
+      "sum.rs": "f6f737d3cc9e3be9f8ae5b84fb787be2dd2b6e1348d6b664860c9bd6e573539c",
+      "text.ae": "7b4a342c988dbe7e317a0edcf95eb76df4846aa5f1f1e6f02209dd9447817027",
+      "text.go": "e8bde6d55fba3f5e369b3eac6e284663d903418f2734e1a367197157758eef60",
+      "text.py": "8d4e781c54500ea83960314be7cd32522552cfef1675c188c69004694aea3a33",
+      "text.rs": "fa48744ba7f0123dc5ebd7e057412cd6fe1b01393e2a0bd0ef997671cf957e5e",
+      "map.ae": "f3270f6483a48ac33973facef0b01866439e493fe80e46119c86e3cb69fc69a1",
+      "map.go": "230280662a07819c10c663b1d41bcae2ef157905b22dce7ee0f977fd82cc34d2",
+      "map.py": "53cd39bb64df2944f288adde42048faba48e3a86a963742c123edf15ba0ec0e9",
+      "map.rs": "0692651c593f45fe1484b9986ebe1dafdc1b759d6066bbc246e61fa4ad7294c5"
+    }
+  }
+}
