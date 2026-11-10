@@ -839,6 +839,40 @@ fn struct_fields_release_on_all_exit_paths() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "0\npayload\n5\n");
 }
 #[test]
+fn split_and_args_produce_string_vectors() {
+    let source = "fn main() { let parts = split(\"a,b,,c\", \",\"); print(len(parts)); print(parts[0]); print(len(parts[2])); let whole = split(\"hello\", \",\"); print(len(whole)); print(whole[0]); var empties = 0; for i in 0..len(parts) { if len(parts[i]) == 0 { empties = empties + 1; } } print(empties); print(join(parts, \"-\")); print(join(parts, \"\")); let a = args(); print(len(a) >= 1); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    // join(parts, "-") = "a-b--c"; join(parts, "") = "abc"; args() includes at least argv[0]
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "4\na\n0\n1\nhello\n1\na-b--c\nabc\ntrue\n");
+    let output = execute("fn main() { let v = split(\"x\", \"\"); print(len(v)); }");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("empty separator"));
+    let output = execute("fn main() { let v = split(\"a,b\", \",\"); print(v[5]); }");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("array index out of bounds"));
+}
+#[test]
+fn strvec_elements_are_borrow_only_and_push_pop_work() {
+    let source = "fn main() { var v = split(\"one,two\", \",\"); print(len(v)); push(v, \"three\"); print(len(v)); print(v[2]); pop(v); print(len(v)); v[0] = \"ONE\"; print(v[0]); print(contains(v[1], \"wo\")); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "2\n3\nthree\n2\nONE\ntrue\n");
+    for source in [
+        "fn main() { let v = split(\"a\", \",\"); let s = v[0] + \"!\"; print(s); }",
+        "fn main() { let v = split(\"a\", \",\"); let w = v[0]; print(len(w)); }",
+        "fn main() { let v = split(\"a\", \",\"); print(v); }",
+        "fn split(s: string, x: string) -> i64 { return 1; } fn main() {}",
+        "fn args() -> i64 { return 1; } fn main() {}",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-sv-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "{source}");
+    }
+}
+#[test]
 fn vec_borrows_are_read_only_and_forwardable() {
     // Borrowed vectors forward like array borrows; mutation and moves are rejected.
     let source = "fn total(v: &vec) -> i64 { var t = 0; for i in 0..len(v) { t = t + v[i]; } return t; } fn last_two(v: &vec) -> i64 { return v[len(v) - 2] + v[len(v) - 1]; } fn main() { var data = vec[1, 2, 3]; print(total(&data)); print(last_two(&data)); data[0] = 10; print(total(&data)); }";

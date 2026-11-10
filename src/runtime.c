@@ -90,6 +90,122 @@ static bool ae_contains(ae_string haystack, ae_string needle, size_t line, size_
     return strstr(haystack.ptr, needle.ptr) != NULL;
 }
 
+static ae_string ae_str_from_len(const char *p, int64_t n, size_t line, size_t column) {
+    char *copy = malloc((size_t)n + 1);
+    if (!copy) ae_fail("out of memory", line, column);
+    memcpy(copy, p, (size_t)n);
+    copy[n] = 0;
+    ae_string out = { copy, n };
+    return out;
+}
+
+// Owned vector of owned strings. Elements are borrow-only reads.
+typedef struct { ae_string *data; int64_t len; int64_t cap; } ae_strvec;
+static ae_strvec ae_strvec_new(size_t line, size_t column) {
+    ae_strvec v;
+    v.len = 0;
+    v.cap = 4;
+    v.data = malloc((size_t)v.cap * sizeof(ae_string));
+    if (!v.data) { v.cap = 0; ae_fail("out of memory", line, column); }
+    return v;
+}
+static void ae_strvec_push(ae_strvec *v, ae_string s, size_t line, size_t column) {
+    if (v->len == v->cap) {
+        if (v->cap > INT64_MAX / 2) ae_fail("vector too large", line, column);
+        int64_t ncap = v->cap * 2;
+        ae_string *nd = realloc(v->data, (size_t)ncap * sizeof(ae_string));
+        if (!nd) ae_fail("out of memory", line, column);
+        v->data = nd;
+        v->cap = ncap;
+    }
+    v->data[v->len] = s;
+    v->len = v->len + 1;
+}
+static void ae_strvec_pop(ae_strvec *v, size_t line, size_t column) {
+    if (v->len == 0) ae_fail("pop from empty vector", line, column);
+    v->len = v->len - 1;
+    ae_str_release(&v->data[v->len]);
+}
+static int64_t ae_strvec_len(ae_strvec v, size_t line, size_t column) {
+    (void)line; (void)column;
+    return v.len;
+}
+static int64_t ae_strvec_index(int64_t index, int64_t len, size_t line, size_t column) {
+    if (index < 0 || index >= len) ae_fail("array index out of bounds", line, column);
+    return index;
+}
+static ae_string *ae_strvec_get(ae_strvec *v, int64_t index, size_t line, size_t column) {
+    ae_strvec_index(index, v->len, line, column);
+    return &v->data[index];
+}
+static void ae_strvec_release(ae_strvec *v) {
+    for (int64_t i = 0; i < v->len; i++) ae_str_release(&v->data[i]);
+    free(v->data);
+    v->data = NULL;
+    v->len = 0;
+    v->cap = 0;
+}
+static void ae_strvec_forfeit(ae_strvec *v) {
+    v->data = NULL;
+    v->len = 0;
+    v->cap = 0;
+}
+static ae_strvec ae_split(ae_string s, ae_string sep, size_t line, size_t column) {
+    if (sep.len == 0) ae_fail("empty separator", line, column);
+    ae_strvec out = ae_strvec_new(line, column);
+    int64_t start = 0;
+    int64_t i = 0;
+    while (i + sep.len <= s.len) {
+        if (memcmp(s.ptr + i, sep.ptr, (size_t)sep.len) == 0) {
+            ae_strvec_push(&out, ae_str_from_len(s.ptr + start, i - start, line, column), line, column);
+            i = i + sep.len;
+            start = i;
+        } else {
+            i = i + 1;
+        }
+    }
+    ae_strvec_push(&out, ae_str_from_len(s.ptr + start, s.len - start, line, column), line, column);
+    return out;
+}
+
+static ae_string ae_join(const ae_strvec *v, ae_string sep, size_t line, size_t column) {
+    if (v->len == 0) {
+        char *empty = malloc(1);
+        if (!empty) ae_fail("out of memory", line, column);
+        empty[0] = 0;
+        ae_string out = { empty, 0 };
+        return out;
+    }
+    if (sep.len != 0 && v->len - 1 > INT64_MAX / sep.len) ae_fail("string too long", line, column);
+    int64_t total = sep.len * (v->len - 1);
+    for (int64_t i = 0; i < v->len; i++) {
+        if (total > INT64_MAX - v->data[i].len) ae_fail("string too long", line, column);
+        total += v->data[i].len;
+    }
+    char *out = malloc((size_t)total + 1);
+    if (!out) ae_fail("out of memory", line, column);
+    int64_t at = 0;
+    for (int64_t i = 0; i < v->len; i++) {
+        if (i > 0) { memcpy(out + at, sep.ptr, (size_t)sep.len); at += sep.len; }
+        memcpy(out + at, v->data[i].ptr, (size_t)v->data[i].len);
+        at += v->data[i].len;
+    }
+    out[at] = 0;
+    ae_string result = { out, total };
+    return result;
+}
+
+// Program arguments bridge: the generated main records argc/argv here.
+static int64_t ae_argc_g = 0;
+static char **ae_argv_g = NULL;
+static ae_strvec ae_args(size_t line, size_t column) {
+    ae_strvec out = ae_strvec_new(line, column);
+    for (int64_t i = 0; i < ae_argc_g; i++) {
+        ae_strvec_push(&out, ae_str_from(ae_argv_g[i], line, column), line, column);
+    }
+    return out;
+}
+
 // Owned growable i64 vector. Moves copy the struct and forfeit the source
 // slot (zeroed without freeing); releases are idempotent, so overlapping
 // release paths can never double-free.

@@ -11,7 +11,7 @@ enum Kind {
 struct Token { kind: Kind, offset: usize, line: usize, column: usize }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, String, Vec, VecRef, Array(usize), Struct(usize) }
+enum Type { Int, Bool, String, Vec, StrVec, VecRef, Array(usize), Struct(usize) }
 impl Type {
     fn name(self) -> String {
         match self {
@@ -19,6 +19,7 @@ impl Type {
             Type::Bool => "bool".to_owned(),
             Type::String => "string".to_owned(),
             Type::Vec => "vec".to_owned(),
+            Type::StrVec => "vec[string]".to_owned(),
             Type::VecRef => "&vec".to_owned(),
             Type::Array(n) => format!("&[i64; {n}]"),
             Type::Struct(id) => format!("struct #{}", id),
@@ -29,6 +30,7 @@ impl Type {
             Type::Bool => "bool ".to_owned(),
             Type::String => "ae_string ".to_owned(),
             Type::Vec => "ae_vec ".to_owned(),
+            Type::StrVec => "ae_strvec ".to_owned(),
             Type::Struct(k) => format!("ae_t{k} "),
             _ => "int64_t ".to_owned(),
         }
@@ -36,12 +38,12 @@ impl Type {
     // Owned types carry heap resources: they move, and every live slot is
     // released on scope exit and control-flow jumps.
     fn owned(self) -> bool {
-        matches!(self, Type::String | Type::Vec | Type::Struct(_))
+        matches!(self, Type::String | Type::Vec | Type::StrVec | Type::Struct(_))
     }
 }
-enum MoveKind { Var(usize), Field }
+enum MoveKind { Var(usize), Field, StrVecElement }
 // Built-in names are reserved so their semantics stay unambiguous.
-const RESERVED: [&str; 9] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice"];
+const RESERVED: [&str; 12] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join"];
 
 fn location(source: &str, offset: usize) -> (usize, usize) {
     let prefix = &source[..offset];
@@ -136,13 +138,13 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 #[derive(Debug)]
 enum Argument { Value(Expr), Borrow(usize, bool) } // bool: borrow of a vec struct (pass &slot) vs array (decays)
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
-enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Break, Continue(Option<usize>), Frees(Vec<(usize, Type)>) }
+enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Break, Continue(Option<usize>), Frees(Vec<(usize, Type)>) }
 #[derive(Debug)]
 struct Function { id: usize, params: Vec<(usize, Type)>, body: Vec<Statement>, is_main: bool, returns: Type }
 fn returns(stmts: &[Statement]) -> bool {
@@ -275,7 +277,7 @@ impl<'a> Parser<'a> {
                                 if self.moved.contains(&id) { return Err(error(&self.file, self.source, name_offset, &format!("cannot use '{arg_name}' because it was moved"))); }
                                 match ty {
                                     Type::Array(n) => { self.pos += 2; fast = Some((Expr::Number(n as i64), Type::Int)); }
-                                    Type::Vec | Type::VecRef => {
+                                    Type::Vec | Type::StrVec | Type::VecRef => {
                                         self.pos += 2;
                                         fast = Some((Expr::Len(Box::new(Expr::Variable(id, ty, vline, vcol)), line, col), Type::Int));
                                     }
@@ -289,11 +291,31 @@ impl<'a> Parser<'a> {
                         None => {
                             let (operand, ty) = self.expression(0, false)?;
                             self.take(Kind::RParen)?;
-                            if !matches!(ty, Type::String | Type::Vec | Type::VecRef) { return Err(self.fail("len expects a string, vec, or array variable")); }
+                            if !matches!(ty, Type::String | Type::Vec | Type::StrVec | Type::VecRef) { return Err(self.fail("len expects a string, vec, or array variable")); }
                             (Expr::Len(Box::new(operand), line, col), Type::Int)
                         }
                     }
-                } else if matches!(name.as_str(), "read_file" | "write_file" | "bytes" | "contains" | "slice") && *self.current() == Kind::LParen {
+                } else if name == "join" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    // join borrows a bare string-vector variable.
+                    let (parts, parts_ty) = self.expression(0, false)?;
+                    let vid = match (&parts, parts_ty) {
+                        (Expr::Variable(id, Type::StrVec, _, _), Type::StrVec) => *id,
+                        _ => return Err(self.fail("join expects a bare vec[string] variable")),
+                    };
+                    if self.moved.contains(&vid) { return Err(self.fail("cannot use a moved vector in join")); }
+                    self.take(Kind::Comma)?;
+                    let (sep, sep_ty) = self.expression(0, false)?;
+                    if sep_ty != Type::String { return Err(self.fail("join expects a string separator")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::Join(vid, Box::new(sep), line, col), Type::String)
+                } else if name == "args" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    self.take(Kind::RParen)?;
+                    (Expr::Args(line, col), Type::StrVec)
+                } else if matches!(name.as_str(), "read_file" | "write_file" | "bytes" | "contains" | "slice" | "split") && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     self.pos += 1;
                     let (first, first_ty) = self.expression(0, false)?;
@@ -313,6 +335,12 @@ impl<'a> Parser<'a> {
                         if end_ty != Type::Int { return Err(self.fail("slice end must be i64")); }
                         self.take(Kind::RParen)?;
                         Expr::Slice(Box::new(first), Box::new(start), Box::new(end), line, col)
+                    } else if name == "split" {
+                        self.take(Kind::Comma)?;
+                        let (second, second_ty) = self.expression(0, false)?;
+                        if second_ty != Type::String { return Err(self.fail("split expects a string separator")); }
+                        self.take(Kind::RParen)?;
+                        Expr::Split(Box::new(first), Box::new(second), line, col)
                     } else if name == "contains" {
                         self.take(Kind::Comma)?;
                         let (second, second_ty) = self.expression(0, false)?;
@@ -326,7 +354,7 @@ impl<'a> Parser<'a> {
                         self.take(Kind::RParen)?;
                         Expr::WriteFile(Box::new(first), Box::new(second), line, col)
                     };
-                    let ty = match name.as_str() { "write_file" => Type::Int, "bytes" => Type::Vec, "contains" => Type::Bool, _ => Type::String };
+                    let ty = match name.as_str() { "write_file" => Type::Int, "bytes" => Type::Vec, "contains" => Type::Bool, "split" => Type::StrVec, _ => Type::String };
                     (builtin, ty)
                 } else if *self.current() == Kind::LParen {
                     let (id, types, ret) = self.functions.get(&name).cloned().ok_or_else(|| error(&self.file, self.source, name_offset, &format!("unknown function '{name}'")))?;
@@ -371,6 +399,12 @@ impl<'a> Parser<'a> {
                         if index_ty != Type::Int { return Err(self.fail("array index must be an integer")); }
                         self.take(Kind::RBracket)?;
                         (Expr::Index(id, len, Box::new(index), line, col), Type::Int)
+                    } else if ty == Type::StrVec && *self.current() == Kind::LBracket {
+                        let (line, col) = self.position(); self.take(Kind::LBracket)?;
+                        let (index, index_ty) = self.expression(0, false)?;
+                        if index_ty != Type::Int { return Err(self.fail("vector index must be an integer")); }
+                        self.take(Kind::RBracket)?;
+                        (Expr::StrVecIndex(id, Box::new(index), line, col), Type::String)
                     } else if (ty == Type::Vec || ty == Type::VecRef) && *self.current() == Kind::LBracket {
                         // Vec variables may also be used bare (moves, len);
                         // indexing is optional. Borrowed vectors are read-only.
@@ -410,11 +444,13 @@ impl<'a> Parser<'a> {
                 (_, ty) if !ty.owned() => None,
                 (Expr::Variable(id, _, _, _), _) => Some(MoveKind::Var(*id)),
                 (Expr::Field(_, _, fty), _) if fty.owned() => Some(MoveKind::Field),
+                (Expr::StrVecIndex(_, _, _, _), _) => Some(MoveKind::StrVecElement),
                 _ => None,
             };
             match move_target {
                 Some(MoveKind::Var(id)) => { if !self.moved.contains(&id) { self.moved.insert(id); } }
                 Some(MoveKind::Field) => return Err(self.fail("cannot move a field out of a struct; use it where a borrow works")),
+                Some(MoveKind::StrVecElement) => return Err(self.fail("cannot move an element out of a vector; use it where a borrow works")),
                 None => {}
             }
         }
@@ -458,6 +494,7 @@ impl<'a> Parser<'a> {
                     match &lhs_expr {
                         Expr::Variable(id, ty, _, _) => { if ty.owned() && !self.moved.contains(id) { self.moved.insert(*id); } }
                         Expr::Field(_, _, fty) if fty.owned() => return Err(self.fail("cannot move a field out of a struct")),
+                        Expr::StrVecIndex(_, _, _, _) => return Err(self.fail("cannot move an element out of a vector")),
                         _ => {}
                     }
                     Type::String
@@ -729,17 +766,26 @@ impl<'a> Parser<'a> {
                         let target = self.identifier()?;
                         let (id, mutable, ty) = *self.names.get(&target).ok_or_else(|| self.fail(&format!("unknown variable '{target}'")))?;
                         if self.moved.contains(&id) { return Err(self.fail(&format!("cannot use '{target}' because it was moved"))); }
-                        if ty != Type::Vec { return Err(self.fail(&format!("{name} expects a vec, found {}", ty.name()))); }
+                        if !matches!(ty, Type::Vec | Type::StrVec) { return Err(self.fail(&format!("{name} expects a vec, found {}", ty.name()))); }
                         if !mutable { return Err(self.fail(&format!("cannot modify immutable variable '{target}'"))); }
                         if name == "push" {
                             self.take(Kind::Comma)?;
-                            let (value, value_ty) = self.expression(0, false)?;
-                            if value_ty != Type::Int { return Err(self.fail("vector elements must be i64")); }
+                            let (value, value_ty) = self.expression(0, ty == Type::StrVec)?;
+                            let ok = match ty { Type::Vec => value_ty == Type::Int, _ => value_ty == Type::String };
+                            if !ok { return Err(self.fail(&format!("vector elements must be {}", if ty == Type::Vec { "i64" } else { "string" }))); }
                             self.take(Kind::RParen)?; self.take(Kind::Semi)?;
-                            result.push(Statement::VecPush(id, value, line, col));
+                            if ty == Type::StrVec {
+                                result.push(Statement::StrVecPush(id, value, line, col));
+                            } else {
+                                result.push(Statement::VecPush(id, value, line, col));
+                            }
                         } else {
                             self.take(Kind::RParen)?; self.take(Kind::Semi)?;
-                            result.push(Statement::VecPop(id, line, col));
+                            if ty == Type::StrVec {
+                                result.push(Statement::StrVecPop(id, line, col));
+                            } else {
+                                result.push(Statement::VecPop(id, line, col));
+                            }
                         }
                         continue;
                     }
@@ -754,6 +800,14 @@ impl<'a> Parser<'a> {
                         let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
                         if value_ty != Type::Int { return Err(self.fail("array elements must be i64")); }
                         result.push(Statement::Store(id, len, index, value, line, col));
+                    } else if ty == Type::StrVec && *self.current() == Kind::LBracket {
+                        let (line, col) = self.position(); self.take(Kind::LBracket)?;
+                        let (index, index_ty) = self.expression(0, false)?;
+                        if index_ty != Type::Int { return Err(self.fail("vector index must be an integer")); }
+                        self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
+                        let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
+                        if value_ty != Type::String { return Err(self.fail("vector elements must be string")); }
+                        result.push(Statement::StrVecStore(id, index, value, line, col));
                     } else if ty == Type::Vec && *self.current() == Kind::LBracket {
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
                         let (index, index_ty) = self.expression(0, false)?;
@@ -989,8 +1043,8 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
                 match ty {
                     Type::Struct(_) => {}
                     _ => {
-                        let probe = match ty { Type::Vec => format!("!v{id}.data"), _ => format!("!v{id}.ptr") };
-                        let message = match ty { Type::Vec => "use of moved vector", _ => "use of moved string" };
+                        let probe = match ty { Type::Vec | Type::StrVec => format!("!v{id}.data"), _ => format!("!v{id}.ptr") };
+                        let message = match ty { Type::Vec | Type::StrVec => "use of moved vector", _ => "use of moved string" };
                         out.push_str(&format!("    if ({probe}) ae_fail(\"{message}\", {line}, {column});\n"));
                     }
                 }
@@ -1045,6 +1099,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let id = *next; *next += 1;
             let call = match t.ty {
                 Type::String => format!("ae_str_len({}, {line}, {col})", t.text),
+                Type::StrVec => format!("ae_strvec_len({}, {line}, {col})", t.text),
                 _ => format!("ae_vec_len({}, {line}, {col})", t.text),
             };
             out.push_str(&format!("    int64_t t{id} = {call};\n"));
@@ -1100,6 +1155,34 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             if h.owned { drop_owned_temp(out, &h); }
             if n.owned { drop_owned_temp(out, &n); }
             Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Split(s, sep, line, col) => {
+            let h = emit_expr(s, out, next, false);
+            let n = emit_expr(sep, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_strvec t{id} = ae_split({}, {}, {line}, {col});\n", h.text, n.text));
+            if h.owned { drop_owned_temp(out, &h); }
+            if n.owned { drop_owned_temp(out, &n); }
+            Emitted { text: format!("t{id}"), ty: Type::StrVec, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Args(line, col) => {
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_strvec t{id} = ae_args({line}, {col});\n"));
+            Emitted { text: format!("t{id}"), ty: Type::StrVec, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::StrVecIndex(id, index, line, col) => {
+            out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+            let i = emit_expr(index, out, next, false);
+            // Elements are borrow-only: the pointer view never owns.
+            Emitted { text: format!("(*ae_strvec_get(&v{id}, {}, {line}, {col}))", i.text), ty: Type::String, owned: false, moves: i.moves, materialized: true }
+        }
+        Expr::Join(vid, sep, line, col) => {
+            out.push_str(&format!("    if (!v{vid}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+            let n = emit_expr(sep, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_join(&v{vid}, {}, {line}, {col});\n", n.text));
+            if n.owned { drop_owned_temp(out, &n); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
         }
         Expr::StructLit(sid, values) => {
             let mut parts = Vec::new();
@@ -1187,6 +1270,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
 fn release_var(out: &mut String, id: usize, ty: Type) {
     match ty {
         Type::Vec => out.push_str(&format!("    ae_vec_release(&v{id});\n")),
+        Type::StrVec => out.push_str(&format!("    ae_strvec_release(&v{id});\n")),
         Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&v{id});\n")),
         _ => out.push_str(&format!("    ae_str_release(&v{id});\n")),
     }
@@ -1196,6 +1280,7 @@ fn drop_owned_temp(out: &mut String, emitted: &Emitted) {
     match emitted.ty {
         Type::Vec => out.push_str(&format!("    ae_vec_release(&{});\n", emitted.text)),
         Type::String => out.push_str(&format!("    ae_str_release(&{});\n", emitted.text)),
+        Type::StrVec => out.push_str(&format!("    ae_strvec_release(&{});\n", emitted.text)),
         Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&{});\n", emitted.text)),
         _ => out.push_str(&format!("    free({});\n", emitted.text)),
     }
@@ -1205,6 +1290,7 @@ fn null_moves(out: &mut String, moves: &[(usize, Type)]) {
         match ty {
             Type::Vec => out.push_str(&format!("    ae_vec_forfeit(&v{id});\n")),
             Type::String => out.push_str(&format!("    ae_str_forfeit(&v{id});\n")),
+            Type::StrVec => out.push_str(&format!("    ae_strvec_forfeit(&v{id});\n")),
             Type::Struct(k) => out.push_str(&format!("    ae_t{k}_forfeit(&v{id});\n")),
             _ => out.push_str(&format!("    v{id} = NULL;\n")),
         }
@@ -1281,6 +1367,26 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                 out.push_str(&format!("    int64_t t{checked} = ae_vec_index({}, v{id}.len, {line}, {col});\n", i.text));
                 let value = emit_expr(value, out, next, false);
                 out.push_str(&format!("    v{id}.data[t{checked}] = {};\n", value.text));
+            }
+            Statement::StrVecPush(id, value, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                let value = emit_expr(value, out, next, true);
+                out.push_str(&format!("    ae_strvec_push(&v{id}, {}, {line}, {col});\n", value.text));
+                null_moves(out, &value.moves);
+            }
+            Statement::StrVecPop(id, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                out.push_str(&format!("    ae_strvec_pop(&v{id}, {line}, {col});\n"));
+            }
+            Statement::StrVecStore(id, index, value, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                let i = emit_expr(index, out, next, false);
+                let checked = *next; *next += 1;
+                out.push_str(&format!("    int64_t t{checked} = ae_strvec_index({}, v{id}.len, {line}, {col});\n", i.text));
+                let value = emit_expr(value, out, next, true);
+                out.push_str(&format!("    ae_str_release(&v{id}.data[t{checked}]);\n"));
+                out.push_str(&format!("    v{id}.data[t{checked}] = {};\n", value.text));
+                null_moves(out, &value.moves);
             }
             Statement::FieldStore(id, fname, fty, value) => {
                 // Overwriting an owned field releases the old value first.
@@ -1434,6 +1540,7 @@ fn c_type_field(ty: Type) -> String {
         Type::Bool => "bool".to_owned(),
         Type::String => "ae_string".to_owned(),
         Type::Vec => "ae_vec".to_owned(),
+        Type::StrVec => "ae_strvec".to_owned(),
         Type::Struct(k) => format!("ae_t{k}"),
         Type::VecRef => "const ae_vec *".to_owned(),
         Type::Array(n) => format!("int64_t [{n}]"),
@@ -1445,6 +1552,7 @@ fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Bool => format!("bool v{id}"),
         Type::String => format!("ae_string v{id}"),
         Type::Vec => format!("ae_vec v{id}"),
+        Type::StrVec => format!("ae_strvec v{id}"),
         Type::Struct(k) => format!("ae_t{k} v{id}"),
         Type::VecRef if declaration => format!("const ae_vec *v{id}"),
         Type::VecRef => "const ae_vec *".to_owned(),
@@ -1493,13 +1601,13 @@ fn emit_program(program: Program) -> Result<String, String> {
     for function in &all {
         if function.is_main { continue; }
         let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, false)).collect::<Vec<_>>().join(", ") };
-        let ret = match function.returns { Type::Bool => "bool", Type::String => "ae_string", Type::Vec => "ae_vec", _ => "int64_t" };
+        let ret = match function.returns { Type::Bool => "bool", Type::String => "ae_string", Type::Vec => "ae_vec", Type::StrVec => "ae_strvec", _ => "int64_t" };
         out.push_str(&format!("\nstatic {ret} ae_fn_{}({params});\n", function.id));
     }
     for function in &all {
         if function.is_main { continue; }
         let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, true)).collect::<Vec<_>>().join(", ") };
-        let ret = match function.returns { Type::Bool => "bool", Type::String => "ae_string", Type::Vec => "ae_vec", _ => "int64_t" };
+        let ret = match function.returns { Type::Bool => "bool", Type::String => "ae_string", Type::Vec => "ae_vec", Type::StrVec => "ae_strvec", _ => "int64_t" };
         out.push_str(&format!("\nstatic {ret} ae_fn_{}({params}) {{\n", function.id));
         emit_statements(&function.body, &mut out, &mut 0);
         // Defensive backstop: even a future control-flow analysis bug must not
@@ -1507,7 +1615,7 @@ fn emit_program(program: Program) -> Result<String, String> {
         out.push_str("    ae_fail(\"function exited without return\", 0, 0);\n}\n");
     }
     let main = all.iter().find(|f| f.is_main).expect("load_program checks exactly one main");
-    out.push_str("\nint main(void) {\n");
+    out.push_str("\nint main(int argc, char **argv) {\n    ae_argc_g = (int64_t)argc;\n    ae_argv_g = argv;\n");
     emit_statements(&main.body, &mut out, &mut 0);
     out.push_str("    if (fflush(stdout) == EOF) return 1;\n    return 0;\n}\n");
     Ok(out)
