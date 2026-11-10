@@ -1,0 +1,45 @@
+字面量拼接融合（litcat）· Windows 归档（2026-11-11）
+
+## 变更内容（单一可测变更）
+发射器把 `"<字面量>" + <字符串表达式>` 与 `<字符串表达式> + "<字面量>"`
+融合到两个新运行时辅助 `ae_str_cat_lit_left/right`：字面量作为程序文本
+直接 memcpy 进结果缓冲，不再先 `ae_str_from` 堆分配、再由
+`ae_str_cat` 释放。字面量是纯表达式，跳过其求值不改语义。
+非字面量拼接路径（`ae_str_cat`）完全不变。
+
+## 动机（见 `2026-11-11-windows-map-hotspots/`）
+map 负载 76% 的时间在字符串构造；其中字面量每迭代「分配 + 释放」一次
+是纯浪费（读码确认 Expr::StrLit 逐次求值发射 ae_str_from）。
+
+## 源码树身份
+工作树 = 提交 b78c282 + 未提交的融合改动（src/runtime.c 两个辅助函数、
+src/frontend.rs 发射分支）；改动与本归档同批提交。
+
+## 平台
+Windows 10.0.26100 / gcc 16.2.0 MinGW ucrt / cargo build --release。
+
+## 命令
+- cargo test --locked（31 + 148 全过）
+- python -I scripts/verify_generated_c.py --leak > verify-c-leak.log
+  （25 用例 PASS，退出块 2 = UCRT 基线，不变）
+- 同次运行对照（same-run-comparison.json）：旧二进制（stash 融合改动重建）
+  与新二进制在同一脚本内对 map 变体（len(counts) 版）与 v2_strings 各
+  交错运行 9 次，输出逐字节一致断言。
+
+## 结果（9 次中位数，同次运行）
+  map 变体（= map.ae 主体）：199.3 → 177.1 ms（快 11.1%）
+  v2_strings（纯字符串桶）：151.0 → 119.6 ms（快 20.8%）
+原始 9 次值在 JSON；每语言首轮偏高为预热，与既有归档一致。
+
+## 语义与资源四问
+- 冷/增量构建：生成 C 略变（辅助函数体），编译器主流程多两个分支；未单独计时。
+- 运行 CPU/内存：每处「字面量 + 字符串」少 1 次分配 + 1 次释放 + 1 次 memcpy；
+  上面为测量收益。
+- 产物/缓存：运行时闭包裁剪自动处理未用辅助（ADR-38）；无新缓存种类。
+- 安全语义：无检查关闭；泄漏基线不变（Windows 2 块）；移动/释放路径不变
+  （辅助函数释放非字面量侧，与 ae_str_cat 释放两侧的 observable 行为一致）。
+
+## 未覆盖
+Linux 正确性已验（`2026-11-11-linux-litcat/`），Linux 侧同次运行对照
+未做（证书窗口不足）；to_string 自身的堆分配（假设 H1）未动；
+map 双哈希（H4）未动。

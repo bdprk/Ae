@@ -134,6 +134,30 @@ static ae_string ae_str_cat(ae_string a, ae_string b, size_t line, size_t column
     ae_string s = { out, a.len + b.len };
     return s;
 }
+// Concatenations with a literal keep the program text out of the allocator:
+// a literal is not an owned value, so it is neither copied into the heap
+// first nor freed afterwards; the result owns one new buffer. strlen on a
+// literal folds to a constant, so the length costs nothing.
+static ae_string ae_str_cat_lit_left(const char *lit, ae_string b, size_t line, size_t column) {
+    const size_t n = strlen(lit);
+    if (b.len > (int64_t)(INT64_MAX - (int64_t)n)) { ae_free(b.ptr); ae_fail("string too long", line, column); }
+    char *out = ae_alloc(n + (size_t)b.len + 1, line, column);
+    memcpy(out, lit, n);
+    memcpy(out + n, b.ptr, (size_t)b.len + 1);
+    ae_free(b.ptr);
+    ae_string s = { out, (int64_t)n + b.len };
+    return s;
+}
+static ae_string ae_str_cat_lit_right(ae_string a, const char *lit, size_t line, size_t column) {
+    const size_t n = strlen(lit);
+    if ((int64_t)n > INT64_MAX - a.len) { ae_free(a.ptr); ae_fail("string too long", line, column); }
+    char *out = ae_alloc((size_t)a.len + n + 1, line, column);
+    memcpy(out, a.ptr, (size_t)a.len);
+    memcpy(out + a.len, lit, n + 1);
+    ae_free(a.ptr);
+    ae_string s = { out, a.len + (int64_t)n };
+    return s;
+}
 static void ae_str_release(ae_string *slot) { ae_free(slot->ptr); slot->ptr = NULL; slot->len = 0; }
 static void ae_str_forfeit(ae_string *slot) { slot->ptr = NULL; slot->len = 0; }
 static bool ae_str_eq(ae_strview a, ae_strview b) {

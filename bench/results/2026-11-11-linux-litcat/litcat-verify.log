@@ -1,0 +1,5 @@
+  leak blocks=0 bytes=0
+PASS bounds.ae
+===
+PASS text_preview.ae
+PASS bounds.ae

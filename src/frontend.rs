@@ -3310,19 +3310,39 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::Binary(a, op, b, line, column, ty) if *op == Kind::Plus && *ty == Type::String => {
+            // A literal operand is program text, not an owned value: emitting
+            // it as ae_str_from would allocate and free a fresh buffer on
+            // every evaluation only so ae_str_cat could free it again.
+            // The fused helpers copy the literal straight into the result and
+            // consume just the non-literal side. A literal is a pure
+            // expression, so skipping its evaluation changes nothing.
+            let owned_part = |part: &Emitted| if part.owned {
+                part.text.clone()
+            } else {
+                format!("ae_str_copy_view(AE_VIEW({}), {line}, {column})", part.text)
+            };
+            let id = *next; *next += 1;
+            if let Expr::StrLit(text, _, _) = a.as_ref() {
+                let r = emit_expr(b, out, next, true);
+                let right = owned_part(&r);
+                out.push_str(&format!("    ae_string t{id} = ae_str_cat_lit_left(\"{text}\", {right}, {line}, {column});\n"));
+                null_moves(out, &r.moves);
+                return Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true };
+            }
+            if let Expr::StrLit(text, _, _) = b.as_ref() {
+                let l = emit_expr(a, out, next, true);
+                let left = owned_part(&l);
+                out.push_str(&format!("    ae_string t{id} = ae_str_cat_lit_right({left}, \"{text}\", {line}, {column});\n"));
+                null_moves(out, &l.moves);
+                return Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true };
+            }
             let l = emit_expr(a, out, next, true);
             let r = emit_expr(b, out, next, true);
             // ae_str_cat frees both operands, so only a value this
             // expression actually owns may be handed over. Views, vec elements
             // and struct fields are borrows: they are copied instead, and the
             // borrow stays valid and untouched.
-            let owned_part = |part: &Emitted| if part.owned {
-                part.text.clone()
-            } else {
-                format!("ae_str_copy_view(AE_VIEW({}), {line}, {column})", part.text)
-            };
             let (left, right) = (owned_part(&l), owned_part(&r));
-            let id = *next; *next += 1;
             out.push_str(&format!("    ae_string t{id} = ae_str_cat({left}, {right}, {line}, {column});\n"));
             let mut moves = l.moves; moves.extend(r.moves);
             null_moves(out, &moves);
