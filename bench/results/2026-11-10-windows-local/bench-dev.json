@@ -1,77 +1,381 @@
 {
-  "note": "Exploratory builds with uncontrolled caches. AE uses GCC -O2 and Rust opt-level=2 in release, otherwise both use no optimization; Go uses its default. Flags do not imply equivalent optimization. Runtime includes startup, runs are grouped, CPU time and peak memory are not measured.",
+  "note": "Exploratory same-host measurements with external toolchain caches uncontrolled. AE uses GCC -O2 and Rust opt-level=2 in release, otherwise both use no optimization; Go uses its default; Python is not compiled and its run time includes interpreter start-up. Flags do not imply equivalent optimization. Runtime includes process start-up; repetitions are interleaved across languages per round, not randomized; temperature and frequency not recorded. Peak memory is the OS high-water mark of the direct child, sampled every millisecond while it runs, so a child that exits between samples reports nothing and a build that spawns grandchildren (gcc, rustc codegen) reports only the driver's peak. AE builds reuse its content-addressed cache unless --cold gives every build a fresh empty cache dir.",
+  "cpu_method": null,
+  "peak_method": "Windows GetProcessMemoryInfo PeakWorkingSetSize",
   "mode": "development",
-  "platform": "Windows-10-10.0.26100-SP0",
+  "platform": "Windows-11-10.0.26300-SP0",
   "machine": "AMD64",
   "processor": "Intel64 Family 6 Model 141 Stepping 1, GenuineIntel",
   "versions": {
     "go": "go version go1.26.0 windows/amd64",
     "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
-    "cc": "gcc (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r3) 16.2.0"
-  },
-  "inputs_sha256": {
-    "sum.ae": "ab508d760ae16ef7eb4a4720a6dee46b99bbced93986b14a0d51092aa1297c3e",
-    "sum.go": "29491cd91778db1f517ad4d7c088a685bbd0e69c01a3d4b1c9a010a93654f78f",
-    "sum.rs": "da91286dc63f2385a3ecbf49b77a2579b40d1a0ffedf6a1b86b90fdc7bd10d16"
+    "cc": "gcc (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r3) 16.2.0",
+    "python": "3.13.14"
   },
   "repetitions": 5,
   "results": {
-    "ae": {
-      "build_ms": [
-        101.2928,
-        73.7323,
-        75.9054,
-        75.2191,
-        83.1098
-      ],
-      "build_median_ms": 75.9054,
-      "run_ms": [
-        15.254,
-        15.2014,
-        15.4842,
-        15.9124,
-        15.2022
-      ],
-      "run_median_ms": 15.254,
-      "executable_bytes": 63397
+    "sum": {
+      "ae": {
+        "build_ms": [
+          81.8339,
+          74.6577,
+          136.2315,
+          74.0946,
+          74.7422
+        ],
+        "build_cpu_ms": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "build_peak_mb": [
+          10.390625,
+          10.40234375,
+          10.3984375,
+          10.40234375,
+          10.40234375
+        ],
+        "build_median_ms": 74.7422,
+        "build_cpu_median_ms": null,
+        "build_peak_median_mb": 10.40234375,
+        "run_ms": [
+          81.8797,
+          48.0452,
+          48.0092,
+          47.7373,
+          65.7954
+        ],
+        "run_cpu_ms": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "run_peak_mb": [
+          9.5234375,
+          9.109375,
+          9.10546875,
+          9.1015625,
+          9.10546875
+        ],
+        "run_median_ms": 48.0452,
+        "run_cpu_median_ms": null,
+        "run_peak_median_mb": 9.10546875,
+        "shipped_bytes": 100509,
+        "output": "499999500000"
+      },
+      "go": {
+        "build_ms": [
+          1227.8278,
+          1275.9792,
+          1647.4952,
+          1344.0462,
+          1395.9821
+        ],
+        "build_cpu_ms": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "build_peak_mb": [
+          31.15625,
+          30.9609375,
+          31.2578125,
+          31.1484375,
+          31.140625
+        ],
+        "build_median_ms": 1344.0462,
+        "build_cpu_median_ms": null,
+        "build_peak_median_mb": 31.1484375,
+        "run_ms": [
+          141.8352,
+          125.083,
+          108.034,
+          112.7727,
+          157.6613
+        ],
+        "run_cpu_ms": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "run_peak_mb": [
+          11.15625,
+          11.03515625,
+          10.890625,
+          10.8359375,
+          10.84375
+        ],
+        "run_median_ms": 125.083,
+        "run_cpu_median_ms": null,
+        "run_peak_median_mb": 10.890625,
+        "shipped_bytes": 2460160,
+        "output": "499999500000"
+      },
+      "rust": {
+        "build_ms": [
+          444.3695,
+          226.6865,
+          210.324,
+          359.1767,
+          300.8131
+        ],
+        "build_cpu_ms": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "build_peak_mb": [
+          13.14453125,
+          13.1015625,
+          13.17578125,
+          13.19921875,
+          13.15234375
+        ],
+        "build_median_ms": 300.8131,
+        "build_cpu_median_ms": null,
+        "build_peak_median_mb": 13.15234375,
+        "run_ms": [
+          163.305,
+          150.3599,
+          135.1683,
+          136.534,
+          169.7264
+        ],
+        "run_cpu_ms": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "run_peak_mb": [
+          9.6015625,
+          9.16796875,
+          9.16796875,
+          9.171875,
+          9.171875
+        ],
+        "run_median_ms": 150.3599,
+        "run_cpu_median_ms": null,
+        "run_peak_median_mb": 9.171875,
+        "shipped_bytes": 135168,
+        "output": "499999500000"
+      }
     },
-    "go": {
-      "build_ms": [
-        880.2618,
-        1017.732,
-        884.8111,
-        855.9851,
-        869.4096
-      ],
-      "build_median_ms": 880.2618,
-      "run_ms": [
-        12.224,
-        12.3042,
-        13.848,
-        13.2533,
-        12.7826
-      ],
-      "run_median_ms": 12.7826,
-      "executable_bytes": 2460160
-    },
-    "rust": {
-      "build_ms": [
-        219.7951,
-        224.1933,
-        225.9598,
-        228.0433,
-        259.8489
-      ],
-      "build_median_ms": 225.9598,
-      "run_ms": [
-        16.1234,
-        16.2602,
-        16.3339,
-        16.3143,
-        15.9713
-      ],
-      "run_median_ms": 16.2602,
-      "executable_bytes": 135168
+    "text": {
+      "ae": {
+        "build_ms": [
+          109.3324,
+          76.9231,
+          76.4112,
+          73.6964,
+          75.414
+        ],
+        "build_cpu_ms": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "build_peak_mb": [
+          10.44140625,
+          10.44921875,
+          10.54296875,
+          10.55078125,
+          10.44921875
+        ],
+        "build_median_ms": 76.4112,
+        "build_cpu_median_ms": null,
+        "build_peak_median_mb": 10.44921875,
+        "run_ms": [
+          115.8642,
+          84.8636,
+          111.7379,
+          109.8878,
+          86.4407
+        ],
+        "run_cpu_ms": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "run_peak_mb": [
+          24.3828125,
+          23.921875,
+          23.92578125,
+          23.90625,
+          23.921875
+        ],
+        "run_median_ms": 109.8878,
+        "run_cpu_median_ms": null,
+        "run_peak_median_mb": 23.921875,
+        "shipped_bytes": 101533,
+        "output": "2588890\n400001\n2188890"
+      },
+      "go": {
+        "build_ms": [
+          1487.1747,
+          1314.9827,
+          1548.842,
+          1256.8218,
+          1248.6839
+        ],
+        "build_cpu_ms": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "build_peak_mb": [
+          30.92578125,
+          31.5703125,
+          31.26171875,
+          31.10546875,
+          30.765625
+        ],
+        "build_median_ms": 1314.9827,
+        "build_cpu_median_ms": null,
+        "build_peak_median_mb": 31.10546875,
+        "run_ms": [
+          153.5943,
+          125.1929,
+          124.2269,
+          170.702,
+          119.0131
+        ],
+        "run_cpu_ms": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "run_peak_mb": [
+          23.91015625,
+          23.47265625,
+          23.35546875,
+          23.50390625,
+          23.6015625
+        ],
+        "run_median_ms": 125.1929,
+        "run_cpu_median_ms": null,
+        "run_peak_median_mb": 23.50390625,
+        "shipped_bytes": 2639872,
+        "output": "2588890\n400001\n2188890"
+      },
+      "rust": {
+        "build_ms": [
+          261.3877,
+          270.1895,
+          350.0611,
+          279.0071,
+          243.3289
+        ],
+        "build_cpu_ms": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "build_peak_mb": [
+          13.15234375,
+          13.203125,
+          13.10546875,
+          13.07421875,
+          13.18359375
+        ],
+        "build_median_ms": 270.1895,
+        "build_cpu_median_ms": null,
+        "build_peak_median_mb": 13.15234375,
+        "run_ms": [
+          89.7615,
+          65.4339,
+          64.003,
+          81.7891,
+          77.6288
+        ],
+        "run_cpu_ms": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "run_peak_mb": [
+          11.19921875,
+          10.76171875,
+          10.76171875,
+          10.765625,
+          10.7578125
+        ],
+        "run_median_ms": 77.6288,
+        "run_cpu_median_ms": null,
+        "run_peak_median_mb": 10.76171875,
+        "shipped_bytes": 169472,
+        "output": "2588890\n400001\n2188890"
+      },
+      "python": {
+        "build_ms": null,
+        "build_cpu_ms": null,
+        "build_peak_mb": null,
+        "build_median_ms": null,
+        "build_cpu_median_ms": null,
+        "build_peak_median_mb": null,
+        "run_ms": [
+          263.2057,
+          264.7106,
+          254.0398,
+          338.2506,
+          405.9338
+        ],
+        "run_cpu_ms": [
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "run_peak_mb": [
+          48.8515625,
+          51.40234375,
+          50.8515625,
+          48.70703125,
+          51.65234375
+        ],
+        "run_median_ms": 264.7106,
+        "run_cpu_median_ms": null,
+        "run_peak_median_mb": 50.8515625,
+        "shipped_bytes": 629,
+        "output": "2588890\n400001\n2188890"
+      }
+    }
+  },
+  "inputs": {
+    "text_input_bytes": 2588890,
+    "text_input_lines": 50000,
+    "sha256": {
+      "sum.ae": "ab508d760ae16ef7eb4a4720a6dee46b99bbced93986b14a0d51092aa1297c3e",
+      "sum.go": "29491cd91778db1f517ad4d7c088a685bbd0e69c01a3d4b1c9a010a93654f78f",
+      "sum.rs": "da91286dc63f2385a3ecbf49b77a2579b40d1a0ffedf6a1b86b90fdc7bd10d16",
+      "text.ae": "7b4a342c988dbe7e317a0edcf95eb76df4846aa5f1f1e6f02209dd9447817027",
+      "text.go": "5f5471750669487cfcefffdd3c9a5194ed12112ca293d44ef3924086aa4c2c23",
+      "text.py": "8d4e781c54500ea83960314be7cd32522552cfef1675c188c69004694aea3a33",
+      "text.rs": "04139c335c193f419763e5ebb6103bca5930f0e749434d32b913111d1fb58f9e"
     }
   }
 }

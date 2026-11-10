@@ -1,0 +1,18 @@
+// Text statistics: read a file, split it into tokens on spaces, then report the
+// byte count, the token count and the total number of bytes inside tokens.
+// Summing token lengths keeps every token touched, so the loop cannot be
+// optimized into "read the file and print its size".
+
+fn main() {
+    let parts = args();
+    assert(len(parts) > 1);
+    let text = read_file(parts[1]);
+    let tokens = split(text, " ");
+    var inside = 0;
+    for token in tokens {
+        inside = inside + len(token);
+    }
+    print(len(text));
+    print(len(tokens));
+    print(inside);
+}

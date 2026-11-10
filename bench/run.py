@@ -1,11 +1,25 @@
-"""Exploratory same-host benchmark; requires Python 3, cargo, gcc, go and rustc.
+"""Exploratory same-host benchmark; requires Python 3, cargo, gcc, rustc and go.
 
 Wall-clock time per call is recorded everywhere; on platforms that expose
 getrusage (POSIX) a summed direct-child CPU time is recorded as well. Peak
-resident memory is not measured. Repetitions are interleaved across languages
-within each round (not randomized). Cold/hot refers only to the AE
-content-addressed cache: with --cold every AE build gets a fresh empty
-cache directory; the external toolchains' own caches are uncontrolled.
+resident memory is sampled from the OS high-water mark of the direct child
+(Windows `PeakWorkingSetSize`, Linux `/proc/<pid>/status` `VmHWM`), which is the
+true peak as long as at least one sample lands before exit; a child that exits
+between two 1 ms samples reports no value. For a build, only the direct child is
+sampled, so a compiler driver that spawns cc1/as/ld (gcc) or rustc's codegen
+children are not covered. Repetitions are interleaved across languages within
+each round (not randomized). Cold/hot refers only to the AE
+content-addressed cache: with --cold every AE build gets a fresh empty cache
+directory; the external toolchains' own caches are uncontrolled.
+
+Two workloads are available:
+
+* `sum` — a million checked additions; the languages are AE, Go and Rust.
+* `text` — read a generated 3 MiB text file, split it on spaces, and report the
+  byte count, token count and summed token length. Python is included here
+  because text processing is the case the design plan compares against Python,
+  with the caveat that its runtime includes interpreter start-up and that its
+  "build" is nothing at all.
 """
 import argparse
 import hashlib
@@ -15,6 +29,7 @@ import platform
 import shutil
 import statistics
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -26,8 +41,10 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parent.parent
 BENCH = ROOT / "bench"
-EXPECTED = b"499999500000"
 REPEATS = 5
+SUM_EXPECTED = b"499999500000"
+TEXT_LINES = 50000
+EXTENSION = {"ae": "ae", "go": "go", "rust": "rs", "python": "py"}
 
 
 def call(args, **kwargs):
@@ -51,14 +68,56 @@ def child_cpu_ms():
     return (r.ru_utime + r.ru_stime) * 1000.0
 
 
+def peak_bytes(pid):
+    """Peak resident set of a live process, in bytes, or None if unavailable."""
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        class Counters(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        process = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+        if not process:
+            return None
+        counters = Counters()
+        counters.cb = ctypes.sizeof(Counters)
+        ok = ctypes.windll.psapi.GetProcessMemoryInfo(process, ctypes.byref(counters), counters.cb)
+        ctypes.windll.kernel32.CloseHandle(process)
+        return counters.PeakWorkingSetSize if ok else None
+    try:
+        with open(f"/proc/{pid}/status", "rb") as status:
+            for line in status:
+                if line.startswith(b"VmHWM:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        return None
+    return None
+
+
 def timed(args, env=None):
     cpu_before = child_cpu_ms()
     start = time.perf_counter_ns()
-    call(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    process = subprocess.Popen([str(x) for x in args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+    peak = None
+    while process.poll() is None:
+        value = peak_bytes(process.pid)
+        if value is not None and (peak is None or value > peak):
+            peak = value
+        time.sleep(0.001)
+    out, err = process.communicate()
     wall_ms = (time.perf_counter_ns() - start) / 1_000_000
+    if process.returncode != 0:
+        raise subprocess.CalledProcessError(process.returncode, args, out, err)
     cpu_after = child_cpu_ms()
     cpu_ms = None if cpu_before is None or cpu_after is None else max(0.0, cpu_after - cpu_before)
-    return {"wall_ms": wall_ms, "cpu_ms": cpu_ms}
+    return {"wall_ms": wall_ms, "cpu_ms": cpu_ms, "peak_mb": None if peak is None else peak / (1024 * 1024)}
 
 
 def _median(values):
@@ -66,73 +125,130 @@ def _median(values):
     return statistics.median(values) if values else None
 
 
+def write_text_input(path):
+    """Deterministic ASCII input: a fixed word cycle plus the line number."""
+    words = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"]
+    with open(path, "w", encoding="ascii", newline="\n") as handle:
+        for i in range(TEXT_LINES):
+            row = " ".join(words[(i + j) % len(words)] for j in range(8))
+            handle.write(f"{row} {i}\n")
+
+
+def build_commands(workload, lang, exe, compiler, options):
+    source = BENCH / f"{workload}.{EXTENSION[lang]}"
+    if lang == "ae":
+        return [compiler, "build", source, "-o", exe] + (["--release"] if options.release else [])
+    if lang == "go":
+        return ["go", "build", "-o", exe, source]
+    if lang == "rust":
+        return ["rustc", "-C", "opt-level=2" if options.release else "opt-level=0", source, "-o", exe]
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--release", action="store_true", help="use AE -O2 and Rust opt-level=2")
     parser.add_argument("--cold", action="store_true", help="give every build a fresh empty AE cache (measures real compiles)")
+    parser.add_argument("--workload", choices=("sum", "text", "all"), default="all")
     options = parser.parse_args()
     call(["cargo", "build", "--release", "--locked"], cwd=ROOT)
     suffix = ".exe" if os.name == "nt" else ""
     compiler = ROOT / "target" / "release" / ("ae" + suffix)
     cc = os.environ.get("AE_CC", "gcc")
     cpu_method = None if _resource is None else "resource.getrusage(RUSAGE_CHILDREN) deltas between calls, direct children only"
+    workloads = ("sum", "text") if options.workload == "all" else (options.workload,)
     report = {
         "note": ("Exploratory same-host measurements with external toolchain caches uncontrolled. AE uses GCC -O2 "
-                 "and Rust opt-level=2 in release, otherwise both use no optimization; Go uses its default. Flags do "
-                 "not imply equivalent optimization. Runtime includes startup; repetitions are interleaved across "
-                 "languages per round, not randomized; temperature and frequency not recorded. Peak memory is not "
-                 "measured. AE builds reuse its content-addressed cache unless --cold gives every build a fresh "
-                 "empty cache dir."),
+                 "and Rust opt-level=2 in release, otherwise both use no optimization; Go uses its default; Python is "
+                 "not compiled and its run time includes interpreter start-up. Flags do not imply equivalent "
+                 "optimization. Runtime includes process start-up; repetitions are interleaved across languages per "
+                 "round, not randomized; temperature and frequency not recorded. Peak memory is the OS high-water mark "
+                 "of the direct child, sampled every millisecond while it runs, so a child that exits between samples "
+                 "reports nothing and a build that spawns grandchildren (gcc, rustc codegen) reports only the driver's "
+                 "peak. AE builds reuse its content-addressed cache unless --cold gives every build a fresh empty "
+                 "cache dir."),
         "cpu_method": cpu_method,
+        "peak_method": ("Windows GetProcessMemoryInfo PeakWorkingSetSize" if os.name == "nt"
+                        else "Linux /proc/<pid>/status VmHWM"),
         "mode": ("cold-" if options.cold else "") + ("release" if options.release else "development"),
         "platform": platform.platform(), "machine": platform.machine(), "processor": platform.processor(),
-        "versions": {"go": version("go", "version"), "rustc": version("rustc", "--version"), "cc": version(cc, "--version")},
-        "inputs_sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in (BENCH / "sum.ae", BENCH / "sum.go", BENCH / "sum.rs")},
+        "versions": {"go": version("go", "version"), "rustc": version("rustc", "--version"),
+                     "cc": version(cc, "--version"), "python": platform.python_version()},
         "repetitions": REPEATS, "results": {},
     }
     with tempfile.TemporaryDirectory(prefix="ae-bench-") as tmp:
         tmp = Path(tmp)
-        langs = ("ae", "go", "rust")
-        exe = {lang: tmp / (lang + suffix) for lang in langs}
-        build_args = {}
-        for lang in langs:
-            if lang == "ae":
-                build_args[lang] = [compiler, "build", BENCH / "sum.ae", "-o", exe[lang]] + (["--release"] if options.release else [])
-            elif lang == "go":
-                build_args[lang] = ["go", "build", "-o", exe[lang], BENCH / "sum.go"]
-            else:
-                build_args[lang] = ["rustc", "-C", "opt-level=2" if options.release else "opt-level=0", BENCH / "sum.rs", "-o", exe[lang]]
-        builds = {lang: [] for lang in langs}
-        runs = {lang: [] for lang in langs}
-        for _ in range(REPEATS):
-            for lang in langs:
-                env = None
-                if options.cold:
-                    cold = tmp / f"cold-{lang}"
-                    shutil.rmtree(cold, ignore_errors=True)
-                    env = {**os.environ, "AE_CACHE": str(cold)}
-                if exe[lang].exists():
-                    exe[lang].unlink()
-                builds[lang].append(timed(build_args[lang], env=env))
-            for lang in langs:
-                runs[lang].append(timed([exe[lang]]))
-        for lang in langs:
-            checked = call([exe[lang]], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if checked.stdout.strip() != EXPECTED:
-                raise RuntimeError(f"{lang} incorrect output: {checked.stdout!r}")
-            b, r = builds[lang], runs[lang]
-            report["results"][lang] = {
-                "build_ms": [x["wall_ms"] for x in b],
-                "build_cpu_ms": [x["cpu_ms"] for x in b],
-                "build_median_ms": statistics.median(x["wall_ms"] for x in b),
-                "build_cpu_median_ms": _median(x["cpu_ms"] for x in b),
-                "run_ms": [x["wall_ms"] for x in r],
-                "run_cpu_ms": [x["cpu_ms"] for x in r],
-                "run_median_ms": statistics.median(x["wall_ms"] for x in r),
-                "run_cpu_median_ms": _median(x["cpu_ms"] for x in r),
-                "executable_bytes": exe[lang].stat().st_size,
-            }
+        text_input = tmp / "input.txt"
+        write_text_input(text_input)
+        report["inputs"] = {"text_input_bytes": text_input.stat().st_size, "text_input_lines": TEXT_LINES,
+                            "sha256": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                                       for p in sorted(BENCH.glob("sum.*")) + sorted(BENCH.glob("text.*"))}}
+        for workload in workloads:
+            report["results"][workload] = run_workload(workload, tmp, compiler, options)
     print(json.dumps(report, indent=2))
+
+
+def run_workload(workload, tmp, compiler, options):
+    langs = ("ae", "go", "rust") if workload == "sum" else ("ae", "go", "rust", "python")
+    expected = SUM_EXPECTED if workload == "sum" else None
+    suffix = ".exe" if os.name == "nt" else ""
+    exe = {lang: tmp / (workload + "-" + lang + suffix) for lang in langs}
+    build_args = {lang: build_commands(workload, lang, exe[lang], compiler, options) for lang in langs}
+    run_args = {}
+    for lang in langs:
+        if lang == "python":
+            run_args[lang] = [sys.executable, BENCH / f"{workload}.py"]
+        else:
+            run_args[lang] = [exe[lang]]
+        if workload == "text":
+            run_args[lang] = run_args[lang] + [tmp / "input.txt"]
+    builds = {lang: [] for lang in langs}
+    runs = {lang: [] for lang in langs}
+    for _ in range(REPEATS):
+        for lang in langs:
+            if build_args[lang] is None:
+                continue
+            env = None
+            if options.cold and lang == "ae":
+                cold = tmp / f"cold-{workload}-{lang}"
+                shutil.rmtree(cold, ignore_errors=True)
+                env = {**os.environ, "AE_CACHE": str(cold)}
+            if exe[lang].exists():
+                exe[lang].unlink()
+            builds[lang].append(timed(build_args[lang], env=env))
+        for lang in langs:
+            runs[lang].append(timed(run_args[lang]))
+    outputs = {}
+    for lang in langs:
+        # Normalize line endings: AE's stdout is opened in text mode on
+        # Windows, the others write raw bytes.
+        outputs[lang] = call(run_args[lang], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.replace(b"\r\n", b"\n").strip()
+        if expected is None:
+            if outputs[lang] != outputs["ae"]:
+                raise RuntimeError(f"{lang} disagreed with ae: {outputs[lang]!r} vs {outputs['ae']!r}")
+        elif outputs[lang] != expected:
+            raise RuntimeError(f"{lang} incorrect output: {outputs[lang]!r}")
+    results = {}
+    for lang in langs:
+        b, r = builds[lang], runs[lang]
+        shipped = exe[lang] if lang != "python" else BENCH / f"{workload}.py"
+        results[lang] = {
+            "build_ms": [x["wall_ms"] for x in b] or None,
+            "build_cpu_ms": [x["cpu_ms"] for x in b] or None,
+            "build_peak_mb": [x["peak_mb"] for x in b] or None,
+            "build_median_ms": _median(x["wall_ms"] for x in b),
+            "build_cpu_median_ms": _median(x["cpu_ms"] for x in b),
+            "build_peak_median_mb": _median(x["peak_mb"] for x in b),
+            "run_ms": [x["wall_ms"] for x in r],
+            "run_cpu_ms": [x["cpu_ms"] for x in r],
+            "run_peak_mb": [x["peak_mb"] for x in r],
+            "run_median_ms": statistics.median(x["wall_ms"] for x in r),
+            "run_cpu_median_ms": _median(x["cpu_ms"] for x in r),
+            "run_peak_median_mb": _median(x["peak_mb"] for x in r),
+            "shipped_bytes": shipped.stat().st_size,
+            "output": outputs[lang].decode(errors="replace"),
+        }
+    return results
 
 
 if __name__ == "__main__":
