@@ -681,10 +681,46 @@ impl<'a> Parser<'a> {
                 Kind::For => {
                     self.pos += 1;
                     let var_name = self.identifier()?;
+                    if RESERVED.contains(&var_name.as_str()) { return Err(self.fail(&format!("'{var_name}' is a built-in name and cannot be a loop variable"))); }
                     if self.names.contains_key(&var_name) { return Err(self.fail(&format!("duplicate variable '{var_name}'"))); }
                     self.take(Kind::In)?;
-                    let (start, start_ty) = self.expression(0, false)?;
-                    if start_ty != Type::Int { return Err(self.fail("range bounds must be i64")); }
+                    let (first, first_ty) = self.expression(0, false)?;
+                    if *self.current() != Kind::DotDot {
+                        // `for x in vec-variable` iterates owned elements by
+                        // value: desugars to a hidden range loop plus an
+                        // immutable element declaration per iteration.
+                        let v_id = match (&first, first_ty) {
+                            (Expr::Variable(id, Type::Vec, _, _), Type::Vec) => *id,
+                            _ => return Err(self.fail("for-in needs a bare vec variable or an int range (start..end)")),
+                        };
+                        if self.loop_depth >= 64 { return Err(self.fail("loop nesting limit exceeded (64)")); }
+                        let (line, col) = self.position();
+                        let end_var = self.next_var; self.next_var += 1;
+                        let counter = self.next_var; self.next_var += 1;
+                        let var = self.next_var; self.next_var += 1;
+                        let label = self.next_label; self.next_label += 1;
+                        self.loop_depth += 1;
+                        self.scopes.push(vec![(var, Type::Int), (counter, Type::Int), (end_var, Type::Int)]);
+                        self.loop_scopes.push(self.scopes.len());
+                        self.loop_labels.push(Some(label));
+                        self.names.insert(var_name.clone(), (var, false, Type::Int));
+                        let body = self.block();
+                        self.loop_labels.pop();
+                        self.loop_scopes.pop();
+                        self.scopes.pop().unwrap();
+                        self.loop_depth -= 1;
+                        self.names.remove(&var_name);
+                        let mut body = body?;
+                        if self.moved.contains(&v_id) { return Err(self.fail(&format!("cannot move the vector being iterated (a move of it happens in this loop)"))); }
+                        // Per-iteration element binding, then the user's body.
+                        let element = Expr::VecIndex(v_id, Box::new(Expr::Variable(counter, Type::Int, line, col)), line, col, false);
+                        body.insert(0, Statement::Declare(var, element));
+                        result.push(Statement::Declare(end_var, Expr::Len(Box::new(first), line, col)));
+                        result.push(Statement::Declare(counter, Expr::Number(0)));
+                        result.push(Statement::For(counter, end_var, body, label, line, col));
+                        continue;
+                    }
+                    if first_ty != Type::Int { return Err(self.fail("range bounds must be i64")); }
                     self.take(Kind::DotDot)?;
                     let (end, end_ty) = self.expression(0, false)?;
                     if end_ty != Type::Int { return Err(self.fail("range bounds must be i64")); }
@@ -708,7 +744,7 @@ impl<'a> Parser<'a> {
                     let body = body?;
                     debug_assert!(for_scope.iter().all(|(_, ty)| *ty != Type::String));
                     // Bounds evaluate once, left to right, before any iteration.
-                    result.push(Statement::Declare(var, start));
+                    result.push(Statement::Declare(var, first));
                     result.push(Statement::Declare(end_var, end));
                     result.push(Statement::For(var, end_var, body, label, line, col));
                 }
