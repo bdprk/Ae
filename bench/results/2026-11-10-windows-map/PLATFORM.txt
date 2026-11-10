@@ -1,58 +1,97 @@
 map 容器负载 · Windows 归档（2026-11-10）
 
 ## 源码树身份
-提交 45b7026（"Share lexed tokens per source file instead of cloning per
-generic declaration"）+ 与本归档同批提交的 bench/map.{ae,go,py,rs}、
-bench/run.py 与 bench/README.md 改动（工作树内完成，随后一并提交）。
+提交 45b7026（ADR-41「Share lexed tokens per source file…」）+ 与本归档同批
+提交的 bench/map.{ae,go,py,rs}、bench/run.py、bench/README.md 改动（工作树内
+完成，随后一并提交，因此 git 历史即精确源码）。
 
 ## 平台
 - OS: Windows 10.0.26100（run.py 记录字符串 "Windows-10-10.0.26100-SP0"），AMD64
-- CPU: Intel64 Family 6 Model 141（run.py 记录字符串）
+- CPU: Intel64 Family 6 Model 141 Stepping 1, GenuineIntel
 - go 1.26.0 windows/amd64；rustc 1.99.1 (58cf8f9c3 2026-10-13)；
   gcc 16.2.0 (MinGW-W64 x86_64-ucrt-posix-seh, Brecht Sanders, r3)；Python 3.10.11
+- ASan：MinGW 无运行时，本平台只做 --leak 分配计数，净化器留待 Linux 侧
 
 ## 命令（工作目录 = 仓库根）
-- python bench/run.py --workload map            > run-map-dev.json      2> run-map-dev.stderr
-- python bench/run.py --release --workload map  > run-map-release.json  2> run-map-release.stderr
+  cargo build --release --locked
+  cargo test --locked
+  python scripts/verify_generated_c.py --leak
+  python -X utf8 bench/run.py --workload map                   > run-map-dev.json
+  python -X utf8 bench/run.py --workload map --release         > run-map-release.json
+  python -X utf8 bench/run.py --workload map --cold            > run-map-cold-dev.json
+  python -X utf8 bench/run.py --workload map --cold --release  > run-map-cold-release.json
+  ae check bench/map.ae
+  ae emit-c bench/map.ae > generated-map.c，再过
+  gcc -std=c11 -pedantic-errors -Werror=return-type -fsyntax-only
+  ae check 全部 examples/*.ae
 每模式 5 次重复、轮内跨语言交错；脚本先 cargo build --release 编译 AE
-编译器本身（stderr 里两条 "Finished" 即此步骤，非被测程序构建）。
+编译器本身（各 .stderr 里一条 "Finished" 即此步骤，非被测程序构建）。
 
 ## 负载定义
-固定种子 LCG（x = x*48271 mod 2147483647，种子 1234567）抽 1,000,000 次，
-写入 10000 个 "k<n>" 字符串键的 map[string,i64] 直方图；再以计数 * (i+1)
-加权校验和读完全部 10000 桶。校验和无法从抽取数/键数推出，每次抽取与查找
-不可省略。四份孪生程序（map.ae / map.go / map.py / map.rs）语义逐点对应，
-缺键处理一致（首见计 1 / 校验和贡献 0）。
+固定种子 LCG（x = x*48271 mod 2147483647，种子 1234567）抽取 1,000,000 次，
+写入 10000 个 "k<n>" 字符串键的 map[string, i64] 直方图；再以计数 * (i+1)
+加权校验和读完全部 10000 桶，并用 len 报告触达键数。校验和无法从抽取数/键数
+推出，每次抽取与每次查找不可省略。四份孪生程序（map.ae / map.go / map.py /
+map.rs）语义逐点对应，缺键处理一致（首见计 1 / 校验和贡献 0），AE 的
+Err 分支不打印任何内容以保证四路输出可比。
 
-## 结果摘要（中位数，原始值在两个 JSON）
-                    dev: build / run / 峰值MB / 产物B        release: build / run / 峰值MB / 产物B
-  AE  61.1 ms / 353.9 ms / 4.69 / 72,925      64.5 ms / 258.2 ms / 4.68 / 71,945
-  Go     614.6 ms / 197.5 ms / 11.36 / 2,463,232  595.8 ms / 184.9 ms / 11.14 / 2,463,232
-  Rust   238.4 ms / 346.2 ms / 4.86 / 174,592     392.5 ms / 184.9 ms / 4.84 / 136,704
-  Python    —    / 492.0 ms / 10.70 / 681(源码)      —    / 488.4 ms / 10.68 / 681(源码)
-四语言输出逐字节一致（行尾归一化后比较，脚本内断言）：
+## 结果摘要（中位数；原始每次值在四个 JSON）
+                build_ms  run_ms  run_peak_MB  shipped_bytes
+dev 热缓存     AE 61.1 / 353.9 / 4.69 / 72,925
+               Go    614.6 / 197.5 / 11.59 / 2,463,232
+               Rust  238.4 / 346.2 / 4.86 / 174,592
+               Python   —  / 492.0 / 10.70 / 681（源码）
+dev --cold     AE 237.5 / 317.9 / 4.67 / 72,925
+               Go    530.9 / 174.5 / 11.34 / 2,463,232
+               Rust  211.4 / 333.4 / 4.88 / 174,592
+               Python   —  / 442.3 / 10.68 / 681
+release 热缓存 AE 64.5 / 258.2 / 4.68 / 71,945
+               Go    595.8 / 184.9 / 11.32 / 2,463,232
+               Rust  392.5 / 184.9 / 4.84 / 136,704
+               Python   —  / 488.4 / 10.68 / 681
+release --cold AE 375.6 / 249.6 / 4.67 / 71,945
+               Go    528.5 / 173.9 / 11.33 / 2,463,232
+               Rust  333.5 / 169.5 / 4.84 / 136,704
+               Python   —  / 455.3 / 10.66 / 681
+四语言输出逐字节一致（脚本内以 CRLF→LF 归一化后断言相等）：
   draws=1000000 / keys=10000 / distinct=10000 / total=1000000 / checksum=5001661237
 
+## 正确性证据
+- cargo-test.log：15 单元 + 139 集成测试全通过，0 失败
+- verify-c-leak.log：25 个生成 C 用例 PASS，退出分配块数均 = UCRT 基线 2
+- examples-check.log：32/32 个 examples/*.ae 通过 check
+- check-map.log：ae check bench/map.ae 通过
+- generated-map.c：29,958 字节，严格 C11 语法检查通过（generated-c-syntax.log
+  为空）；第 182 行为 /* windows.h omitted */，纯计算程序按 ADR-39 不引入
+  <windows.h>
+
 ## 观察（只报方向与量级，不作排名）
-1. 运行时间：release 模式 AE 258 ms 慢于 Go / Rust 的 185 ms（约 1.4×）；
-   dev 模式 AE 354 ms 与 Rust dev 346 ms 相当、慢于 Go 198 ms。方向：
-   AE 的 map 路径（哈希 + 每键字符串拷贝）尚有优化空间，未定位热点。
-2. 运行峰值内存：AE 4.7 MB ≈ Rust 4.8 MB < Python 10.7 MB < Go 11.4 MB。
-   这是 map 路径内存表现良好的第一个数据点——与 text 负载（AE 峰值
-   明显高于 Rust，split 每令牌分配）结论不同；两条负载各说各的，不互相推翻。
-3. 热缓存构建 61–65 ms：这是内容寻址缓存命中路径的时间，按 §20.4 第 5 条
-   不得当作编译速度证据；本轮未跑 --cold。
-4. 产物体积：Go 2.46 MB 远大于 Rust 137 KB / AE 72 KB（release）。
+1. 运行时间：release 下 AE 258 ms 慢于 Go/Rust 的 185 ms（约 1.4×）；dev
+   下 AE 354 ms 与 Rust dev 346 ms 相当、慢于 Go 198 ms。AE 的 map
+   路径（哈希 + 每键字符串拷贝）尚未定位热点。
+2. 运行峰值内存：AE 4.7 MB ≈ Rust 4.8 MB < Python 10.7 MB < Go 11.4 MB，
+   两种优化模式一致。这是 map 路径内存表现的第一个数据点，与 text 负载的
+   结论（AE 因 split 每令牌分配而明显高于 Rust）不矛盾——两条负载各说
+   各的，不互相推广。
+3. 构建：热缓存 61–65 ms 是内容寻址缓存命中路径，按方案 §20.4 第 5 条不作
+   编译速度证据；--cold 下 AE dev 237.5 ms / release 375.6 ms 为真实
+   单程序编译（含 C 工具链），四场景冷/热对照见四个 JSON 的 build_ms 原始值。
+4. 产物体积：Go 2.46 MB ≫ Rust 137 KB / AE 72 KB（release）。
 
 ## 已知差异 / 归一化规则
 - CPU 时间在 Windows 上为 null（无 getrusage；Linux 归档才会有）。
-- 构建峰值只含编译器驱动直接子进程，gcc 的 cc1/as/ld 与 rustc codegen
-  孙代进程不计入；该字段语义是「驱动峰值」而非整棵构建树峰值。
-- 输出比较先做 CRLF→LF 归一化（AE 在 Windows 上以文本模式写 stdout）。
-- AE 构建复用内容寻址缓存（本轮未加 --cold）；外部工具链缓存不受控；
-  温度、电源、频率未记录。
+- 构建峰值只采样直接子进程，gcc 的 cc1/as/ld 与 rustc codegen 孙代不计入。
+- 输出比较先做 CRLF→LF 归一化（AE 在 Windows 以文本模式写 stdout）。
+- AE 构建复用内容寻址缓存（--cold 轮为每构建全新空缓存目录）；外部工具
+  链缓存不受控；温度、电源、频率未记录。
 
 ## 未覆盖
-Linux 侧孪生归档（需 Linux 机器跑同一脚本）、--cold 冷构建计时、
-构建整树峰值（job object）、热点定位与优化、与 Gojo/Python 的可发布对比。
-本归档是探索性测量，不构成任何性能结论的发布证据。
+Linux 侧孪生归档（需 Linux 机器跑同一脚本）、整棵构建树峰值（job object）、
+热点定位与优化、与 Gojo/Python 的可发布对照。本归档是探索性测量，不构成
+任何性能结论的发布证据；按方案 §20.4 第 7 条，本轮状态为「单平台验证」。
+
+## 归档诚信
+本文件由本会话从上述原始 JSON/日志重新生成。归档目录内曾出现一份来源不明
+的 PLATFORM.txt 草稿（并发写作者所留；其 dev/release 数字经核验与本归档
+原始 JSON 一致，但缺 --cold 数据与全套日志），已按原始数据全额重写，不引用
+草稿中任何未核验内容。
