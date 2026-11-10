@@ -50,7 +50,7 @@ impl Type {
 }
 enum MoveKind { Var(usize), Field, StrVecElement }
 // Built-in names are reserved so their semantics stay unambiguous.
-const RESERVED: [&str; 22] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir"];
+const RESERVED: [&str; 31] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir"];
 // Provisional prelude: fallible operations report failure as values instead of
 // terminating the process (§4.5). These enums are registered before any user
 // type, so a program can name them without importing anything. They are
@@ -62,6 +62,11 @@ fn prelude_enums() -> (Vec<EnumDef>, HashMap<String, usize>) {
         ("WriteResult", vec![("Ok", vec![Type::Int]), ("Err", vec![Type::String])]),
         ("IntResult", vec![("Ok", vec![Type::Int]), ("Err", vec![Type::String])]),
         ("DirResult", vec![("Ok", vec![Type::StrVec]), ("Err", vec![Type::String])]),
+        // Metadata: byte size, modification time in seconds since the Unix
+        // epoch, and whether the target is a directory.
+        ("FileResult", vec![("Ok", vec![Type::Int, Type::Int, Type::Bool]), ("Err", vec![Type::String])]),
+        // Operations with no value to report: success carries nothing.
+        ("StatusResult", vec![("Ok", vec![]), ("Err", vec![Type::String])]),
     ];
     let mut enums = Vec::new();
     let mut names = HashMap::new();
@@ -166,7 +171,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 #[derive(Debug)]
 enum Argument { Value(Expr), Borrow(usize, bool), View(Expr) } // Borrow bool: pass &slot vs array (decays); View: read-only string borrow
 #[derive(Debug)]
@@ -470,6 +475,69 @@ impl<'a> Parser<'a> {
                     if !matches!(path_ty, Type::String | Type::StrView) { return Err(self.fail("path_exists expects a string path")); }
                     self.take(Kind::RParen)?;
                     (Expr::PathExists(Box::new(path), line, col), Type::Bool)
+                } else if name == "path_join" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    let (dir, dir_ty) = self.expression(0, false)?;
+                    if !matches!(dir_ty, Type::String | Type::StrView) { return Err(self.fail("path_join expects a string directory")); }
+                    self.take(Kind::Comma)?;
+                    let (name, name_ty) = self.expression(0, false)?;
+                    if !matches!(name_ty, Type::String | Type::StrView) { return Err(self.fail("path_join expects a string name")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::PathJoin(Box::new(dir), Box::new(name), line, col), Type::String)
+                } else if name == "path_name" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    let (path, path_ty) = self.expression(0, false)?;
+                    if !matches!(path_ty, Type::String | Type::StrView) { return Err(self.fail("path_name expects a string path")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::PathName(Box::new(path), line, col), Type::String)
+                } else if name == "path_parent" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    let (path, path_ty) = self.expression(0, false)?;
+                    if !matches!(path_ty, Type::String | Type::StrView) { return Err(self.fail("path_parent expects a string path")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::PathParent(Box::new(path), line, col), Type::String)
+                } else if name == "try_file_info" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    let ty = self.prelude_type("FileResult");
+                    self.take(Kind::LParen)?;
+                    let (path, path_ty) = self.expression(0, false)?;
+                    if !matches!(path_ty, Type::String | Type::StrView) { return Err(self.fail("try_file_info expects a string path")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::TryFileInfo(Box::new(path), ty, line, col), ty)
+                } else if matches!(name.as_str(), "try_copy_file" | "try_rename_path") && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    let ty = self.prelude_type("StatusResult");
+                    self.take(Kind::LParen)?;
+                    let (from, from_ty) = self.expression(0, false)?;
+                    if !matches!(from_ty, Type::String | Type::StrView) { return Err(self.fail(&format!("{name} expects a string source path"))); }
+                    self.take(Kind::Comma)?;
+                    let (to, to_ty) = self.expression(0, false)?;
+                    if !matches!(to_ty, Type::String | Type::StrView) { return Err(self.fail(&format!("{name} expects a string destination path"))); }
+                    self.take(Kind::RParen)?;
+                    let builtin = if name == "try_copy_file" {
+                        Expr::TryCopyFile(Box::new(from), Box::new(to), ty, line, col)
+                    } else {
+                        Expr::TryRenamePath(Box::new(from), Box::new(to), ty, line, col)
+                    };
+                    (builtin, ty)
+                } else if matches!(name.as_str(), "try_remove_file" | "try_create_dir" | "try_remove_dir") && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    let ty = self.prelude_type("StatusResult");
+                    self.take(Kind::LParen)?;
+                    let (path, path_ty) = self.expression(0, false)?;
+                    if !matches!(path_ty, Type::String | Type::StrView) { return Err(self.fail(&format!("{name} expects a string path"))); }
+                    self.take(Kind::RParen)?;
+                    let builtin = if name == "try_remove_file" {
+                        Expr::TryRemoveFile(Box::new(path), ty, line, col)
+                    } else if name == "try_remove_dir" {
+                        Expr::TryRemoveDir(Box::new(path), ty, line, col)
+                    } else {
+                        Expr::TryCreateDir(Box::new(path), ty, line, col)
+                    };
+                    (builtin, ty)
                 } else if name == "parse_int" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     let ty = self.prelude_type("IntResult");
@@ -1557,6 +1625,9 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let id = *next; *next += 1;
             out.push_str(&format!("    ae_string t{id} = ae_read_file({}.ptr, {line}, {col});
 ", t.text));
+            // The path is only read: an owned temporary is released here, a
+            // named slot keeps owning its buffer.
+            if t.owned { drop_owned_temp(out, &t); }
             Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
         }
         Expr::WriteFile(path, content, line, col) => {
@@ -1565,6 +1636,9 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let id = *next; *next += 1;
             out.push_str(&format!("    int64_t t{id} = ae_write_file({}, AE_VIEW({}), {line}, {col});
 ", p.text, c.text));
+            // Both operands are read, never consumed by the call.
+            if p.owned { drop_owned_temp(out, &p); }
+            if c.owned { drop_owned_temp(out, &c); }
             Emitted { text: format!("t{id}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::Bytes(e, line, col) => {
@@ -1572,6 +1646,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let id = *next; *next += 1;
             out.push_str(&format!("    ae_vec t{id} = ae_bytes(AE_VIEW({}), {line}, {col});
 ", t.text));
+            if t.owned { drop_owned_temp(out, &t); }
             Emitted { text: format!("t{id}"), ty: Type::Vec, owned: true, moves: Vec::new(), materialized: true }
         }
         Expr::Slice(e, start, end, line, col) => {
@@ -1687,6 +1762,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let p = emit_expr(path, out, next, false);
             let id = *next; *next += 1;
             out.push_str(&format!("    {}t{id} = ae_try_read_file({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
             Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
         }
         Expr::TryWriteFile(path, content, ty, line, col) => {
@@ -1701,15 +1777,91 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let p = emit_expr(path, out, next, false);
             let id = *next; *next += 1;
             out.push_str(&format!("    {}t{id} = ae_try_list_dir({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::PathJoin(dir, name, line, col) => {
+            let d = emit_expr(dir, out, next, false);
+            let n = emit_expr(name, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_path_join(AE_VIEW({}), AE_VIEW({}), {line}, {col});\n", d.text, n.text));
+            if d.owned { drop_owned_temp(out, &d); }
+            if n.owned { drop_owned_temp(out, &n); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::PathName(path, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_path_name(AE_VIEW({}), {line}, {col});\n", p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::PathParent(path, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_path_parent(AE_VIEW({}), {line}, {col});\n", p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryFileInfo(path, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_file_info({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryCopyFile(from, to, ty, line, col) => {
+            let a = emit_expr(from, out, next, false);
+            let b = emit_expr(to, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_copy_file({}.ptr, {}.ptr, {line}, {col});\n", ty.c_temp(), a.text, b.text));
+            if a.owned { drop_owned_temp(out, &a); }
+            if b.owned { drop_owned_temp(out, &b); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryRenamePath(from, to, ty, line, col) => {
+            let a = emit_expr(from, out, next, false);
+            let b = emit_expr(to, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_rename_path({}.ptr, {}.ptr, {line}, {col});\n", ty.c_temp(), a.text, b.text));
+            if a.owned { drop_owned_temp(out, &a); }
+            if b.owned { drop_owned_temp(out, &b); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryRemoveFile(path, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_remove_file({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryRemoveDir(path, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_remove_dir({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryCreateDir(path, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_create_dir({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
             Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
         }
         Expr::PathExists(path, line, col) => {
             let p = emit_expr(path, out, next, false);
-            Emitted { text: format!("ae_path_exists({}.ptr, {line}, {col})", p.text), ty: Type::Bool, owned: false, moves: p.moves, materialized: false }
+            let id = *next; *next += 1;
+            out.push_str(&format!("    bool t{id} = ae_path_exists({}.ptr, {line}, {col});\n", p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::PathIsDir(path, line, col) => {
             let p = emit_expr(path, out, next, false);
-            Emitted { text: format!("ae_path_is_dir({}.ptr, {line}, {col})", p.text), ty: Type::Bool, owned: false, moves: p.moves, materialized: false }
+            let id = *next; *next += 1;
+            out.push_str(&format!("    bool t{id} = ae_path_is_dir({}.ptr, {line}, {col});\n", p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::ParseInt(text, ty, line, col) => {
             let t = emit_expr(text, out, next, false);
@@ -2220,8 +2372,8 @@ fn emit_program(program: Program) -> Result<String, String> {
     // Fallible built-ins and platform helpers name prelude enum types, so they
     // are included after the layouts above. runtime_ex.c relies on the prelude
     // order, which is checked here rather than trusted.
-    let names: Vec<&str> = enums.iter().take(4).map(|def| def.name).collect();
-    if names != ["ReadResult", "WriteResult", "IntResult", "DirResult"] {
+    let names: Vec<&str> = enums.iter().take(6).map(|def| def.name).collect();
+    if names != ["ReadResult", "WriteResult", "IntResult", "DirResult", "FileResult", "StatusResult"] {
         return Err(format!("internal: prelude enums must be registered first and in order, found {names:?}"));
     }
     out.push_str(include_str!("runtime_ex.c"));

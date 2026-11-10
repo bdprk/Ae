@@ -25,6 +25,21 @@
 #define AE_DIR_RESULT ae_e3
 #define AE_DIR_OK AE_E3_0
 #define AE_DIR_ERR AE_E3_1
+#define AE_FILE_RESULT ae_e4
+#define AE_FILE_OK AE_E4_0
+#define AE_FILE_ERR AE_E4_1
+#define AE_STATUS_RESULT ae_e5
+#define AE_STATUS_OK AE_E5_0
+#define AE_STATUS_ERR AE_E5_1
+
+static AE_STATUS_RESULT ae_status_ok(void) {
+    AE_STATUS_RESULT out = { AE_STATUS_OK, { { 0 } } };
+    return out;
+}
+static AE_STATUS_RESULT ae_status_failed(ae_string message) {
+    AE_STATUS_RESULT out = { AE_STATUS_ERR, { .v1 = { message } } };
+    return out;
+}
 
 static ae_string ae_io_message(int code, size_t line, size_t column) {
     const char *text = strerror(code == 0 ? EIO : code);
@@ -215,4 +230,242 @@ static AE_DIR_RESULT ae_try_list_dir(const char *path, size_t line, size_t colum
     if (names.len > 1) qsort(names.data, (size_t)names.len, sizeof(ae_string), ae_name_compare);
     AE_DIR_RESULT out = { AE_DIR_OK, { .v0 = { names } } };
     return out;
+}
+
+// ---- Path algebra -----------------------------------------------------------
+// Separators: both '/' and '\' are accepted on input, but '/'-joined output is
+// what this layer emits, because Windows accepts '/' and identical output on
+// both platforms keeps tests and recorded results comparable.
+
+static bool ae_is_separator(char c) { return c == '/' || c == '\\'; }
+
+// Concatenate `dir` and `name`, inserting a separator only when needed.
+static ae_string ae_path_concat(ae_strview dir, ae_strview name, bool separator, size_t line, size_t column) {
+    const int64_t total = dir.len + name.len + (separator ? 1 : 0);
+    char *buffer = malloc((size_t)total + 1);
+    if (!buffer) ae_fail("out of memory", line, column);
+    memcpy(buffer, dir.ptr, (size_t)dir.len);
+    int64_t at = dir.len;
+    if (separator) buffer[at++] = '/';
+    memcpy(buffer + at, name.ptr, (size_t)name.len);
+    buffer[total] = 0;
+    ae_string out = { buffer, total };
+    return out;
+}
+// An absolute name (leading separator, or a drive letter) replaces the
+// directory instead of being appended to it.
+static bool ae_path_is_absolute(ae_strview name) {
+    if (name.len == 0) return false;
+    if (ae_is_separator(name.ptr[0])) return true;
+    return name.len >= 2 && name.ptr[1] == ':';
+}
+static ae_string ae_path_join(ae_strview dir, ae_strview name, size_t line, size_t column) {
+    if (name.len == 0) return ae_str_copy_view(dir, line, column);
+    if (dir.len == 0) return ae_str_copy_view(name, line, column);
+    if (ae_path_is_absolute(name)) return ae_str_copy_view(name, line, column);
+    const bool separated = ae_is_separator(dir.ptr[dir.len - 1]);
+    return ae_path_concat(dir, name, !separated, line, column);
+}
+// Final component of a path. Trailing separators are dropped first so
+// "dir/name/" yields "name"; a path that is only separators keeps one so the
+// root stays recognisable.
+static ae_string ae_path_name(ae_strview path, size_t line, size_t column) {
+    int64_t end = path.len;
+    while (end > 1 && ae_is_separator(path.ptr[end - 1])) end--;
+    int64_t start = end;
+    while (start > 0 && !ae_is_separator(path.ptr[start - 1])) start--;
+    if (start == end) {
+        // All separators: the name of the root is the root marker itself.
+        ae_strview root = { path.ptr, end };
+        return ae_str_copy_view(root, line, column);
+    }
+    ae_strview tail = { path.ptr + start, end - start };
+    return ae_str_copy_view(tail, line, column);
+}
+// Everything before the final component. A path without a separator has no
+// parent, which reports as the empty string rather than a fabricated "." .
+static ae_string ae_path_parent(ae_strview path, size_t line, size_t column) {
+    int64_t end = path.len;
+    while (end > 1 && ae_is_separator(path.ptr[end - 1])) end--;
+    int64_t at = end;
+    while (at > 0 && !ae_is_separator(path.ptr[at - 1])) at--;
+    if (at == 0) return ae_str_from_len("", 0, line, column);
+    int64_t stop = at;
+    while (stop > 1 && ae_is_separator(path.ptr[stop - 1])) stop--;
+#ifdef _WIN32
+    // Keep the separator after a drive prefix: "C:/dir" has parent "C:/".
+    if (stop == 2 && path.ptr[1] == ':' && at > stop) stop = at;
+#endif
+    if (stop == 1 && ae_is_separator(path.ptr[0])) stop = 1;
+    return ae_str_from_len(path.ptr, stop, line, column);
+}
+
+// ---- Metadata ---------------------------------------------------------------
+// Size in bytes, modification time in seconds since the Unix epoch, and whether
+// the target is a directory. Failure is a value, never a silent zero size.
+static AE_FILE_RESULT ae_try_file_info(const char *path, size_t line, size_t column) {
+#ifdef _WIN32
+    wchar_t *wide = ae_widen(path);
+    if (!wide) {
+        AE_FILE_RESULT out = { AE_FILE_ERR, { .v1 = { ae_str_from("out of memory", line, column) } } };
+        return out;
+    }
+    WIN32_FILE_ATTRIBUTE_DATA data;
+    if (!GetFileAttributesExW(wide, GetFileExInfoStandard, &data)) {
+        const unsigned long status = (unsigned long)GetLastError();
+        free(wide);
+        AE_FILE_RESULT out = { AE_FILE_ERR, { .v1 = { ae_status_message("cannot read file metadata", status, line, column) } } };
+        return out;
+    }
+    free(wide);
+    const int64_t size = (int64_t)(((uint64_t)data.nFileSizeHigh << 32) | (uint64_t)data.nFileSizeLow);
+    // FILETIME counts 100 ns ticks from 1601-01-01; this offset lands on the
+    // Unix epoch, so the number matches st_mtime on POSIX.
+    const int64_t ticks = (int64_t)(((uint64_t)data.ftLastWriteTime.dwHighDateTime << 32) | (uint64_t)data.ftLastWriteTime.dwLowDateTime);
+    const int64_t modified = ticks / 10000000 - 11644473600LL;
+    const bool is_dir = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    AE_FILE_RESULT out = { AE_FILE_OK, { .v0 = { size, modified, is_dir } } };
+    return out;
+#else
+    errno = 0;
+    struct stat info;
+    if (stat(path, &info) != 0) {
+        AE_FILE_RESULT out = { AE_FILE_ERR, { .v1 = { ae_io_message(errno, line, column) } } };
+        return out;
+    }
+    AE_FILE_RESULT out = { AE_FILE_OK, { .v0 = { (int64_t)info.st_size, (int64_t)info.st_mtime, S_ISDIR(info.st_mode) } } };
+    return out;
+#endif
+}
+
+// ---- Mutation --------------------------------------------------------------
+static AE_STATUS_RESULT ae_try_copy_file(const char *from, const char *to, size_t line, size_t column) {
+    errno = 0;
+    FILE *source = ae_fopen(from, "rb");
+    if (!source) return ae_status_failed(ae_io_message(errno, line, column));
+    FILE *target = ae_fopen(to, "wb");
+    if (!target) {
+        fclose(source);
+        return ae_status_failed(ae_io_message(errno, line, column));
+    }
+    ae_string failure = { NULL, 0 };
+    char buffer[65536];
+    size_t read;
+    while ((read = fread(buffer, 1, sizeof buffer, source)) > 0) {
+        if (fwrite(buffer, 1, read, target) != read) { failure = ae_io_message(errno, line, column); break; }
+    }
+    if (!failure.ptr && ferror(source)) failure = ae_io_message(errno, line, column);
+    if (fclose(source) != 0 && !failure.ptr) failure = ae_io_message(errno, line, column);
+    if (fclose(target) != 0 && !failure.ptr) failure = ae_io_message(errno, line, column);
+    if (failure.ptr) return ae_status_failed(failure);
+    return ae_status_ok();
+}
+
+static AE_STATUS_RESULT ae_try_rename_path(const char *from, const char *to, size_t line, size_t column) {
+#ifdef _WIN32
+    errno = 0;
+    wchar_t *source = ae_widen(from);
+    wchar_t *target = ae_widen(to);
+    if (!source || !target) {
+        free(source); free(target);
+        return ae_status_failed(ae_str_from("out of memory", line, column));
+    }
+    const bool moved = MoveFileExW(source, target, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED) != 0;
+    const unsigned long status = (unsigned long)GetLastError();
+    free(source); free(target);
+    if (!moved) return ae_status_failed(ae_status_message("cannot rename path", status, line, column));
+    return ae_status_ok();
+#else
+    errno = 0;
+    if (rename(from, to) != 0) return ae_status_failed(ae_io_message(errno, line, column));
+    return ae_status_ok();
+#endif
+}
+
+// Removes a file. Directories are refused on both platforms: POSIX remove()
+// would also delete an empty directory, and reporting the same outcome on two
+// platforms matters more than the extra convenience.
+static AE_STATUS_RESULT ae_try_remove_file(const char *path, size_t line, size_t column) {
+    if (ae_path_is_dir(path, line, column)) {
+        return ae_status_failed(ae_str_from("cannot remove a directory with try_remove_file", line, column));
+    }
+#ifdef _WIN32
+    errno = 0;
+    wchar_t *wide = ae_widen(path);
+    if (!wide) return ae_status_failed(ae_str_from("out of memory", line, column));
+    const bool removed = DeleteFileW(wide) != 0;
+    const unsigned long status = (unsigned long)GetLastError();
+    free(wide);
+    if (!removed) return ae_status_failed(ae_status_message("cannot remove file", status, line, column));
+    return ae_status_ok();
+#else
+    errno = 0;
+    if (remove(path) != 0) return ae_status_failed(ae_io_message(errno, line, column));
+    return ae_status_ok();
+#endif
+}
+
+// Returns an empty string on success, or the failure text. Keeping the message
+// as the return value lets the caller decide whether a race is acceptable.
+static ae_string ae_make_one_dir(const char *path, size_t line, size_t column) {
+    ae_string none = { NULL, 0 };
+#ifdef _WIN32
+    wchar_t *wide = ae_widen(path);
+    if (!wide) return ae_str_from("out of memory", line, column);
+    if (CreateDirectoryW(wide, NULL)) { free(wide); return none; }
+    const unsigned long status = (unsigned long)GetLastError();
+    free(wide);
+    if (status == ERROR_ALREADY_EXISTS) return none;
+    return ae_status_message("cannot create directory", status, line, column);
+#else
+    errno = 0;
+    if (mkdir(path, 0777) == 0) return none;
+    if (errno == EEXIST) return none;
+    return ae_io_message(errno, line, column);
+#endif
+}
+// Creates the directory and every missing parent, so a caller can write
+// "out/2026/march/" in one step. Existing directories are not an error.
+static AE_STATUS_RESULT ae_try_create_dir(const char *path, size_t line, size_t column) {
+    const int64_t length = (int64_t)strlen(path);
+    if (length == 0) return ae_status_failed(ae_str_from("empty path", line, column));
+    char *buffer = malloc((size_t)length + 1);
+    if (!buffer) return ae_status_failed(ae_str_from("out of memory", line, column));
+    memcpy(buffer, path, (size_t)length + 1);
+    ae_string failure = { NULL, 0 };
+    for (int64_t at = 1; at <= length; at++) {
+        if (at < length && !ae_is_separator(buffer[at])) continue;
+        const char saved = buffer[at];
+        buffer[at] = 0;
+        bool skip = false;
+#ifdef _WIN32
+        if (at == 2 && buffer[1] == ':') skip = true; // drive prefix
+#endif
+        if (!skip && !ae_path_is_dir(buffer, line, column)) {
+            failure = ae_make_one_dir(buffer, line, column);
+        }
+        buffer[at] = saved;
+        if (failure.ptr) break;
+    }
+    free(buffer);
+    if (failure.ptr) return ae_status_failed(failure);
+    return ae_status_ok();
+}
+
+// Removes an empty directory. Recursive removal is deliberately absent: a
+// helper that silently deletes a tree is the easiest way to lose data.
+static AE_STATUS_RESULT ae_try_remove_dir(const char *path, size_t line, size_t column) {
+#ifdef _WIN32
+    wchar_t *wide = ae_widen(path);
+    if (!wide) return ae_status_failed(ae_str_from("out of memory", line, column));
+    const bool removed = RemoveDirectoryW(wide) != 0;
+    const unsigned long status = (unsigned long)GetLastError();
+    free(wide);
+    if (!removed) return ae_status_failed(ae_status_message("cannot remove directory", status, line, column));
+    return ae_status_ok();
+#else
+    errno = 0;
+    if (rmdir(path) != 0) return ae_status_failed(ae_io_message(errno, line, column));
+    return ae_status_ok();
+#endif
 }

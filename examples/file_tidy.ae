@@ -1,0 +1,151 @@
+// File organisation end to end: create a sandbox, write files, read metadata,
+// sort each file into small/ or large/ by byte size, then clean everything up.
+// Every fallible step is matched, so a real failure prints instead of vanishing.
+
+fn classify(size: i64) -> string {
+    if size <= 64 {
+        return "small";
+    }
+    return "large";
+}
+
+// Removes every file in `dir` and reports how many were removed.
+fn clear_files(dir: &string) -> i64 {
+    var removed = 0;
+    let listed = try_list_dir(dir);
+    match listed {
+        DirResult::Ok(names) => {
+            for name in names {
+                let outcome = try_remove_file(path_join(dir, name));
+                match outcome {
+                    StatusResult::Ok => {
+                        removed = removed + 1;
+                    }
+                    StatusResult::Err(reason) => {
+                        print("cleanup: " + reason);
+                    }
+                }
+            }
+        }
+        DirResult::Err(reason) => {
+            print("cleanup: " + reason);
+        }
+    }
+    return removed;
+}
+
+fn organize() -> i64 {
+    let root = "tidy_demo";
+    let raw = path_join(root, "raw");
+    let small = path_join(root, "small");
+    let large = path_join(root, "large");
+
+    let prepared = try_create_dir(raw);
+    match prepared {
+        StatusResult::Ok => {}
+        StatusResult::Err(reason) => {
+            print("cannot prepare the raw directory: " + reason);
+            return 1;
+        }
+    }
+    let prepared_small = try_create_dir(small);
+    match prepared_small {
+        StatusResult::Ok => {}
+        StatusResult::Err(reason) => {
+            print("cannot prepare the small directory: " + reason);
+            return 1;
+        }
+    }
+    let prepared_large = try_create_dir(large);
+    match prepared_large {
+        StatusResult::Ok => {}
+        StatusResult::Err(reason) => {
+            print("cannot prepare the large directory: " + reason);
+            return 1;
+        }
+    }
+
+    let a = path_join(raw, "a_small.txt");
+    let b = path_join(raw, "b_medium.txt");
+    let c = path_join(raw, "c_large.txt");
+    assert(write_file(a, "12345") == 5);
+    assert(write_file(b, "012345678901234567890123456789012345678901234567890123456789") == 60);
+    let wide = "012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789";
+    assert(write_file(c, wide) == 300);
+
+    var organized = 0;
+    let listed = try_list_dir(raw);
+    match listed {
+        DirResult::Ok(names) => {
+            for name in names {
+                let source = path_join(raw, name);
+                let info = try_file_info(source);
+                match info {
+                    FileResult::Ok(size, modified, is_dir) => {
+                        assert(modified >= 0);
+                        if !is_dir {
+                            let bucket = classify(size);
+                            let target = path_join(root, bucket);
+                            let copied = try_copy_file(source, path_join(target, name));
+                            match copied {
+                                StatusResult::Ok => {
+                                    print(name + " " + to_string(size) + " " + bucket);
+                                    organized = organized + 1;
+                                }
+                                StatusResult::Err(reason) => {
+                                    print("copy failed: " + reason);
+                                }
+                            }
+                        }
+                    }
+                    FileResult::Err(reason) => {
+                        print("stat failed: " + reason);
+                    }
+                }
+            }
+        }
+        DirResult::Err(reason) => {
+            print("cannot list the raw directory: " + reason);
+        }
+    }
+    print("organized " + to_string(organized) + " into small/large");
+
+    let cleared = clear_files(raw) + clear_files(small) + clear_files(large);
+    print("cleared " + to_string(cleared) + " files");
+    let removed_raw = try_remove_dir(raw);
+    match removed_raw {
+        StatusResult::Ok => {}
+        StatusResult::Err(reason) => {
+            print("cleanup: " + reason);
+        }
+    }
+    let removed_small = try_remove_dir(small);
+    match removed_small {
+        StatusResult::Ok => {}
+        StatusResult::Err(reason) => {
+            print("cleanup: " + reason);
+        }
+    }
+    let removed_large = try_remove_dir(large);
+    match removed_large {
+        StatusResult::Ok => {}
+        StatusResult::Err(reason) => {
+            print("cleanup: " + reason);
+        }
+    }
+    let removed_root = try_remove_dir(root);
+    match removed_root {
+        StatusResult::Ok => {
+            print("done");
+            return 0;
+        }
+        StatusResult::Err(reason) => {
+            print("cleanup: " + reason);
+            return 1;
+        }
+    }
+}
+
+fn main() {
+    assert(organize() == 0);
+}

@@ -33,6 +33,9 @@ def run():
         ("strings.ae", b"hello\nhello!\nhi there\n8\n\xe4\xb8\xad\xe6\x96\x87 \xf0\x9f\x98\x80", True),
         ("enums.ae", b"27\n20\n0\ncircle r=3\nrect 4x5\nempty\ntext:hi\nnumber:7\nflag:true\n12\nnumber:9", True),
         ("concat.ae", b"field/tail\n[bcd]\nbcd\nfield\na!c\nb", True),
+        # Runs inside the temporary directory: the example creates and then
+        # removes its own sandbox, so the working tree stays clean.
+        ("file_tidy.ae", b"a_small.txt 5 small\nb_medium.txt 60 small\nc_large.txt 300 large\norganized 3 into small/large\ncleared 6 files\ndone", True),
     ]
     with tempfile.TemporaryDirectory(prefix="ae-c-verify-") as tmp:
         tmp = Path(tmp)
@@ -58,7 +61,7 @@ def run():
             if options.leak:
                 extra = [str(LEAKCHECK), "-Wl,--wrap=malloc", "-Wl,--wrap=free", "-Wl,--wrap=realloc"]
             subprocess.run([cc, *flags, cfile, *extra, "-o", binary], check=True)
-            result = subprocess.run([binary], capture_output=True)
+            result = subprocess.run([binary], capture_output=True, cwd=tmp)
             if ok:
                 stdout = result.stdout.replace(b"\r\n", b"\n").strip()
                 assert result.returncode == 0 and stdout == expected, (name, result.returncode, result.stdout, result.stderr)
@@ -80,7 +83,7 @@ def leak_counts(executable, cc, tmp, source, options):
     cfile.write_bytes(generated)
     subprocess.run([cc, "-std=c11", "-pedantic-errors", "-O1", cfile, str(LEAKCHECK),
                     "-Wl,--wrap=malloc", "-Wl,--wrap=free", "-Wl,--wrap=realloc", "-o", binary], check=True)
-    return parse_leak(subprocess.run([binary], capture_output=True).stderr)
+    return parse_leak(subprocess.run([binary], capture_output=True, cwd=tmp).stderr)
 
 def parse_leak(stdout):
     match = re.search(rb"\[leak\] blocks=(-?\d+) bytes=(-?\d+)", stdout)

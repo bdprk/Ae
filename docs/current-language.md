@@ -48,7 +48,7 @@
 
 ## 工具链
 
-`ae check|emit-c|run|build|cache|version`。`build` 与 `run` 的产物基于内容寻址缓存：键覆盖生成的 C、优化模式、C 编译器标识、编译器版本与目标平台，相同输入直接复用可执行文件而不重新调用 C 编译器；缓存命中与全量构建语义一致。`AE_CACHE` 覆盖缓存位置，`cache dir|clear|stats` 查看与清理。`AE_CC` 指定 C 编译器；默认开发模式 `-O0`，`--release` 使用 `-O2`；两种模式保持相同语言语义与检查。`AE_TIMINGS=1` 输出阶段耗时与缓存命中情况。
+`ae check|emit-c|run|build|cache|version`。`build` 与 `run` 的产物基于内容寻址缓存：键覆盖生成的 C、优化模式、C 编译器标识、编译器版本与目标平台，相同输入直接复用可执行文件而不重新调用 C 编译器；缓存命中与全量构建语义一致。`AE_CACHE` 覆盖缓存位置，`cache dir|clear|stats` 查看与清理。`AE_CC` 指定 C 编译器；默认开发模式 `-O0`，`--release` 使用 `-O2`；两种模式保持相同语言语义与检查。`run` 把 `--` 之后的参数转发给被运行的程序（`args()` 可见，含 argv[0]）；其他子命令不接受程序参数，传入即报错。`AE_TIMINGS=1` 输出阶段耗时与缓存命中情况。
 
 ## 字符串向量
 
@@ -64,9 +64,27 @@
 
 ## 可恢复错误与数字转换
 
-程序预置四个结果枚举（无需导入，变体顺序固定）：`ReadResult{Ok(string), Err(string)}`、`WriteResult{Ok(i64), Err(string)}`、`IntResult{Ok(i64), Err(string)}`、`DirResult{Ok(vec[string]), Err(string)}`。可失败内建：`try_read_file(path) -> ReadResult`、`try_write_file(path, content) -> WriteResult`（成功返回写入字节数）、`parse_int(text) -> IntResult`。失败返回 `Err` 负载的错误描述，**不终止进程**；`read_file`/`write_file` 仍是失败即终止的不可恢复版本。`parse_int` 严格按十进制：可选 `+`/`-`、只允许 ASCII 数字、整串必须消费完、正负分别以 `9223372036854775807`/`-9223372036854775808` 为界，其余情况均为 `Err`。`to_string(i64) -> string` 是十进制格式化，与 `parse_int` 构成往返。
+程序预置六个结果枚举（无需导入，变体顺序固定）：`ReadResult{Ok(string), Err(string)}`、`WriteResult{Ok(i64), Err(string)}`、`IntResult{Ok(i64), Err(string)}`、`DirResult{Ok(vec[string]), Err(string)}`、`FileResult{Ok(i64, i64, bool), Err(string)}`、`StatusResult{Ok, Err(string)}`。可失败内建：`try_read_file(path) -> ReadResult`、`try_write_file(path, content) -> WriteResult`（成功返回写入字节数）、`parse_int(text) -> IntResult`。失败返回 `Err` 负载的错误描述，**不终止进程**；`read_file`/`write_file` 仍是失败即终止的不可恢复版本。`parse_int` 严格按十进制：可选 `+`/`-`、只允许 ASCII 数字、整串必须消费完、正负分别以 `9223372036854775807`/`-9223372036854775808` 为界，其余情况均为 `Err`。`to_string(i64) -> string` 是十进制格式化，与 `parse_int` 构成往返。
 
-结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`parse_int`/`to_string` 与四个结果类型名均为保留名。
+结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string` 与六个结果类型名均为保留名。
+
+## 路径代数与文件元数据
+
+路径函数是纯字符串操作，不触碰文件系统，也不做规范化（不解析 `.`/`..`、不折叠重复分隔符）。`path_join(dir, name) -> string` 在需要时插入 `/`：`dir` 以分隔符结尾则直接相接，`name` 是绝对路径（以 `/`、`\` 开头或形如 `C:`）时**整个替换** `dir`，任一参数为空则返回另一个的副本。`path_name(path) -> string` 返回最后一个分量（先丢弃尾部空分隔符，所以 `a/b/` 的 name 是 `b`；纯分隔符路径返回分隔符本身）。`path_parent(path) -> string` 返回最后一个分量之前的部分并去掉多余分隔符（`/a` 的父是 `/`）；没有分隔符的路径没有父，返回空字符串而不是编造 `.`。输出一律使用 `/`：Windows 接受 `/`，两平台打印同一路径文本，测试与记录才可比。
+
+`try_file_info(path) -> FileResult` 返回元数据：`FileResult::Ok(size, modified, is_dir)` 中的 `size` 是字节数（i64）、`modified` 是**自 Unix 纪元起的秒数**（Windows 的 FILETIME 已换算成同一口径）、`is_dir` 表示是否为目录。路径不存在或无权限时返回 `Err`，**不会**以 0 大小静默成功。
+
+## 文件整理操作
+
+文件系统写入操作全部返回 `StatusResult`（`Ok` 不带负载，`Err(string)` 带原因），不会终止进程：
+
+- `try_copy_file(from, to) -> StatusResult`：复制内容（64 KiB 分块），目标已存在则截断覆盖；不保留权限/时间戳（当前限制）。
+- `try_rename_path(from, to) -> StatusResult`：同卷移动并覆盖已存在的目标文件（Windows `MoveFileExW` 带 `REPLACE_EXISTING`，POSIX `rename`）。
+- `try_remove_file(path) -> StatusResult`：删除文件；**目录一律拒绝**（POSIX `remove()` 会删空目录，为两平台一致改为先判定并报错）。
+- `try_create_dir(path) -> StatusResult`：按 `mkdir -p` 语义创建所有缺失的父目录；目录已存在不算错误。
+- `try_remove_dir(path) -> StatusResult`：只删空目录，且**没有**递归删除接口——静默删除整棵树是最容易造成数据丢失的 API。
+
+`for name in names` 与这些函数组合即可写出「列出→判定→搬移→清理」的文件整理流程，示例见 `examples/file_tidy.ae`。
 
 ## 枚举与模式匹配
 

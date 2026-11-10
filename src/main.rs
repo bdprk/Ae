@@ -4,7 +4,7 @@ mod frontend;
 mod sha256;
 use frontend::compile_path;
 
-const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae run <source.ae> [--release]\n       ae build <source.ae> -o <output> [--release]\n       ae cache [dir|clear|stats]\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--release]\n       ae cache [dir|clear|stats]\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -153,6 +153,16 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         "build" if args.len() == 5 && args[4] == "--release" => true,
         _ => false,
     };
+    // `run` forwards everything after `--` to the program, so a script that
+    // reads `args()` can be exercised through the toolchain instead of being
+    // built and invoked by hand.
+    let mut program_args: Vec<OsString> = Vec::new();
+    let mut args = args;
+    if let Some(at) = args.iter().position(|a| a.to_str() == Some("--")) {
+        program_args = args.split_off(at + 1);
+        args.pop();
+        if cmd != "run" { return Err(format!("'{cmd}' does not take program arguments\n{USAGE}")); }
+    }
     let output = match cmd.as_str() {
         "check" | "emit-c" | "run" if args.len() == 2 => None,
         "run" if release => None,
@@ -178,7 +188,7 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         "run" => {
             let dir = TempDir::create(&env::temp_dir())?;
             let exe = build_c(&c, &dir.0, release, true)?;
-            let status = Command::new(&exe).status().map_err(|e| format!("cannot start program: {e}"))?;
+            let status = Command::new(&exe).args(&program_args).status().map_err(|e| format!("cannot start program: {e}"))?;
             Ok(status.code().and_then(|n| u8::try_from(n).ok()).unwrap_or(1))
         }
         "build" => {

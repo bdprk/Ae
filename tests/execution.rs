@@ -1308,3 +1308,192 @@ fn invalid_filesystem_and_borrow_usage_is_rejected() {
         assert!(!output.status.success(), "accepted invalid program: {source}");
     }
 }
+#[test]
+fn path_algebra_joins_names_and_parents() {
+    // Separator handling is uniform: '/' is emitted on both platforms so the
+    // same program prints the same paths everywhere.
+    let source = r#"fn main() {
+    print(path_join("dir", "name.txt"));
+    print(path_join("dir/", "name.txt"));
+    print(path_join("dir", "/abs.txt"));
+    print(path_join("", "name.txt"));
+    print(path_join("dir", ""));
+    print("[" + path_name("a/b/c.txt") + "]");
+    print("[" + path_name("a/b/") + "]");
+    print("[" + path_name("plain") + "]");
+    print("[" + path_parent("a/b/c.txt") + "]");
+    print("[" + path_parent("a/b") + "]");
+    print("[" + path_parent("plain") + "]");
+    print("[" + path_parent("/a") + "]");
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "dir/name.txt\ndir/name.txt\n/abs.txt\nname.txt\ndir\n[c.txt]\n[b]\n[plain]\n[a/b]\n[a]\n[]\n[/]\n"
+    );
+}
+#[test]
+fn file_metadata_reports_size_and_missing_paths() {
+    let dir = std::env::temp_dir().join(format!("ae-meta-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::create_dir(&dir).unwrap();
+    let data = dir.join("data.txt");
+    let missing = dir.join("missing.txt");
+    let literal = |p: &std::path::Path| p.display().to_string().replace('\\', "\\\\");
+    let source = format!(r#"fn main() {{
+    let found = try_file_info("{data}");
+    match found {{
+        FileResult::Ok(size, modified, is_dir) => {{
+            print(size);
+            print(is_dir);
+            print(modified > 0);
+        }}
+        FileResult::Err(reason) => {{ print("unexpected failure"); }}
+    }}
+    let folder = try_file_info("{dir}");
+    match folder {{
+        FileResult::Ok(size, modified, is_dir) => {{ print(is_dir); }}
+        FileResult::Err(reason) => {{ print("unexpected failure"); }}
+    }}
+    let absent = try_file_info("{missing}");
+    match absent {{
+        FileResult::Ok(size, modified, is_dir) => {{ print("unexpected success"); }}
+        FileResult::Err(reason) => {{ print(len(reason) > 0); }}
+    }}
+}}"#, data = literal(&data), dir = literal(&dir), missing = literal(&missing));
+    fs::write(&data, "hello world").unwrap();
+    let output = execute(&source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "11\nfalse\ntrue\ntrue\ntrue\n");
+    fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn file_operations_create_copy_rename_and_remove() {
+    let dir = std::env::temp_dir().join(format!("ae-ops-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::create_dir(&dir).unwrap();
+    let work = dir.join("work");
+    let nested = work.join("nested/deep");
+    let literal = |p: &std::path::Path| p.display().to_string().replace('\\', "\\\\");
+    let source = format!(r#"fn main() {{
+    let made = try_create_dir("{nested}");
+    match made {{
+        StatusResult::Ok => {{ print("mkdir ok"); }}
+        StatusResult::Err(reason) => {{ print("mkdir failed"); }}
+    }}
+    let again = try_create_dir("{nested}");
+    match again {{
+        StatusResult::Ok => {{ print("mkdir idempotent"); }}
+        StatusResult::Err(reason) => {{ print("mkdir repeated failed"); }}
+    }}
+    let original = path_join("{nested}", "one.txt");
+    assert(write_file(original, "payload") == 7);
+    let copy = path_join("{nested}", "two.txt");
+    let copied = try_copy_file(original, copy);
+    match copied {{
+        StatusResult::Ok => {{ print("copy ok"); }}
+        StatusResult::Err(reason) => {{ print("copy failed"); }}
+    }}
+    let moved = path_join("{nested}", "three.txt");
+    let renamed = try_rename_path(copy, moved);
+    match renamed {{
+        StatusResult::Ok => {{ print("rename ok"); }}
+        StatusResult::Err(reason) => {{ print("rename failed"); }}
+    }}
+    // A directory is not a file: removal must refuse it instead of silently
+    // deleting an empty tree on one platform only.
+    let refused = try_remove_file("{work}");
+    match refused {{
+        StatusResult::Ok => {{ print("removed a directory"); }}
+        StatusResult::Err(reason) => {{ print("directory refused"); }}
+    }}
+    let gone = try_remove_file(moved);
+    match gone {{
+        StatusResult::Ok => {{ print("remove ok"); }}
+        StatusResult::Err(reason) => {{ print("remove failed"); }}
+    }}
+    let absent = try_remove_file(moved);
+    match absent {{
+        StatusResult::Ok => {{ print("removed twice"); }}
+        StatusResult::Err(reason) => {{ print("missing reported"); }}
+    }}
+}}"#, nested = literal(&nested), work = literal(&work));
+    let output = execute(&source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "mkdir ok\nmkdir idempotent\ncopy ok\nrename ok\ndirectory refused\nremove ok\nmissing reported\n"
+    );
+    // The original survived, the copy moved to its new name, and the moved
+    // file was really removed.
+    assert_eq!(fs::read_to_string(nested.join("one.txt")).unwrap(), "payload");
+    assert!(!nested.join("two.txt").exists());
+    assert!(!nested.join("three.txt").exists());
+    fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn directory_removal_requires_an_empty_directory() {
+    let dir = std::env::temp_dir().join(format!("ae-rmdir-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::create_dir_all(dir.join("full")).unwrap();
+    fs::create_dir_all(dir.join("empty")).unwrap();
+    fs::write(dir.join("full/file.txt"), "x").unwrap();
+    let literal = |p: &std::path::Path| p.display().to_string().replace('\\', "\\\\");
+    let source = format!(r#"fn main() {{
+    let busy = try_remove_dir("{full}");
+    match busy {{
+        StatusResult::Ok => {{ print("removed a non-empty directory"); }}
+        StatusResult::Err(reason) => {{ print("non-empty refused"); }}
+    }}
+    let empty = try_remove_dir("{empty}");
+    match empty {{
+        StatusResult::Ok => {{ print("empty removed"); }}
+        StatusResult::Err(reason) => {{ print("empty failed"); }}
+    }}
+}}"#, full = literal(&dir.join("full")), empty = literal(&dir.join("empty")));
+    let output = execute(&source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "non-empty refused\nempty removed\n");
+    assert!(dir.join("full/file.txt").exists());
+    assert!(!dir.join("empty").exists());
+    fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn invalid_path_helpers_are_rejected() {
+    for source in [
+        "fn main() { print(path_join(1, \"b\")); }",
+        "fn main() { print(path_name(1)); }",
+        "fn main() { print(path_parent(1)); }",
+        "fn main() { let x = try_file_info(1); print(1); }",
+        "fn main() { let x = try_copy_file(\"a\", 1); print(1); }",
+        "fn main() { let x = try_rename_path(1, \"b\"); print(1); }",
+        "fn main() { let x = try_remove_file(1); print(1); }",
+        "fn main() { let x = try_create_dir(1); print(1); }",
+        "fn main() { let x = try_remove_dir(1); print(1); }",
+        "fn main() { let path_join = 1; }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-path-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted invalid program: {source}");
+    }
+}
+#[test]
+fn run_forwards_program_arguments_after_double_dash() {
+    let dir = std::env::temp_dir().join(format!("ae-argv-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::create_dir(&dir).unwrap();
+    let source = dir.join("argv.ae");
+    fs::write(&source, "fn main() { let a = args(); print(len(a) - 1); print(a[1]); }").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("run").arg(&source).arg("--").arg("first").arg("second")
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "2\nfirst\n");
+    // Only `run` starts a program, so passing arguments to another command is
+    // an error rather than silently ignored.
+    let rejected = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("check").arg(&source).arg("--").arg("extra")
+        .output().unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("does not take program arguments"));
+    fs::remove_dir_all(dir).unwrap();
+}
