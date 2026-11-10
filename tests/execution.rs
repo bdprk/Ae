@@ -1023,6 +1023,50 @@ fn changing_the_working_directory_moves_relative_paths() {
     fs::remove_dir_all(&root).unwrap();
 }
 #[test]
+fn generic_constraints_reject_arguments_at_the_call_site() {
+    // A bound is a shape check on the argument, not a proof about the body:
+    // the body is still checked once per instantiation. The error therefore
+    // points at the call site, with the allowed types spelled out.
+    let source = r#"fn add[T: Add](a: T, b: T) -> T { return a + b; }
+fn larger[T: Ord](a: T, b: T) -> T { if a > b { return a; } return b; }
+fn same[T: Eq](a: T, b: T) -> bool { return a == b; }
+fn copy_twice[T: Copy](x: T) -> T { let y = x; return y; }
+fn both[T: Add + Eq](a: T, b: T) -> bool { return (a + b) == a; }
+fn main() {
+    print(add[i64](2, 3));
+    print(add[string]("ae", "ther"));
+    print(larger[i64](4, 9));
+    print(same[bool](true, true));
+    print(same[string]("x", "x"));
+    print(copy_twice[i64](7));
+    print(both[i64](0, 5));
+    print(true == true);
+    print(true != false);
+    print(false == true);
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "5\nae\n9\ntrue\ntrue\n7\nfalse\ntrue\ntrue\nfalse\n");
+    for source in [
+        "fn add[T: Add](a: T, b: T) -> T { return a + b; } fn main() { print(add[bool](true, false)); }",
+        "fn larger[T: Ord](a: T, b: T) -> T { if a > b { return a; } return b; } fn main() { print(larger[string](\"a\", \"b\")); }",
+        "fn copy_twice[T: Copy](x: T) -> T { return x; } fn main() { print(copy_twice[string](\"a\")); }",
+        "fn same[T: Eq](a: T, b: T) -> bool { return a == b; } fn main() { print(same[vec](vec[], vec[])); }",
+        "fn f[T: Add + Eq](a: T) -> T { return a; } fn main() { print(f[bool](true)); }",
+        "fn f[T: Printable](a: T) -> T { return a; } fn main() { print(f[i64](1)); }",
+        "fn f[T: Add + Add](a: T) -> T { return a; } fn main() { print(f[i64](1)); }",
+        "struct P[T: Copy] { x: T } fn main() { print(1); }",
+        "enum E[T: Copy] { A(T), B } fn main() { print(1); }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-bound-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "{source}");
+    }
+}
+
+#[test]
 fn split_and_args_produce_string_vectors() {
     let source = "fn main() { let parts = split(\"a,b,,c\", \",\"); print(len(parts)); print(parts[0]); print(len(parts[2])); let whole = split(\"hello\", \",\"); print(len(whole)); print(whole[0]); var empties = 0; for i in 0..len(parts) { if len(parts[i]) == 0 { empties = empties + 1; } } print(empties); print(join(parts, \"-\")); print(join(parts, \"\")); let a = args(); print(len(a) >= 1); }";
     let output = execute(source);

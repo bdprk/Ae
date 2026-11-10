@@ -63,6 +63,9 @@ def run():
         # Generic functions: one C function per argument list, and the owned
         # parameter that is not returned must be released exactly once.
         ("generic_fn.ae", b"41\nada\nleft\ntrue\nwrapped\nk\n2", True),
+        # Constraints: one body is emitted for several argument lists, so each
+        # instantiation must release its own string parameters exactly once.
+        ("constraints.ae", b"5\nae\n9\ntrue\n7\nfalse", True),
         ("json_report.ae", (
             "ready\n"
             "wrote 175 bytes\n"

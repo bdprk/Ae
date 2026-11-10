@@ -1,0 +1,32 @@
+// A constraint rejects unsuitable type arguments at the call site, before the
+// generic body is parsed with them. The body is still checked per instance.
+fn add[T: Add](a: T, b: T) -> T {
+    return a + b;
+}
+
+fn larger[T: Ord](a: T, b: T) -> T {
+    if a > b { return a; }
+    return b;
+}
+
+fn same[T: Eq](a: T, b: T) -> bool {
+    return a == b;
+}
+
+fn copy_twice[T: Copy](x: T) -> T {
+    let y = x;
+    return y;
+}
+
+fn both[T: Add + Eq](a: T, b: T) -> bool {
+    return (a + b) == a;
+}
+
+fn main() {
+    print(add[i64](2, 3));
+    print(add[string]("ae", "ther"));
+    print(larger[i64](4, 9));
+    print(same[bool](true, true));
+    print(copy_twice[i64](7));
+    print(both[i64](0, 5));
+}

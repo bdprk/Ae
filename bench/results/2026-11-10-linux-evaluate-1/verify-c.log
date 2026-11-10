@@ -28,6 +28,8 @@ PASS pairs.ae
   leak blocks=0 bytes=0
 PASS generic_fn.ae
   leak blocks=0 bytes=0
+PASS constraints.ae
+  leak blocks=0 bytes=0
 PASS json_report.ae
   leak blocks=0 bytes=0
 PASS maybe.ae

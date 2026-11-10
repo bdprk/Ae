@@ -263,11 +263,38 @@ struct GenericEnum { name: String, params: Vec<String>, variants: Vec<(String, V
 // reason as GenericEnum: a declaration is a shape, not a layout.
 #[derive(Debug, Clone)]
 struct GenericStruct { name: String, params: Vec<String>, fields: Vec<(String, Payload)>, file: String, public: bool }
+// A constraint on a generic function's type parameter is a *shape check* at
+// the call site, not a proof about the generic body (ADR-33). The body is still
+// parsed and type-checked once per instantiation, so a constraint can only
+// reject an argument earlier and with a better message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Bound { Add, Eq, Ord, Copy }
+impl Bound {
+    fn name(self) -> &'static str {
+        match self { Bound::Add => "Add", Bound::Eq => "Eq", Bound::Ord => "Ord", Bound::Copy => "Copy" }
+    }
+    fn allows(self, ty: Type) -> bool {
+        match self {
+            Bound::Copy => matches!(ty, Type::Int | Type::Bool),
+            Bound::Eq => matches!(ty, Type::Int | Type::Bool | Type::String),
+            Bound::Ord => matches!(ty, Type::Int),
+            Bound::Add => matches!(ty, Type::Int | Type::String),
+        }
+    }
+    fn allowed_types(self) -> &'static str {
+        match self {
+            Bound::Copy => "i64, bool",
+            Bound::Eq => "i64, bool, string",
+            Bound::Ord => "i64",
+            Bound::Add => "i64, string",
+        }
+    }
+}
 // `fn pick[T](a: T, b: T) -> T { ... }` before any call site picks arguments.
 // The declaration keeps its own token slice and source text so an instantiation
 // can be parsed later, even from another file (ADR-31).
 #[derive(Debug, Clone)]
-struct GenericFn { name: String, params: Vec<String>, start: usize, tokens: Vec<Token>, source: String, file: String, public: bool }
+struct GenericFn { name: String, params: Vec<String>, bounds: Vec<Vec<Bound>>, start: usize, tokens: Vec<Token>, source: String, file: String, public: bool }
 // An instantiated generic function: its id, parameter types and return type.
 type Instance = (usize, Vec<Type>, Type);
 // Instantiated generic enums, structs and functions, keyed by declaration and
@@ -924,6 +951,7 @@ impl<'a> Parser<'a> {
                 Kind::EqEq | Kind::NotEq | Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq => {
                     let comparable = match (lhs_ty, rhs_ty) {
                         (Type::Int, Type::Int) => true,
+                        (Type::Bool, Type::Bool) => op == Kind::EqEq || op == Kind::NotEq,
                         (Type::String | Type::StrView, Type::String | Type::StrView) => op == Kind::EqEq || op == Kind::NotEq,
                         _ => false,
                     };
@@ -1163,21 +1191,47 @@ impl<'a> Parser<'a> {
     }
     // `[T, U]` after a declaration name; empty for a plain definition. Single
     // uppercase letters keep a parameter from being mistaken for a real type.
-    fn type_params(&mut self) -> Result<Vec<String>, String> {
-        let mut params = Vec::new();
+    // `[T, U]` or `[T: Add + Ord, U: Copy]`. Constraints are parsed here for
+    // every generic declaration, but only generic functions may use them.
+    fn type_params_with_bounds(&mut self) -> Result<Vec<(String, Vec<Bound>)>, String> {
+        let mut params: Vec<(String, Vec<Bound>)> = Vec::new();
         if *self.current() != Kind::LBracket { return Ok(params); }
         self.pos += 1;
         loop {
             if params.len() >= 8 { return Err(self.fail("type parameter limit exceeded (8)")); }
             let param = self.identifier()?;
             if param.len() != 1 || !param.chars().all(|c| c.is_ascii_uppercase()) { return Err(self.fail("type parameters are single uppercase letters, e.g. 'T'")); }
-            if params.contains(&param) { return Err(self.fail(&format!("duplicate type parameter '{param}'"))); }
-            params.push(param);
+            if params.iter().any(|(n, _)| n == &param) { return Err(self.fail(&format!("duplicate type parameter '{param}'"))); }
+            let mut bounds = Vec::new();
+            if *self.current() == Kind::Colon {
+                self.pos += 1;
+                loop {
+                    let at = self.tokens[self.pos].offset;
+                    let label = self.identifier()?;
+                    let bound = match label.as_str() {
+                        "Add" => Bound::Add, "Eq" => Bound::Eq,
+                        "Ord" => Bound::Ord, "Copy" => Bound::Copy,
+                        _ => return Err(error(&self.file, self.source, at, "unknown constraint; allowed: Add, Eq, Ord, Copy")),
+                    };
+                    if bounds.contains(&bound) { return Err(self.fail(&format!("duplicate constraint '{label}'"))); }
+                    bounds.push(bound);
+                    if *self.current() != Kind::Plus { break; }
+                    self.pos += 1;
+                }
+            }
+            params.push((param, bounds));
             if *self.current() != Kind::Comma { break; }
             self.pos += 1;
         }
         self.take(Kind::RBracket)?;
         Ok(params)
+    }
+    fn type_params(&mut self) -> Result<Vec<String>, String> {
+        let params = self.type_params_with_bounds()?;
+        if params.iter().any(|(_, bounds)| !bounds.is_empty()) {
+            return Err(self.fail("constraints are only supported on generic functions"));
+        }
+        Ok(params.into_iter().map(|(name, _)| name).collect())
     }
     fn variant_payload(&mut self, params: &[String]) -> Result<Payload, String> {
         if let Kind::Ident(name) = self.current() {
@@ -1442,10 +1496,12 @@ impl<'a> Parser<'a> {
                 // A generic function has no signature of its own: only its
                 // instantiations exist, and each gets an id when constructed.
                 if name == "main" { return Err(self.fail("main cannot be generic")); }
-                let params = self.type_params()?;
+                let declared = self.type_params_with_bounds()?;
+                let params = declared.iter().map(|(n, _)| n.clone()).collect();
+                let bounds = declared.into_iter().map(|(_, b)| b).collect();
                 let gid = self.generics.fn_defs.len();
                 self.generics.fn_names.insert(name.clone(), gid);
-                self.generics.fn_defs.push(GenericFn { name, params, start: self.pos, tokens: self.tokens.clone(), source: self.source.to_owned(), file: self.file.clone(), public });
+                self.generics.fn_defs.push(GenericFn { name, params, bounds, start: self.pos, tokens: self.tokens.clone(), source: self.source.to_owned(), file: self.file.clone(), public });
                 self.skip_function_body()?;
                 continue;
             }
@@ -1585,6 +1641,15 @@ impl<'a> Parser<'a> {
             return Err(error(&self.file, self.source, offset, &format!("'{}' takes {} type argument(s), found {}", def.name, def.params.len(), args.len())));
         }
         self.require_public("function", &def.name, &def.file, def.public)?;
+        for (index, bounds) in def.bounds.iter().enumerate() {
+            for &bound in bounds {
+                if !bound.allows(args[index]) {
+                    return Err(error(&self.file, self.source, offset, &format!(
+                        "type argument '{}' for '{}' does not satisfy '{}'; that constraint allows {}",
+                        args[index].name(), def.name, bound.name(), bound.allowed_types())));
+                }
+            }
+        }
         let key = format!("{gid}:{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
         if let Some(instance) = self.generics.fn_done.get(&key) { return Ok(instance.clone()); }
         if self.generics.fn_in_progress.contains(&key) {
@@ -3493,7 +3558,7 @@ mod tests {
             "fn main() { if 1 { print(1); } }",
             "fn main() { while 1 { break; } }",
             "fn main() { print(true + 1); }",
-            "fn main() { if true == false { print(1); } }",
+            "fn main() { if true < false { print(1); } }",
             "fn main() { if 1 < true { print(1); } }",
             "fn main() { let x = 1; x = true; }",
             "fn main() { let b = true; b = 1; }",
@@ -3508,6 +3573,7 @@ mod tests {
     #[test] fn accepts_typed_programs() {
         for s in [
             "fn main() { let flag = true; if flag && !false { print(true); } }",
+            "fn main() { print(true == true); print(false != true); }",
             "fn is_even(n: i64) -> bool { return n % 2 == 0; } fn main() { print(is_even(4) || is_even(3)); }",
             "fn pick(flag: bool, a: i64, b: i64) -> i64 { if flag { return a; } else { return b; } } fn main() { print(pick(1 < 2, 3, 4)); }",
             "fn main() { print(\"hello, 世界\"); print(true); print(1 < 2 && 2 < 3); assert(1 == 1); }",
