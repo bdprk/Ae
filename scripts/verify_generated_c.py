@@ -42,6 +42,14 @@ def run():
         # Hash map: keys() returns a sorted copy, so the report order is stable
         # across platforms; the map is released when the program exits.
         ("word_count.ae", b"distinct 8\nbrown 1\ndog 1\nfox 2\njumps 1\nlazy 1\nover 1\nquick 1\nthe 3", True),
+        # Character-safe truncation: every cut lands on a UTF-8 boundary, so the
+        # ellipsis is never preceded by half a character.
+        ("text_preview.ae", (
+            "这是一行很长的中文文本，用于演示按字符而…\n"
+            "short line\n"
+            "😀 emoji 也按一个字符计算，不会被…\n"
+            "lines 3\nchars 68\nbytes 167"
+        ).encode("utf-8"), True),
     ]
     with tempfile.TemporaryDirectory(prefix="ae-c-verify-") as tmp:
         tmp = Path(tmp)

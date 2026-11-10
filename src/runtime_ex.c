@@ -64,12 +64,12 @@ static AE_READ_RESULT ae_try_read_file(const char *path, size_t line, size_t col
     if (!failure.ptr) rewind(f);
     char *buffer = NULL;
     if (!failure.ptr) {
-        buffer = malloc((size_t)size + 1);
+        buffer = ae_alloc_try((size_t)size + 1);
         if (!buffer) failure = ae_str_from("out of memory", line, column);
     }
     if (!failure.ptr) {
         const size_t read = fread(buffer, 1, (size_t)size, f);
-        if (read != (size_t)size) { free(buffer); buffer = NULL; failure = ae_io_message(errno, line, column); }
+        if (read != (size_t)size) { ae_free(buffer); buffer = NULL; failure = ae_io_message(errno, line, column); }
     }
     fclose(f);
     if (failure.ptr) { AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { failure } } }; return out; }
@@ -136,7 +136,7 @@ static bool ae_path_exists(const char *path, size_t line, size_t column) {
     wchar_t *wide = ae_widen(path);
     if (!wide) return false;
     const DWORD attributes = GetFileAttributesW(wide);
-    free(wide);
+    ae_free(wide);
     return attributes != INVALID_FILE_ATTRIBUTES;
 #else
     struct stat info;
@@ -150,7 +150,7 @@ static bool ae_path_is_dir(const char *path, size_t line, size_t column) {
     wchar_t *wide = ae_widen(path);
     if (!wide) return false;
     const DWORD attributes = GetFileAttributesW(wide);
-    free(wide);
+    ae_free(wide);
     return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 #else
     struct stat info;
@@ -173,7 +173,7 @@ static AE_DIR_RESULT ae_try_list_dir(const char *path, size_t line, size_t colum
 #ifdef _WIN32
     const size_t length = strlen(path);
     const bool separated = length > 0 && (path[length - 1] == '\\' || path[length - 1] == '/');
-    char *pattern = malloc(length + (separated ? 2 : 3));
+    char *pattern = ae_alloc_try(length + (separated ? 2 : 3));
     if (!pattern) {
         ae_strvec_release(&names);
         AE_DIR_RESULT out = { AE_DIR_ERR, { .v1 = { ae_str_from("out of memory", line, column) } } };
@@ -184,7 +184,7 @@ static AE_DIR_RESULT ae_try_list_dir(const char *path, size_t line, size_t colum
     pattern[length + (separated ? 0 : 1)] = '*';
     pattern[length + (separated ? 1 : 2)] = 0;
     wchar_t *wide = ae_widen(pattern);
-    free(pattern);
+    ae_free(pattern);
     if (!wide) {
         ae_strvec_release(&names);
         AE_DIR_RESULT out = { AE_DIR_ERR, { .v1 = { ae_str_from("out of memory", line, column) } } };
@@ -192,7 +192,7 @@ static AE_DIR_RESULT ae_try_list_dir(const char *path, size_t line, size_t colum
     }
     WIN32_FIND_DATAW data;
     HANDLE walk = FindFirstFileW(wide, &data);
-    free(wide);
+    ae_free(wide);
     if (walk == INVALID_HANDLE_VALUE) {
         ae_string message = ae_status_message("cannot list directory", (unsigned long)GetLastError(), line, column);
         ae_strvec_release(&names);
@@ -209,7 +209,7 @@ static AE_DIR_RESULT ae_try_list_dir(const char *path, size_t line, size_t colum
             return out;
         }
         ae_strvec_push(&names, ae_str_from(utf8, line, column), line, column);
-        free(utf8);
+        ae_free(utf8);
     } while (FindNextFileW(walk, &data));
     FindClose(walk);
 #else
@@ -242,8 +242,7 @@ static bool ae_is_separator(char c) { return c == '/' || c == '\\'; }
 // Concatenate `dir` and `name`, inserting a separator only when needed.
 static ae_string ae_path_concat(ae_strview dir, ae_strview name, bool separator, size_t line, size_t column) {
     const int64_t total = dir.len + name.len + (separator ? 1 : 0);
-    char *buffer = malloc((size_t)total + 1);
-    if (!buffer) ae_fail("out of memory", line, column);
+    char *buffer = ae_alloc((size_t)total + 1, line, column);
     memcpy(buffer, dir.ptr, (size_t)dir.len);
     int64_t at = dir.len;
     if (separator) buffer[at++] = '/';
@@ -313,11 +312,11 @@ static AE_FILE_RESULT ae_try_file_info(const char *path, size_t line, size_t col
     WIN32_FILE_ATTRIBUTE_DATA data;
     if (!GetFileAttributesExW(wide, GetFileExInfoStandard, &data)) {
         const unsigned long status = (unsigned long)GetLastError();
-        free(wide);
+        ae_free(wide);
         AE_FILE_RESULT out = { AE_FILE_ERR, { .v1 = { ae_status_message("cannot read file metadata", status, line, column) } } };
         return out;
     }
-    free(wide);
+    ae_free(wide);
     const int64_t size = (int64_t)(((uint64_t)data.nFileSizeHigh << 32) | (uint64_t)data.nFileSizeLow);
     // FILETIME counts 100 ns ticks from 1601-01-01; this offset lands on the
     // Unix epoch, so the number matches st_mtime on POSIX.
@@ -367,12 +366,12 @@ static AE_STATUS_RESULT ae_try_rename_path(const char *from, const char *to, siz
     wchar_t *source = ae_widen(from);
     wchar_t *target = ae_widen(to);
     if (!source || !target) {
-        free(source); free(target);
+        ae_free(source); ae_free(target);
         return ae_status_failed(ae_str_from("out of memory", line, column));
     }
     const bool moved = MoveFileExW(source, target, MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED) != 0;
     const unsigned long status = (unsigned long)GetLastError();
-    free(source); free(target);
+    ae_free(source); ae_free(target);
     if (!moved) return ae_status_failed(ae_status_message("cannot rename path", status, line, column));
     return ae_status_ok();
 #else
@@ -395,7 +394,7 @@ static AE_STATUS_RESULT ae_try_remove_file(const char *path, size_t line, size_t
     if (!wide) return ae_status_failed(ae_str_from("out of memory", line, column));
     const bool removed = DeleteFileW(wide) != 0;
     const unsigned long status = (unsigned long)GetLastError();
-    free(wide);
+    ae_free(wide);
     if (!removed) return ae_status_failed(ae_status_message("cannot remove file", status, line, column));
     return ae_status_ok();
 #else
@@ -412,9 +411,9 @@ static ae_string ae_make_one_dir(const char *path, size_t line, size_t column) {
 #ifdef _WIN32
     wchar_t *wide = ae_widen(path);
     if (!wide) return ae_str_from("out of memory", line, column);
-    if (CreateDirectoryW(wide, NULL)) { free(wide); return none; }
+    if (CreateDirectoryW(wide, NULL)) { ae_free(wide); return none; }
     const unsigned long status = (unsigned long)GetLastError();
-    free(wide);
+    ae_free(wide);
     if (status == ERROR_ALREADY_EXISTS) return none;
     return ae_status_message("cannot create directory", status, line, column);
 #else
@@ -429,7 +428,7 @@ static ae_string ae_make_one_dir(const char *path, size_t line, size_t column) {
 static AE_STATUS_RESULT ae_try_create_dir(const char *path, size_t line, size_t column) {
     const int64_t length = (int64_t)strlen(path);
     if (length == 0) return ae_status_failed(ae_str_from("empty path", line, column));
-    char *buffer = malloc((size_t)length + 1);
+    char *buffer = ae_alloc_try((size_t)length + 1);
     if (!buffer) return ae_status_failed(ae_str_from("out of memory", line, column));
     memcpy(buffer, path, (size_t)length + 1);
     ae_string failure = { NULL, 0 };
@@ -447,7 +446,7 @@ static AE_STATUS_RESULT ae_try_create_dir(const char *path, size_t line, size_t 
         buffer[at] = saved;
         if (failure.ptr) break;
     }
-    free(buffer);
+    ae_free(buffer);
     if (failure.ptr) return ae_status_failed(failure);
     return ae_status_ok();
 }
@@ -460,7 +459,7 @@ static AE_STATUS_RESULT ae_try_remove_dir(const char *path, size_t line, size_t 
     if (!wide) return ae_status_failed(ae_str_from("out of memory", line, column));
     const bool removed = RemoveDirectoryW(wide) != 0;
     const unsigned long status = (unsigned long)GetLastError();
-    free(wide);
+    ae_free(wide);
     if (!removed) return ae_status_failed(ae_status_message("cannot remove directory", status, line, column));
     return ae_status_ok();
 #else

@@ -6,6 +6,66 @@
 #include <string.h>
 #include <limits.h>
 _Noreturn static void ae_fail(const char *message, size_t line, size_t column) { fprintf(stderr, "ae:%zu:%zu: %s\n", line, column, message); exit(1); }
+
+// ---- Allocation interface (ADR-16) ------------------------------------------
+// Every buffer the runtime owns is obtained through one of these three
+// pointers, so a host (future embed API, a test harness, a tracing allocator)
+// can substitute its own backend without touching generated code. Failure is
+// fatal and carries the location of the operation that needed the memory:
+// there is no meaningful way to continue with a half-built value, and no
+// unwinding machinery to run destructors through.
+typedef struct {
+    void *(*alloc)(size_t size);
+    void *(*resize)(void *block, size_t size);
+    void (*release)(void *block);
+} ae_allocator;
+static void *ae_os_alloc(size_t size) { return malloc(size); }
+static void *ae_os_resize(void *block, size_t size) { return realloc(block, size); }
+static void ae_os_release(void *block) { free(block); }
+static ae_allocator ae_allocator_impl = { ae_os_alloc, ae_os_resize, ae_os_release };
+// `AE_ALLOC_LIMIT` caps the cumulative number of bytes handed out, which is
+// how the test suite reaches the out-of-memory path on purpose. It is a
+// diagnostic, not a policy knob: the default is unlimited.
+static uint64_t ae_alloc_budget = UINT64_MAX;
+static uint64_t ae_alloc_total = 0;
+static bool ae_alloc_ready = false;
+static void ae_alloc_env(void) {
+    ae_alloc_ready = true;
+    const char *limit = getenv("AE_ALLOC_LIMIT");
+    if (!limit || !*limit) return;
+    char *end = NULL;
+    unsigned long long value = strtoull(limit, &end, 10);
+    if (end == limit || *end) return;
+    ae_alloc_budget = (uint64_t)value;
+}
+// NULL-returning variant for helpers that report failure through their own
+// return value (path widening, for instance) instead of terminating.
+static void *ae_alloc_try(size_t size) {
+    if (!ae_alloc_ready) ae_alloc_env();
+    if (size > ae_alloc_budget - ae_alloc_total) return NULL;
+    void *block = ae_allocator_impl.alloc(size);
+    if (!block) return NULL;
+    ae_alloc_total += (uint64_t)size;
+    return block;
+}
+static void *ae_alloc(size_t size, size_t line, size_t column) {
+    void *block = ae_alloc_try(size);
+    if (!block) ae_fail("out of memory", line, column);
+    return block;
+}
+static void *ae_alloc_resize(void *block, size_t size, size_t line, size_t column) {
+    if (!ae_alloc_ready) ae_alloc_env();
+    // The budget is charged for the whole new size: the accounting is a coarse
+    // "how much did this program ask for" measure, not a live byte count.
+    if (size > ae_alloc_budget - ae_alloc_total) { ae_allocator_impl.release(block); ae_fail("out of memory", line, column); }
+    void *resized = ae_allocator_impl.resize(block, size);
+    if (!resized) ae_fail("out of memory", line, column);
+    ae_alloc_total += (uint64_t)size;
+    return resized;
+}
+static void ae_free(void *block) { if (block) ae_allocator_impl.release(block); }
+static void ae_set_allocator(ae_allocator impl) { ae_allocator_impl = impl; }
+
 static int64_t ae_add(int64_t a, int64_t b, size_t line, size_t column) {
     if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) ae_fail("integer overflow", line, column);
     return a + b;
@@ -52,23 +112,21 @@ typedef struct { const char *ptr; int64_t len; } ae_strview;
 
 static ae_string ae_str_from(const char *text, size_t line, size_t column) {
     size_t n = strlen(text);
-    char *copy = malloc(n + 1);
-    if (!copy) ae_fail("out of memory", line, column);
+    char *copy = ae_alloc(n + 1, line, column);
     memcpy(copy, text, n + 1);
     ae_string s = { copy, (int64_t)n };
     return s;
 }
 static ae_string ae_str_cat(ae_string a, ae_string b, size_t line, size_t column) {
-    if (a.len > INT64_MAX - b.len) { free(a.ptr); free(b.ptr); ae_fail("string too long", line, column); }
-    char *out = malloc((size_t)(a.len + b.len) + 1);
-    if (!out) { free(a.ptr); free(b.ptr); ae_fail("out of memory", line, column); }
+    if (a.len > INT64_MAX - b.len) { ae_free(a.ptr); ae_free(b.ptr); ae_fail("string too long", line, column); }
+    char *out = ae_alloc((size_t)(a.len + b.len) + 1, line, column);
     memcpy(out, a.ptr, (size_t)a.len);
     memcpy(out + a.len, b.ptr, (size_t)b.len + 1);
-    free(a.ptr); free(b.ptr);
+    ae_free(a.ptr); ae_free(b.ptr);
     ae_string s = { out, a.len + b.len };
     return s;
 }
-static void ae_str_release(ae_string *slot) { free(slot->ptr); slot->ptr = NULL; slot->len = 0; }
+static void ae_str_release(ae_string *slot) { ae_free(slot->ptr); slot->ptr = NULL; slot->len = 0; }
 static void ae_str_forfeit(ae_string *slot) { slot->ptr = NULL; slot->len = 0; }
 static bool ae_str_eq(ae_strview a, ae_strview b) {
     return a.len == b.len && (a.len == 0 || memcmp(a.ptr, b.ptr, (size_t)a.len) == 0);
@@ -77,15 +135,30 @@ static int64_t ae_str_len(ae_strview s, size_t line, size_t column) {
     (void)line; (void)column;
     return s.len;
 }
+// UTF-8 (ADR-17): len/slice count bytes, but a slice may not end in the middle
+// of a character. Every byte of a multi-byte sequence except the first has the
+// pattern 10xxxxxx, so checking that one byte is O(1) and cannot be fooled by
+// the slice length. Strings that already contain malformed bytes are left
+// alone: the rule forbids introducing broken sequences, it does not validate
+// input (read_file and argv are byte streams, and forcing a validation pass
+// would make every load O(n) for a guarantee callers rarely want).
+static bool ae_utf8_continue(unsigned char byte) { return (byte & 0xC0) == 0x80; }
+static void ae_utf8_check(ae_strview s, int64_t start, int64_t end, size_t line, size_t column) {
+    if ((start > 0 && start < s.len && ae_utf8_continue((unsigned char)s.ptr[start]))
+        || (end > 0 && end < s.len && ae_utf8_continue((unsigned char)s.ptr[end]))) {
+        ae_fail("string index splits a UTF-8 character", line, column);
+    }
+}
 static ae_strview ae_slice_view(ae_strview s, int64_t start, int64_t end, size_t line, size_t column) {
     if (start < 0 || end < start || end > s.len) ae_fail("string index out of bounds", line, column);
+    ae_utf8_check(s, start, end, line, column);
     ae_strview r = { s.ptr + start, end - start };
     return r;
 }
 static ae_string ae_slice(ae_strview s, int64_t start, int64_t end, size_t line, size_t column) {
     if (start < 0 || end < start || end > s.len) ae_fail("string index out of bounds", line, column);
-    char *out = malloc((size_t)(end - start) + 1);
-    if (!out) ae_fail("out of memory", line, column);
+    ae_utf8_check(s, start, end, line, column);
+    char *out = ae_alloc((size_t)(end - start) + 1, line, column);
     memcpy(out, s.ptr + start, (size_t)(end - start));
     out[end - start] = 0;
     ae_string r = { out, end - start };
@@ -101,8 +174,7 @@ static bool ae_contains(ae_strview haystack, ae_strview needle, size_t line, siz
 }
 
 static ae_string ae_str_from_len(const char *p, int64_t n, size_t line, size_t column) {
-    char *copy = malloc((size_t)n + 1);
-    if (!copy) ae_fail("out of memory", line, column);
+    char *copy = ae_alloc((size_t)n + 1, line, column);
     memcpy(copy, p, (size_t)n);
     copy[n] = 0;
     ae_string out = { copy, n };
@@ -113,6 +185,31 @@ static ae_string ae_str_from_len(const char *p, int64_t n, size_t line, size_t c
 static ae_string ae_str_copy_view(ae_strview s, size_t line, size_t column) {
     return ae_str_from_len(s.ptr, s.len, line, column);
 }
+// Number of characters, i.e. number of bytes that are not continuations. For
+// well-formed text that is the codepoint count; for stray continuation bytes
+// the count is still monotone and never exceeds the byte length.
+static int64_t ae_utf8_len(ae_strview s, size_t line, size_t column) {
+    (void)line; (void)column;
+    int64_t count = 0;
+    for (int64_t i = 0; i < s.len; i++) {
+        if (!ae_utf8_continue((unsigned char)s.ptr[i])) count = count + 1;
+    }
+    return count;
+}
+// First `n` characters as an owned string: the character-safe way to truncate
+// text without computing byte offsets by hand. `n` beyond the end copies
+// everything, so a caller can clamp with utf8_len or just ask for a big number.
+static ae_string ae_utf8_prefix(ae_strview s, int64_t n, size_t line, size_t column) {
+    if (n < 0) ae_fail("character index out of bounds", line, column);
+    int64_t at = 0;
+    int64_t seen = 0;
+    while (at < s.len && seen < n) {
+        at = at + 1;
+        while (at < s.len && ae_utf8_continue((unsigned char)s.ptr[at])) at = at + 1;
+        seen = seen + 1;
+    }
+    return ae_str_from_len(s.ptr, at, line, column);
+}
 
 // Owned vector of owned strings. Elements are borrow-only reads.
 typedef struct { ae_string *data; int64_t len; int64_t cap; } ae_strvec;
@@ -120,16 +217,14 @@ static ae_strvec ae_strvec_new(size_t line, size_t column) {
     ae_strvec v;
     v.len = 0;
     v.cap = 4;
-    v.data = malloc((size_t)v.cap * sizeof(ae_string));
-    if (!v.data) { v.cap = 0; ae_fail("out of memory", line, column); }
+    v.data = ae_alloc((size_t)v.cap * sizeof(ae_string), line, column);
     return v;
 }
 static void ae_strvec_push(ae_strvec *v, ae_string s, size_t line, size_t column) {
     if (v->len == v->cap) {
         if (v->cap > INT64_MAX / 2) ae_fail("vector too large", line, column);
         int64_t ncap = v->cap * 2;
-        ae_string *nd = realloc(v->data, (size_t)ncap * sizeof(ae_string));
-        if (!nd) ae_fail("out of memory", line, column);
+        ae_string *nd = ae_alloc_resize(v->data, (size_t)ncap * sizeof(ae_string), line, column);
         v->data = nd;
         v->cap = ncap;
     }
@@ -160,7 +255,7 @@ static const ae_string *ae_strvec_get_const(const ae_strvec *v, int64_t index, s
 }
 static void ae_strvec_release(ae_strvec *v) {
     for (int64_t i = 0; i < v->len; i++) ae_str_release(&v->data[i]);
-    free(v->data);
+    ae_free(v->data);
     v->data = NULL;
     v->len = 0;
     v->cap = 0;
@@ -192,8 +287,7 @@ static ae_strvec ae_split(ae_strview s, ae_strview sep, size_t line, size_t colu
 
 static ae_string ae_join(const ae_strvec *v, ae_strview sep, size_t line, size_t column) {
     if (v->len == 0) {
-        char *empty = malloc(1);
-        if (!empty) ae_fail("out of memory", line, column);
+        char *empty = ae_alloc(1, line, column);
         empty[0] = 0;
         ae_string out = { empty, 0 };
         return out;
@@ -204,8 +298,7 @@ static ae_string ae_join(const ae_strvec *v, ae_strview sep, size_t line, size_t
         if (total > INT64_MAX - v->data[i].len) ae_fail("string too long", line, column);
         total += v->data[i].len;
     }
-    char *out = malloc((size_t)total + 1);
-    if (!out) ae_fail("out of memory", line, column);
+    char *out = ae_alloc((size_t)total + 1, line, column);
     int64_t at = 0;
     for (int64_t i = 0; i < v->len; i++) {
         if (i > 0) { memcpy(out + at, sep.ptr, (size_t)sep.len); at += sep.len; }
@@ -299,16 +392,14 @@ static ae_vec ae_vec_new(size_t line, size_t column) {
     ae_vec v;
     v.len = 0;
     v.cap = 4;
-    v.data = malloc((size_t)v.cap * sizeof(int64_t));
-    if (!v.data) { v.cap = 0; ae_fail("out of memory", line, column); }
+    v.data = ae_alloc((size_t)v.cap * sizeof(int64_t), line, column);
     return v;
 }
 static void ae_vec_push(ae_vec *v, int64_t x, size_t line, size_t column) {
     if (v->len == v->cap) {
         if (v->cap > INT64_MAX / 2) ae_fail("vector too large", line, column);
         int64_t ncap = v->cap * 2;
-        int64_t *nd = realloc(v->data, (size_t)ncap * sizeof(int64_t));
-        if (!nd) ae_fail("out of memory", line, column);
+        int64_t *nd = ae_alloc_resize(v->data, (size_t)ncap * sizeof(int64_t), line, column);
         v->data = nd;
         v->cap = ncap;
     }
@@ -332,7 +423,7 @@ static int64_t ae_vec_get(ae_vec v, int64_t index, size_t line, size_t column) {
     return v.data[index];
 }
 static void ae_vec_release(ae_vec *v) {
-    free(v->data);
+    ae_free(v->data);
     v->data = NULL;
     v->len = 0;
     v->cap = 0;
@@ -352,7 +443,7 @@ static void ae_vec_forfeit(ae_vec *v) {
 static wchar_t *ae_widen(const char *text) {
     const int len = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
     if (len <= 0) return NULL;
-    wchar_t *wide = malloc((size_t)len * sizeof(wchar_t));
+    wchar_t *wide = ae_alloc_try((size_t)len * sizeof(wchar_t));
     if (!wide) return NULL;
     MultiByteToWideChar(CP_UTF8, 0, text, -1, wide, len);
     return wide;
@@ -362,7 +453,7 @@ static char *ae_narrow(const wchar_t *text, int len) {
     if (len <= 0) return NULL;
     const int size = WideCharToMultiByte(CP_UTF8, 0, text, len, NULL, 0, NULL, NULL);
     if (size <= 0) return NULL;
-    char *narrow = malloc((size_t)size + 1);
+    char *narrow = ae_alloc_try((size_t)size + 1);
     if (!narrow) return NULL;
     WideCharToMultiByte(CP_UTF8, 0, text, len, narrow, size, NULL, NULL);
     narrow[size] = 0;
@@ -371,10 +462,10 @@ static char *ae_narrow(const wchar_t *text, int len) {
 static FILE *ae_fopen(const char *path, const char *mode) {
     wchar_t *wpath = ae_widen(path);
     wchar_t *wmode = ae_widen(mode);
-    if (!wpath || !wmode) { free(wpath); free(wmode); return NULL; }
+    if (!wpath || !wmode) { ae_free(wpath); ae_free(wmode); return NULL; }
     FILE *f = _wfopen(wpath, wmode);
-    free(wpath);
-    free(wmode);
+    ae_free(wpath);
+    ae_free(wmode);
     return f;
 }
 #else
@@ -388,8 +479,8 @@ static ae_string ae_read_file(const char *path, size_t line, size_t column) {
     long size = ftell(f);
     if (size < 0) { fclose(f); ae_fail("cannot read file", line, column); }
     rewind(f);
-    char *buffer = malloc((size_t)size + 1);
-    if (!buffer) { fclose(f); ae_fail("out of memory", line, column); }
+    size_t wanted = (size_t)size + 1;
+    char *buffer = ae_alloc(wanted, line, column);
     size_t read = fread(buffer, 1, (size_t)size, f);
     fclose(f);
     if (read != (size_t)size) ae_fail("cannot read file", line, column);
@@ -466,11 +557,10 @@ static void ae_map_grow(ae_map *m, size_t line, size_t column) {
         cap = cap * 2;
     }
     if (cap == m->cap && m->used == m->len) return;
-    // malloc + memset rather than calloc: the allocation-counting checker in
-    // scripts/leakcheck.c wraps malloc/free/realloc only, and an unwrapped
-    // calloc buffer freed through the wrapper would corrupt the heap.
-    ae_map_slot *slots = malloc((size_t)cap * sizeof(ae_map_slot));
-    if (!slots) ae_fail("out of memory", line, column);
+    // Zeroed by hand rather than with a calloc-style interface: the slot table
+    // needs EMPTY in every byte, and keeping one allocation primitive makes the
+    // allocator interface a single implementation instead of two.
+    ae_map_slot *slots = ae_alloc((size_t)cap * sizeof(ae_map_slot), line, column);
     memset(slots, 0, (size_t)cap * sizeof(ae_map_slot));
     for (int64_t i = 0; i < m->cap; i++) {
         if (m->slots[i].state != AE_MAP_FULL) continue;
@@ -478,7 +568,7 @@ static void ae_map_grow(ae_map *m, size_t line, size_t column) {
         while (slots[at].state == AE_MAP_FULL) at = (at + 1) & (cap - 1);
         slots[at] = m->slots[i];
     }
-    free(m->slots);
+    ae_free(m->slots);
     m->slots = slots;
     m->cap = cap;
     m->used = m->len;
@@ -535,7 +625,7 @@ static void ae_map_release(ae_map *m) {
     for (int64_t i = 0; i < m->cap; i++) {
         if (m->slots[i].state == AE_MAP_FULL) ae_str_release(&m->slots[i].key);
     }
-    free(m->slots);
+    ae_free(m->slots);
     m->slots = NULL;
     m->cap = 0;
     m->len = 0;

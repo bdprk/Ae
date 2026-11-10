@@ -34,6 +34,14 @@
 
 **目录与路径**：`try_list_dir(path) -> DirResult` 返回目录下的条目名（不含 `.` 与 `..`，按字节序排序），失败返回 `Err(描述)`；`path_exists(path) -> bool`、`path_is_dir(path) -> bool` 只做查询。三者都接受拥有字符串或视图。
 
+## Unicode 与字符边界
+
+`len` 与 `slice` 按**字节**工作（字符串是 UTF-8 字节序列，两者都是 O(1)）。为避免切出非法 UTF-8，`slice`/`slice_view` 在索引落在字符中间时终止并报告 `string index splits a UTF-8 character`——判定只看一个字节，仍是 O(1)；`start`/`end` 等于 `len` 视为合法边界。
+
+按字符处理用两个函数：`utf8_len(s) -> i64` 返回字符数（码点数，即非「后续字节」的字节数），`utf8_prefix(s, n) -> string` 返回前 `n` 个字符的拥有副本（`n` 超过字符数则复制全部，负数为错误）。`utf8_len("中文 😀 abc")` 是 8 而 `len` 是 15；`utf8_prefix(..., 2)` 得到 `中文`。
+
+规则只保证**不新引入**断裂序列：来自文件或 argv 的非法字节允许存在并被原样处理（`bytes`/`slice` 皆可）。字符按码点计，不处理组合字符与字素簇；`split`/`contains`/`lines`/`path_*` 仍按字节匹配分隔符（ASCII 分隔符不受影响）。`utf8_len`/`utf8_prefix` 为保留名。
+
 ## 固定长度数组
 
 `let a = [1, 2];` 声明不可变数组，`var a = [1, 2];` 声明可变数组。数组元素是整数表达式，自左向右求值；数组长度为 1 至 4096，只允许声明时使用数组字面量，不支持数组整体赋值、按值传参、返回或嵌套数组。`a[i]` 读取，`a[i] = value;` 需要可变数组。下标须为整数，负数或大于等于长度时程序报告下标位置并以非零状态退出；写入先计算并检查下标，再计算右侧。`len(a)` 是编译期常量（要求裸数组变量）。优化构建保持相同检查。
@@ -66,7 +74,7 @@
 
 程序预置六个结果枚举（无需导入，变体顺序固定）：`ReadResult{Ok(string), Err(string)}`、`WriteResult{Ok(i64), Err(string)}`、`IntResult{Ok(i64), Err(string)}`、`DirResult{Ok(vec[string]), Err(string)}`、`FileResult{Ok(i64, i64, bool), Err(string)}`、`StatusResult{Ok, Err(string)}`。可失败内建：`try_read_file(path) -> ReadResult`、`try_write_file(path, content) -> WriteResult`（成功返回写入字节数）、`parse_int(text) -> IntResult`。失败返回 `Err` 负载的错误描述，**不终止进程**；`read_file`/`write_file` 仍是失败即终止的不可恢复版本。`parse_int` 严格按十进制：可选 `+`/`-`、只允许 ASCII 数字、整串必须消费完、正负分别以 `9223372036854775807`/`-9223372036854775808` 为界，其余情况均为 `Err`。`to_string(i64) -> string` 是十进制格式化，与 `parse_int` 构成往返。
 
-结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string`/`map_new`/`map_get`/`map_has`/`map_remove`/`keys` 与六个结果类型名均为保留名。
+结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string`/`map_new`/`map_get`/`map_has`/`map_remove`/`keys`/`utf8_len`/`utf8_prefix` 与六个结果类型名均为保留名。
 
 ## 错误传播 `?`
 

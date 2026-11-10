@@ -1,0 +1,35 @@
+// Character-safe previews: truncate each line to 20 characters (not 20 bytes)
+// and mark the cut with an ellipsis. Usage: text_preview [file]
+
+fn preview(line: &string) -> string {
+    if utf8_len(line) <= 20 {
+        return slice(line, 0, len(line));
+    }
+    return utf8_prefix(line, 20) + "…";
+}
+
+fn show(text: &string) -> i64 {
+    let rows = lines(text);
+    var shown = 0;
+    for row in rows {
+        print(preview(row));
+        shown = shown + 1;
+    }
+    return shown;
+}
+
+fn main() {
+    var text = "这是一行很长的中文文本，用于演示按字符而不是按字节截断的行为\nshort line\n😀 emoji 也按一个字符计算，不会被切成半个字节";
+    let parts = args();
+    if len(parts) > 1 {
+        let loaded = try_read_file(parts[1]);
+        match loaded {
+            ReadResult::Ok(content) => { text = slice(content, 0, len(content)); }
+            ReadResult::Err(reason) => { print("cannot read: " + reason); }
+        }
+    }
+    let shown = show(text);
+    print("lines " + to_string(shown));
+    print("chars " + to_string(utf8_len(text)));
+    print("bytes " + to_string(len(text)));
+}

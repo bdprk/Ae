@@ -1645,3 +1645,82 @@ fn maps_reject_wrong_keys_values_and_use_after_move() {
         assert!(!output.status.success(), "accepted invalid program: {source}");
     }
 }
+fn execute_with_env(source: &str, env: &[(&str, &str)]) -> std::process::Output {
+    let path = std::env::temp_dir().join(format!("ae-integration-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, source).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ae"));
+    command.arg("run").arg(&path);
+    for (key, value) in env { command.env(key, value); }
+    let output = command.output().unwrap();
+    fs::remove_file(path).unwrap();
+    output
+}
+#[test]
+fn utf8_length_and_prefix_count_characters_not_bytes() {
+    let output = execute(r#"fn main() {
+    let text = "中文 😀 abc";
+    print(len(text));
+    print(utf8_len(text));
+    print(utf8_prefix(text, 2));
+    print(utf8_prefix(text, 3));
+    print(utf8_prefix(text, 100) == text);
+    print(utf8_prefix("", 3) == "");
+    print(utf8_prefix("abc", 0) == "");
+}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "15\n8\n中文\n中文 \ntrue\ntrue\ntrue\n"
+    );
+}
+#[test]
+fn slicing_inside_a_character_is_rejected() {
+    for source in [
+        "fn main() { let text = \"中文\"; print(slice(text, 0, 1)); }",
+        "fn main() { let text = \"中文\"; print(slice(text, 3, 5)); }",
+        "fn main() { let text = \"中文\"; print(slice_view(text, 1, 3)); }",
+        // A whole-character range is fine, and so is the empty range at a boundary.
+        "fn main() { let text = \"中文\"; print(slice(text, 3, 6)); print(utf8_len(slice(text, 0, 0))); }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-utf8-slice-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        let allowed = source.contains("utf8_len(slice(text, 0, 0))");
+        if allowed {
+            assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+            assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "文\n0\n");
+        } else {
+            assert!(!output.status.success(), "accepted a slice that splits a character: {source}");
+            assert!(String::from_utf8_lossy(&output.stderr).contains("string index splits a UTF-8 character"), "{}", String::from_utf8_lossy(&output.stderr));
+        }
+    }
+}
+#[test]
+fn split_accepts_borrowed_separators() {
+    let output = execute(r#"fn fields(text: &string, sep: &string) -> i64 {
+    let parts = split(text, sep);
+    return len(parts);
+}
+fn main() {
+    print(fields("a,b,c", ","));
+    print(fields("no separator", ","));
+}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "3\n1\n");
+}
+#[test]
+fn allocation_failure_reports_the_operation_location() {
+    let source = "fn main() {\n    let text = \"hello\";\n    print(text);\n}";
+    let exhausted = execute_with_env(source, &[("AE_ALLOC_LIMIT", "0")]);
+    assert!(!exhausted.status.success(), "an exhausted allocation budget must fail");
+    let stderr = String::from_utf8_lossy(&exhausted.stderr);
+    assert!(stderr.contains("out of memory"), "{stderr}");
+    assert!(stderr.contains("ae:2:"), "the location of the string literal is missing: {stderr}");
+    let generous = execute_with_env(source, &[("AE_ALLOC_LIMIT", "4096")]);
+    assert!(generous.status.success(), "{}", String::from_utf8_lossy(&generous.stderr));
+    assert_eq!(String::from_utf8_lossy(&generous.stdout).trim(), "hello");
+    // A malformed limit is ignored rather than silently disabling the program.
+    let malformed = execute_with_env(source, &[("AE_ALLOC_LIMIT", "lots")]);
+    assert!(malformed.status.success(), "{}", String::from_utf8_lossy(&malformed.stderr));
+}
