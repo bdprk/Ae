@@ -4,7 +4,7 @@ AE 是自主研发的实验性原生编程语言，首批目标平台为 Windows
 
 优先级：安全和正确性是底线；运行 CPU 和内存共同优化；编译速度和磁盘占用都必须满足未来基于基准设定的预算。功能可以为这些目标让路。
 
-当前原型支持的子集：`fn main()` 与用户函数（`i64`/`bool`/`string`/`vec` 参数与返回值，含 `&vec` 只读借用与 `&[i64; N]` 数组借用）、`let`/`var`、赋值、整数与布尔字面量、字符串字面量与转义、括号、`+ - * / %` 与一元 `-`/`!`、受检算术（溢出、除零报告位置并退出）、比较（含字符串内容相等）与 `&&`/`||` 短路、`if`/`else if`/`else`、`while`、`for i in a..b`（半开区间，界只求值一次）、`break`/`continue`、`assert`、`print`、`len`、固定长度数组与**动态向量 `vec`**（`push`/`pop`/索引，全部边界检查）、**拥有型字符串与向量的移动语义与确定性释放**、**模块（`use` 导入、环检测、跨文件重名拒绝）**、**结构体（拥有字段、字段借用、确定性释放）**、**枚举与穷尽 `match`**（变体负载 `i64`/`bool`/`string`，负载随枚举确定性释放）、**可恢复错误**（预置 `ReadResult`/`WriteResult`/`IntResult`/`DirResult`/`FileResult`/`StatusResult` 与 `try_read_file`/`try_write_file`/`try_list_dir`/`try_file_info`/`parse_int`/`to_string`，失败作为值返回而非终止进程）、**目录遍历与路径查询**（`try_list_dir`/`path_exists`/`path_is_dir`）、**路径代数**（`path_join`/`path_name`/`path_parent`，两平台统一 `/`）、**文件整理操作**（`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`，全部可恢复）、**文件元数据**（`try_file_info` 返回字节数、Unix 秒时间戳与目录标志）、**只读借用参数**（`&string`/`&vec[string]`，不移动不复制）、**`for x in vec` 元素迭代**、**文件读写 `read_file`/`write_file`（Unicode 路径）**、`bytes()`/`contains()`/`slice()`/`split()`/`join()`/`lines()`/`count_lines_with()`/`args()` 与 `vec[string]` 字符串向量与**借用字符串视图**（`slice_view` 零拷贝切片，借用跟踪）。表达式从左到右求值；字符串与向量赋值/传参/返回按移动处理，移动后使用被编译期拒绝，并有运行时空检查兜底；块退出、提前返回与跳转路径全部插入幂等释放。
+当前原型支持的子集：`fn main()` 与用户函数（`i64`/`bool`/`string`/`vec` 参数与返回值，含 `&vec` 只读借用与 `&[i64; N]` 数组借用）、`let`/`var`、赋值、整数与布尔字面量、字符串字面量与转义、括号、`+ - * / %` 与一元 `-`/`!`、受检算术（溢出、除零报告位置并退出）、比较（含字符串内容相等）与 `&&`/`||` 短路、`if`/`else if`/`else`、`while`、`for i in a..b`（半开区间，界只求值一次）、`break`/`continue`、`assert`、`print`、`len`、固定长度数组与**动态向量 `vec`**（`push`/`pop`/索引，全部边界检查）、**拥有型字符串与向量的移动语义与确定性释放**、**模块（`use` 导入、环检测、跨文件重名拒绝）**、**结构体（拥有字段、字段借用、确定性释放）**、**枚举与穷尽 `match`**（变体负载 `i64`/`bool`/`string`，负载随枚举确定性释放）、**错误传播 `?`**（`let x = call()?;` 与 `call()?;`，失败时释放已绑定值并原样返回给调用者）、**可恢复错误**（预置 `ReadResult`/`WriteResult`/`IntResult`/`DirResult`/`FileResult`/`StatusResult` 与 `try_read_file`/`try_write_file`/`try_list_dir`/`try_file_info`/`parse_int`/`to_string`，失败作为值返回而非终止进程）、**目录遍历与路径查询**（`try_list_dir`/`path_exists`/`path_is_dir`）、**路径代数**（`path_join`/`path_name`/`path_parent`，两平台统一 `/`）、**文件整理操作**（`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`，全部可恢复）、**文件元数据**（`try_file_info` 返回字节数、Unix 秒时间戳与目录标志）、**只读借用参数**（`&string`/`&vec[string]`，不移动不复制）、**`for x in vec` 元素迭代**、**文件读写 `read_file`/`write_file`（Unicode 路径）**、`bytes()`/`contains()`/`slice()`/`split()`/`join()`/`lines()`/`count_lines_with()`/`args()` 与 `vec[string]` 字符串向量与**借用字符串视图**（`slice_view` 零拷贝切片，借用跟踪）。表达式从左到右求值；字符串与向量赋值/传参/返回按移动处理，移动后使用被编译期拒绝，并有运行时空检查兜底；块退出、提前返回与跳转路径全部插入幂等释放。
 
 诊断显示行列号；尚无泛型、并发或正式安全证明，不能据此宣称完整的内存安全语言已完成。
 
@@ -22,6 +22,7 @@ cargo run -- run examples/concat.ae
 cargo run -- run examples/sum_numbers.ae -- 文件路径
 cargo run -- run examples/find_files.ae -- . txt
 cargo run -- run examples/file_tidy.ae
+cargo run -- run examples/copy_notes.ae
 cargo run -- run examples/strings.ae
 cargo run -- run examples/vectors.ae
 cargo run -- run examples/grep.ae

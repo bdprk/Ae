@@ -36,6 +36,9 @@ def run():
         # Runs inside the temporary directory: the example creates and then
         # removes its own sandbox, so the working tree stays clean.
         ("file_tidy.ae", b"a_small.txt 5 small\nb_medium.txt 60 small\nc_large.txt 300 large\norganized 3 into small/large\ncleared 6 files\ndone", True),
+        # `?` propagation: the error path must release everything the arm before
+        # it bound, which the allocation baseline checks.
+        ("copy_notes.ae", b"copied text notes\n11\n2\ntrue\ncleared the sandbox\ndone", True),
     ]
     with tempfile.TemporaryDirectory(prefix="ae-c-verify-") as tmp:
         tmp = Path(tmp)

@@ -68,6 +68,12 @@
 
 结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string` 与六个结果类型名均为保留名。
 
+## 错误传播 `?`
+
+`let x = 调用()?;` 与 `调用()?;` 是传播语句：结果枚举处于 `Err` 时，先释放当前函数内所有仍存活的拥有型变量，再把这个结果值本身返回给调用者；处于 `Ok` 时，`let` 形式把唯一的负载移出并绑定（`Ok` 必须恰好一个负载），裸语句形式则释放负载后继续。裸语句是语言里唯一的「表达式语句」，且**必须以 `?` 结尾**，因此不存在「静默丢弃返回值」的写法。
+
+可传播的类型必须形如 `{ Ok(...), Err(string) }`（`Ok` 在前、`Err` 在后），六个预置结果枚举都满足；自定义枚举照此形状同样可用。传播要求外层函数返回**同一个**枚举类型，`main` 里不能传播；一个函数只能传播一个结果族，跨族（例如 `try_list_dir` 的 `DirResult` 与 `try_copy_file` 的 `StatusResult`）必须在边界处用 `match` 转换。`?` 是语句而非表达式，不能出现在更大的表达式里。
+
 ## 路径代数与文件元数据
 
 路径函数是纯字符串操作，不触碰文件系统，也不做规范化（不解析 `.`/`..`、不折叠重复分隔符）。`path_join(dir, name) -> string` 在需要时插入 `/`：`dir` 以分隔符结尾则直接相接，`name` 是绝对路径（以 `/`、`\` 开头或形如 `C:`）时**整个替换** `dir`，任一参数为空则返回另一个的副本。`path_name(path) -> string` 返回最后一个分量（先丢弃尾部空分隔符，所以 `a/b/` 的 name 是 `b`；纯分隔符路径返回分隔符本身）。`path_parent(path) -> string` 返回最后一个分量之前的部分并去掉多余分隔符（`/a` 的父是 `/`）；没有分隔符的路径没有父，返回空字符串而不是编造 `.`。输出一律使用 `/`：Windows 接受 `/`，两平台打印同一路径文本，测试与记录才可比。

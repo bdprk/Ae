@@ -1497,3 +1497,84 @@ fn run_forwards_program_arguments_after_double_dash() {
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("does not take program arguments"));
     fs::remove_dir_all(dir).unwrap();
 }
+#[test]
+fn error_propagation_returns_the_first_failure() {
+    let dir = std::env::temp_dir().join(format!("ae-propagate-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::create_dir(&dir).unwrap();
+    fs::write(dir.join("a.txt"), "alpha").unwrap();
+    fs::write(dir.join("b.txt"), "beta").unwrap();
+    let literal = |p: &std::path::Path| p.display().to_string().replace('\\', "\\\\");
+    let source = format!(r#"fn merge(first: &string, second: &string) -> ReadResult {{
+    let a = try_read_file(first)?;
+    let b = try_read_file(second)?;
+    return ReadResult::Ok(a + b);
+}}
+
+fn double(text: &string) -> IntResult {{
+    let n = parse_int(text)?;
+    return IntResult::Ok(n * 2);
+}}
+
+fn remove_missing(path: &string) -> StatusResult {{
+    try_remove_file(path)?;
+    return StatusResult::Ok;
+}}
+
+fn main() {{
+    let both = merge("{a}", "{b}");
+    match both {{
+        ReadResult::Ok(text) => {{ print(text); }}
+        ReadResult::Err(reason) => {{ print("unexpected failure"); }}
+    }}
+    let half = merge("{a}", "{missing}");
+    match half {{
+        ReadResult::Ok(text) => {{ print("unexpected success"); }}
+        ReadResult::Err(reason) => {{ print(len(reason) > 0); }}
+    }}
+    let doubled = double("21");
+    match doubled {{
+        IntResult::Ok(n) => {{ print(n); }}
+        IntResult::Err(reason) => {{ print("unexpected failure"); }}
+    }}
+    let rejected = double("21x");
+    match rejected {{
+        IntResult::Ok(n) => {{ print("unexpected success"); }}
+        IntResult::Err(reason) => {{ print(reason); }}
+    }}
+    let absent = remove_missing("{missing2}");
+    match absent {{
+        StatusResult::Ok => {{ print("unexpected success"); }}
+        StatusResult::Err(reason) => {{ print(len(reason) > 0); }}
+    }}
+}}"#, a = literal(&dir.join("a.txt")), b = literal(&dir.join("b.txt")),
+        missing = literal(&dir.join("missing.txt")), missing2 = literal(&dir.join("gone.txt")));
+    let output = execute(&source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "alphabeta\ntrue\n42\nnot a base-10 integer\ntrue\n"
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn invalid_error_propagation_is_rejected() {
+    for source in [
+        // '?' needs a function that returns the same result type
+        "fn main() { let a = try_read_file(\"x\")?; print(1); }",
+        "fn f(p: &string) -> StatusResult { let names = try_list_dir(p)?; return StatusResult::Ok; } fn main() { print(1); }",
+        // the value has to be a result at all
+        "fn f() -> ReadResult { let x = 1?; return ReadResult::Ok(\"a\"); } fn main() { print(1); }",
+        // only the prelude-shaped Ok/Err pairs can be propagated
+        "enum Pair { Ok(string), Bad(string) } fn f() -> Pair { let x = try_read_file(\"a\")?; return Pair::Ok(x); } fn main() { print(1); }",
+        // a three-value Ok needs an explicit match, a binding cannot pick one
+        "fn f(p: &string) -> FileResult { let size = try_file_info(p)?; return FileResult::Ok(size, 0, false); } fn main() { print(1); }",
+        // a bare call statement must state what happens to the result
+        "fn f(p: &string) -> StatusResult { try_remove_file(p); return StatusResult::Ok; } fn main() { print(1); }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-propagate-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted invalid program: {source}");
+    }
+}

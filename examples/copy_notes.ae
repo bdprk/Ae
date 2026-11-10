@@ -1,0 +1,110 @@
+// Error propagation with '?': each helper stays inside one result family and
+// hands the first failure straight back, so the happy path reads top to bottom.
+// Usage: copy_notes   (works inside a sandbox directory it creates itself)
+
+fn copy_notes(from: &string, to: &string) -> StatusResult {
+    let listed = try_list_dir(from);
+    match listed {
+        DirResult::Ok(names) => {
+            for name in names {
+                if contains(name, ".txt") {
+                    try_copy_file(path_join(from, name), path_join(to, name))?;
+                }
+            }
+            return StatusResult::Ok;
+        }
+        DirResult::Err(reason) => {
+            return StatusResult::Err("cannot list the source directory");
+        }
+    }
+}
+
+fn clear(dir: &string) -> StatusResult {
+    let listed = try_list_dir(dir);
+    match listed {
+        DirResult::Ok(names) => {
+            for name in names {
+                try_remove_file(path_join(dir, name))?;
+            }
+            return StatusResult::Ok;
+        }
+        DirResult::Err(reason) => {
+            return StatusResult::Err("cannot list the directory to clear");
+        }
+    }
+}
+
+fn read_pair(first: &string, second: &string) -> ReadResult {
+    let a = try_read_file(first)?;
+    let b = try_read_file(second)?;
+    return ReadResult::Ok(a + b);
+}
+
+fn main() {
+    let from = "notes_demo/inbox";
+    let to = "notes_demo/sorted";
+    let made = try_create_dir(from);
+    match made {
+        StatusResult::Ok => {}
+        StatusResult::Err(reason) => {
+            print("cannot prepare the sandbox: " + reason);
+        }
+    }
+    let made_to = try_create_dir(to);
+    match made_to {
+        StatusResult::Ok => {}
+        StatusResult::Err(reason) => {
+            print("cannot prepare the sandbox: " + reason);
+        }
+    }
+    assert(write_file(path_join(from, "a.txt"), "alpha\n") == 6);
+    assert(write_file(path_join(from, "b.txt"), "beta\n") == 5);
+    assert(write_file(path_join(from, "skip.md"), "ignore me\n") == 10);
+
+    let copied = copy_notes(from, to);
+    match copied {
+        StatusResult::Ok => { print("copied text notes"); }
+        StatusResult::Err(reason) => { print("copy failed: " + reason); }
+    }
+    let merged = read_pair(path_join(to, "a.txt"), path_join(to, "b.txt"));
+    match merged {
+        ReadResult::Ok(text) => {
+            print(len(text));
+            print(len(lines(text)));
+        }
+        ReadResult::Err(reason) => { print("read failed: " + reason); }
+    }
+    // `?` reports the first failure, so a missing file stops the pair read and
+    // the reason survives all the way into this match.
+    let broken = read_pair(path_join(to, "a.txt"), path_join(to, "missing.txt"));
+    match broken {
+        ReadResult::Ok(text) => { print("unexpected success"); }
+        ReadResult::Err(reason) => { print(len(reason) > 0); }
+    }
+
+    let cleared_from = clear(from);
+    match cleared_from {
+        StatusResult::Ok => {}
+        StatusResult::Err(reason) => { print("cleanup failed: " + reason); }
+    }
+    let cleared_to = clear(to);
+    match cleared_to {
+        StatusResult::Ok => { print("cleared the sandbox"); }
+        StatusResult::Err(reason) => { print("cleanup failed: " + reason); }
+    }
+    let removed_from = try_remove_dir(from);
+    match removed_from {
+        StatusResult::Ok => {}
+        StatusResult::Err(reason) => { print("cleanup failed: " + reason); }
+    }
+    let removed_to = try_remove_dir(to);
+    match removed_to {
+        StatusResult::Ok => {}
+        StatusResult::Err(reason) => { print("cleanup failed: " + reason); }
+    }
+    let removed_root = try_remove_dir("notes_demo");
+    match removed_root {
+        StatusResult::Ok => { print("done"); }
+        StatusResult::Err(reason) => { print("cleanup failed: " + reason); }
+    }
+}

@@ -6,7 +6,7 @@ enum Kind {
     Ident(String), Number(i64), Text(String), Fn, Let, Var, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, Struct,
-    Enum, Match, ColonColon, FatArrow, Eof,
+    Enum, Match, ColonColon, FatArrow, Question, Eof,
 }
 #[derive(Debug, Clone)]
 struct Token { kind: Kind, offset: usize, line: usize, column: usize }
@@ -151,7 +151,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                 '[' => Kind::LBracket, ']' => Kind::RBracket, ',' => Kind::Comma, ':' => Kind::Colon, '&' => Kind::Amp,
                 ';' => Kind::Semi, '=' => Kind::Equal, '+' => Kind::Plus, '-' => Kind::Minus,
                 '*' => Kind::Star, '/' => Kind::Slash, '%' => Kind::Percent, '<' => Kind::Less, '>' => Kind::Greater,
-                '!' => Kind::Bang, '.' => Kind::Dot,
+                '!' => Kind::Bang, '.' => Kind::Dot, '?' => Kind::Question,
                 _ => return Err(lex_error(source, start, &format!("unexpected character {c:?}"))),
             }
         };
@@ -177,7 +177,7 @@ enum Argument { Value(Expr), Borrow(usize, bool), View(Expr) } // Borrow bool: p
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
-enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), Break, Continue(Option<usize>), Frees(Vec<(usize, Type)>) }
+enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), Propagate(Expr, Type, Vec<Type>, Option<(usize, Type)>, Vec<(usize, Type)>), Break, Continue(Option<usize>), Frees(Vec<(usize, Type)>) }
 #[derive(Debug)]
 struct Function { id: usize, params: Vec<(usize, Type)>, body: Vec<Statement>, is_main: bool, returns: Type }
 fn returns(stmts: &[Statement]) -> bool {
@@ -1129,7 +1129,21 @@ impl<'a> Parser<'a> {
                         let len = values.len(); (Statement::Array(id, values), Type::Array(len))
                     } else {
                         // The initializer consumes string values.
-                        let (value, ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
+                        let (value, ty) = self.expression(0, true)?;
+                        // `let x = call()?;` binds the Ok payload and returns the
+                        // error to the caller instead of continuing.
+                        if *self.current() == Kind::Question {
+                            let (statement, bound_ty) = self.propagate_statement(value, ty, Some(id))?;
+                            self.pos += 1;
+                            self.take(Kind::Semi)?;
+                            let bound_ty = bound_ty.expect("a binding propagation always produces a payload type");
+                            self.names.insert(name.clone(), (id, mutable, bound_ty));
+                            self.scopes.last_mut().unwrap().push((id, bound_ty));
+                            declared.push(name);
+                            result.push(statement);
+                            continue;
+                        }
+                        self.take(Kind::Semi)?;
                         // A borrow has no storage of its own: it lives only as a
                         // parameter or a pattern binding, never as a variable.
                         if matches!(ty, Type::VecRef | Type::StrVecRef) {
@@ -1174,6 +1188,19 @@ impl<'a> Parser<'a> {
                                 result.push(Statement::VecPop(id, line, col));
                             }
                         }
+                        continue;
+                    }
+                    if !self.names.contains_key(&name) {
+                        // A call used only for its effect. The value must be
+                        // propagated with '?', so a failure is never dropped.
+                        let (value, ty) = self.expression(0, true)?;
+                        if *self.current() != Kind::Question {
+                            return Err(self.fail("a statement that only calls a function must end with '?' to propagate its result"));
+                        }
+                        let (statement, _) = self.propagate_statement(value, ty, None)?;
+                        self.pos += 1;
+                        self.take(Kind::Semi)?;
+                        result.push(statement);
                         continue;
                     }
                     let (id, mutable, ty) = *self.names.get(&name).ok_or_else(|| self.fail(&format!("unknown variable '{name}'")))?;
@@ -1437,6 +1464,35 @@ impl<'a> Parser<'a> {
         for id in after_yes { self.moved.insert(id); }
         Ok(Statement::If(condition, yes, no))
     }
+    // `expr?` propagates the error variant of a result enum: on `Err` every
+    // live owned value is released and the enum itself is returned, so a caller
+    // never observes a half-finished result. On `Ok` the payload is bound (or
+    // released when the statement only wanted the side effect).
+    fn propagate_statement(&mut self, value: Expr, ty: Type, binding: Option<usize>) -> Result<(Statement, Option<Type>), String> {
+        let eid = match ty {
+            Type::Enum(_, eid) => eid,
+            _ => return Err(self.fail(&format!("'?' needs a result value, found {}", ty.name()))),
+        };
+        let def = self.enums[eid].clone();
+        if def.variants.len() != 2 || def.variants[0].0 != "Ok" || def.variants[1].0 != "Err" || def.variants[1].1 != [Type::String] {
+            return Err(self.fail(&format!("'?' needs an enum shaped {{ Ok(...), Err(string) }}, and '{}' is not one", def.name)));
+        }
+        if self.in_main || self.return_type != ty {
+            return Err(self.fail(&format!("'?' needs the enclosing function to return {}, so the failure can be handed on", def.name)));
+        }
+        let fields = def.variants[0].1.clone();
+        let bound = match binding {
+            Some(id) => {
+                if fields.len() != 1 {
+                    return Err(self.fail(&format!("'{}::Ok' carries {} values; a binding `let` needs exactly one (use a bare statement to discard)", def.name, fields.len())));
+                }
+                Some((id, fields[0]))
+            }
+            None => None,
+        };
+        let bound_ty = bound.map(|(_, ty)| ty);
+        Ok((Statement::Propagate(value, ty, fields, bound, self.live_owned()), bound_ty))
+    }
     // `match subject { Enum::Variant(a, b) => { ... } ... }` is a statement.
     // Coverage must be exhaustive and each variant may appear once, so there is
     // no fall-through path to reason about. The subject is borrowed for the
@@ -1566,13 +1622,23 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
         }
         Expr::Call(id, args, ret) => {
             let mut moves = Vec::new();
+            // A read-only argument only borrows its value, so a temporary
+            // (literal or `+` result) stays owned by this expression and is
+            // released after the call. Without this, `f("a" + b)` leaks.
+            let mut view_temps: Vec<String> = Vec::new();
             let arguments = args.iter().map(|arg| match arg {
                 Argument::Value(e) => { let t = emit_expr(e, out, next, true); moves.extend(t.moves); t.text }
                 Argument::Borrow(id, is_vec) => if *is_vec { format!("&v{id}") } else { format!("v{id}") },
-                Argument::View(e) => { let t = emit_expr(e, out, next, false); moves.extend(t.moves); format!("AE_VIEW({})", t.text) },
+                Argument::View(e) => {
+                    let t = emit_expr(e, out, next, false);
+                    moves.extend(t.moves);
+                    if t.owned { view_temps.push(t.text.clone()); }
+                    format!("AE_VIEW({})", t.text)
+                }
             }).collect::<Vec<_>>().join(", ");
             let t = *next; *next += 1;
             out.push_str(&format!("    {}t{t} = ae_fn_{id}({arguments});\n", ret.c_temp()));
+            for text in &view_temps { out.push_str(&format!("    ae_str_release(&{text});\n")); }
             null_moves(out, &moves);
             Emitted { text: format!("t{t}"), ty: *ret, owned: ret.owned(), moves: Vec::new(), materialized: true }
         }
@@ -2126,6 +2192,37 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                 Some(label) => out.push_str(&format!("    goto ae_next_{label};\n")),
                 None => out.push_str("    continue;\n"),
             },
+            // Propagating a result returns the error value itself after every
+            // live owned value is released, so the failure path owns nothing
+            // the caller could reach. The Ok payload moves out of the enum and
+            // the enum is then forfeited, which is what keeps it from being
+            // freed twice.
+            Statement::Propagate(value, ty, fields, binding, frees) => {
+                let t = emit_expr(value, out, next, true);
+                let eid = match ty { Type::Enum(_, k) => *k, _ => unreachable!("propagation is enum-typed") };
+                null_moves(out, &t.moves);
+                out.push_str(&format!("    if ({}.tag == AE_E{eid}_1) {{\n", t.text));
+                for &(id, vty) in frees {
+                    if t.moves.iter().any(|&(m, _)| m == id) { continue; }
+                    release_var(out, id, vty);
+                }
+                out.push_str(&format!("        return {};\n    }}\n", t.text));
+                match binding {
+                    Some((id, pty)) => out.push_str(&format!("    {}v{id} = {}.u.v0.p0;\n", pty.c_temp(), t.text)),
+                    None => {
+                        for (index, field) in fields.iter().enumerate() {
+                            if !field.owned() { continue; }
+                            let member = format!("{}.u.v0.p{index}", t.text);
+                            match field {
+                                Type::Vec => out.push_str(&format!("    ae_vec_release(&{member});\n")),
+                                Type::StrVec => out.push_str(&format!("    ae_strvec_release(&{member});\n")),
+                                _ => out.push_str(&format!("    ae_str_release(&{member});\n")),
+                            }
+                        }
+                    }
+                }
+                out.push_str(&format!("    ae_e{eid}_forfeit(&{});\n", t.text));
+            }
             // Arms become an if/else chain rather than a C switch: a `break`
             // in an arm body must leave the enclosing loop, which a switch
             // would swallow. Coverage is exhaustive, so no fall-through case
