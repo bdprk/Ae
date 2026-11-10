@@ -17,11 +17,11 @@
 
 ### 记录时效
 
-2026-11-10 的两次 Linux 运行覆盖了当前全部能力：第一阶段（InstaBox `evaluate-2`）记录的是性能基准，第二阶段（`evaluate-1`，见 `bench/results/2026-11-10-linux-evaluate-1/`）在新增哈希表、UTF-8 边界、分配器接口、`pub` 可见性、循环移动规则、泛型枚举、排序/时钟/环境变量/追加写入、`exit`、`read_stdin`/`cwd`、JSON 路径查询、缓存校验与上限、`strvec_new`/`run_command`、泛型结构体与泛型函数、`set_cwd`、类型参数约束之后重跑，9 + 126 全部通过、20 个生成 C 用例全部 PASS 且分配计数为 0。第一阶段暴露并修复了一个**只在 Linux 出现**的缺陷：`clock_gettime` 属于 POSIX，在 `-std=c11 -pedantic-errors` 下被 glibc 隐藏，导致 91 个测试无法编译；改用 ISO C11 的 `timespec_get` 后消失（见 ADR-25）。
+2026-11-10 的 Linux 运行覆盖了当前全部能力：第一阶段（InstaBox `evaluate-2`）记录的是性能基准，第二阶段（`evaluate-1`，见 `bench/results/2026-11-10-linux-evaluate-1/`）在新增哈希表、UTF-8 边界、分配器接口、`pub` 可见性、循环移动规则、泛型枚举、排序/时钟/环境变量/追加写入、`exit`、`read_stdin`/`cwd`、JSON 路径查询、缓存校验与上限、`strvec_new`/`run_command`、泛型结构体与泛型函数、`set_cwd`、类型参数约束之后重跑，9 + 126 全部通过、20 个生成 C 用例全部 PASS 且分配计数为 0。之后（`node`，见 `bench/results/2026-11-10-linux-node-option/`）再加入 `?` 对 `Option` 的传播，9 + 127 全部通过、21 个生成 C 用例 PASS，净化器与分配计数同样干净。第一阶段暴露并修复了一个**只在 Linux 出现**的缺陷：`clock_gettime` 属于 POSIX，在 `-std=c11 -pedantic-errors` 下被 glibc 隐藏，导致 91 个测试无法编译；改用 ISO C11 的 `timespec_get` 后消失（见 ADR-25）。
 
 此后任何新增能力在提交前都要求两平台各跑一次上述命令；只有一方通过时，本文不会把它标记为跨平台已验证。
 
-2026-11-10 的 Windows 本地运行覆盖了 `?` 对 `Option` 的传播（127 个集成测试 + 21 个生成 C 用例，全部通过）；Linux 最近一次全量记录早于该特性，因此本行不构成本特性的跨平台证据，下一次 Linux 运行需重跑全部命令。
+2026-11-10 在 Windows 本地与 Linux（instabox-node）各跑一次全量验证，覆盖 `?` 对 `Option` 的传播：9 单元 + 127 集成测试全部通过，21 个生成 C 用例在两种优化模式下 PASS，Linux 净化器无地址/未定义行为报告、`--leak` 的退出分配计数为 0（Windows 为 2 块基线）。原始输出见 `bench/results/2026-11-10-linux-node-option/`。
 
 ## 已知平台差异（不掩盖）
 
@@ -36,4 +36,4 @@
 
 ## 复现
 
-Linux 结果与原始数据见 `bench/results/2026-11-10-linux-evaluate-1/`（Debian 13、GCC 14.2.0、rustc 1.99.0、4 vCPU / 7.8 GB：`PLATFORM.txt`、`cargo-test.log`、`verify-c.log`），性能基准见 `bench/results/2026-11-10-linux-node3/`（InstaBox `evaluate-2`），Windows 见 `bench/results/2026-11-10-windows-local/`。命令：`cargo test --locked`、`python3 scripts/verify_generated_c.py --sanitize`、`python3 scripts/verify_generated_c.py --leak`、`python3 bench/run.py [--release] [--cold]`。
+Linux 结果与原始数据见 `bench/results/2026-11-10-linux-evaluate-1/`（Debian 13、GCC 14.2.0、rustc 1.99.0、4 vCPU / 7.8 GB：`PLATFORM.txt`、`cargo-test.log`、`verify-c.log`）与 `bench/results/2026-11-10-linux-node-option/`（同机型的 `instabox-node`，含 `verify-c-sanitize.log` 与 `verify-c-leak.log`），性能基准见 `bench/results/2026-11-10-linux-node3/`（InstaBox `evaluate-2`），Windows 见 `bench/results/2026-11-10-windows-local/`。命令：`cargo test --locked`、`python3 scripts/verify_generated_c.py --sanitize`、`python3 scripts/verify_generated_c.py --leak`、`python3 bench/run.py [--release] [--cold]`。

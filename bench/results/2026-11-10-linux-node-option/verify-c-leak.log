@@ -1,0 +1,44 @@
+BASELINE leak blocks=0
+  leak blocks=0 bytes=0
+PASS vectors.ae
+  leak blocks=0 bytes=0
+PASS arrays.ae
+  leak blocks=0 bytes=0
+PASS borrow.ae
+  leak blocks=0 bytes=0
+PASS functions.ae
+  leak blocks=0 bytes=0
+PASS control-flow.ae
+  leak blocks=0 bytes=0
+PASS strings.ae
+  leak blocks=0 bytes=0
+PASS enums.ae
+  leak blocks=0 bytes=0
+PASS concat.ae
+  leak blocks=0 bytes=0
+PASS file_tidy.ae
+  leak blocks=0 bytes=0
+PASS copy_notes.ae
+  leak blocks=0 bytes=0
+PASS word_count.ae
+  leak blocks=0 bytes=0
+PASS dir_report.ae
+  leak blocks=0 bytes=0
+PASS pairs.ae
+  leak blocks=0 bytes=0
+PASS generic_fn.ae
+  leak blocks=0 bytes=0
+PASS constraints.ae
+  leak blocks=0 bytes=0
+PASS option_propagate.ae
+  leak blocks=0 bytes=0
+PASS json_report.ae
+  leak blocks=0 bytes=0
+PASS maybe.ae
+  leak blocks=0 bytes=0
+PASS main.ae
+  leak blocks=0 bytes=0
+PASS text_preview.ae
+  leak blocks=0 bytes=0
+PASS bounds.ae
+verify-exit=0
