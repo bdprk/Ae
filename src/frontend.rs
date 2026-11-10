@@ -5,13 +5,14 @@ use std::path::Path;
 enum Kind {
     Ident(String), Number(i64), Text(String), Fn, Let, Var, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang,
-    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, Struct, Eof,
+    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, Struct,
+    Enum, Match, ColonColon, FatArrow, Eof,
 }
 #[derive(Debug, Clone)]
 struct Token { kind: Kind, offset: usize, line: usize, column: usize }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, String, StrView, Vec, StrVec, VecRef, Array(usize), Struct(usize) }
+enum Type { Int, Bool, String, StrView, Vec, StrVec, VecRef, Array(usize), Struct(usize), Enum(&'static str, usize) }
 impl Type {
     fn name(self) -> String {
         match self {
@@ -24,6 +25,7 @@ impl Type {
             Type::VecRef => "&vec".to_owned(),
             Type::Array(n) => format!("&[i64; {n}]"),
             Type::Struct(id) => format!("struct #{}", id),
+            Type::Enum(name, _) => name.to_owned(),
         }
     }
     fn c_temp(self) -> String {
@@ -34,13 +36,15 @@ impl Type {
             Type::Vec => "ae_vec ".to_owned(),
             Type::StrVec => "ae_strvec ".to_owned(),
             Type::Struct(k) => format!("ae_t{k} "),
+            Type::Enum(_, k) => format!("ae_e{k} "),
             _ => "int64_t ".to_owned(),
         }
     }
     // Owned types carry heap resources: they move, and every live slot is
-    // released on scope exit and control-flow jumps.
+    // released on scope exit and control-flow jumps. Enums own their payload
+    // slots, which may hold strings.
     fn owned(self) -> bool {
-        matches!(self, Type::String | Type::Vec | Type::StrVec | Type::Struct(_))
+        matches!(self, Type::String | Type::Vec | Type::StrVec | Type::Struct(_) | Type::Enum(..))
     }
 }
 enum MoveKind { Var(usize), Field, StrVecElement }
@@ -104,15 +108,16 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                 "for" => Kind::For, "in" => Kind::In,
                 "break" => Kind::Break, "continue" => Kind::Continue, "assert" => Kind::Assert,
                 "true" => Kind::True, "false" => Kind::False, "use" => Kind::Use, "struct" => Kind::Struct,
+                "enum" => Kind::Enum, "match" => Kind::Match,
                 s => Kind::Ident(s.to_owned()),
             }
         } else if c.is_ascii_digit() {
             i += 1;
             while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
             Kind::Number(source[start..i].parse().map_err(|_| lex_error(source, start, "integer literal exceeds i64 maximum"))?)
-        } else if ["==", "!=", "<=", ">=", "->", "&&", "||", ".."].iter().any(|op| source[i..].starts_with(op)) {
+        } else if ["==", "!=", "<=", ">=", "->", "&&", "||", "..", "=>", "::"].iter().any(|op| source[i..].starts_with(op)) {
             i += 2;
-            match &source[start..i] { "==" => Kind::EqEq, "!=" => Kind::NotEq, "<=" => Kind::LessEq, ">=" => Kind::GreaterEq, "->" => Kind::Arrow, "&&" => Kind::And, "||" => Kind::Or, ".." => Kind::DotDot, _ => unreachable!() }
+            match &source[start..i] { "==" => Kind::EqEq, "!=" => Kind::NotEq, "<=" => Kind::LessEq, ">=" => Kind::GreaterEq, "->" => Kind::Arrow, "&&" => Kind::And, "||" => Kind::Or, ".." => Kind::DotDot, "=>" => Kind::FatArrow, "::" => Kind::ColonColon, _ => unreachable!() }
         } else {
             i += c.len_utf8();
             match c {
@@ -140,28 +145,38 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 #[derive(Debug)]
 enum Argument { Value(Expr), Borrow(usize, bool) } // bool: borrow of a vec struct (pass &slot) vs array (decays)
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
-enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Break, Continue(Option<usize>), Frees(Vec<(usize, Type)>) }
+enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), Break, Continue(Option<usize>), Frees(Vec<(usize, Type)>) }
 #[derive(Debug)]
 struct Function { id: usize, params: Vec<(usize, Type)>, body: Vec<Statement>, is_main: bool, returns: Type }
 fn returns(stmts: &[Statement]) -> bool {
     stmts.iter().any(|s| match s {
         Statement::Return(..) => true,
         Statement::If(_, yes, no) => returns(yes) && returns(no),
+        // Exhaustive coverage means the match always runs one arm, so the
+        // match returns whenever every arm does.
+        Statement::Match(_, _, arms) => !arms.is_empty() && arms.iter().all(|arm| returns(&arm.body)),
         _ => false,
     })
 }
 #[derive(Debug, Clone)]
 struct StructDef { name: String, fields: Vec<(String, Type)> }
+// Enum layouts are closed: variants carry a fixed field list, and the first
+// version restricts payload fields to i64/bool/string so no enum can contain
+// itself and every payload has a trivial release.
+#[derive(Debug, Clone)]
+struct EnumDef { name: &'static str, variants: Vec<(String, Vec<Type>)> }
+#[derive(Debug)]
+struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 
 type SharedFunctions = HashMap<String, (usize, Vec<Type>, Type)>;
 
-struct Parser<'a> { file: String, source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>> }
+struct Parser<'a> { file: String, source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>> }
 impl<'a> Parser<'a> {
     fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
     fn fail(&self, message: &str) -> String { error(&self.file, self.source, self.tokens[self.pos].offset, message) }
@@ -231,6 +246,36 @@ impl<'a> Parser<'a> {
                     self.take(Kind::RBracket)?;
                     // Bind and fall through to the binary-operator loop.
                     (Expr::VecLit(values, line, column), Type::Vec)
+                } else if *self.current() == Kind::ColonColon {
+                    // Enum::Variant or Enum::Variant(payload, ...)
+                    let eid = *self.enum_names.get(&name)
+                        .ok_or_else(|| error(&self.file, self.source, name_offset, &format!("'{name}' is not an enum; variants are written Enum::Variant")))?;
+                    self.pos += 1;
+                    let vname = self.identifier()?;
+                    let def = self.enums[eid].clone();
+                    let vidx = def.variants.iter().position(|(n, _)| *n == vname)
+                        .ok_or_else(|| self.fail(&format!("enum '{}' has no variant '{}'", def.name, vname)))?;
+                    let fields = def.variants[vidx].1.clone();
+                    let mut values = Vec::new();
+                    if *self.current() == Kind::LParen {
+                        self.pos += 1;
+                        for (index, field) in fields.iter().enumerate() {
+                            // String payloads are moved into the variant.
+                            let (value, value_ty) = self.expression(0, *field == Type::String)?;
+                            if value_ty != *field {
+                                return Err(self.fail(&format!("payload {} of '{}::{}' must be {}", index + 1, def.name, vname, field.name())));
+                            }
+                            values.push(value);
+                            if index + 1 < fields.len() { self.take(Kind::Comma)?; }
+                        }
+                        if *self.current() == Kind::Comma {
+                            return Err(self.fail(&format!("variant '{}::{}' takes {} payload value(s)", def.name, vname, fields.len())));
+                        }
+                        self.take(Kind::RParen)?;
+                    } else if !fields.is_empty() {
+                        return Err(self.fail(&format!("variant '{}::{}' needs {} payload value(s)", def.name, vname, fields.len())));
+                    }
+                    (Expr::EnumLit(def.name, eid, vidx, values), Type::Enum(def.name, eid))
                 } else if let Some(&sid) = self.struct_names.get(&name) {
                     if *self.current() == Kind::LBrace {
                         // Construction: Name { field: expr, ... } - fields may
@@ -569,9 +614,57 @@ impl<'a> Parser<'a> {
             "vec" => Ok(Type::Vec),
             other => match self.struct_names.get(other) {
                 Some(&id) => Ok(Type::Struct(id)),
-                None => Err(self.fail(&format!("unknown type '{}'", other))),
+                None => match self.enum_names.get(other) {
+                    Some(&id) => Ok(Type::Enum(self.enums[id].name, id)),
+                    None => Err(self.fail(&format!("unknown type '{}'", other))),
+                },
             },
         }
+    }
+    fn parse_enum_def(&mut self) -> Result<(), String> {
+        self.pos += 1;
+        let name = self.identifier()?;
+        if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{}' is a built-in name and cannot be an enum", name))); }
+        if self.struct_names.contains_key(&name) { return Err(self.fail(&format!("'{}' is already a struct", name))); }
+        if self.enum_names.contains_key(&name) { return Err(self.fail(&format!("duplicate enum '{}'", name))); }
+        self.take(Kind::LBrace)?;
+        let mut variants: Vec<(String, Vec<Type>)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        while *self.current() != Kind::RBrace {
+            let vname = self.identifier()?;
+            if !seen.insert(vname.clone()) { return Err(self.fail(&format!("duplicate variant '{}' in enum '{}'", vname, name))); }
+            let mut fields = Vec::new();
+            if *self.current() == Kind::LParen {
+                self.pos += 1;
+                if *self.current() != Kind::RParen {
+                    loop {
+                        if fields.len() >= 16 { return Err(self.fail("variant payload limit exceeded (16)")); }
+                        let fty = self.named_type()?;
+                        // Payloads stay flat in the first version: a variant
+                        // may not carry a vec, struct, or another enum.
+                        if !matches!(fty, Type::Int | Type::Bool | Type::String) {
+                            return Err(self.fail("enum variant payloads must be i64, bool, or string"));
+                        }
+                        fields.push(fty);
+                        if *self.current() != Kind::Comma { break; }
+                        self.pos += 1;
+                    }
+                }
+                self.take(Kind::RParen)?;
+            }
+            variants.push((vname, fields));
+            if *self.current() == Kind::Comma { self.pos += 1; }
+        }
+        self.take(Kind::RBrace)?;
+        if variants.is_empty() { return Err(self.fail(&format!("enum '{}' needs at least one variant", name))); }
+        if variants.len() > 256 { return Err(self.fail("enum variant limit exceeded (256)")); }
+        let id = self.enums.len();
+        // Type names are interned once per declaration so Type stays Copy and
+        // diagnostics can print the declared name.
+        let interned: &'static str = Box::leak(name.clone().into_boxed_str());
+        self.enum_names.insert(name, id);
+        self.enums.push(EnumDef { name: interned, variants });
+        Ok(())
     }
     fn parse_struct_def(&mut self) -> Result<(), String> {
         self.pos += 1;
@@ -639,10 +732,26 @@ impl<'a> Parser<'a> {
             self.pos += 1;
         }
     }
+    // Enum bodies are collected in the first pass, skipped in the second.
+    fn skip_enum_def(&mut self) {
+        self.pos += 2; // 'enum' Name
+        self.pos += 1; // the opening brace
+        let mut depth = 1usize;
+        while depth > 0 {
+            match self.current() {
+                Kind::LBrace => depth += 1,
+                Kind::RBrace => depth -= 1,
+                Kind::Eof => return,
+                _ => {}
+            }
+            self.pos += 1;
+        }
+    }
     fn collect_functions(&mut self, next_id: &mut usize) -> Result<(), String> {
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::Eof {
             if *self.current() == Kind::Struct { self.parse_struct_def()?; continue; }
+            if *self.current() == Kind::Enum { self.parse_enum_def()?; continue; }
             self.take(Kind::Fn)?;
             let name = self.identifier()?;
             if !seen.insert(name.clone()) { return Err(self.fail(&format!("duplicate function '{name}'"))); }
@@ -696,6 +805,7 @@ impl<'a> Parser<'a> {
         let mut main_found = false;
         while *self.current() != Kind::Eof {
             if *self.current() == Kind::Struct { self.skip_struct_def(); continue; }
+            if *self.current() == Kind::Enum { self.skip_enum_def(); continue; }
             self.take(Kind::Fn)?;
             let name = self.identifier()?;
             let is_main = name == "main";
@@ -779,6 +889,7 @@ impl<'a> Parser<'a> {
             }
             Expr::SliceView(_, a, b, _, _) => { self.record_borrow_bases(a); self.record_borrow_bases(b); }
             Expr::StructLit(_, values) => { for v in values { self.record_borrow_bases(v); } }
+            Expr::EnumLit(_, _, _, values) => { for v in values { self.record_borrow_bases(v); } }
             Expr::Binary(a, _, b, _, _, _) => { self.record_borrow_bases(a); self.record_borrow_bases(b); }
             Expr::Neg(a, _, _) | Expr::Not(a) | Expr::Len(a, _, _) => self.record_borrow_bases(a),
             Expr::Index(_, _, a, _, _) => self.record_borrow_bases(a),
@@ -817,6 +928,7 @@ impl<'a> Parser<'a> {
                     let name = self.identifier()?;
                     if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{name}' is a built-in name and cannot be a variable"))); }
                     if self.struct_names.contains_key(&name) { return Err(self.fail(&format!("'{name}' names a struct and cannot be a variable"))); }
+                    if self.enum_names.contains_key(&name) { return Err(self.fail(&format!("'{name}' names an enum and cannot be a variable"))); }
                     if self.names.contains_key(&name) { return Err(self.fail(&format!("duplicate variable '{name}'"))); }
                     self.take(Kind::Equal)?;
                     let id = self.next_var; self.next_var += 1;
@@ -905,6 +1017,20 @@ impl<'a> Parser<'a> {
                         let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
                         if value_ty != Type::Int { return Err(self.fail("vector elements must be i64")); }
                         result.push(Statement::VecStore(id, index, value, line, col));
+                    } else if let Type::Enum(_, _) = ty {
+                        // Assigning an enum releases the old payload first.
+                        if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                            return Err(self.fail(&format!("cannot assign to '{name}' while it is borrowed")));
+                        }
+                        self.take(Kind::Equal)?;
+                        let moved_before = self.moved.contains(&id);
+                        let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
+                        if value_ty != ty { return Err(self.fail(&format!("cannot assign a {} value to {} variable", value_ty.name(), ty.name()))); }
+                        if self.moved.contains(&id) && !moved_before {
+                            return Err(self.fail(&format!("cannot assign to '{name}' because it was moved in the same statement")));
+                        }
+                        self.moved.remove(&id);
+                        result.push(Statement::Assign(id, value, true));
                     } else if let Type::Struct(sid) = ty {
                         if *self.current() == Kind::Dot {
                             self.take(Kind::Dot)?;
@@ -964,6 +1090,7 @@ impl<'a> Parser<'a> {
                     result.push(Statement::Return(value, self.live_owned()));
                 }
                 Kind::If => result.push(self.if_statement()?),
+                Kind::Match => result.push(self.match_statement()?),
                 Kind::While => {
                     self.pos += 1;
                     let (condition, ty) = self.expression(0, false)?;
@@ -1115,6 +1242,75 @@ impl<'a> Parser<'a> {
         for id in after_yes { self.moved.insert(id); }
         Ok(Statement::If(condition, yes, no))
     }
+    // `match subject { Enum::Variant(a, b) => { ... } ... }` is a statement.
+    // Coverage must be exhaustive and each variant may appear once, so there is
+    // no fall-through path to reason about. The subject is borrowed for the
+    // whole match: arms can read payloads but never move or overwrite it.
+    fn match_statement(&mut self) -> Result<Statement, String> {
+        self.pos += 1;
+        let (subject, subject_ty) = self.expression(0, false)?;
+        let (sid, eid) = match (&subject, subject_ty) {
+            (Expr::Variable(id, Type::Enum(_, _), _, _), Type::Enum(_, k)) => (*id, k),
+            _ => return Err(self.fail("match needs a bare enum variable as its subject")),
+        };
+        if self.moved.contains(&sid) { return Err(self.fail("cannot match a value that was moved")); }
+        let def = self.enums[eid].clone();
+        self.take(Kind::LBrace)?;
+        let mut arms: Vec<MatchArm> = Vec::new();
+        let mut seen = vec![false; def.variants.len()];
+        self.borrows.push((sid, self.scopes.len()));
+        while *self.current() != Kind::RBrace {
+            let pattern = self.identifier()?;
+            if pattern != def.name {
+                return Err(self.fail(&format!("pattern must name the matched enum ('{}::Variant')", def.name)));
+            }
+            self.take(Kind::ColonColon)?;
+            let vname = self.identifier()?;
+            let vidx = def.variants.iter().position(|(n, _)| *n == vname)
+                .ok_or_else(|| self.fail(&format!("enum '{}' has no variant '{}'", def.name, vname)))?;
+            if seen[vidx] { return Err(self.fail(&format!("variant '{}::{}' is matched twice", def.name, vname))); }
+            seen[vidx] = true;
+            let fields = def.variants[vidx].1.clone();
+            self.scopes.push(Vec::new());
+            let mut bindings = Vec::new();
+            let mut bound: Vec<String> = Vec::new();
+            if *self.current() == Kind::LParen {
+                if fields.is_empty() { return Err(self.fail(&format!("variant '{}::{}' has no payload", def.name, vname))); }
+                self.pos += 1;
+                for (index, field) in fields.iter().copied().enumerate() {
+                    let bname = self.identifier()?;
+                    if RESERVED.contains(&bname.as_str()) { return Err(self.fail(&format!("'{bname}' is a built-in name and cannot be a pattern binding"))); }
+                    if self.names.contains_key(&bname) { return Err(self.fail(&format!("duplicate variable '{bname}'"))); }
+                    let id = self.next_var; self.next_var += 1;
+                    // String payloads bind as read-only views: nothing can be
+                    // moved out of the matched enum.
+                    let bty = if field == Type::String { Type::StrView } else { field };
+                    self.names.insert(bname.clone(), (id, false, bty));
+                    self.scopes.last_mut().unwrap().push((id, bty));
+                    bound.push(bname);
+                    bindings.push((id, field, index));
+                    if index + 1 < fields.len() { self.take(Kind::Comma)?; }
+                }
+                if *self.current() == Kind::Comma {
+                    return Err(self.fail(&format!("variant '{}::{}' binds {} payload value(s)", def.name, vname, fields.len())));
+                }
+                self.take(Kind::RParen)?;
+            } else if !fields.is_empty() {
+                return Err(self.fail(&format!("variant '{}::{}' needs {} binding(s)", def.name, vname, fields.len())));
+            }
+            self.take(Kind::FatArrow)?;
+            let body = self.block()?;
+            self.scopes.pop().unwrap();
+            for name in bound { self.names.remove(&name); }
+            arms.push(MatchArm { variant: vidx, bindings, body });
+        }
+        self.take(Kind::RBrace)?;
+        self.borrows.pop();
+        if let Some(missing) = seen.iter().position(|covered| !covered) {
+            return Err(self.fail(&format!("match is not exhaustive: '{}::{}' is not handled", def.name, def.variants[missing].0)));
+        }
+        Ok(Statement::Match(sid, subject_ty, arms))
+    }
 }
 
 // Expression emission tracks ownership of string values so every buffer is
@@ -1144,7 +1340,9 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             } else if ty.owned() {
                 // Runtime backstop: a moved value's slot is empty.
                 match ty {
-                    Type::Struct(_) => {}
+                    // Structs and enums have no runtime sentinel: the compile-time
+                    // move set is their only guard (documented limitation).
+                    Type::Struct(_) | Type::Enum(_, _) => {}
                     _ => {
                         let probe = match ty { Type::Vec | Type::StrVec => format!("!v{id}.data"), _ => format!("!v{id}.ptr") };
                         let message = match ty { Type::Vec | Type::StrVec => "use of moved vector", _ => "use of moved string" };
@@ -1329,6 +1527,20 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             null_moves(out, &moves);
             Emitted { text: format!("t{id}"), ty: Type::Struct(*sid), owned: true, moves: Vec::new(), materialized: true }
         }
+        Expr::EnumLit(_name, eid, vidx, values) => {
+            let mut parts = Vec::new();
+            let mut moves = Vec::new();
+            for value in values.iter() {
+                let e = emit_expr(value, out, next, true);
+                moves.extend(e.moves);
+                parts.push(e.text);
+            }
+            let id = *next; *next += 1;
+            let payload = if parts.is_empty() { "{ 0 }".to_owned() } else { format!("{{ .v{vidx} = {{ {} }} }}", parts.join(", ")) };
+            out.push_str(&format!("    ae_e{eid} t{id} = {{ AE_E{eid}_{vidx}, {payload} }};\n"));
+            null_moves(out, &moves);
+            Emitted { text: format!("t{id}"), ty: Type::Enum(_name, *eid), owned: true, moves: Vec::new(), materialized: true }
+        }
         Expr::Field(base, fname, fty) => {
             let b = emit_expr(base, out, next, false);
             if fty.owned() {
@@ -1404,6 +1616,7 @@ fn release_var(out: &mut String, id: usize, ty: Type) {
         Type::Vec => out.push_str(&format!("    ae_vec_release(&v{id});\n")),
         Type::StrVec => out.push_str(&format!("    ae_strvec_release(&v{id});\n")),
         Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&v{id});\n")),
+        Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_release(&v{id});\n")),
         _ => out.push_str(&format!("    ae_str_release(&v{id});\n")),
     }
 }
@@ -1414,6 +1627,7 @@ fn drop_owned_temp(out: &mut String, emitted: &Emitted) {
         Type::String => out.push_str(&format!("    ae_str_release(&{});\n", emitted.text)),
         Type::StrVec => out.push_str(&format!("    ae_strvec_release(&{});\n", emitted.text)),
         Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&{});\n", emitted.text)),
+        Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_release(&{});\n", emitted.text)),
         _ => out.push_str(&format!("    free({});\n", emitted.text)),
     }
 }
@@ -1424,6 +1638,7 @@ fn null_moves(out: &mut String, moves: &[(usize, Type)]) {
             Type::String => out.push_str(&format!("    ae_str_forfeit(&v{id});\n")),
             Type::StrVec => out.push_str(&format!("    ae_strvec_forfeit(&v{id});\n")),
             Type::Struct(k) => out.push_str(&format!("    ae_t{k}_forfeit(&v{id});\n")),
+            Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_forfeit(&v{id});\n")),
             _ => out.push_str(&format!("    v{id} = NULL;\n")),
         }
     }
@@ -1526,7 +1741,9 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                 let release_old = match fty {
                     Type::String => format!("    ae_str_release(&v{id}.{});\n", fname),
                     Type::Vec => format!("    ae_vec_release(&v{id}.{});\n", fname),
+                    Type::StrVec => format!("    ae_strvec_release(&v{id}.{});\n", fname),
                     Type::Struct(k) => format!("    ae_t{k}_release(&v{id}.{});\n", fname),
+                    Type::Enum(_, k) => format!("    ae_e{k}_release(&v{id}.{});\n", fname),
                     _ => String::new(),
                 };
                 out.push_str(&release_old);
@@ -1563,6 +1780,29 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                 Some(label) => out.push_str(&format!("    goto ae_next_{label};\n")),
                 None => out.push_str("    continue;\n"),
             },
+            // Arms become an if/else chain rather than a C switch: a `break`
+            // in an arm body must leave the enclosing loop, which a switch
+            // would swallow. Coverage is exhaustive, so no fall-through case
+            // is needed.
+            Statement::Match(subject, subject_ty, arms) => {
+                let eid = match subject_ty { Type::Enum(_, k) => *k, _ => unreachable!("match subjects are enum-typed") };
+                let mut first = true;
+                for arm in arms {
+                    let test = format!("v{subject}.tag == AE_E{eid}_{}", arm.variant);
+                    if first { out.push_str(&format!("    if ({test}) {{\n")); } else { out.push_str(&format!("    }} else if ({test}) {{\n")); }
+                    first = false;
+                    for &(bid, pty, index) in &arm.bindings {
+                        let member = format!("v{subject}.u.v{}.p{index}", arm.variant);
+                        match pty {
+                            Type::String => out.push_str(&format!("    ae_strview v{bid} = AE_VIEW({member});\n")),
+                            Type::Bool => out.push_str(&format!("    bool v{bid} = {member};\n")),
+                            _ => out.push_str(&format!("    int64_t v{bid} = {member};\n")),
+                        }
+                    }
+                    emit_statements(&arm.body, out, next);
+                }
+                out.push_str("    }\n");
+            }
             Statement::For(var, end_var, body, label, line, col) => {
                 out.push_str("    while (1) {\n");
                 out.push_str(&format!("    if (!(v{var} < v{end_var})) break;\n"));
@@ -1576,10 +1816,10 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
     }
 }
 #[derive(Debug, Default)]
-struct Program { files: Vec<Vec<Function>>, structs: Vec<StructDef> }
+struct Program { files: Vec<Vec<Function>>, structs: Vec<StructDef>, enums: Vec<EnumDef> }
 
-fn make_parser<'a>(file: &str, source: &'a str, tokens: Vec<Token>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>) -> Parser<'a> {
-    Parser { file: file.to_owned(), source, tokens, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new() }
+fn make_parser<'a>(file: &str, source: &'a str, tokens: Vec<Token>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>) -> Parser<'a> {
+    Parser { file: file.to_owned(), source, tokens, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new() }
 }
 
 // Leading `use "path";` headers. Parsed from tokens before the Parser owns
@@ -1608,13 +1848,13 @@ fn scan_uses(file: &str, tokens: &[Token]) -> Result<Vec<String>, String> {
 }
 
 #[allow(dead_code)] // exercised by in-memory unit tests
-fn parse_source(file: &str, source: &str, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, next_id: &mut usize) -> Result<Vec<Function>, String> {
+fn parse_source(file: &str, source: &str, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, next_id: &mut usize) -> Result<Vec<Function>, String> {
     let tokens = lex(source)?;
     let uses = scan_uses(file, &tokens)?;
     if !uses.is_empty() {
         return Err(error(file, source, 0, "'use' is only supported when compiling a source file"));
     }
-    let mut p = make_parser(file, source, tokens, shared, structs, struct_names);
+    let mut p = make_parser(file, source, tokens, shared, structs, struct_names, enums, enum_names);
     p.collect_functions(next_id)?;
     let functions = p.program()?;
     if functions.iter().filter(|f| f.is_main).count() != 1 {
@@ -1623,7 +1863,7 @@ fn parse_source(file: &str, source: &str, shared: &mut SharedFunctions, structs:
     Ok(functions)
 }
 
-fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::PathBuf>, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, next_id: &mut usize, out: &mut Vec<Vec<Function>>, mains: &mut usize) -> Result<(), String> {
+fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::PathBuf>, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, next_id: &mut usize, out: &mut Vec<Vec<Function>>, mains: &mut usize) -> Result<(), String> {
     let canonical = std::fs::canonicalize(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
     if !visited.insert(canonical) { return Err(format!("circular import of {}", path.display())); }
     let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -1632,9 +1872,9 @@ fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::Pat
     let uses = scan_uses(&file, &tokens).map_err(|e| format!("{file}:{e}"))?;
     let parent = path.parent().unwrap_or(Path::new(".")).to_owned();
     for import in uses {
-        load_file(&parent.join(&import), visited, shared, structs, struct_names, next_id, out, mains)?;
+        load_file(&parent.join(&import), visited, shared, structs, struct_names, enums, enum_names, next_id, out, mains)?;
     }
-    let mut p = make_parser(&file, &source, tokens, shared, structs, struct_names);
+    let mut p = make_parser(&file, &source, tokens, shared, structs, struct_names, enums, enum_names);
     p.skip_uses();
     p.collect_functions(next_id)?;
     let functions = p.program()?;
@@ -1648,12 +1888,14 @@ fn load_program(entry: &Path) -> Result<Program, String> {
     let mut shared: SharedFunctions = HashMap::new();
     let mut structs: Vec<StructDef> = Vec::new();
     let mut struct_names: HashMap<String, usize> = HashMap::new();
+    let mut enums: Vec<EnumDef> = Vec::new();
+    let mut enum_names: HashMap<String, usize> = HashMap::new();
     let mut next_id = 0usize;
     let mut files = Vec::new();
     let mut mains = 0usize;
-    load_file(entry, &mut visited, &mut shared, &mut structs, &mut struct_names, &mut next_id, &mut files, &mut mains)?;
+    load_file(entry, &mut visited, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut next_id, &mut files, &mut mains)?;
     if mains != 1 { return Err(format!("program must define exactly one main function (found {mains})")); }
-    Ok(Program { files, structs })
+    Ok(Program { files, structs, enums })
 }
 
 pub fn check_path(path: &Path) -> Result<(), String> {
@@ -1664,8 +1906,10 @@ pub fn check(source: &str) -> Result<(), String> {
     let mut shared: SharedFunctions = HashMap::new();
     let mut structs: Vec<StructDef> = Vec::new();
     let mut struct_names: HashMap<String, usize> = HashMap::new();
+    let mut enums: Vec<EnumDef> = Vec::new();
+    let mut enum_names: HashMap<String, usize> = HashMap::new();
     let mut next_id = 0usize;
-    parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut next_id).map(|_| ())
+    parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut next_id).map(|_| ())
 }
 fn c_type_field(ty: Type) -> String {
     match ty {
@@ -1676,6 +1920,7 @@ fn c_type_field(ty: Type) -> String {
         Type::Vec => "ae_vec".to_owned(),
         Type::StrVec => "ae_strvec".to_owned(),
         Type::Struct(k) => format!("ae_t{k}"),
+        Type::Enum(_, k) => format!("ae_e{k}"),
         Type::VecRef => "const ae_vec *".to_owned(),
         Type::Array(n) => format!("int64_t [{n}]"),
     }
@@ -1689,15 +1934,81 @@ fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Vec => format!("ae_vec v{id}"),
         Type::StrVec => format!("ae_strvec v{id}"),
         Type::Struct(k) => format!("ae_t{k} v{id}"),
+        Type::Enum(_, k) => format!("ae_e{k} v{id}"),
         Type::VecRef if declaration => format!("const ae_vec *v{id}"),
         Type::VecRef => "const ae_vec *".to_owned(),
         Type::Array(_) if declaration => format!("const int64_t *v{id}"),
         Type::Array(_) => "const int64_t *".to_owned(),
     }
 }
+// Return type of a generated C function: the same spelling the expression
+// temporaries use, without the variable name.
+fn c_return(ty: Type) -> String {
+    match ty {
+        Type::Bool => "bool".to_owned(),
+        Type::String => "ae_string".to_owned(),
+        Type::StrView => "ae_strview".to_owned(),
+        Type::Vec => "ae_vec".to_owned(),
+        Type::StrVec => "ae_strvec".to_owned(),
+        Type::Struct(k) => format!("ae_t{k}"),
+        Type::Enum(_, k) => format!("ae_e{k}"),
+        _ => "int64_t".to_owned(),
+    }
+}
 fn emit_program(program: Program) -> Result<String, String> {
-    let Program { files, structs } = program;
+    let Program { files, structs, enums } = program;
     let mut out = String::from(include_str!("runtime.c"));
+    // Enum layouts: a tag plus a union of per-variant payload records. Each
+    // variant gets its own struct so a variant can carry several fields at
+    // once (a union of individual fields would alias them). Release frees the
+    // live variant's owned payloads (idempotently); forfeit only clears them
+    // because the value moved elsewhere.
+    for (eid, def) in enums.iter().enumerate() {
+        let tags = (0..def.variants.len()).map(|v| format!("    AE_E{eid}_{v} = {v}")).collect::<Vec<_>>().join(",\n");
+        out.push_str(&format!("\ntypedef enum {{\n{tags}\n}} ae_e{eid}_tag;\n"));
+        let mut members = String::new();
+        for (vidx, (_, fields)) in def.variants.iter().enumerate() {
+            if fields.is_empty() { continue; }
+            let mut record = String::new();
+            for (index, ty) in fields.iter().enumerate() {
+                record.push_str(&format!("    {} p{index};\n", c_type_field(*ty)));
+            }
+            out.push_str(&format!("typedef struct {{\n{record}}} ae_e{eid}_v{vidx};\n"));
+            members.push_str(&format!("        ae_e{eid}_v{vidx} v{vidx};\n"));
+        }
+        // A union needs at least one member; enums without payloads get a
+        // placeholder so the initializer form stays uniform.
+        if members.is_empty() { members.push_str("        char ae_empty;\n"); }
+        out.push_str(&format!("typedef struct {{\n    ae_e{eid}_tag tag;\n    union {{\n{members}    }} u;\n}} ae_e{eid};\n"));
+        let mut release = String::new();
+        let mut forfeit = String::new();
+        for (vidx, (_, fields)) in def.variants.iter().enumerate() {
+            if fields.is_empty() { continue; }
+            let mut clears = String::new();
+            let mut forfeits = String::new();
+            for (index, ty) in fields.iter().enumerate() {
+                let member = format!("v->u.v{vidx}.p{index}");
+                match ty {
+                    Type::String => {
+                        clears.push_str(&format!("        ae_str_release(&{member});\n"));
+                        forfeits.push_str(&format!("        ae_str_forfeit(&{member});\n"));
+                    }
+                    Type::Bool => {
+                        clears.push_str(&format!("        {member} = false;\n"));
+                        forfeits.push_str(&format!("        {member} = false;\n"));
+                    }
+                    _ => {
+                        clears.push_str(&format!("        {member} = 0;\n"));
+                        forfeits.push_str(&format!("        {member} = 0;\n"));
+                    }
+                }
+            }
+            release.push_str(&format!("    if (v->tag == AE_E{eid}_{vidx}) {{\n{clears}    }}\n"));
+            forfeit.push_str(&format!("    if (v->tag == AE_E{eid}_{vidx}) {{\n{forfeits}    }}\n"));
+        }
+        out.push_str(&format!("static void ae_e{eid}_release(ae_e{eid} *v) {{\n{release}}}\n"));
+        out.push_str(&format!("static void ae_e{eid}_forfeit(ae_e{eid} *v) {{\n{forfeit}}}\n"));
+    }
     // Struct layouts and their ownership helpers. Release zeroes every field
     // and frees owned ones; forfeit only zeroes (the value moved elsewhere).
     for (sid, def) in structs.iter().enumerate() {
@@ -1721,6 +2032,14 @@ fn emit_program(program: Program) -> Result<String, String> {
                     release.push_str(&format!("    ae_t{k}_release(&v->{});\n", n));
                     forfeit.push_str(&format!("    ae_t{k}_forfeit(&v->{});\n", n));
                 }
+                Type::StrVec => {
+                    release.push_str(&format!("    ae_strvec_release(&v->{});\n", n));
+                    forfeit.push_str(&format!("    ae_strvec_forfeit(&v->{});\n", n));
+                }
+                Type::Enum(_, k) => {
+                    release.push_str(&format!("    ae_e{k}_release(&v->{});\n", n));
+                    forfeit.push_str(&format!("    ae_e{k}_forfeit(&v->{});\n", n));
+                }
                 other => {
                     let zero = match other { Type::Bool => "false", _ => "0" };
                     release.push_str(&format!("    v->{} = {};\n", n, zero));
@@ -1736,13 +2055,13 @@ fn emit_program(program: Program) -> Result<String, String> {
     for function in &all {
         if function.is_main { continue; }
         let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, false)).collect::<Vec<_>>().join(", ") };
-        let ret = match function.returns { Type::Bool => "bool", Type::String => "ae_string", Type::Vec => "ae_vec", Type::StrVec => "ae_strvec", _ => "int64_t" };
+        let ret = c_return(function.returns);
         out.push_str(&format!("\nstatic {ret} ae_fn_{}({params});\n", function.id));
     }
     for function in &all {
         if function.is_main { continue; }
         let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, true)).collect::<Vec<_>>().join(", ") };
-        let ret = match function.returns { Type::Bool => "bool", Type::String => "ae_string", Type::Vec => "ae_vec", Type::StrVec => "ae_strvec", _ => "int64_t" };
+        let ret = c_return(function.returns);
         out.push_str(&format!("\nstatic {ret} ae_fn_{}({params}) {{\n", function.id));
         emit_statements(&function.body, &mut out, &mut 0);
         // Defensive backstop: even a future control-flow analysis bug must not
@@ -1760,9 +2079,11 @@ pub fn compile(source: &str) -> Result<String, String> {
     let mut shared: SharedFunctions = HashMap::new();
     let mut structs: Vec<StructDef> = Vec::new();
     let mut struct_names: HashMap<String, usize> = HashMap::new();
+    let mut enums: Vec<EnumDef> = Vec::new();
+    let mut enum_names: HashMap<String, usize> = HashMap::new();
     let mut next_id = 0usize;
-    let functions = parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut next_id)?;
-    emit_program(Program { files: vec![functions], structs })
+    let functions = parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut next_id)?;
+    emit_program(Program { files: vec![functions], structs, enums })
 }
 pub fn compile_path(path: &Path) -> Result<String, String> {
     emit_program(load_program(path)?)

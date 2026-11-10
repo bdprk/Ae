@@ -1,0 +1,112 @@
+// enums and match: tagged variants with payloads, exhaustive matching.
+
+enum Shape {
+    Circle(i64),
+    Rect(i64, i64),
+    Empty,
+}
+
+fn area(s: Shape) -> i64 {
+    match s {
+        Shape::Circle(r) => {
+            return 3 * r * r;
+        }
+        Shape::Rect(w, h) => {
+            return w * h;
+        }
+        Shape::Empty => {
+            return 0;
+        }
+    }
+}
+
+fn label(n: i64) -> string {
+    if n < 0 {
+        return "big";
+    }
+    if n == 0 { return "0"; }
+    if n == 1 { return "1"; }
+    if n == 2 { return "2"; }
+    if n == 3 { return "3"; }
+    if n == 4 { return "4"; }
+    if n == 5 { return "5"; }
+    if n == 6 { return "6"; }
+    if n == 7 { return "7"; }
+    if n == 8 { return "8"; }
+    return "9";
+}
+
+fn describe(s: Shape) -> string {
+    var name = "shape";
+    match s {
+        Shape::Circle(r) => {
+            name = "circle r=" + label(r);
+        }
+        Shape::Rect(w, h) => {
+            name = "rect " + label(w) + "x" + label(h);
+        }
+        Shape::Empty => {
+            name = "empty";
+        }
+    }
+    return name;
+}
+
+// Payloads that own memory move into the variant and are released with it.
+enum Message {
+    Text(string),
+    Number(i64),
+    Flag(bool),
+}
+
+fn render(m: Message) -> string {
+    match m {
+        Message::Text(text) => {
+            // A string payload binds as a read-only view; take a copy to join.
+            return "text:" + slice(text, 0, len(text));
+        }
+        Message::Number(n) => {
+            return "number:" + label(n);
+        }
+        Message::Flag(flag) => {
+            if flag { return "flag:true"; }
+            return "flag:false";
+        }
+    }
+}
+
+fn main() {
+    print(area(Shape::Circle(3)));
+    print(area(Shape::Rect(4, 5)));
+    print(area(Shape::Empty));
+
+    let a = Shape::Circle(3);
+    print(describe(a));
+    let b = Shape::Rect(4, 5);
+    print(describe(b));
+    let c = Shape::Empty;
+    print(describe(c));
+
+    print(render(Message::Text("hi")));
+    print(render(Message::Number(7)));
+    print(render(Message::Flag(true)));
+
+    // Matching inside a loop keeps `break` bound to the loop.
+    var i = 0;
+    var total = 0;
+    while i < 4 {
+        let s = Shape::Rect(i, 2);
+        match s {
+            Shape::Circle(r) => { total = total + r; }
+            Shape::Rect(w, h) => { total = total + w * h; }
+            Shape::Empty => { break; }
+        }
+        i = i + 1;
+    }
+    print(total);
+
+    // Reassigning an enum releases the previous payload.
+    var current = Message::Text("first");
+    current = Message::Number(9);
+    print(render(current));
+}

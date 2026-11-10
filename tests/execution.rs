@@ -1007,3 +1007,92 @@ fn vec_borrows_are_read_only_and_forwardable() {
         assert!(!output.status.success(), "{source}");
     }
 }
+fn check_rejects(source: &str) -> String {
+    let path = std::env::temp_dir().join(format!("ae-enum-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(!output.status.success(), "accepted invalid program: {source}");
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+#[test]
+fn enums_match_payloads_execute() {
+    let source = "enum Shape { Circle(i64), Rect(i64, i64), Empty }
+enum Msg { Text(string), Flag(bool) }
+fn area(s: Shape) -> i64 { match s { Shape::Circle(r) => { return 3 * r * r; } Shape::Rect(w, h) => { return w * h; } Shape::Empty => { return 0; } } }
+fn render(m: Msg) -> string { match m { Msg::Text(t) => { return \"t:\" + slice(t, 0, len(t)); } Msg::Flag(b) => { if b { return \"yes\"; } return \"no\"; } } }
+fn main() {
+    print(area(Shape::Circle(3)));
+    print(area(Shape::Rect(4, 5)));
+    print(area(Shape::Empty));
+    let m = Msg::Text(\"hi\");
+    print(render(m));
+    print(render(Msg::Flag(false)));
+}";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "27\n20\n0\nt:hi\nno\n");
+}
+#[test]
+fn match_arms_do_not_capture_loop_control_flow() {
+    // An arm body's break/continue must leave the enclosing loop, not the match.
+    let source = "enum Signal { Stop, Skip, Go(i64) }
+fn main() {
+    var i = 0;
+    var total = 0;
+    while i < 10 {
+        i = i + 1;
+        var signal = Signal::Go(i);
+        if i == 2 { signal = Signal::Skip; }
+        if i == 4 { signal = Signal::Stop; }
+        match signal {
+            Signal::Stop => { break; }
+            Signal::Skip => { continue; }
+            Signal::Go(n) => { total = total + n; }
+        }
+    }
+    print(i);
+    print(total);
+}";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    // i stops at 4 (stop); total collects 1 + 3 = 4 (2 skipped, 4 breaks first).
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "4\n4\n");
+}
+#[test]
+fn enum_values_move_and_assign_deterministically() {
+    let source = "enum Slot { Empty, Text(string) }
+fn describe(s: Slot) -> string { match s { Slot::Empty => { return \"empty\"; } Slot::Text(t) => { return \"text \" + slice(t, 0, len(t)); } } }
+fn main() {
+    var slot = Slot::Text(\"one\");
+    slot = Slot::Text(\"two\");
+    print(describe(slot));
+    slot = Slot::Empty;
+    print(describe(slot));
+}";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "text two\nempty\n");
+}
+#[test]
+fn invalid_enum_programs_are_rejected() {
+    let cases = [
+        ("enum E { A, B } fn main() { let x = E::A; match x { E::A => { print(1); } } }", "not exhaustive"),
+        ("enum E { A, B } fn main() { let x = E::A; match x { E::A => { print(1); } E::A => { print(2); } E::B => { print(3); } } }", "matched twice"),
+        ("enum E { A(i64) } fn main() { let x = E::A(1, 2); print(1); }", "payload"),
+        ("enum E { A(i64) } fn main() { let x = E::A; print(1); }", "payload"),
+        ("enum E { A(i64) } fn main() { let x = E::A(1); match x { E::A => { print(1); } } }", "binding"),
+        ("enum E { A } fn main() { let x = E::A; match x { F::A => { print(1); } } }", "pattern must name"),
+        ("enum E { A } enum E { B } fn main() { print(1); }", "duplicate enum"),
+        ("enum E { A, A } fn main() { print(1); }", "duplicate variant"),
+        ("enum E { A(vec) } fn main() { print(1); }", "payloads must be"),
+        ("enum E { A } fn main() { let E = 1; print(E); }", "names an enum"),
+        ("enum E { A } fn main() { let x = 1; match x { E::A => { print(1); } } }", "bare enum variable"),
+        ("enum E { A } fn main() { let x = E::A; let y = x; match x { E::A => { print(1); } } }", "moved"),
+        ("enum E { A(string) } fn main() { let x = E::A(\"s\"); match x { E::A(t) => { let u = t + \"x\"; print(u); } } }", "two strings"),
+    ];
+    for (source, expected) in cases {
+        let message = check_rejects(source);
+        assert!(message.contains(expected), "{source}\n  expected '{expected}', got '{message}'");
+    }
+}

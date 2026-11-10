@@ -4,9 +4,9 @@ AE 是自主研发的实验性原生编程语言，首批目标平台为 Windows
 
 优先级：安全和正确性是底线；运行 CPU 和内存共同优化；编译速度和磁盘占用都必须满足未来基于基准设定的预算。功能可以为这些目标让路。
 
-当前原型支持的子集：`fn main()` 与用户函数（`i64`/`bool`/`string`/`vec` 参数与返回值，含 `&vec` 只读借用与 `&[i64; N]` 数组借用）、`let`/`var`、赋值、整数与布尔字面量、字符串字面量与转义、括号、`+ - * / %` 与一元 `-`/`!`、受检算术（溢出、除零报告位置并退出）、比较（含字符串内容相等）与 `&&`/`||` 短路、`if`/`else if`/`else`、`while`、`for i in a..b`（半开区间，界只求值一次）、`break`/`continue`、`assert`、`print`、`len`、固定长度数组与**动态向量 `vec`**（`push`/`pop`/索引，全部边界检查）、**拥有型字符串与向量的移动语义与确定性释放**、**模块（`use` 导入、环检测、跨文件重名拒绝）**、**结构体（拥有字段、字段借用、确定性释放）**、**`for x in vec` 元素迭代**、**文件读写 `read_file`/`write_file`（Unicode 路径）**、`bytes()`/`contains()`/`slice()`/`split()`/`join()`/`lines()`/`count_lines_with()`/`args()` 与 `vec[string]` 字符串向量与**借用字符串视图**（`slice_view` 零拷贝切片，借用跟踪）。表达式从左到右求值；字符串与向量赋值/传参/返回按移动处理，移动后使用被编译期拒绝，并有运行时空检查兜底；块退出、提前返回与跳转路径全部插入幂等释放。
+当前原型支持的子集：`fn main()` 与用户函数（`i64`/`bool`/`string`/`vec` 参数与返回值，含 `&vec` 只读借用与 `&[i64; N]` 数组借用）、`let`/`var`、赋值、整数与布尔字面量、字符串字面量与转义、括号、`+ - * / %` 与一元 `-`/`!`、受检算术（溢出、除零报告位置并退出）、比较（含字符串内容相等）与 `&&`/`||` 短路、`if`/`else if`/`else`、`while`、`for i in a..b`（半开区间，界只求值一次）、`break`/`continue`、`assert`、`print`、`len`、固定长度数组与**动态向量 `vec`**（`push`/`pop`/索引，全部边界检查）、**拥有型字符串与向量的移动语义与确定性释放**、**模块（`use` 导入、环检测、跨文件重名拒绝）**、**结构体（拥有字段、字段借用、确定性释放）**、**枚举与穷尽 `match`**（变体负载 `i64`/`bool`/`string`，负载随枚举确定性释放）、**`for x in vec` 元素迭代**、**文件读写 `read_file`/`write_file`（Unicode 路径）**、`bytes()`/`contains()`/`slice()`/`split()`/`join()`/`lines()`/`count_lines_with()`/`args()` 与 `vec[string]` 字符串向量与**借用字符串视图**（`slice_view` 零拷贝切片，借用跟踪）。表达式从左到右求值；字符串与向量赋值/传参/返回按移动处理，移动后使用被编译期拒绝，并有运行时空检查兜底；块退出、提前返回与跳转路径全部插入幂等释放。
 
-诊断显示行列号；尚无泛型、结构体、并发或正式安全证明，不能据此宣称完整的内存安全语言已完成。
+诊断显示行列号；尚无泛型、并发或正式安全证明，不能据此宣称完整的内存安全语言已完成。
 
 ## 使用
 
@@ -17,6 +17,7 @@ cargo test
 cargo run -- check examples/hello.ae
 cargo run -- emit-c examples/hello.ae
 cargo run -- run examples/hello.ae
+cargo run -- run examples/enums.ae
 cargo run -- run examples/strings.ae
 cargo run -- run examples/vectors.ae
 cargo run -- run examples/grep.ae
@@ -34,7 +35,7 @@ cargo run -- cache stats
 
 设置 `AE_TIMINGS=1` 输出前端、C 编译与链接耗时及缓存命中情况；`check` 只做词法、语法与语义检查，不需要 C 编译器。
 
-验证生成的 C：`cargo build` 后运行 `python scripts/verify_generated_c.py`；Linux 可加 `--sanitize` 启用地址和未定义行为检测。检测覆盖有限案例，不能证明实现完全安全。
+验证生成的 C：`cargo build` 后运行 `python scripts/verify_generated_c.py`；Linux 可加 `--sanitize` 启用地址和未定义行为检测，MinGW 无 libasan 时用 `--leak` 走 `-Wl,--wrap` 的分配计数（要求每个程序的退出分配块数等于空程序基线）。检测覆盖有限案例，不能证明实现完全安全。
 
 现有子集的完整规则见 [当前语言语义](docs/current-language.md)；设计决策记录见 [docs/decisions.md](docs/decisions.md)；探索性测量工具和限制见 [基准说明](bench/README.md)。目前不能据此宣称性能优于 Go、Rust、Gojo 或 Python。
 
