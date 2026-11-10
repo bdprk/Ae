@@ -40,44 +40,54 @@ static size_t ae_index(int64_t index, size_t len, size_t line, size_t column) {
     return (size_t)index;
 }
 
-// Owned strings. ae_str_cat consumes both operands; ae_str_release is
-// idempotent so overlapping release paths can never double-free.
-static char *ae_str_from(const char *text, size_t line, size_t column) {
-    size_t n = strlen(text) + 1;
-    char *copy = malloc(n);
+// Owned length-carrying strings (ADR-8): len/slice are O(1); buffers stay
+// NUL-terminated for C interop. ae_str_cat consumes both operands;
+// moves copy the struct and forfeit the slot; releases are idempotent so
+// overlapping release paths can never double-free.
+typedef struct { char *ptr; int64_t len; } ae_string;
+static ae_string ae_str_from(const char *text, size_t line, size_t column) {
+    size_t n = strlen(text);
+    char *copy = malloc(n + 1);
     if (!copy) ae_fail("out of memory", line, column);
-    memcpy(copy, text, n);
-    return copy;
+    memcpy(copy, text, n + 1);
+    ae_string s = { copy, (int64_t)n };
+    return s;
 }
-static char *ae_str_cat(char *a, char *b, size_t line, size_t column) {
-    size_t na = strlen(a), nb = strlen(b);
-    char *out = malloc(na + nb + 1);
-    if (!out) { free(a); free(b); ae_fail("out of memory", line, column); }
-    memcpy(out, a, na);
-    memcpy(out + na, b, nb + 1);
-    free(a); free(b);
-    return out;
+static ae_string ae_str_cat(ae_string a, ae_string b, size_t line, size_t column) {
+    if (a.len > INT64_MAX - b.len) { free(a.ptr); free(b.ptr); ae_fail("string too long", line, column); }
+    char *out = malloc((size_t)(a.len + b.len) + 1);
+    if (!out) { free(a.ptr); free(b.ptr); ae_fail("out of memory", line, column); }
+    memcpy(out, a.ptr, (size_t)a.len);
+    memcpy(out + a.len, b.ptr, (size_t)b.len + 1);
+    free(a.ptr); free(b.ptr);
+    ae_string s = { out, a.len + b.len };
+    return s;
 }
-static void ae_str_release(char **slot) { free(*slot); *slot = NULL; }
-static bool ae_str_eq(const char *a, const char *b) { return strcmp(a, b) == 0; }
-static char *ae_slice(const char *s, int64_t start, int64_t end, size_t line, size_t column) {
-    int64_t n = (int64_t)strlen(s);
-    if (start < 0 || end < start || end > n) ae_fail("string index out of bounds", line, column);
+static void ae_str_release(ae_string *slot) { free(slot->ptr); slot->ptr = NULL; slot->len = 0; }
+static void ae_str_forfeit(ae_string *slot) { slot->ptr = NULL; slot->len = 0; }
+static bool ae_str_eq(ae_string a, ae_string b) {
+    return a.len == b.len && (a.len == 0 || memcmp(a.ptr, b.ptr, (size_t)a.len) == 0);
+}
+static int64_t ae_str_len(ae_string s, size_t line, size_t column) {
+    (void)line; (void)column;
+    return s.len;
+}
+static ae_string ae_slice(ae_string s, int64_t start, int64_t end, size_t line, size_t column) {
+    if (start < 0 || end < start || end > s.len) ae_fail("string index out of bounds", line, column);
     char *out = malloc((size_t)(end - start) + 1);
     if (!out) ae_fail("out of memory", line, column);
-    memcpy(out, s + start, (size_t)(end - start));
+    memcpy(out, s.ptr + start, (size_t)(end - start));
     out[end - start] = 0;
-    return out;
+    ae_string r = { out, end - start };
+    return r;
 }
-static bool ae_contains(const char *haystack, const char *needle, size_t line, size_t column) {
-    // strstr carries the platform's optimized substring search.
+static bool ae_contains(ae_string haystack, ae_string needle, size_t line, size_t column) {
+    // strstr carries the platform's optimized substring search; buffers are
+    // NUL-terminated so embedded-NUL truncation matches len/bytes semantics.
     (void)line; (void)column;
-    return strstr(haystack, needle) != NULL;
-}
-static int64_t ae_str_len(const char *s, size_t line, size_t column) {
-    size_t n = strlen(s);
-    if (n > (size_t)INT64_MAX) ae_fail("string too long", line, column);
-    return (int64_t)n;
+    if (needle.len == 0) return true;
+    if (haystack.len < needle.len) return false;
+    return strstr(haystack.ptr, needle.ptr) != NULL;
 }
 
 // Owned growable i64 vector. Moves copy the struct and forfeit the source
@@ -155,7 +165,7 @@ static FILE *ae_fopen(const char *path, const char *mode) {
 static FILE *ae_fopen(const char *path, const char *mode) { return fopen(path, mode); }
 #endif
 
-static char *ae_read_file(const char *path, size_t line, size_t column) {
+static ae_string ae_read_file(const char *path, size_t line, size_t column) {
     FILE *f = ae_fopen(path, "rb");
     if (!f) ae_fail("cannot read file", line, column);
     if (fseek(f, 0, SEEK_END) != 0) { fclose(f); ae_fail("cannot read file", line, column); }
@@ -168,20 +178,20 @@ static char *ae_read_file(const char *path, size_t line, size_t column) {
     fclose(f);
     if (read != (size_t)size) ae_fail("cannot read file", line, column);
     buffer[size] = 0;
-    return buffer;
+    ae_string out = { buffer, (int64_t)size };
+    return out;
 }
-static int64_t ae_write_file(const char *path, const char *content, size_t line, size_t column) {
-    FILE *f = ae_fopen(path, "wb");
+static int64_t ae_write_file(ae_string path, ae_string content, size_t line, size_t column) {
+    FILE *f = ae_fopen(path.ptr, "wb");
     if (!f) ae_fail("cannot write file", line, column);
-    size_t n = strlen(content);
-    size_t written = fwrite(content, 1, n, f);
-    if (fclose(f) != 0 || written != n) ae_fail("cannot write file", line, column);
+    size_t written = fwrite(content.ptr, 1, (size_t)content.len, f);
+    if (fclose(f) != 0 || written != (size_t)content.len) ae_fail("cannot write file", line, column);
     return (int64_t)written;
 }
-static ae_vec ae_bytes(const char *s, size_t line, size_t column) {
+static ae_vec ae_bytes(ae_string s, size_t line, size_t column) {
     ae_vec v = ae_vec_new(line, column);
-    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
-        ae_vec_push(&v, (int64_t)*p, line, column);
+    for (int64_t i = 0; i < s.len; i++) {
+        ae_vec_push(&v, (int64_t)(unsigned char)s.ptr[i], line, column);
     }
     return v;
 }

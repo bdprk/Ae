@@ -17,7 +17,7 @@ impl Type {
         match self { Type::Int => "i64", Type::Bool => "bool", Type::String => "string", Type::Vec => "vec", Type::VecRef => "&vec", Type::Array(_) => "array" }
     }
     fn c_temp(self) -> &'static str {
-        match self { Type::Bool => "bool ", Type::String => "char *", Type::Vec => "ae_vec ", _ => "int64_t " }
+        match self { Type::Bool => "bool ", Type::String => "ae_string ", Type::Vec => "ae_vec ", _ => "int64_t " }
     }
     // Owned types carry heap resources: they move, and every live slot is
     // released on scope exit and control-flow jumps.
@@ -796,7 +796,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
                 Emitted { text: format!("(*v{id})"), ty: Type::Vec, owned: false, moves: Vec::new(), materialized: true }
             } else if ty.owned() {
                 // Runtime backstop: a moved value's slot is empty.
-                let probe = match ty { Type::Vec => format!("!v{id}.data"), _ => format!("!v{id}") };
+                let probe = match ty { Type::Vec => format!("!v{id}.data"), _ => format!("!v{id}.ptr") };
                 let message = match ty { Type::Vec => "use of moved vector", _ => "use of moved string" };
                 out.push_str(&format!("    if ({probe}) ae_fail(\"{message}\", {line}, {column});\n"));
                 if moving {
@@ -867,7 +867,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
         Expr::ReadFile(e, line, col) => {
             let t = emit_expr(e, out, next, false);
             let id = *next; *next += 1;
-            out.push_str(&format!("    char *t{id} = ae_read_file({}, {line}, {col});
+            out.push_str(&format!("    ae_string t{id} = ae_read_file({}.ptr, {line}, {col});
 ", t.text));
             Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
         }
@@ -891,7 +891,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let st = emit_expr(start, out, next, false);
             let en = emit_expr(end, out, next, false);
             let id = *next; *next += 1;
-            out.push_str(&format!("    char *t{id} = ae_slice({}, {}, {}, {line}, {col});
+            out.push_str(&format!("    ae_string t{id} = ae_slice({}, {}, {}, {line}, {col});
 ", t.text, st.text, en.text));
             if t.owned { drop_owned_temp(out, &t); }
             Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
@@ -935,7 +935,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let l = emit_expr(a, out, next, true);
             let r = emit_expr(b, out, next, true);
             let id = *next; *next += 1;
-            out.push_str(&format!("    char *t{id} = ae_str_cat({}, {}, {line}, {column});\n", l.text, r.text));
+            out.push_str(&format!("    ae_string t{id} = ae_str_cat({}, {}, {line}, {column});\n", l.text, r.text));
             let mut moves = l.moves; moves.extend(r.moves);
             null_moves(out, &moves);
             Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
@@ -975,6 +975,7 @@ fn release_var(out: &mut String, id: usize, ty: Type) {
 fn drop_owned_temp(out: &mut String, emitted: &Emitted) {
     match emitted.ty {
         Type::Vec => out.push_str(&format!("    ae_vec_release(&{});\n", emitted.text)),
+        Type::String => out.push_str(&format!("    ae_str_release(&{});\n", emitted.text)),
         _ => out.push_str(&format!("    free({});\n", emitted.text)),
     }
 }
@@ -982,6 +983,7 @@ fn null_moves(out: &mut String, moves: &[(usize, Type)]) {
     for &(id, ty) in moves {
         match ty {
             Type::Vec => out.push_str(&format!("    ae_vec_forfeit(&v{id});\n")),
+            Type::String => out.push_str(&format!("    ae_str_forfeit(&v{id});\n")),
             _ => out.push_str(&format!("    v{id} = NULL;\n")),
         }
     }
@@ -992,8 +994,8 @@ fn emit_print(printed: &Printed, out: &mut String, next: &mut usize) {
             let t = emit_expr(e, out, next, false);
             match t.ty {
                 Type::String => {
-                    out.push_str(&format!("    if (printf(\"%s\\n\", {}) < 0) ae_fail(\"output error\", 0, 0);\n", t.text));
-                    if t.owned { out.push_str(&format!("    free({});\n", t.text)); }
+                    out.push_str(&format!("    if (fwrite({}.ptr, 1, (size_t){}.len, stdout) != (size_t){}.len || fputc('\\n', stdout) == EOF) ae_fail(\"output error\", 0, 0);\n", t.text, t.text, t.text));
+                    if t.owned { drop_owned_temp(out, &t); }
                 }
                 Type::Bool => out.push_str(&format!("    if (printf(\"%s\\n\", {} ? \"true\" : \"false\") < 0) ae_fail(\"output error\", 0, 0);\n", t.text)),
                 _ => out.push_str(&format!("    if (printf(\"%\" PRId64 \"\\n\", {}) < 0) ae_fail(\"output error\", 0, 0);\n", t.text)),
@@ -1188,7 +1190,7 @@ fn c_type(ty: Type, id: usize, declaration: bool) -> String {
     match ty {
         Type::Int => format!("int64_t v{id}"),
         Type::Bool => format!("bool v{id}"),
-        Type::String => format!("char *v{id}"),
+        Type::String => format!("ae_string v{id}"),
         Type::Vec => format!("ae_vec v{id}"),
         Type::VecRef if declaration => format!("const ae_vec *v{id}"),
         Type::VecRef => "const ae_vec *".to_owned(),
@@ -1202,13 +1204,13 @@ fn emit_program(files: Vec<Vec<Function>>) -> Result<String, String> {
     for function in &all {
         if function.is_main { continue; }
         let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, false)).collect::<Vec<_>>().join(", ") };
-        let ret = match function.returns { Type::Bool => "bool", Type::String => "char *", Type::Vec => "ae_vec", _ => "int64_t" };
+        let ret = match function.returns { Type::Bool => "bool", Type::String => "ae_string", Type::Vec => "ae_vec", _ => "int64_t" };
         out.push_str(&format!("\nstatic {ret} ae_fn_{}({params});\n", function.id));
     }
     for function in &all {
         if function.is_main { continue; }
         let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, true)).collect::<Vec<_>>().join(", ") };
-        let ret = match function.returns { Type::Bool => "bool", Type::String => "char *", Type::Vec => "ae_vec", _ => "int64_t" };
+        let ret = match function.returns { Type::Bool => "bool", Type::String => "ae_string", Type::Vec => "ae_vec", _ => "int64_t" };
         out.push_str(&format!("\nstatic {ret} ae_fn_{}({params}) {{\n", function.id));
         emit_statements(&function.body, &mut out, &mut 0);
         // Defensive backstop: even a future control-flow analysis bug must not
