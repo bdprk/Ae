@@ -9,11 +9,15 @@
 | Linux（净化器） | x86-64 | 已验证 | 2026-11-10 | GCC `-fsanitize=address,undefined` | 同上 |
 | macOS / ARM64 / 交叉编译 | — | 未验证（不在首批承诺内） | — | — | — |
 
-## 验证内容（两平台一致）
+## 验证内容
 
-- `cargo test --locked`：9 单元 + 46 集成测试（含 Unicode 路径、受检算术边界、字符串所有权与释放、循环与范围、缓存命中/损坏/清理）。
-- `scripts/verify_generated_c.py [--sanitize]`：生成 C 在两种优化模式输出一致；失败路径（越界、断言）按预期非零退出；Linux 净化器下无地址/未定义行为报告。
-- 全部 `examples/*.ae` 输出与 Windows 完全一致。
+- `cargo test --locked`：9 单元 + 99 集成测试（Unicode 路径与字符边界、受检算术边界、字符串/向量/映射的所有权与释放、循环与范围、`?` 传播、哈希表、模块可见性、缓存命中/损坏/清理）。
+- `scripts/verify_generated_c.py [--sanitize]`：生成 C 在两种优化模式输出一致；失败路径（越界、断言、UTF-8 边界、分配失败）按预期非零退出；`--leak` 用分配计数要求每个程序的退出块数等于空程序基线（当前 2 块）；Linux 净化器下无地址/未定义行为报告。
+- 全部 `examples/*.ae`（含 `examples/modules/` 的多文件程序）输出与 Windows 完全一致。
+
+### 记录时效
+
+表内的「已验证」记录分别来自 2026-11-09/10 的两次本机运行。此后新增的能力——哈希表 `map[string, i64]`、UTF-8 字符边界与 `utf8_len`/`utf8_prefix`、分配器接口与 `AE_ALLOC_LIMIT`、`pub` 可见性、循环移动规则——目前只有 **Windows 本机**的完整证据；Linux 侧的记录早于这些改动，需要重跑 `cargo test --locked`、`python3 scripts/verify_generated_c.py --sanitize --leak` 与示例对比后才能重新声明一致。在这之前，本文不把新能力标记为跨平台已验证。
 
 ## 已知平台差异（不掩盖）
 
