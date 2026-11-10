@@ -1,0 +1,29 @@
+{
+  "functions": 800,
+  "generated_c_bytes": 20352,
+  "generated_c_identical": true,
+  "median_delta_ms": 4.537,
+  "median_with_ms": 30.15,
+  "median_without_ms": 25.613,
+  "runs": 7,
+  "source_bytes_each": 40714,
+  "tool": "bench/constraint_audit_timings.py",
+  "with_constraints_ms": [
+    39.91,
+    28.291,
+    30.15,
+    32.838,
+    28.519,
+    29.361,
+    32.631
+  ],
+  "without_constraints_ms": [
+    34.895,
+    25.323,
+    24.734,
+    23.989,
+    25.613,
+    27.679,
+    28.173
+  ]
+}

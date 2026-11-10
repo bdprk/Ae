@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Kind {
@@ -515,9 +516,11 @@ fn audit_generic_fn(
 
 // `fn pick[T](a: T, b: T) -> T { ... }` before any call site picks arguments.
 // The declaration keeps its own token slice and source text so an instantiation
-// can be parsed later, even from another file (ADR-31).
+// can be parsed later, even from another file (ADR-31). ADR-41: both are shared
+// per source file with `Rc`, so N generic declarations in one file do not make
+// N full copies of the token stream (an O(N^2) front-end cost).
 #[derive(Debug, Clone)]
-struct GenericFn { name: String, params: Vec<String>, bounds: Vec<Vec<Bound>>, start: usize, tokens: Vec<Token>, source: String, file: String, public: bool }
+struct GenericFn { name: String, params: Vec<String>, bounds: Vec<Vec<Bound>>, start: usize, tokens: Rc<Vec<Token>>, source: Rc<str>, file: String, public: bool }
 // An instantiated generic function: its id, parameter types and return type.
 type Instance = (usize, Vec<Type>, Type);
 // Instantiated generic enums, structs and functions, keyed by declaration and
@@ -535,7 +538,7 @@ struct Signature { id: usize, params: Vec<Type>, ret: Type, file: String, public
 
 type SharedFunctions = HashMap<String, Signature>;
 
-struct Parser<'a> { file: String, source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>>, subst: HashMap<String, Type>, pending: Vec<Function> }
+struct Parser<'a> { file: String, source: &'a str, tokens: Rc<Vec<Token>>, shared_source: Rc<str>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>>, subst: HashMap<String, Type>, pending: Vec<Function> }
 impl<'a> Parser<'a> {
     fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
     fn fail(&self, message: &str) -> String { error(&self.file, self.source, self.tokens[self.pos].offset, message) }
@@ -1796,10 +1799,10 @@ impl<'a> Parser<'a> {
                 let bounds: Vec<Vec<Bound>> = declared.into_iter().map(|(_, b)| b).collect();
                 let start = self.pos;
                 let end = self.skip_function_body()?;
-                audit_generic_fn(&self.file, self.source, &self.tokens, start, end, &name, &params, &bounds, declared_at)?;
+                audit_generic_fn(&self.file, self.source, self.tokens.as_ref(), start, end, &name, &params, &bounds, declared_at)?;
                 let gid = self.generics.fn_defs.len();
                 self.generics.fn_names.insert(name.clone(), gid);
-                self.generics.fn_defs.push(GenericFn { name, params, bounds, start, tokens: self.tokens.clone(), source: self.source.to_owned(), file: self.file.clone(), public });
+                self.generics.fn_defs.push(GenericFn { name, params, bounds, start, tokens: Rc::clone(&self.tokens), source: Rc::clone(&self.shared_source), file: self.file.clone(), public });
                 continue;
             }
             self.take(Kind::LParen)?;
@@ -1958,7 +1961,7 @@ impl<'a> Parser<'a> {
         let mut subst = HashMap::new();
         for (index, param) in def.params.iter().enumerate() { subst.insert(param.clone(), args[index]); }
         let mut sub = Parser {
-            file: def.file.clone(), source: def.source.as_str(), tokens: def.tokens, pos: def.start,
+            file: def.file.clone(), source: &*def.source, tokens: Rc::clone(&def.tokens), shared_source: Rc::clone(&def.source), pos: def.start,
             names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0,
             loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0,
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
@@ -3617,8 +3620,8 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
 #[derive(Debug, Default)]
 struct Program { files: Vec<Vec<Function>>, structs: Vec<StructDef>, enums: Vec<EnumDef> }
 
-fn make_parser<'a>(file: &str, source: &'a str, tokens: Vec<Token>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics) -> Parser<'a> {
-    Parser { file: file.to_owned(), source, tokens, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new(), subst: HashMap::new(), pending: Vec::new() }
+fn make_parser<'a>(file: &str, source: &'a str, tokens: Rc<Vec<Token>>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics) -> Parser<'a> {
+    Parser { file: file.to_owned(), source, tokens, shared_source: Rc::from(source), pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new(), subst: HashMap::new(), pending: Vec::new() }
 }
 
 // Leading `use "path";` headers. Parsed from tokens before the Parser owns
@@ -3648,8 +3651,8 @@ fn scan_uses(file: &str, tokens: &[Token]) -> Result<Vec<String>, String> {
 
 #[allow(dead_code)] // exercised by in-memory unit tests
 fn parse_source(file: &str, source: &str, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, generics: &mut Generics, next_id: &mut usize) -> Result<Vec<Function>, String> {
-    let tokens = lex(source)?;
-    let uses = scan_uses(file, &tokens)?;
+    let tokens = Rc::new(lex(source)?);
+    let uses = scan_uses(file, tokens.as_ref())?;
     if !uses.is_empty() {
         return Err(error(file, source, 0, "'use' is only supported when compiling a source file"));
     }
@@ -3677,8 +3680,8 @@ fn load_file(path: &Path, root: &Path, visited: &mut std::collections::HashSet<s
     if !visited.insert(canonical) { return Err(format!("circular import of {}", path.display())); }
     let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let file = path.display().to_string();
-    let tokens = lex(&source).map_err(|e| format!("{file}:{e}"))?;
-    let uses = scan_uses(&file, &tokens).map_err(|e| format!("{file}:{e}"))?;
+    let tokens = Rc::new(lex(&source).map_err(|e| format!("{file}:{e}"))?);
+    let uses = scan_uses(&file, tokens.as_ref()).map_err(|e| format!("{file}:{e}"))?;
     let parent = path.parent().unwrap_or(Path::new(".")).to_owned();
     for import in &uses {
         load_file(&parent.join(import), root, visited, shared, structs, struct_names, enums, enum_names, generics, next_id, out, mains, modules)?;
@@ -4387,5 +4390,31 @@ mod tests {
         ] {
             if let Err(err) = compile(source) { panic!("valid declaration rejected: {source}: {err}"); }
         }
+    }
+
+    #[test]
+    fn generic_declarations_share_one_token_buffer_per_file() {
+        // ADR-41: before this change every declaration cloned the whole token
+        // stream and source text, which is O(N^2) in the number of declarations.
+        let mut shared = HashMap::new();
+        let mut structs = Vec::new();
+        let mut struct_names = HashMap::new();
+        let (mut enums, mut enum_names) = prelude_enums();
+        let mut generics = prelude_generics();
+        let mut next_id = 0usize;
+        let source = "fn f[T: Add](a: T, b: T) -> T { return a + b; }\n\
+fn g[U: Ord](a: U, b: U) -> U { return a + b; }\n\
+fn h[V: Eq](a: V, b: V) -> bool { return a == b; }\n\
+fn main() { print(f[i64](1, 2)); print(g[i64](3, 4)); print(h[bool](true, true)); }";
+        parse_source("", source, &mut shared, &mut structs, &mut struct_names,
+            &mut enums, &mut enum_names, &mut generics, &mut next_id).unwrap();
+        assert_eq!(generics.fn_defs.len(), 3, "expected three generic declarations");
+        let tokens = Rc::clone(&generics.fn_defs[0].tokens);
+        let text = Rc::clone(&generics.fn_defs[0].source);
+        for def in &generics.fn_defs[1..] {
+            assert!(Rc::ptr_eq(&tokens, &def.tokens), "each declaration copied the token stream");
+            assert!(Rc::ptr_eq(&text, &def.source), "each declaration copied the source text");
+        }
+        assert_eq!(&*text, source);
     }
 }

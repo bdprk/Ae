@@ -1,0 +1,6 @@
+functions=800 source_bytes=40714 runs=7
+old (per-declaration clone) ms: [1240.333, 1629.001, 959.268, 971.006, 981.715, 987.224, 1023.854] median=987.224
+new (shared Rc)            ms: [9.301, 9.375, 9.25, 9.216, 9.613, 8.806, 8.881] median=9.25
+saved=977.974 ms ratio=106.727
+generated C bytes=20352 identical (normalised)=True identical (raw)=True diagnostic identical=True
+wrote /tmp/ae-w5/shared-800.json

@@ -1,0 +1,6 @@
+functions=200 source_bytes=10114 runs=7
+with constraints   ms: [49.576, 26.857, 50.439, 28.395, 23.64, 19.284, 19.771] median=26.857
+without constraints ms: [36.854, 26.173, 25.624, 28.225, 18.296, 19.319, 18.756] median=25.624
+delta (upper bound) ms: 1.233
+generated C bytes=20352 identical=True
+wrote bench\results\2026-11-10-windows-w5-front\audit-timings-200.json

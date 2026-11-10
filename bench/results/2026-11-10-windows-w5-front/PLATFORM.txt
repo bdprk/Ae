@@ -1,0 +1,74 @@
+AE Windows local verification, 2026-11-10 (ADR-41)
+Scope: share lexer output per source file, remove O(N^2) token cloning
+
+Platform
+  OS: Windows x86-64 (native, MinGW-W64 UCRT toolchain)
+  C compiler: gcc.exe (MinGW-W64 x86_64-ucrt-posix-seh) 16.2.0
+  Rust: cargo / rustc 1.99.1
+  AddressSanitizer: unavailable on MinGW; allocation counting uses -Wl,--wrap
+
+Source tree
+  Local working tree immediately after commit 55f6b14 (ADR-40), plus the
+  uncommitted ADR-41 changes. This archive is committed together with that
+  tree, so git history identifies the exact sources.
+
+Baseline binary (NOT committed; rebuild exactly as follows)
+  mkdir -p target/probe/old-tree
+  git archive 55f6b14 src Cargo.toml Cargo.lock | tar -x -C target/probe/old-tree
+  cp src/runtime.c src/runtime_ex.c target/probe/old-tree/src/
+      # git archive exports these with CRLF, while the working tree has LF.
+      # Matching line endings keeps the generated C byte-identical, so the
+      # comparison cannot be confounded by a known platform difference.
+  cd target/probe/old-tree
+  CARGO_TARGET_DIR=$PWD/../../old-target cargo build --locked
+  => target/probe/old-target/debug/ae.exe
+
+Commands (run from the repository root)
+  cargo build --locked
+  cargo test --locked
+  python scripts/verify_generated_c.py --leak
+  python bench/build_timings.py --runs 3 --json <archive>/timings.json
+  python bench/constraint_audit_timings.py --runs 7 --functions 200|800 \
+      --json <archive>/audit-timings-{200,800}.json
+  python bench/shared_tokens_timings.py \
+      --old-exe target/probe/old-target/debug/ae.exe \
+      --runs 7 --functions 200|800 --json <archive>/shared-{200,800}.json
+  ae check on every examples/*.ae
+  ae deps examples/modules/main.ae
+  ae emit-c examples/float_math.ae / examples/file_tidy.ae / print(1)
+
+Results
+  cargo-test.log: 15 unit + 139 integration tests, 0 failures
+  verify-c-leak.log: 25 generated-C cases PASS, every program exits at the
+    UCRT baseline of 2 live allocation blocks
+  examples-check.log: empty, all 32 examples/*.ae pass check
+  deps-output.txt: identical to the Linux file after CRLF/LF normalization
+    (233 bytes)
+  generated-c-header-check.txt: float_math.ae omits <windows.h>,
+    file_tidy.ae keeps it, print(1) generated C is 20,352 bytes
+  shared-200.* / shared-800.*: old-vs-new within-run comparison (7 raw values)
+  audit-timings-200.* / audit-timings-800.*: capability-audit upper bound
+    after the O(N^2) cost is gone
+  timings.json / timings.txt: four build scenarios
+
+Measured effect (within-run old/new comparison, wall clock, 7 alternating runs)
+  200 declarations: old 132.5 -> new 29.1 ms, saved 103.4 ms, ratio 4.55
+  800 declarations: old 1575.9 -> new 32.8 ms, saved 1543.1 ms, ratio 48.03
+  Both binaries emit byte-identical C (20,352 bytes, raw AND normalised) and
+  byte-identical declaration-site diagnostics; the assertion is in the script.
+  Capability-audit upper-bound delta dropped to 1.2 / 4.5 ms (200 / 800),
+  versus 10.3 / 94.2 ms in the ADR-40 archive: the earlier gap was mostly the
+  O(N^2) clone, not the audit.
+  Four scenarios (ms): cold 352.4 | unchanged 139.3 | impl 457.2 | iface 431.3
+  -O0 executable 64,195 bytes; no cache kind or generated C change.
+
+Boundaries (do not overstate)
+  - The speedup applies to files with MANY generic declarations. A program
+    with one or two generic functions is within measurement noise; this is not
+    a general "compiler is N times faster" claim.
+  - Absolute numbers vary with load on this machine; only the within-run
+    old/new comparison is causal. Do not subtract numbers across archives.
+  - No peak-memory sampling was done; allocation counts drop but no specific
+    memory figure is claimed.
+  - No safety check was disabled, no cache kind or resident process added,
+    and no translation unit was split (W3 stage 2 remains blocked by ADR-38).

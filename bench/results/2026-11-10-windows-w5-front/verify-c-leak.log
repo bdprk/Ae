@@ -1,0 +1,51 @@
+BASELINE leak blocks=2
+  leak blocks=2 bytes=84
+PASS vectors.ae
+  leak blocks=2 bytes=84
+PASS arrays.ae
+  leak blocks=2 bytes=84
+PASS borrow.ae
+  leak blocks=2 bytes=84
+PASS functions.ae
+  leak blocks=2 bytes=84
+PASS control-flow.ae
+  leak blocks=2 bytes=84
+PASS strings.ae
+  leak blocks=2 bytes=84
+PASS enums.ae
+  leak blocks=2 bytes=84
+PASS concat.ae
+  leak blocks=2 bytes=84
+PASS file_tidy.ae
+  leak blocks=2 bytes=84
+PASS copy_notes.ae
+  leak blocks=2 bytes=84
+PASS word_count.ae
+  leak blocks=2 bytes=84
+PASS dir_report.ae
+  leak blocks=2 bytes=84
+PASS pairs.ae
+  leak blocks=2 bytes=84
+PASS generic_fn.ae
+  leak blocks=2 bytes=84
+PASS constraints.ae
+  leak blocks=2 bytes=84
+PASS generic_constraints.ae
+  leak blocks=2 bytes=84
+PASS option_propagate.ae
+  leak blocks=2 bytes=84
+PASS generic_borrow.ae
+  leak blocks=2 bytes=84
+PASS find_text.ae
+  leak blocks=2 bytes=84
+PASS float_math.ae
+  leak blocks=2 bytes=84
+PASS json_report.ae
+  leak blocks=2 bytes=84
+PASS maybe.ae
+  leak blocks=2 bytes=84
+PASS main.ae
+  leak blocks=2 bytes=84
+PASS text_preview.ae
+  leak blocks=2 bytes=84
+PASS bounds.ae

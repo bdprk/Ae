@@ -1,0 +1,6 @@
+functions=200 source_bytes=10114 runs=7
+old (per-declaration clone) ms: [63.628, 62.3, 61.84, 64.141, 66.464, 65.888, 65.637] median=64.141
+new (shared Rc)            ms: [3.818, 3.412, 3.586, 2.91, 3.295, 2.841, 3.677] median=3.412
+saved=60.729 ms ratio=18.799
+generated C bytes=20352 identical (normalised)=True identical (raw)=True diagnostic identical=True
+wrote /tmp/ae-w5/shared-200.json

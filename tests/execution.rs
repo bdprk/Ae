@@ -1115,6 +1115,30 @@ fn main() { print(f[i64](2, 3)); print(f[string]("a", "b")); print(f[f64](1.5, 2
 }
 
 #[test]
+fn many_generic_declarations_in_one_file_keep_their_own_bodies() {
+    // ADR-41: sharing one token buffer per file must not move any declaration's
+    // `start`; each instantiation still parses its own parameter list and body.
+    let mut source = String::new();
+    for i in 0..40 {
+        source.push_str(&format!("fn f{i}[T: Add](a: T, b: T) -> T {{ return a + b; }}\n"));
+        source.push_str(&format!("fn g{i}[T: Ord](a: T, b: T) -> T {{ if a > b {{ return a; }} return b; }}\n"));
+    }
+    source.push_str("fn main() { ");
+    for i in 0..40 {
+        source.push_str(&format!("print(f{i}[i64]({i}, 1)); print(g{i}[i64]({i}, 100)); "));
+    }
+    source.push_str("}");
+    let output = execute(&source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let mut expected = Vec::new();
+    for i in 0..40 {
+        expected.push((i + 1).to_string());
+        expected.push("100".to_owned());
+    }
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), expected.join("\n") + "\n");
+}
+
+#[test]
 fn capability_audit_applies_to_imported_generic_functions() {
     let dir = std::env::temp_dir().join(format!("ae-w4-import-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);

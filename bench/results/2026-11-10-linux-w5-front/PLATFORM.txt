@@ -1,0 +1,73 @@
+AE Linux native verification, 2026-11-10 (ADR-41)
+Scope: share lexer output per source file, remove O(N^2) token cloning
+
+Platform
+  OS: Debian 13 x86-64 (instabox-node sandbox, 4 vCPU)
+  C compiler: gcc 14.2.0
+  Rust: cargo / rustc 1.99.0
+  Sanitizers: AddressSanitizer + UndefinedBehaviorSanitizer available
+
+Source tree
+  ~/ae-lang synced from the Windows working tree immediately after commit
+  55f6b14 (ADR-40), plus the uncommitted ADR-41 changes:
+    tar -czf - src tests scripts examples docs Cargo.toml Cargo.lock \
+        bench/*.py | ssh instabox-node 'cd ~/ae-lang && tar -xzf -'
+  The remote tree has no .git; the Windows archive is committed together with
+  this tree, so git history identifies the exact sources. bench/results/ was
+  not overwritten.
+
+Baseline binary (NOT committed; rebuilt on this host)
+  The same pre-ADR-41 source tree was exported on Windows with
+  `git archive 55f6b14 src Cargo.toml Cargo.lock`, copied so runtime.c and
+  runtime_ex.c use the same line endings as the working tree, then synced:
+    tar -czf - -C target/probe/old-tree src Cargo.toml Cargo.lock \
+        | ssh instabox-node 'mkdir -p ~/ae-old && cd ~/ae-old && tar -xzf -'
+    cd ~/ae-old && CARGO_TARGET_DIR=~/ae-old/target cargo build --locked
+  => ~/ae-old/target/debug/ae
+
+Commands (run from ~/ae-lang)
+  cargo build --locked
+  cargo test --locked
+  python3 scripts/verify_generated_c.py --leak
+  python3 scripts/verify_generated_c.py --sanitize
+  python3 bench/build_timings.py --runs 3 --json /tmp/ae-w5/timings.json
+  python3 bench/constraint_audit_timings.py --runs 7 --functions 200 \
+      --json /tmp/ae-w5/audit-timings-200.json
+  python3 bench/shared_tokens_timings.py \
+      --old-exe ~/ae-old/target/debug/ae \
+      --runs 7 --functions 200|800 --json /tmp/ae-w5/shared-{200,800}.json
+  ae check on every examples/*.ae
+  ae deps examples/modules/main.ae
+  ae emit-c examples/float_math.ae / print(1)
+
+Results
+  cargo-test.log: 15 unit + 139 integration tests, 0 failures
+  verify-c-leak.log: 25 generated-C cases PASS, 0 live allocation blocks
+  verify-c-sanitize.log: 25 cases PASS, 0 ASan/UBSan/runtime-error reports
+  examples-check.log: empty, all 32 examples/*.ae pass check
+  deps-output.txt: identical to the Windows file after CRLF/LF normalization
+    (233 bytes)
+  generated-c-header-check.txt: float_math.ae omits <windows.h>,
+    print(1) generated C is 20,352 bytes
+  shared-200.* / shared-800.*: old-vs-new within-run comparison (7 raw values)
+  timings.json / timings.txt: four build scenarios
+
+Measured effect (within-run old/new comparison, wall clock, 7 alternating runs)
+  200 declarations: old 64.1 -> new 3.4 ms, saved 60.7 ms, ratio 18.80
+  800 declarations: old 987.2 -> new 9.3 ms, saved 978.0 ms, ratio 106.73
+  Both binaries emit byte-identical C (20,352 bytes, raw AND normalised) and
+  byte-identical declaration-site diagnostics; the assertion is in the script.
+  Four scenarios (ms): cold 38.2 | unchanged 5.4 | impl 40.0 | iface 40.2
+  -O0 executable 17,168 bytes; no cache kind or generated C change.
+
+Boundaries (do not overstate)
+  - The speedup applies to files with MANY generic declarations. A program
+    with one or two generic functions is within measurement noise; this is not
+    a general "compiler is N times faster" claim.
+  - One 800-decl baseline sample reached 1,629 ms under load; absolute numbers
+    must not be compared across sessions or archives. Only the within-run
+    old/new comparison is causal.
+  - No peak-memory sampling was done; allocation counts drop but no specific
+    memory figure is claimed.
+  - No safety check was disabled, no cache kind or resident process added,
+    and no translation unit was split (W3 stage 2 remains blocked by ADR-38).

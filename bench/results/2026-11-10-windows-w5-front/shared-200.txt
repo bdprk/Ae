@@ -1,0 +1,6 @@
+functions=200 source_bytes=10114 runs=7
+old (per-declaration clone) ms: [129.04, 129.847, 136.024, 132.465, 137.512, 138.139, 118.295] median=132.465
+new (shared Rc)            ms: [29.038, 27.948, 29.758, 30.462, 30.179, 29.095, 28.525] median=29.095
+saved=103.37 ms ratio=4.553
+generated C bytes=20352 identical (normalised)=True identical (raw)=True diagnostic identical=True
+wrote bench\results\2026-11-10-windows-w5-front\shared-200.json

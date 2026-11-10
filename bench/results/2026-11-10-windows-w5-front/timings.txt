@@ -1,0 +1,13 @@
+{
+  "c_compile_ms": 344.906,
+  "executable_bytes": 64195,
+  "generated_c_bytes": 20352,
+  "runs": 3,
+  "scenarios": {
+    "cold_build_ms": 352.371,
+    "implementation_edit_ms": 457.227,
+    "interface_edit_ms": 431.283,
+    "unchanged_build_ms": 139.337
+  },
+  "tool": "bench/build_timings.py"
+}

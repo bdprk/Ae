@@ -1,0 +1,34 @@
+{
+  "declaration_diagnostic_identical": true,
+  "functions": 200,
+  "generated_c_bytes": 20352,
+  "generated_c_identical": true,
+  "generated_c_identical_raw": true,
+  "median_new_ms": 3.412,
+  "median_old_ms": 64.141,
+  "median_ratio": 18.799,
+  "median_saved_ms": 60.729,
+  "new_check_ms": [
+    3.818,
+    3.412,
+    3.586,
+    2.91,
+    3.295,
+    2.841,
+    3.677
+  ],
+  "new_exe": "/data/home/ae-lang/target/debug/ae",
+  "old_check_ms": [
+    63.628,
+    62.3,
+    61.84,
+    64.141,
+    66.464,
+    65.888,
+    65.637
+  ],
+  "old_exe": "/data/home/ae-old/target/debug/ae",
+  "runs": 7,
+  "source_bytes": 10114,
+  "tool": "bench/shared_tokens_timings.py"
+}

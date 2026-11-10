@@ -58,6 +58,8 @@ cargo run -- version
 
 带约束的泛型函数还会在**声明处**接受能力覆盖检查（ADR-40）：把约束白名单的交集作为有效类型集，若函数体对 `T` 用了某个有效类型不支持的运算，就在类型参数声明处报错。例如 `fn f[T: Copy](a: T, b: T) -> T { return a + b; }` 会被拒绝（`Copy` 允许 `bool`），改成 `T: Add` 即可。这是**收紧**：过去只在实例化时才报错；它只拒绝、不放行，逐实例化完整类型检查保持不变，无约束泛型行为不变，**不是 trait/impl**。`bench/constraint_audit_timings.py` 用两份同字节数的源码交替测 `check`，并断言两者 `emit-c` 输出逐字节相同——本轮不改变任何生成 C、可执行文件或缓存。
 
+编译器前端按源文件共享词法结果（ADR-41）：`GenericFn` 不再为每个泛型声明复制整份 token 流与源码，含大量泛型声明的文件 `check` 明显变快，生成 C 与诊断完全不变。`bench/shared_tokens_timings.py` 用改动前后的两个二进制在同一脚本内交替测 `check`，并断言两者 `emit-c` 逐字节相同、声明处诊断一致；`bench/constraint_audit_timings.py` 则用于度量能力审计本身的上界。
+
 `run` 支持把程序参数放在 `--` 之后转发给被运行的程序（`args()` 才能看到它们）：`cargo run -- run examples/find_files.ae -- examples txt`。设置 `AE_TIMINGS=1` 输出前端、C 编译与链接耗时及缓存命中情况；设置 `AE_ALLOC_LIMIT=N` 把运行时的累计分配字节数限制在 N，用于确定性地验证分配失败诊断（超出后按「out of memory」终止并给出位置，不是内存配额）；`check` 只做词法、语法与语义检查，不需要 C 编译器。
 
 验证生成的 C：`cargo build` 后运行 `python scripts/verify_generated_c.py`；Linux 可加 `--sanitize` 启用地址和未定义行为检测，MinGW 无 libasan 时用 `--leak` 走 `-Wl,--wrap` 的分配计数（要求每个程序的退出分配块数等于空程序基线）。检测覆盖有限案例，不能证明实现完全安全。
