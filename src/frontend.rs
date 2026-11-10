@@ -118,6 +118,36 @@ fn location(source: &str, offset: usize) -> (usize, usize) {
     (prefix.bytes().filter(|b| *b == b'\n').count() + 1,
      prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1)
 }
+
+// Test-only view for the formatter's lexer-drift defense: the same token
+// boundaries, as comparable names. Values are dropped on purpose.
+#[cfg(test)]
+pub(crate) fn lex_kind_names(source: &str) -> Result<Vec<&'static str>, String> {
+    lex(source).map(|tokens| tokens.iter().map(|t| kind_name(&t.kind)).collect())
+}
+
+#[cfg(test)]
+fn kind_name(kind: &Kind) -> &'static str {
+    match kind {
+        Kind::Ident(_) => "Ident", Kind::Number(_) => "Number", Kind::Float(_) => "Float", Kind::Text(_) => "Text",
+        Kind::Fn => "Fn", Kind::Let => "Let", Kind::Var => "Var", Kind::Print => "Print",
+        Kind::If => "If", Kind::Else => "Else", Kind::While => "While", Kind::For => "For",
+        Kind::In => "In", Kind::Return => "Return", Kind::Break => "Break", Kind::Continue => "Continue",
+        Kind::Assert => "Assert", Kind::True => "True", Kind::False => "False", Kind::Use => "Use",
+        Kind::Struct => "Struct", Kind::Enum => "Enum", Kind::Match => "Match",
+        Kind::EqEq => "EqEq", Kind::NotEq => "NotEq", Kind::Less => "Less", Kind::LessEq => "LessEq",
+        Kind::Greater => "Greater", Kind::GreaterEq => "GreaterEq", Kind::And => "And", Kind::Or => "Or",
+        Kind::Bang => "Bang",
+        Kind::LParen => "LParen", Kind::RParen => "RParen", Kind::LBrace => "LBrace", Kind::RBrace => "RBrace",
+        Kind::LBracket => "LBracket", Kind::RBracket => "RBracket", Kind::Comma => "Comma",
+        Kind::Colon => "Colon", Kind::Arrow => "Arrow", Kind::Amp => "Amp", Kind::Semi => "Semi",
+        Kind::Equal => "Equal", Kind::Plus => "Plus", Kind::Minus => "Minus", Kind::Star => "Star",
+        Kind::Slash => "Slash", Kind::Percent => "Percent", Kind::Dot => "Dot", Kind::DotDot => "DotDot",
+        Kind::ColonColon => "ColonColon", Kind::FatArrow => "FatArrow", Kind::Question => "Question",
+        Kind::Eof => "Eof",
+    }
+}
+
 // Lexer diagnostics carry no file name; load_file adds the file prefix.
 fn lex_error(source: &str, offset: usize, message: &str) -> String {
     let (line, column) = location(source, offset);
@@ -3731,6 +3761,12 @@ fn load_program(entry: &Path) -> Result<Program, String> {
 
 pub fn check_path(path: &Path) -> Result<(), String> {
     load_program(path).map(|_| ())
+}
+
+// Formatter gate: the file must be cuttable into the same tokens the
+// compiler sees, nothing more. Modules without main stay formattable.
+pub(crate) fn check_lexable(source: &str) -> Result<(), String> {
+    lex(source).map(|_| ())
 }
 
 /// A stable, platform-independent description of the import graph and every

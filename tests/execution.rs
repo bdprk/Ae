@@ -2902,3 +2902,148 @@ fn deps_reports_the_import_graph_in_load_order() {
     assert!(text.contains("module main.ae"), "{text}");
     assert!(text.contains("  uses words.ae\n  uses report.ae\n"), "{text}");
 }
+
+fn unique_temp_dir(label: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("ae-fmt-test-{}-{}-{}", label, std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::create_dir(&dir).unwrap();
+    dir
+}
+
+#[test]
+fn fmt_normalizes_keeps_semantics_and_is_idempotent() {
+    let dir = unique_temp_dir("sem");
+    let input = dir.join("fmt_target.ae");
+    let messy = "fn main(){\n// count\nvar total=0;\nfor i in 0..3 {\ntotal=total+i;\n}\nprint(total); // done\n}\n";
+    fs::write(&input, messy).unwrap();
+    let ae = || Command::new(env!("CARGO_BIN_EXE_ae"));
+    let before = ae().arg("emit-c").arg(&input).output().unwrap();
+    assert!(before.status.success(), "{}", String::from_utf8_lossy(&before.stderr));
+
+    let first = ae().arg("fmt").arg(&input).output().unwrap();
+    assert!(first.status.success(), "{}", String::from_utf8_lossy(&first.stderr));
+    let formatted = fs::read_to_string(&input).unwrap();
+    assert_eq!(formatted, "fn main() {\n    // count\n    var total = 0;\n    for i in 0..3 {\n        total = total + i;\n    }\n    print(total); // done\n}\n");
+
+    // A second pass must be a no-op: formatting is idempotent.
+    let second = ae().arg("fmt").arg(&input).output().unwrap();
+    assert!(second.status.success(), "{}", String::from_utf8_lossy(&second.stderr));
+    assert_eq!(fs::read_to_string(&input).unwrap(), formatted);
+
+    // Semantics are unchanged. Byte-equality of the generated C is not the
+    // contract: runtime checks embed the source column, and spacing moves
+    // columns. What must hold here is that the generated C changes only in
+    // embedded numbers, so every differing line matches once digits are
+    // ignored. (Token stream and line numbers are covered by the formatter's
+    // own unit tests against the compiler lexer.)
+    let after = ae().arg("emit-c").arg(&input).output().unwrap();
+    let before_c = String::from_utf8_lossy(&before.stdout).replace("\r\n", "\n");
+    let after_c = String::from_utf8_lossy(&after.stdout).replace("\r\n", "\n");
+    assert_eq!(after_c.lines().count(), before_c.lines().count(), "generated C line count changed");
+    let ignore_digits = |line: &str| -> String { line.chars().filter(|c| !c.is_ascii_digit()).collect() };
+    for (index, (was, now)) in before_c.lines().zip(after_c.lines()).enumerate() {
+        assert_eq!(ignore_digits(was), ignore_digits(now),
+            "generated C line {index} changed beyond embedded numbers:\n  before: {was}\n  after:  {now}");
+    }
+
+    // And the program still computes the same answer.
+    let run = execute(&formatted);
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "3\n");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fmt_adds_the_final_newline_and_reports_no_change_when_clean() {
+    let dir = unique_temp_dir("nl");
+    let input = dir.join("tidy.ae");
+    fs::write(&input, "fn main() { print(1); }").unwrap();
+    let ae = || Command::new(env!("CARGO_BIN_EXE_ae"));
+    let result = ae().arg("fmt").arg(&input).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(fs::read_to_string(&input).unwrap(), "fn main() { print(1); }\n");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fmt_refuses_unlexable_files_and_leaves_them_untouched() {
+    let dir = unique_temp_dir("bad");
+    let ae = || Command::new(env!("CARGO_BIN_EXE_ae"));
+    for broken in [
+        // Unterminated string.
+        "fn main() { print(\"open); }\n",
+        // A character the language has no token for.
+        "fn main() { print(1 @ 2); }\n",
+    ] {
+        let input = dir.join("broken.ae");
+        fs::write(&input, broken).unwrap();
+        let result = ae().arg("fmt").arg(&input).output().unwrap();
+        assert!(!result.status.success(), "fmt accepted {broken:?}");
+        assert!(!String::from_utf8_lossy(&result.stderr).is_empty());
+        assert_eq!(fs::read_to_string(&input).unwrap(), broken, "fmt modified a file it refused to format");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fmt_formats_files_that_fail_full_check() {
+    // A semantic error does not make whitespace normalization unsafe, and
+    // module files have no main of their own, so fmt only requires
+    // lexability. A file with an unknown name is still reformatted.
+    let dir = unique_temp_dir("semantic");
+    let input = dir.join("broken.ae");
+    fs::write(&input, "fn main() {\nprint(who_am_i);\n}\n").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_ae")).arg("fmt").arg(&input).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(fs::read_to_string(&input).unwrap(), "fn main() {\n    print(who_am_i);\n}\n");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fmt_formats_a_module_file_without_a_main() {
+    let dir = unique_temp_dir("module");
+    let modules = dir.join("modules");
+    fs::create_dir(&modules).unwrap();
+    for name in ["main.ae", "words.ae", "report.ae"] {
+        fs::copy(format!("examples/modules/{name}"), modules.join(name)).unwrap();
+    }
+    let before = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-c").arg(modules.join("main.ae")).output().unwrap();
+    assert!(before.status.success(), "{}", String::from_utf8_lossy(&before.stderr));
+
+    let result = Command::new(env!("CARGO_BIN_EXE_ae")).arg("fmt").arg(modules.join("report.ae")).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+
+    // The whole program still emits the same C up to embedded columns.
+    let after = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-c").arg(modules.join("main.ae")).output().unwrap();
+    assert!(after.status.success(), "{}", String::from_utf8_lossy(&after.stderr));
+    let ignore_digits = |line: &str| -> String { line.chars().filter(|c| !c.is_ascii_digit()).collect() };
+    let strip = |bytes: &[u8]| -> Vec<String> {
+        String::from_utf8_lossy(bytes).replace("\r\n", "\n").split('\n')
+            .map(|l| ignore_digits(l)).collect()
+    };
+    assert_eq!(strip(&before.stdout), strip(&after.stdout));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn fmt_preserves_comment_and_string_bytes_end_to_end() {
+    let dir = unique_temp_dir("bytes");
+    let input = dir.join("keep.ae");
+    let source = "// header comment\nfn main() {\n    // indented comment\n    print(\"tab\\there quote\\\" done\"); // tail\n    print(1e3);\n    print(007);\n}\n";
+    fs::write(&input, source).unwrap();
+    let ae = || Command::new(env!("CARGO_BIN_EXE_ae"));
+    let result = ae().arg("fmt").arg(&input).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let formatted = fs::read_to_string(&input).unwrap();
+    // Everything but indentation is byte-identical: comments, escapes and
+    // literal spellings are re-emitted from the source, not re-created.
+    for needle in ["// header comment", "// indented comment", "\"tab\\there quote\\\" done\"); // tail", "1e3", "007"] {
+        assert!(formatted.contains(needle), "lost {needle:?} in:\n{formatted}");
+    }
+    let run = execute(&formatted);
+    assert!(run.status.success());
+    // The integer literal keeps its value; the float's canonical text is
+    // ADR-37's domain and asserted there, not here.
+    let out = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+    assert!(out.lines().any(|l| l == "7"), "{out}");
+    let _ = fs::remove_dir_all(&dir);
+}

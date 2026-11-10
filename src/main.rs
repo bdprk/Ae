@@ -1,10 +1,11 @@
 use std::{env, ffi::{OsStr, OsString}, fs, path::{Path, PathBuf}, process::{Command, ExitCode}, time::Instant};
 
+mod fmt;
 mod frontend;
 mod sha256;
 use frontend::compile_path;
 
-const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--release]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae fmt <source.ae>\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--release]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -238,6 +239,15 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         return Ok(0);
     }
     if cmd == "cache" { return cache_command(args.get(1)); }
+    if cmd == "fmt" {
+        if args.len() != 2 { return Err(USAGE.into()); }
+        let started = Instant::now();
+        let changed = fmt::fmt_path(Path::new(&args[1]))?;
+        if timings_enabled() {
+            eprintln!("ae timing: fmt_ms={:.3} (changed={changed})", started.elapsed().as_secs_f64() * 1000.0);
+        }
+        return Ok(0);
+    }
     if cmd == "deps" {
         if args.len() != 2 { return Err(USAGE.into()); }
         print!("{}", frontend::describe_path(Path::new(&args[1]))?);

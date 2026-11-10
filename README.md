@@ -16,6 +16,7 @@ AE 是自主研发的实验性原生编程语言，首批目标平台为 Windows
 cargo test
 cargo run -- check examples/hello.ae
 cargo run -- emit-c examples/hello.ae
+cargo run -- fmt examples/hello.ae
 cargo run -- run examples/hello.ae
 cargo run -- run examples/enums.ae
 cargo run -- run examples/concat.ae
