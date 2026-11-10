@@ -2058,3 +2058,41 @@ fn append_adds_to_a_file_that_write_truncates() {
     );
     let _ = fs::remove_file(&path);
 }
+#[test]
+fn exit_sets_the_status_and_flushes_what_was_printed() {
+    let output = execute(r#"fn main() {
+    let note = "about to stop";
+    print(note);
+    exit(3);
+}"#);
+    assert_eq!(output.status.code(), Some(3), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "about to stop\n");
+    // Code after a terminating statement is never reached.
+    let output = execute("fn main() { print(\"before\"); exit(0); print(\"after\"); }");
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "before\n");
+}
+#[test]
+fn exit_can_end_a_function_that_never_returns_a_value() {
+    let output = execute(r#"fn stop(code: i64) -> i64 {
+    let note = "stopping";
+    print(note);
+    exit(code);
+}
+fn main() {
+    let reached = stop(4);
+    print(reached);
+}"#);
+    assert_eq!(output.status.code(), Some(4), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "stopping\n");
+}
+#[test]
+fn exit_rejects_non_integer_status_codes() {
+    for source in ["fn main() { exit(\"no\"); }", "fn main() { exit(true); }", "fn main() { exit(); }"] {
+        let path = std::env::temp_dir().join(format!("ae-exit-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted invalid program: {source}");
+    }
+}

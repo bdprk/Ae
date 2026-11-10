@@ -5,6 +5,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+// Deliberate termination with a status. Buffered output is flushed first, so a
+// program that prints and then exits does not lose the last line to a pipe. The
+// code is truncated to int: POSIX shells only see the low eight bits, and
+// pretending otherwise in the language would be worse than documenting it.
+_Noreturn static void ae_exit(int64_t code) {
+    fflush(stdout);
+    exit((int)code);
+}
 _Noreturn static void ae_fail(const char *message, size_t line, size_t column) { fprintf(stderr, "ae:%zu:%zu: %s\n", line, column, message); exit(1); }
 
 // ---- Allocation interface (ADR-16) ------------------------------------------

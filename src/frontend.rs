@@ -60,7 +60,7 @@ const PRELUDE: &str = "<prelude>";
 const MAX_ENUM_TYPES: usize = 256;
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
-const RESERVED: [&str; 49] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file"];
+const RESERVED: [&str; 50] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit"];
 // Provisional prelude: fallible operations report failure as values instead of
 // terminating the process (§4.5). These enums are registered before any user
 // type, so a program can name them without importing anything. They are
@@ -220,12 +220,15 @@ enum Argument { Value(Expr), Borrow(usize, bool), View(Expr) } // Borrow bool: p
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
-enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), Sort(usize, bool, usize, usize), Reverse(usize, bool, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), MapPut(MapPlace, Expr, Expr, usize, usize), Propagate(Expr, Type, Vec<Type>, Option<(usize, Type)>, Vec<(usize, Type)>), Break, Continue(Option<usize>), Frees(Vec<(usize, Type)>) }
+enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), Sort(usize, bool, usize, usize), Reverse(usize, bool, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), MapPut(MapPlace, Expr, Expr, usize, usize), Propagate(Expr, Type, Vec<Type>, Option<(usize, Type)>, Vec<(usize, Type)>), Break, Continue(Option<usize>), Exit(Expr, Vec<(usize, Type)>), Frees(Vec<(usize, Type)>) }
 #[derive(Debug)]
 struct Function { id: usize, params: Vec<(usize, Type)>, body: Vec<Statement>, is_main: bool, returns: Type }
 fn returns(stmts: &[Statement]) -> bool {
     stmts.iter().any(|s| match s {
         Statement::Return(..) => true,
+        // Terminating the process is a valid way to end a function that never
+        // produces a value.
+        Statement::Exit(..) => true,
         Statement::If(_, yes, no) => returns(yes) && returns(no),
         // Exhaustive coverage means the match always runs one arm, so the
         // match returns whenever every arm does.
@@ -1525,6 +1528,17 @@ impl<'a> Parser<'a> {
                     result.push(stmt);
                 }
                 Kind::Ident(name) => {
+                    // `exit(code);` terminates the process. It releases the
+                    // live owned values first, so the allocation account stays
+                    // balanced and buffered output still flushes.
+                    if name == "exit" && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
+                        self.pos += 2;
+                        let (code, code_ty) = self.expression(0, false)?;
+                        if code_ty != Type::Int { return Err(self.fail("exit expects an i64 status code")); }
+                        self.take(Kind::RParen)?; self.take(Kind::Semi)?;
+                        result.push(Statement::Exit(code, self.live_owned()));
+                        continue;
+                    }
                     // Built-in mutation statements come before assignment so
                     // they stay unambiguous: push(v, x); pop(v);
                     if matches!(name.as_str(), "push" | "pop" | "sort" | "reverse") && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
@@ -2699,6 +2713,11 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                 null_moves(out, &t.moves);
             }
             Statement::Print(printed) => emit_print(printed, out, next),
+            Statement::Exit(code, frees) => {
+                let value = emit_expr(code, out, next, false);
+                for &(id, ty) in frees { release_var(out, id, ty); }
+                out.push_str(&format!("    ae_exit({});\n", value.text));
+            }
             Statement::Assert(condition, line, col) => {
                 let t = emit_expr(condition, out, next, false);
                 out.push_str(&format!("    if (!({})) ae_fail(\"assertion failed\", {line}, {col});\n", t.text));
