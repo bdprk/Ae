@@ -1578,3 +1578,70 @@ fn invalid_error_propagation_is_rejected() {
         assert!(!output.status.success(), "accepted invalid program: {source}");
     }
 }
+#[test]
+fn maps_store_count_replace_and_report_keys_in_order() {
+    let output = execute(r#"fn main() {
+    var counts = map_new();
+    counts["b"] = 2;
+    counts["a"] = 1;
+    counts["b"] = 5;
+    print(len(counts));
+    print(map_has(counts, "a"));
+    print(map_has(counts, "zz"));
+    let got = map_get(counts, "b");
+    match got { IntResult::Ok(n) => { print(n); } IntResult::Err(reason) => { print("unexpected failure"); } }
+    let absent = map_get(counts, "zz");
+    match absent { IntResult::Ok(n) => { print("unexpected success"); } IntResult::Err(reason) => { print(reason); } }
+    let names = keys(counts);
+    for name in names { print(name); }
+    print(map_remove(counts, "a"));
+    print(map_remove(counts, "a"));
+    print(len(counts));
+}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "2\ntrue\nfalse\n5\nkey not found\na\nb\ntrue\nfalse\n1\n"
+    );
+}
+#[test]
+fn maps_survive_storage_in_struct_fields() {
+    let output = execute(r#"struct Tally { label: string, counts: map[string, i64] }
+fn record(label: &string) -> Tally {
+    var counts = map_new();
+    counts["seen"] = 1;
+    counts["seen"] = 2;
+    return Tally { label: slice(label, 0, len(label)), counts: counts };
+}
+fn main() {
+    let t = record("day");
+    print(t.label);
+    print(len(t.counts));
+    print(map_has(t.counts, "seen"));
+    let got = map_get(t.counts, "seen");
+    match got { IntResult::Ok(n) => { print(n); } IntResult::Err(reason) => { print("unexpected failure"); } }
+    let names = keys(t.counts);
+    print(names[0]);
+}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "day\n1\ntrue\n2\nseen\n");
+}
+#[test]
+fn maps_reject_wrong_keys_values_and_use_after_move() {
+    for source in [
+        "fn main() { var m = map_new(); m[1] = 2; }",
+        "fn main() { var m = map_new(); m[\"a\"] = \"b\"; }",
+        "fn main() { let m = map_new(); m[\"a\"] = 1; }",
+        "fn main() { var m = map_new(); print(map_get(1, \"a\")); }",
+        "fn main() { var m = map_new(); print(map_has(m, 2)); }",
+        "fn main() { var m = map_new(); m[\"a\"] = 1; print(m[\"a\"]); }",
+        "fn take(m: map[string, i64]) -> i64 { return len(m); } fn main() { var m = map_new(); print(take(m)); print(len(m)); }",
+        "fn main() { var a: map[string, bool] = map_new(); print(len(a)); }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-map-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted invalid program: {source}");
+    }
+}

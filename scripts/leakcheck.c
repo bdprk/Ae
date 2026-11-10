@@ -5,13 +5,20 @@
 // non-zero block count at exit.
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static long long ae_leak_blocks = 0;
 static long long ae_leak_bytes = 0;
 
 void *__real_malloc(size_t);
+void __real_calloc(size_t, size_t);
 void __real_free(void *);
 void *__real_realloc(void *, size_t);
+
+static void *memset_zero(void *block, size_t size) {
+    memset(block, 0, size);
+    return block;
+}
 
 static void ae_leak_report(void) {
     // Stderr keeps the program's stdout byte-comparable in verification runs.
@@ -27,6 +34,15 @@ void *__wrap_malloc(size_t size) {
     ae_leak_blocks += 1;
     ae_leak_bytes += (long long)size;
     return (char *)header + 16;
+}
+
+// calloc goes through the same header, so a program that allocates with
+// calloc and frees through the wrapper still accounts correctly.
+void *__wrap_calloc(size_t count, size_t size) {
+    const size_t total = count * size;
+    void *block = __wrap_malloc(total);
+    if (!block) return NULL;
+    return memset_zero(block, total);
 }
 
 void __wrap_free(void *block) {

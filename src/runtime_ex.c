@@ -469,3 +469,26 @@ static AE_STATUS_RESULT ae_try_remove_dir(const char *path, size_t line, size_t 
     return ae_status_ok();
 #endif
 }
+
+// ---- Map helpers that need the prelude result types -------------------------
+// A missing key is a value, not a zero: `0` is a perfectly normal count.
+static AE_INT_RESULT ae_map_get(const ae_map *m, ae_strview key, size_t line, size_t column) {
+    int64_t value = 0;
+    if (!ae_map_lookup(m, key, &value)) {
+        AE_INT_RESULT out = { AE_INT_ERR, { .v1 = { ae_str_from("key not found", line, column) } } };
+        return out;
+    }
+    AE_INT_RESULT out = { AE_INT_OK, { .v0 = { value } } };
+    return out;
+}
+// Keys are copied and sorted by bytes, so iteration is reproducible and the
+// caller owns a plain string vector.
+static ae_strvec ae_map_keys(const ae_map *m, size_t line, size_t column) {
+    ae_strvec keys = ae_strvec_new(line, column);
+    for (int64_t i = 0; i < m->cap; i++) {
+        if (m->slots[i].state != AE_MAP_FULL) continue;
+        ae_strvec_push(&keys, ae_str_copy_view(AE_VIEW(m->slots[i].key), line, column), line, column);
+    }
+    if (keys.len > 1) qsort(keys.data, (size_t)keys.len, sizeof(ae_string), ae_name_compare);
+    return keys;
+}

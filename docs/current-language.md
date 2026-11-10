@@ -66,7 +66,7 @@
 
 程序预置六个结果枚举（无需导入，变体顺序固定）：`ReadResult{Ok(string), Err(string)}`、`WriteResult{Ok(i64), Err(string)}`、`IntResult{Ok(i64), Err(string)}`、`DirResult{Ok(vec[string]), Err(string)}`、`FileResult{Ok(i64, i64, bool), Err(string)}`、`StatusResult{Ok, Err(string)}`。可失败内建：`try_read_file(path) -> ReadResult`、`try_write_file(path, content) -> WriteResult`（成功返回写入字节数）、`parse_int(text) -> IntResult`。失败返回 `Err` 负载的错误描述，**不终止进程**；`read_file`/`write_file` 仍是失败即终止的不可恢复版本。`parse_int` 严格按十进制：可选 `+`/`-`、只允许 ASCII 数字、整串必须消费完、正负分别以 `9223372036854775807`/`-9223372036854775808` 为界，其余情况均为 `Err`。`to_string(i64) -> string` 是十进制格式化，与 `parse_int` 构成往返。
 
-结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string` 与六个结果类型名均为保留名。
+结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string`/`map_new`/`map_get`/`map_has`/`map_remove`/`keys` 与六个结果类型名均为保留名。
 
 ## 错误传播 `?`
 
@@ -92,6 +92,18 @@
 
 `for name in names` 与这些函数组合即可写出「列出→判定→搬移→清理」的文件整理流程，示例见 `examples/file_tidy.ae`。
 
+## 哈希表
+
+`var counts = map_new();` 建立一个空的 `map[string, i64]`——当前唯一的映射实例化：键必须是 `string`，值必须是 `i64`，类型书写为 `map[string, i64]`（可用于变量标注、参数、返回类型与结构体字段）。
+
+- `counts[key] = n;` 插入或覆盖。键由运行时代为**复制**，因此视图（`&string` 参数、`vec[string]` 元素）与临时值都能直接作键；值是 `i64`，不涉及所有权。目标必须是可变映射（`var` 变量，或可变结构体变量的映射字段 `s.counts[key] = n;`），且在借用期间不可写。
+- `map_get(m, key) -> IntResult`：命中返回 `Ok(n)`，缺失返回 `Err("key not found")`——「不存在」与「值为 0」因此可以区分，不会像 C 风格 API 那样用 0 冒充缺失。
+- `map_has(m, key) -> bool`、`map_remove(m, key) -> bool`（返回是否真的删掉了）、`keys(m) -> vec[string]`（**复制**并按字节序排序，因此遍历顺序在两平台一致）、`len(m)` 返回条目数。
+
+映射是拥有型值：赋值、按值传参、`return` 都移动整个表，作用域退出与跳转路径按类型生成的释放例程回收所有键与槽位数组，不会泄漏或双重释放。`map_get`/`map_has`/`map_remove`/`keys` 只在调用期间借用映射，接收者必须是**裸映射变量或它的结构体字段**（`map_get(t.counts, k)`），不能是更复杂的表达式；对已移动的映射调用会被编译期拒绝，运行时还有 `slots` 空指针哨兵兜底。
+
+实现是开放寻址 + 线性探测（FNV-1a 哈希，`AE_MAP_EMPTY/FULL/DELETED` 三态，删除留墓碑以维持探测链），负载因子达 3/4 时扩容一倍并清除墓碑。限制：不能直接 `for k in m` 遍历（请用 `keys(m)`），值类型只有 `i64`，没有自定义哈希与容量预分配；`keys()` 会分配一整份副本。
+
 ## 枚举与模式匹配
 
 `enum Shape { Circle(i64), Rect(i64, i64), Empty }` 声明枚举：变体可带 0–16 个位置负载，负载类型限于 `i64`、`bool`、`string`、`vec`、`vec[string]`（因此枚举不能自包含，不存在递归布局）。变体名在同一枚举内唯一，枚举名与结构体、内置名冲突时报错；与结构体一样，只能在同文件内先声明后使用。构造 `Shape::Circle(3)`、`Shape::Rect(4, 5)`、`Shape::Empty`；负载个数必须与声明一致，`string` 负载按移动传入。
@@ -101,4 +113,4 @@
 枚举是拥有型值：赋值、按值传参、`return` 都移动整个枚举，移动后使用被编译期拒绝；作用域退出、提前返回与跳转路径按当前变体释放负载，`string` 负载因此不会泄漏或双重释放。给枚举变量整体赋值时先释放旧负载再移入新值。枚举可用于函数参数与返回类型，也可作为结构体字段。枚举整体不能被 `print` 或比较。
 
 ## 当前实现限制
-编译器当前限制表达式嵌套深度及表达式节点数各为 128，块嵌套深度为 64，循环嵌套 64；超出时报告错误。这些是早期实现的资源限制，不是最终语言能力承诺。移动/所有权跟踪覆盖所有拥有型值：string、vec 与结构体变量共用同一套 moved 集合（编译器以 MoveKind::{Var, Field, StrVecElement} 记录），结构体字段与 vec 元素按设计不能被拆出、只能作为借用使用（具体编译期/运行时边界见上文）。比较不可链接；字符串不可变（无原地修改）；这些限制将在后续版本按规范逐步放开。
+编译器当前限制表达式嵌套深度及表达式节点数各为 128，块嵌套深度为 64，循环嵌套 64；超出时报告错误。这些是早期实现的资源限制，不是最终语言能力承诺。移动/所有权跟踪覆盖所有拥有型值：string、vec、map 与结构体变量共用同一套 moved 集合（编译器以 MoveKind::{Var, Field, StrVecElement} 记录），结构体字段与 vec 元素按设计不能被拆出、只能作为借用使用（具体编译期/运行时边界见上文）。比较不可链接；字符串不可变（无原地修改）；这些限制将在后续版本按规范逐步放开。

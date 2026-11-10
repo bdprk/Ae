@@ -12,7 +12,7 @@ enum Kind {
 struct Token { kind: Kind, offset: usize, line: usize, column: usize }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, String, StrView, Vec, StrVec, VecRef, StrVecRef, Array(usize), Struct(usize), Enum(&'static str, usize) }
+enum Type { Int, Bool, String, StrView, Vec, StrVec, VecRef, StrVecRef, Map, Array(usize), Struct(usize), Enum(&'static str, usize) }
 impl Type {
     fn name(self) -> String {
         match self {
@@ -24,6 +24,8 @@ impl Type {
             Type::StrVec => "vec[string]".to_owned(),
             Type::VecRef => "&vec".to_owned(),
             Type::StrVecRef => "&vec[string]".to_owned(),
+            // One map shape for now: string keys, i64 values.
+            Type::Map => "map[string, i64]".to_owned(),
             Type::Array(n) => format!("&[i64; {n}]"),
             Type::Struct(id) => format!("struct #{}", id),
             Type::Enum(name, _) => name.to_owned(),
@@ -36,6 +38,7 @@ impl Type {
             Type::StrView => "ae_strview ".to_owned(),
             Type::Vec => "ae_vec ".to_owned(),
             Type::StrVec => "ae_strvec ".to_owned(),
+            Type::Map => "ae_map ".to_owned(),
             Type::Struct(k) => format!("ae_t{k} "),
             Type::Enum(_, k) => format!("ae_e{k} "),
             _ => "int64_t ".to_owned(),
@@ -45,12 +48,12 @@ impl Type {
     // released on scope exit and control-flow jumps. Enums own their payload
     // slots, which may hold strings.
     fn owned(self) -> bool {
-        matches!(self, Type::String | Type::Vec | Type::StrVec | Type::Struct(_) | Type::Enum(..))
+        matches!(self, Type::String | Type::Vec | Type::StrVec | Type::Map | Type::Struct(_) | Type::Enum(..))
     }
 }
 enum MoveKind { Var(usize), Field, StrVecElement }
 // Built-in names are reserved so their semantics stay unambiguous.
-const RESERVED: [&str; 31] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir"];
+const RESERVED: [&str; 37] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys"];
 // Provisional prelude: fallible operations report failure as values instead of
 // terminating the process (§4.5). These enums are registered before any user
 // type, so a program can name them without importing anything. They are
@@ -171,13 +174,29 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+// A map reachable without a move: either a variable slot or a field of one.
+#[derive(Debug)]
+enum MapPlace { Var(usize), Field(usize, String) }
+impl MapPlace {
+    fn text(&self) -> String {
+        match self {
+            MapPlace::Var(id) => format!("v{id}"),
+            MapPlace::Field(id, name) => format!("v{id}.{name}"),
+        }
+    }
+    fn slot(&self) -> usize {
+        match self {
+            MapPlace::Var(id) | MapPlace::Field(id, _) => *id,
+        }
+    }
+}
 #[derive(Debug)]
 enum Argument { Value(Expr), Borrow(usize, bool), View(Expr) } // Borrow bool: pass &slot vs array (decays); View: read-only string borrow
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
-enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), Propagate(Expr, Type, Vec<Type>, Option<(usize, Type)>, Vec<(usize, Type)>), Break, Continue(Option<usize>), Frees(Vec<(usize, Type)>) }
+enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), MapPut(MapPlace, Expr, Expr, usize, usize), Propagate(Expr, Type, Vec<Type>, Option<(usize, Type)>, Vec<(usize, Type)>), Break, Continue(Option<usize>), Frees(Vec<(usize, Type)>) }
 #[derive(Debug)]
 struct Function { id: usize, params: Vec<(usize, Type)>, body: Vec<Statement>, is_main: bool, returns: Type }
 fn returns(stmts: &[Statement]) -> bool {
@@ -357,7 +376,7 @@ impl<'a> Parser<'a> {
                                 if self.moved.contains(&id) { return Err(error(&self.file, self.source, name_offset, &format!("cannot use '{arg_name}' because it was moved"))); }
                                 match ty {
                                     Type::Array(n) => { self.pos += 2; fast = Some((Expr::Number(n as i64), Type::Int)); }
-                                    Type::Vec | Type::StrVec | Type::VecRef | Type::StrVecRef => {
+                                    Type::Vec | Type::StrVec | Type::VecRef | Type::StrVecRef | Type::Map => {
                                         self.pos += 2;
                                         fast = Some((Expr::Len(Box::new(Expr::Variable(id, ty, vline, vcol)), line, col), Type::Int));
                                     }
@@ -371,7 +390,7 @@ impl<'a> Parser<'a> {
                         None => {
                             let (operand, ty) = self.expression(0, false)?;
                             self.take(Kind::RParen)?;
-                            if !matches!(ty, Type::String | Type::StrView | Type::Vec | Type::StrVec | Type::VecRef) { return Err(self.fail("len expects a string, vec, or array variable")); }
+                            if !matches!(ty, Type::String | Type::StrView | Type::Vec | Type::StrVec | Type::VecRef | Type::Map) { return Err(self.fail("len expects a string, vec, map, or array variable")); }
                             (Expr::Len(Box::new(operand), line, col), Type::Int)
                         }
                     }
@@ -475,6 +494,42 @@ impl<'a> Parser<'a> {
                     if !matches!(path_ty, Type::String | Type::StrView) { return Err(self.fail("path_exists expects a string path")); }
                     self.take(Kind::RParen)?;
                     (Expr::PathExists(Box::new(path), line, col), Type::Bool)
+                } else if name == "map_new" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    self.take(Kind::RParen)?;
+                    (Expr::MapNew(line, col), Type::Map)
+                } else if matches!(name.as_str(), "map_get" | "map_has" | "map_remove" | "keys") && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    let ty = if name == "map_get" { self.prelude_type("IntResult") } else if name == "keys" { Type::StrVec } else { Type::Bool };
+                    self.take(Kind::LParen)?;
+                    // A bare map variable keeps the borrow explicit: the map is
+                    // read (or mutated) only for the duration of this call.
+                    let (map, map_ty) = self.expression(0, false)?;
+                    let place = match (&map, map_ty) {
+                        (Expr::Variable(id, Type::Map, _, _), Type::Map) => MapPlace::Var(*id),
+                        (Expr::Field(base, fname, Type::Map), Type::Map) => match **base {
+                            Expr::Variable(id, _, _, _) => MapPlace::Field(id, fname.clone()),
+                            _ => return Err(self.fail(&format!("{name} needs a map variable or a field of one"))),
+                        },
+                        _ => return Err(self.fail(&format!("{name} expects a map variable or a field of one"))),
+                    };
+                    if self.moved.contains(&place.slot()) { return Err(self.fail(&format!("cannot use '{name}' on a moved map"))); }
+                    if name == "keys" {
+                        self.take(Kind::RParen)?;
+                        (Expr::MapKeys(place, line, col), ty)
+                    } else {
+                        self.take(Kind::Comma)?;
+                        let (key, key_ty) = self.expression(0, false)?;
+                        if !matches!(key_ty, Type::String | Type::StrView) { return Err(self.fail(&format!("{name} expects a string key"))); }
+                        self.take(Kind::RParen)?;
+                        let builtin = match name.as_str() {
+                            "map_get" => Expr::MapGet(place, Box::new(key), ty, line, col),
+                            "map_has" => Expr::MapHas(place, Box::new(key), line, col),
+                            _ => Expr::MapRemove(place, Box::new(key), line, col),
+                        };
+                        (builtin, ty)
+                    }
                 } else if name == "path_join" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     self.take(Kind::LParen)?;
@@ -625,8 +680,11 @@ impl<'a> Parser<'a> {
                                 if actual != Type::Array(len) { return Err(self.fail(&format!("argument requires array of length {len}"))); }
                                 args.push(Argument::Borrow(var, false));
                             } else {
-                                // By-value arguments consume string values.
-                                let (value, ty) = self.expression(0, moving)?;
+                                // By-value arguments always consume their value:
+                                // the callee releases the parameter, so the caller
+                                // must not use the slot afterwards even when the
+                                // surrounding statement is not a move context.
+                                let (value, ty) = self.expression(0, true)?;
                                 if ty != expected { return Err(self.fail(&format!("argument {} to '{name}' must be {}", args.len() + 1, expected.name()))); }
                                 args.push(Argument::Value(value));
                             }
@@ -778,6 +836,16 @@ impl<'a> Parser<'a> {
             "bool" => Ok(Type::Bool),
             "string" => Ok(Type::String),
             "vec" => Ok(Type::Vec),
+            "map" => {
+                // Only one shape exists, but the shape is spelled out so the
+                // code says what it means and the parser can grow later.
+                self.take(Kind::LBracket)?;
+                if self.identifier()? != "string" { return Err(self.fail("map keys must be string")); }
+                self.take(Kind::Comma)?;
+                if self.identifier()? != "i64" { return Err(self.fail("map values must be i64")); }
+                self.take(Kind::RBracket)?;
+                Ok(Type::Map)
+            }
             other => match self.struct_names.get(other) {
                 Some(&id) => Ok(Type::Struct(id)),
                 None => match self.enum_names.get(other) {
@@ -940,6 +1008,7 @@ impl<'a> Parser<'a> {
             if *self.current() != Kind::RParen {
                 loop {
                     if types.len() >= 64 { return Err(self.fail("function parameter limit exceeded (64)")); }
+                    if *self.current() == Kind::Var { self.pos += 1; }
                     let parameter = self.identifier()?;
                     if RESERVED.contains(&parameter.as_str()) { return Err(self.fail(&format!("'{parameter}' is a built-in name and cannot be a parameter"))); }
                     self.take(Kind::Colon)?;
@@ -997,13 +1066,18 @@ impl<'a> Parser<'a> {
             if *self.current() != Kind::RParen {
                 loop {
                     if params.len() >= 64 { return Err(self.fail("function parameter limit exceeded (64)")); }
+                    // `var` marks the parameter slot writable. The value was moved
+                    // in at the call site, so mutating this copy cannot be seen by
+                    // the caller; that difference is what keeps it safe.
+                    let mutable = *self.current() == Kind::Var;
+                    if mutable { self.pos += 1; }
                     let param = self.identifier()?;
                     if RESERVED.contains(&param.as_str()) { return Err(self.fail(&format!("'{param}' is a built-in name and cannot be a parameter"))); }
                     if self.names.contains_key(&param) { return Err(self.fail(&format!("duplicate parameter '{param}'"))); }
                     self.take(Kind::Colon)?;
                     let ty = self.parameter_type()?;
                     let id = self.next_var; self.next_var += 1;
-                    self.names.insert(param, (id, false, ty)); params.push((id, ty));
+                    self.names.insert(param, (id, mutable, ty)); params.push((id, ty));
                     if *self.current() != Kind::Comma { break; }
                     self.pos += 1;
                 }
@@ -1085,6 +1159,7 @@ impl<'a> Parser<'a> {
             }
             Expr::Contains(a, b, _, _) | Expr::Split(a, b, _, _) | Expr::StrEq(a, b, _) => { self.record_borrow_bases(a); self.record_borrow_bases(b); }
             Expr::WriteFile(a, b, _, _) | Expr::Slice(_, a, b, _, _) => { self.record_borrow_bases(a); self.record_borrow_bases(b); }
+            Expr::MapGet(_, key, _, _, _) | Expr::MapHas(_, key, _, _) | Expr::MapRemove(_, key, _, _) => self.record_borrow_bases(key),
             Expr::Join(_, sep, _, _) => self.record_borrow_bases(sep),
             Expr::Field(base, _, _) => self.record_borrow_bases(base),
             _ => {}
@@ -1206,7 +1281,21 @@ impl<'a> Parser<'a> {
                     let (id, mutable, ty) = *self.names.get(&name).ok_or_else(|| self.fail(&format!("unknown variable '{name}'")))?;
                     if !mutable { return Err(self.fail(&format!("cannot assign to immutable variable '{name}'"))); }
                     self.pos += 1;
-                    if let Type::Array(len) = ty {
+                    if ty == Type::Map && *self.current() == Kind::LBracket {
+                        // `m[key] = value;` inserts or overwrites. The key is
+                        // copied by the runtime, so a view or temporary is fine.
+                        if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                            return Err(self.fail(&format!("cannot modify '{name}' while it is borrowed")));
+                        }
+                        let (line, col) = self.position();
+                        self.take(Kind::LBracket)?;
+                        let (key, key_ty) = self.expression(0, false)?;
+                        if !matches!(key_ty, Type::String | Type::StrView) { return Err(self.fail("map keys must be strings")); }
+                        self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
+                        let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
+                        if value_ty != Type::Int { return Err(self.fail("map values must be i64")); }
+                        result.push(Statement::MapPut(MapPlace::Var(id), key, value, line, col));
+                    } else if let Type::Array(len) = ty {
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
                         let (index, index_ty) = self.expression(0, false)?;
                         if index_ty != Type::Int { return Err(self.fail("array index must be an integer")); }
@@ -1259,6 +1348,22 @@ impl<'a> Parser<'a> {
                                     .ok_or_else(|| self.fail(&format!("struct '{}' has no field '{}'", def.name, fname)))?;
                                 def.fields[fidx].1
                             };
+                            if fty == Type::Map && *self.current() == Kind::LBracket {
+                                // `s.counts[key] = n;` writes through the field,
+                                // so the record itself stays in place.
+                                if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                                    return Err(self.fail(&format!("cannot modify '{name}' while it is borrowed")));
+                                }
+                                let (line, col) = self.position();
+                                self.take(Kind::LBracket)?;
+                                let (key, key_ty) = self.expression(0, false)?;
+                                if !matches!(key_ty, Type::String | Type::StrView) { return Err(self.fail("map keys must be strings")); }
+                                self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
+                                let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
+                                if value_ty != Type::Int { return Err(self.fail("map values must be i64")); }
+                                result.push(Statement::MapPut(MapPlace::Field(id, fname), key, value, line, col));
+                                continue;
+                            }
                             self.take(Kind::Equal)?;
                             let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
                             if value_ty != fty { return Err(self.fail(&format!("field '{}' must be {}", fname, fty.name()))); }
@@ -1286,17 +1391,16 @@ impl<'a> Parser<'a> {
                         let moved_before = self.moved.contains(&id);
                         let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
                         if value_ty != ty { return Err(self.fail(&format!("cannot assign a {} value to {} variable '{name}'", value_ty.name(), ty.name()))); }
-                        let release_old = ty == Type::String;
-                        if release_old {
-                            // The right-hand side may not consume the target
-                            // itself; assigning to a previously moved variable
-                            // is a legal re-initialization.
-                            if self.moved.contains(&id) && !moved_before {
-                                return Err(self.fail(&format!("cannot assign to '{name}' because it was moved in the same statement")));
-                            }
-                            self.moved.remove(&id);
+                        // The right-hand side may not consume the target itself;
+                        // assigning to an already-moved variable is a legal
+                        // re-initialization, so the move flag clears either way.
+                        if self.moved.contains(&id) && !moved_before {
+                            return Err(self.fail(&format!("cannot assign to '{name}' because it was moved in the same statement")));
                         }
-                        result.push(Statement::Assign(id, value, release_old));
+                        self.moved.remove(&id);
+                        // Every owned slot releases its old value before the new
+                        // one moves in; scalars have nothing to release.
+                        result.push(Statement::Assign(id, value, ty.owned()));
                     }
                 }
                 Kind::Return => {
@@ -1604,8 +1708,8 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
                     // move set is their only guard (documented limitation).
                     Type::Struct(_) | Type::Enum(_, _) => {}
                     _ => {
-                        let probe = match ty { Type::Vec | Type::StrVec => format!("!v{id}.data"), _ => format!("!v{id}.ptr") };
-                        let message = match ty { Type::Vec | Type::StrVec => "use of moved vector", _ => "use of moved string" };
+                        let probe = match ty { Type::Vec | Type::StrVec => format!("!v{id}.data"), Type::Map => format!("!v{id}.slots"), _ => format!("!v{id}.ptr") };
+                        let message = match ty { Type::Vec | Type::StrVec => "use of moved vector", Type::Map => "use of moved map", _ => "use of moved string" };
                         out.push_str(&format!("    if ({probe}) ae_fail(\"{message}\", {line}, {column});\n"));
                     }
                 }
@@ -1672,6 +1776,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let call = match t.ty {
                 Type::String | Type::StrView => format!("ae_str_len(AE_VIEW({}), {line}, {col})", t.text),
                 Type::StrVec => format!("ae_strvec_len({}, {line}, {col})", t.text),
+                Type::Map => format!("ae_map_len(&{}, {line}, {col})", t.text),
                 _ => format!("ae_vec_len({}, {line}, {col})", t.text),
             };
             out.push_str(&format!("    int64_t t{id} = {call};\n"));
@@ -1739,7 +1844,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let h = emit_expr(s, out, next, false);
             let n = emit_expr(sep, out, next, false);
             let id = *next; *next += 1;
-            out.push_str(&format!("    ae_strvec t{id} = ae_split({}, {}, {line}, {col});\n", h.text, n.text));
+            out.push_str(&format!("    ae_strvec t{id} = ae_split(AE_VIEW({}), AE_VIEW({}), {line}, {col});\n", h.text, n.text));
             if h.owned { drop_owned_temp(out, &h); }
             if n.owned { drop_owned_temp(out, &n); }
             Emitted { text: format!("t{id}"), ty: Type::StrVec, owned: true, moves: Vec::new(), materialized: true }
@@ -1776,7 +1881,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             out.push_str(&format!("    if (!v{vid}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
             let n = emit_expr(sep, out, next, false);
             let id = *next; *next += 1;
-            out.push_str(&format!("    ae_string t{id} = ae_join(&v{vid}, {}, {line}, {col});\n", n.text));
+            out.push_str(&format!("    ae_string t{id} = ae_join(&v{vid}, AE_VIEW({}), {line}, {col});\n", n.text));
             if n.owned { drop_owned_temp(out, &n); }
             Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
         }
@@ -1900,6 +2005,37 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             out.push_str(&format!("    {}t{id} = ae_try_remove_file({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
             if p.owned { drop_owned_temp(out, &p); }
             Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::MapNew(line, col) => {
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_map t{id} = ae_map_new({line}, {col});\n"));
+            Emitted { text: format!("t{id}"), ty: Type::Map, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::MapGet(place, key, ty, line, col) => {
+            let k = emit_expr(key, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_map_get(&{}, AE_VIEW({}), {line}, {col});\n", ty.c_temp(), place.text(), k.text));
+            if k.owned { drop_owned_temp(out, &k); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::MapHas(place, key, line, col) => {
+            let k = emit_expr(key, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    bool t{id} = ae_map_has(&{}, AE_VIEW({}), {line}, {col});\n", place.text(), k.text));
+            if k.owned { drop_owned_temp(out, &k); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::MapRemove(place, key, line, col) => {
+            let k = emit_expr(key, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    bool t{id} = ae_map_remove(&{}, AE_VIEW({}), {line}, {col});\n", place.text(), k.text));
+            if k.owned { drop_owned_temp(out, &k); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::MapKeys(place, line, col) => {
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_strvec t{id} = ae_map_keys(&{}, {line}, {col});\n", place.text()));
+            Emitted { text: format!("t{id}"), ty: Type::StrVec, owned: true, moves: Vec::new(), materialized: true }
         }
         Expr::TryRemoveDir(path, ty, line, col) => {
             let p = emit_expr(path, out, next, false);
@@ -2027,6 +2163,7 @@ fn release_var(out: &mut String, id: usize, ty: Type) {
     match ty {
         Type::Vec => out.push_str(&format!("    ae_vec_release(&v{id});\n")),
         Type::StrVec => out.push_str(&format!("    ae_strvec_release(&v{id});\n")),
+        Type::Map => out.push_str(&format!("    ae_map_release(&v{id});\n")),
         Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&v{id});\n")),
         Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_release(&v{id});\n")),
         _ => out.push_str(&format!("    ae_str_release(&v{id});\n")),
@@ -2038,6 +2175,7 @@ fn drop_owned_temp(out: &mut String, emitted: &Emitted) {
         Type::Vec => out.push_str(&format!("    ae_vec_release(&{});\n", emitted.text)),
         Type::String => out.push_str(&format!("    ae_str_release(&{});\n", emitted.text)),
         Type::StrVec => out.push_str(&format!("    ae_strvec_release(&{});\n", emitted.text)),
+        Type::Map => out.push_str(&format!("    ae_map_release(&{});\n", emitted.text)),
         Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&{});\n", emitted.text)),
         Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_release(&{});\n", emitted.text)),
         _ => out.push_str(&format!("    free({});\n", emitted.text)),
@@ -2049,6 +2187,7 @@ fn null_moves(out: &mut String, moves: &[(usize, Type)]) {
             Type::Vec => out.push_str(&format!("    ae_vec_forfeit(&v{id});\n")),
             Type::String => out.push_str(&format!("    ae_str_forfeit(&v{id});\n")),
             Type::StrVec => out.push_str(&format!("    ae_strvec_forfeit(&v{id});\n")),
+            Type::Map => out.push_str(&format!("    ae_map_forfeit(&v{id});\n")),
             Type::Struct(k) => out.push_str(&format!("    ae_t{k}_forfeit(&v{id});\n")),
             Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_forfeit(&v{id});\n")),
             _ => out.push_str(&format!("    v{id} = NULL;\n")),
@@ -2154,6 +2293,7 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                     Type::String => format!("    ae_str_release(&v{id}.{});\n", fname),
                     Type::Vec => format!("    ae_vec_release(&v{id}.{});\n", fname),
                     Type::StrVec => format!("    ae_strvec_release(&v{id}.{});\n", fname),
+                    Type::Map => format!("    ae_map_release(&v{id}.{});\n", fname),
                     Type::Struct(k) => format!("    ae_t{k}_release(&v{id}.{});\n", fname),
                     Type::Enum(_, k) => format!("    ae_e{k}_release(&v{id}.{});\n", fname),
                     _ => String::new(),
@@ -2192,6 +2332,16 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                 Some(label) => out.push_str(&format!("    goto ae_next_{label};\n")),
                 None => out.push_str("    continue;\n"),
             },
+            // `m[key] = value;` copies the key into the table, so the key
+            // expression may be a temporary or a view.
+            Statement::MapPut(place, key, value, line, col) => {
+                let k = emit_expr(key, out, next, false);
+                let v = emit_expr(value, out, next, false);
+                out.push_str(&format!("    ae_map_put(&{}, AE_VIEW({}), {}, {line}, {col});\n", place.text(), k.text, v.text));
+                null_moves(out, &k.moves);
+                null_moves(out, &v.moves);
+                if k.owned { drop_owned_temp(out, &k); }
+            }
             // Propagating a result returns the error value itself after every
             // live owned value is released, so the failure path owns nothing
             // the caller could reach. The Ok payload moves out of the enum and
@@ -2365,6 +2515,7 @@ fn c_type_field(ty: Type) -> String {
         Type::StrView => "ae_strview".to_owned(),
         Type::Vec => "ae_vec".to_owned(),
         Type::StrVec => "ae_strvec".to_owned(),
+        Type::Map => "ae_map".to_owned(),
         Type::Struct(k) => format!("ae_t{k}"),
         Type::Enum(_, k) => format!("ae_e{k}"),
         Type::VecRef => "const ae_vec *".to_owned(),
@@ -2380,6 +2531,7 @@ fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::StrView => format!("ae_strview v{id}"),
         Type::Vec => format!("ae_vec v{id}"),
         Type::StrVec => format!("ae_strvec v{id}"),
+        Type::Map => format!("ae_map v{id}"),
         Type::Struct(k) => format!("ae_t{k} v{id}"),
         Type::Enum(_, k) => format!("ae_e{k} v{id}"),
         Type::VecRef if declaration => format!("const ae_vec *v{id}"),
@@ -2399,6 +2551,7 @@ fn c_return(ty: Type) -> String {
         Type::StrView => "ae_strview".to_owned(),
         Type::Vec => "ae_vec".to_owned(),
         Type::StrVec => "ae_strvec".to_owned(),
+        Type::Map => "ae_map".to_owned(),
         Type::Struct(k) => format!("ae_t{k}"),
         Type::Enum(_, k) => format!("ae_e{k}"),
         _ => "int64_t".to_owned(),
@@ -2450,6 +2603,10 @@ fn emit_program(program: Program) -> Result<String, String> {
                         clears.push_str(&format!("        ae_strvec_release(&{member});\n"));
                         forfeits.push_str(&format!("        ae_strvec_forfeit(&{member});\n"));
                     }
+                    Type::Map => {
+                        clears.push_str(&format!("        ae_map_release(&{member});\n"));
+                        forfeits.push_str(&format!("        ae_map_forfeit(&{member});\n"));
+                    }
                     Type::Bool => {
                         clears.push_str(&format!("        {member} = false;\n"));
                         forfeits.push_str(&format!("        {member} = false;\n"));
@@ -2500,6 +2657,10 @@ fn emit_program(program: Program) -> Result<String, String> {
                 Type::StrVec => {
                     release.push_str(&format!("    ae_strvec_release(&v->{});\n", n));
                     forfeit.push_str(&format!("    ae_strvec_forfeit(&v->{});\n", n));
+                }
+                Type::Map => {
+                    release.push_str(&format!("    ae_map_release(&v->{});\n", n));
+                    forfeit.push_str(&format!("    ae_map_forfeit(&v->{});\n", n));
                 }
                 Type::Enum(_, k) => {
                     release.push_str(&format!("    ae_e{k}_release(&v->{});\n", n));

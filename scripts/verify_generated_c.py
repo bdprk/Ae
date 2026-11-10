@@ -39,6 +39,9 @@ def run():
         # `?` propagation: the error path must release everything the arm before
         # it bound, which the allocation baseline checks.
         ("copy_notes.ae", b"copied text notes\n11\n2\ntrue\ncleared the sandbox\ndone", True),
+        # Hash map: keys() returns a sorted copy, so the report order is stable
+        # across platforms; the map is released when the program exits.
+        ("word_count.ae", b"distinct 8\nbrown 1\ndog 1\nfox 2\njumps 1\nlazy 1\nover 1\nquick 1\nthe 3", True),
     ]
     with tempfile.TemporaryDirectory(prefix="ae-c-verify-") as tmp:
         tmp = Path(tmp)
@@ -62,7 +65,7 @@ def run():
                 flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-sanitize-recover=all"]
             extra = []
             if options.leak:
-                extra = [str(LEAKCHECK), "-Wl,--wrap=malloc", "-Wl,--wrap=free", "-Wl,--wrap=realloc"]
+                extra = [str(LEAKCHECK), "-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=free", "-Wl,--wrap=realloc"]
             subprocess.run([cc, *flags, cfile, *extra, "-o", binary], check=True)
             result = subprocess.run([binary], capture_output=True, cwd=tmp)
             if ok:
@@ -85,7 +88,7 @@ def leak_counts(executable, cc, tmp, source, options):
     binary = tmp / ("leak-probe.exe" if os.name == "nt" else "leak-probe")
     cfile.write_bytes(generated)
     subprocess.run([cc, "-std=c11", "-pedantic-errors", "-O1", cfile, str(LEAKCHECK),
-                    "-Wl,--wrap=malloc", "-Wl,--wrap=free", "-Wl,--wrap=realloc", "-o", binary], check=True)
+                    "-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=free", "-Wl,--wrap=realloc", "-o", binary], check=True)
     return parse_leak(subprocess.run([binary], capture_output=True, cwd=tmp).stderr)
 
 def parse_leak(stdout):

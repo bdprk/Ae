@@ -1,0 +1,52 @@
+// Word frequency with a hash map: read a file (or a built-in sample), count
+// each word, then print the counts in key order. Usage: word_count [file]
+
+fn count_words(text: &string) -> map[string, i64] {
+    var counts = map_new();
+    let words = split(text, " ");
+    for word in words {
+        if len(word) > 0 {
+            if map_has(counts, word) {
+                let previous = map_get(counts, word);
+                match previous {
+                    IntResult::Ok(n) => { counts[word] = n + 1; }
+                    IntResult::Err(reason) => { counts[word] = 1; }
+                }
+            } else {
+                counts[word] = 1;
+            }
+        }
+    }
+    return counts;
+}
+
+// Consumes the map: printing the report is its last use in main.
+fn report(counts: map[string, i64]) -> i64 {
+    let names = keys(counts);
+    for name in names {
+        let count = map_get(counts, name);
+        match count {
+            IntResult::Ok(n) => { print(name + " " + to_string(n)); }
+            IntResult::Err(reason) => { print(name + " ?"); }
+        }
+    }
+    return len(names);
+}
+
+fn main() {
+    var text = "the quick brown fox jumps over the lazy dog the fox";
+    let parts = args();
+    if len(parts) > 1 {
+        let loaded = try_read_file(parts[1]);
+        match loaded {
+            // The binding is a read-only view; slice copies it into the owned
+            // buffer `text` already holds, releasing the old value.
+            ReadResult::Ok(content) => { text = slice(content, 0, len(content)); }
+            ReadResult::Err(reason) => { print("cannot read: " + reason); }
+        }
+    }
+    let counts = count_words(text);
+    print("distinct " + to_string(len(counts)));
+    let printed = report(counts);
+    assert(printed > 0);
+}
