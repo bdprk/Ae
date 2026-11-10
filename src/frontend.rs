@@ -5,26 +5,41 @@ use std::path::Path;
 enum Kind {
     Ident(String), Number(i64), Text(String), Fn, Let, Var, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang,
-    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, DotDot, Eof,
+    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, Struct, Eof,
 }
 #[derive(Debug, Clone)]
 struct Token { kind: Kind, offset: usize, line: usize, column: usize }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, String, Vec, VecRef, Array(usize) }
+enum Type { Int, Bool, String, Vec, VecRef, Array(usize), Struct(usize) }
 impl Type {
-    fn name(self) -> &'static str {
-        match self { Type::Int => "i64", Type::Bool => "bool", Type::String => "string", Type::Vec => "vec", Type::VecRef => "&vec", Type::Array(_) => "array" }
+    fn name(self) -> String {
+        match self {
+            Type::Int => "i64".to_owned(),
+            Type::Bool => "bool".to_owned(),
+            Type::String => "string".to_owned(),
+            Type::Vec => "vec".to_owned(),
+            Type::VecRef => "&vec".to_owned(),
+            Type::Array(n) => format!("&[i64; {n}]"),
+            Type::Struct(id) => format!("struct #{}", id),
+        }
     }
-    fn c_temp(self) -> &'static str {
-        match self { Type::Bool => "bool ", Type::String => "ae_string ", Type::Vec => "ae_vec ", _ => "int64_t " }
+    fn c_temp(self) -> String {
+        match self {
+            Type::Bool => "bool ".to_owned(),
+            Type::String => "ae_string ".to_owned(),
+            Type::Vec => "ae_vec ".to_owned(),
+            Type::Struct(k) => format!("ae_t{k} "),
+            _ => "int64_t ".to_owned(),
+        }
     }
     // Owned types carry heap resources: they move, and every live slot is
     // released on scope exit and control-flow jumps.
     fn owned(self) -> bool {
-        matches!(self, Type::String | Type::Vec)
+        matches!(self, Type::String | Type::Vec | Type::Struct(_))
     }
 }
+enum MoveKind { Var(usize), Field }
 // Built-in names are reserved so their semantics stay unambiguous.
 const RESERVED: [&str; 9] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice"];
 
@@ -84,7 +99,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                 "if" => Kind::If, "else" => Kind::Else, "while" => Kind::While, "return" => Kind::Return,
                 "for" => Kind::For, "in" => Kind::In,
                 "break" => Kind::Break, "continue" => Kind::Continue, "assert" => Kind::Assert,
-                "true" => Kind::True, "false" => Kind::False, "use" => Kind::Use,
+                "true" => Kind::True, "false" => Kind::False, "use" => Kind::Use, "struct" => Kind::Struct,
                 s => Kind::Ident(s.to_owned()),
             }
         } else if c.is_ascii_digit() {
@@ -101,7 +116,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                 '[' => Kind::LBracket, ']' => Kind::RBracket, ',' => Kind::Comma, ':' => Kind::Colon, '&' => Kind::Amp,
                 ';' => Kind::Semi, '=' => Kind::Equal, '+' => Kind::Plus, '-' => Kind::Minus,
                 '*' => Kind::Star, '/' => Kind::Slash, '%' => Kind::Percent, '<' => Kind::Less, '>' => Kind::Greater,
-                '!' => Kind::Bang,
+                '!' => Kind::Bang, '.' => Kind::Dot,
                 _ => return Err(lex_error(source, start, &format!("unexpected character {c:?}"))),
             }
         };
@@ -121,13 +136,13 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 #[derive(Debug)]
 enum Argument { Value(Expr), Borrow(usize, bool) } // bool: borrow of a vec struct (pass &slot) vs array (decays)
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
-enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Break, Continue(Option<usize>), Frees(Vec<(usize, Type)>) }
+enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Break, Continue(Option<usize>), Frees(Vec<(usize, Type)>) }
 #[derive(Debug)]
 struct Function { id: usize, params: Vec<(usize, Type)>, body: Vec<Statement>, is_main: bool, returns: Type }
 fn returns(stmts: &[Statement]) -> bool {
@@ -137,7 +152,12 @@ fn returns(stmts: &[Statement]) -> bool {
         _ => false,
     })
 }
-struct Parser<'a> { file: String, source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut HashMap<String, (usize, Vec<Type>, Type)>, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, scopes: Vec<Vec<(usize, Type)>> }
+#[derive(Debug, Clone)]
+struct StructDef { name: String, fields: Vec<(String, Type)> }
+
+type SharedFunctions = HashMap<String, (usize, Vec<Type>, Type)>;
+
+struct Parser<'a> { file: String, source: &'a str, tokens: Vec<Token>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, scopes: Vec<Vec<(usize, Type)>> }
 impl<'a> Parser<'a> {
     fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
     fn fail(&self, message: &str) -> String { error(&self.file, self.source, self.tokens[self.pos].offset, message) }
@@ -207,6 +227,41 @@ impl<'a> Parser<'a> {
                     self.take(Kind::RBracket)?;
                     // Bind and fall through to the binary-operator loop.
                     (Expr::VecLit(values, line, column), Type::Vec)
+                } else if let Some(&sid) = self.struct_names.get(&name) {
+                    if *self.current() == Kind::LBrace {
+                        // Construction: Name { field: expr, ... } - fields may
+                        // appear in any order, each exactly once.
+                        self.pos += 1;
+                        let def_fields = self.structs[sid].fields.clone();
+                        let mut slots: Vec<Option<Expr>> = (0..def_fields.len()).map(|_| None).collect();
+                        let mut seen = std::collections::HashSet::new();
+                        while *self.current() != Kind::RBrace {
+                            let fname = self.identifier()?;
+                            let fidx = def_fields.iter().position(|(n, _)| *n == fname)
+                                .ok_or_else(|| self.fail(&format!("struct '{}' has no field '{}'", name, fname)))?;
+                            if !seen.insert(fname.clone()) { return Err(self.fail(&format!("field '{}' specified twice", fname))); }
+                            self.take(Kind::Colon)?;
+                            let (value, vty) = self.expression(0, true)?;
+                            if vty != def_fields[fidx].1 { return Err(self.fail(&format!("field '{}' must be {}", fname, def_fields[fidx].1.name()))); }
+                            slots[fidx] = Some(value);
+                            if *self.current() == Kind::Comma { self.pos += 1; }
+                        }
+                        self.take(Kind::RBrace)?;
+                        let mut values = Vec::new();
+                        for (i, slot) in slots.into_iter().enumerate() {
+                            match slot {
+                                Some(v) => values.push(v),
+                                None => return Err(error(&self.file, self.source, name_offset, &format!("missing field '{}' in '{}' construction", def_fields[i].0, name))),
+                            }
+                        }
+                        // Early return: no postfix on a fresh literal; wrap in
+                        // parentheses for field access.
+                        return Ok((Expr::StructLit(sid, values), Type::Struct(sid)));
+                    } else if *self.current() == Kind::LParen {
+                        return Err(self.fail(&format!("'{}' is a struct, not a function", name)));
+                    } else {
+                        return Err(self.fail(&format!("'{}' is a struct name; construct it with '{} {{ ... }}'", name, name)));
+                    }
                 } else if name == "len" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     self.take(Kind::LParen)?;
@@ -325,7 +380,6 @@ impl<'a> Parser<'a> {
                         self.take(Kind::RBracket)?;
                         (Expr::VecIndex(id, Box::new(index), line, col, ty == Type::VecRef), Type::Int)
                     } else {
-                        if moving && ty.owned() { self.moved.insert(id); }
                         (Expr::Variable(id, ty, vline, vcol), ty)
                     }
                 }
@@ -333,6 +387,37 @@ impl<'a> Parser<'a> {
             Kind::LParen => { self.pos += 1; let inner = self.expression(0, moving)?; self.take(Kind::RParen)?; inner }
             _ => return Err(self.fail("expected expression")),
         };
+        // Postfix field access binds tighter than every operator.
+        loop {
+            if *self.current() != Kind::Dot { break; }
+            self.pos += 1;
+            let fname = self.identifier()?;
+            let (base, base_ty) = lhs;
+            let sid = match base_ty { Type::Struct(sid) => sid, other => return Err(self.fail(&format!("type {} has no fields", other.name()))) };
+            let fty = {
+                let def = &self.structs[sid];
+                let fidx = def.fields.iter().position(|(n, _)| *n == fname)
+                    .ok_or_else(|| self.fail(&format!("struct '{}' has no field '{}'", def.name, fname)))?;
+                def.fields[fidx].1
+            };
+            lhs = (Expr::Field(Box::new(base), fname, fty), fty);
+        }
+        // Move bookkeeping happens once the full postfix chain is known:
+        // bare owned variables move; owned fields are borrows and can never
+        // be moved out of their struct.
+        if moving {
+            let move_target = match (&lhs.0, lhs.1) {
+                (_, ty) if !ty.owned() => None,
+                (Expr::Variable(id, _, _, _), _) => Some(MoveKind::Var(*id)),
+                (Expr::Field(_, _, fty), _) if fty.owned() => Some(MoveKind::Field),
+                _ => None,
+            };
+            match move_target {
+                Some(MoveKind::Var(id)) => { if !self.moved.contains(&id) { self.moved.insert(id); } }
+                Some(MoveKind::Field) => return Err(self.fail("cannot move a field out of a struct; use it where a borrow works")),
+                None => {}
+            }
+        }
         loop {
             let (prec, op) = match self.current() {
                 Kind::Or => (1u8, Kind::Or), Kind::And => (2, Kind::And),
@@ -370,7 +455,11 @@ impl<'a> Parser<'a> {
                     if lhs_ty != Type::String || rhs_ty != Type::String { return Err(self.fail("'+' requires two strings or two integers")); }
                     // The left operand was parsed in the caller's mode; using it
                     // here consumes it, so retroactively record the move.
-                    if let Expr::Variable(id, ty, _, _) = &lhs_expr { if ty.owned() && !self.moved.contains(id) { self.moved.insert(*id); } }
+                    match &lhs_expr {
+                        Expr::Variable(id, ty, _, _) => { if ty.owned() && !self.moved.contains(id) { self.moved.insert(*id); } }
+                        Expr::Field(_, _, fty) if fty.owned() => return Err(self.fail("cannot move a field out of a struct")),
+                        _ => {}
+                    }
                     Type::String
                 }
                 _ => {
@@ -381,6 +470,41 @@ impl<'a> Parser<'a> {
             lhs = (Expr::Binary(Box::new(lhs_expr), op, Box::new(rhs), line, column, ty), ty);
         }
         Ok(lhs)
+    }
+    fn named_type(&mut self) -> Result<Type, String> {
+        let name = self.identifier()?;
+        match name.as_str() {
+            "i64" => Ok(Type::Int),
+            "bool" => Ok(Type::Bool),
+            "string" => Ok(Type::String),
+            "vec" => Ok(Type::Vec),
+            other => match self.struct_names.get(other) {
+                Some(&id) => Ok(Type::Struct(id)),
+                None => Err(self.fail(&format!("unknown type '{}'", other))),
+            },
+        }
+    }
+    fn parse_struct_def(&mut self) -> Result<(), String> {
+        self.pos += 1;
+        let name = self.identifier()?;
+        if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{}' is a built-in name and cannot be a struct", name))); }
+        if self.struct_names.contains_key(&name) { return Err(self.fail(&format!("duplicate struct '{}'", name))); }
+        self.take(Kind::LBrace)?;
+        let mut fields: Vec<(String, Type)> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        while *self.current() != Kind::RBrace {
+            let fname = self.identifier()?;
+            if !seen.insert(fname.clone()) { return Err(self.fail(&format!("duplicate field '{}' in struct '{}'", fname, name))); }
+            self.take(Kind::Colon)?;
+            let fty = self.named_type()?;
+            fields.push((fname, fty));
+            if *self.current() == Kind::Comma { self.pos += 1; }
+        }
+        self.take(Kind::RBrace)?;
+        let id = self.structs.len();
+        self.struct_names.insert(name.clone(), id);
+        self.structs.push(StructDef { name, fields });
+        Ok(())
     }
     // Arrays are borrowed read-only; strings and scalars pass by value.
     fn parameter_type(&mut self) -> Result<Type, String> {
@@ -400,34 +524,36 @@ impl<'a> Parser<'a> {
             self.pos += 1; self.take(Kind::RBracket)?;
             Ok(Type::Array(len))
         } else {
-            let name = self.identifier()?;
-            match name.as_str() {
-                "i64" => Ok(Type::Int),
-                "bool" => Ok(Type::Bool),
-                "string" => Ok(Type::String),
-                "vec" => Ok(Type::Vec),
-                _ => Err(self.fail("parameter type must be i64, bool, string, vec, or &[i64; N]")),
-            }
+            self.named_type()
         }
     }
     fn return_annotation(&mut self) -> Result<Type, String> {
-        let name = self.identifier()?;
-        match name.as_str() {
-            "i64" => Ok(Type::Int),
-            "bool" => Ok(Type::Bool),
-            "string" => Ok(Type::String),
-            "vec" => Ok(Type::Vec),
-            _ => Err(self.fail("return type must be i64, bool, string, or vec")),
-        }
+        self.named_type()
     }
     // First pass collects only signatures. Bodies are checked in the second pass.
     // scan_uses validated the headers; skip them before collecting.
     fn skip_uses(&mut self) {
         while *self.current() == Kind::Use { self.pos += 3; }
     }
+    // Second pass skips struct bodies (already collected, must not re-register).
+    fn skip_struct_def(&mut self) {
+        self.pos += 2; // 'struct' Name
+        self.pos += 1; // the opening brace
+        let mut depth = 1usize;
+        while depth > 0 {
+            match self.current() {
+                Kind::LBrace => depth += 1,
+                Kind::RBrace => depth -= 1,
+                Kind::Eof => return,
+                _ => {}
+            }
+            self.pos += 1;
+        }
+    }
     fn collect_functions(&mut self, next_id: &mut usize) -> Result<(), String> {
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::Eof {
+            if *self.current() == Kind::Struct { self.parse_struct_def()?; continue; }
             self.take(Kind::Fn)?;
             let name = self.identifier()?;
             if !seen.insert(name.clone()) { return Err(self.fail(&format!("duplicate function '{name}'"))); }
@@ -480,6 +606,7 @@ impl<'a> Parser<'a> {
         let mut result = Vec::new();
         let mut main_found = false;
         while *self.current() != Kind::Eof {
+            if *self.current() == Kind::Struct { self.skip_struct_def(); continue; }
             self.take(Kind::Fn)?;
             let name = self.identifier()?;
             let is_main = name == "main";
@@ -565,6 +692,7 @@ impl<'a> Parser<'a> {
                     let mutable = *self.current() == Kind::Var; self.pos += 1;
                     let name = self.identifier()?;
                     if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{name}' is a built-in name and cannot be a variable"))); }
+                    if self.struct_names.contains_key(&name) { return Err(self.fail(&format!("'{name}' names a struct and cannot be a variable"))); }
                     if self.names.contains_key(&name) { return Err(self.fail(&format!("duplicate variable '{name}'"))); }
                     self.take(Kind::Equal)?;
                     let id = self.next_var; self.next_var += 1;
@@ -634,6 +762,32 @@ impl<'a> Parser<'a> {
                         let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
                         if value_ty != Type::Int { return Err(self.fail("vector elements must be i64")); }
                         result.push(Statement::VecStore(id, index, value, line, col));
+                    } else if let Type::Struct(sid) = ty {
+                        if *self.current() == Kind::Dot {
+                            self.take(Kind::Dot)?;
+                            let fname = self.identifier()?;
+                            let fty = {
+                                let def = self.structs[sid].clone();
+                                let fidx = def.fields.iter().position(|(n, _)| *n == fname)
+                                    .ok_or_else(|| self.fail(&format!("struct '{}' has no field '{}'", def.name, fname)))?;
+                                def.fields[fidx].1
+                            };
+                            self.take(Kind::Equal)?;
+                            let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
+                            if value_ty != fty { return Err(self.fail(&format!("field '{}' must be {}", fname, fty.name()))); }
+                            result.push(Statement::FieldStore(id, fname, fty, value));
+                            continue;
+                        }
+                        // Whole-struct assignment moves a fresh value in.
+                        self.take(Kind::Equal)?;
+                        let moved_before = self.moved.contains(&id);
+                        let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
+                        if value_ty != ty { return Err(self.fail(&format!("cannot assign a {} value to {} variable", value_ty.name(), ty.name()))); }
+                        if self.moved.contains(&id) && !moved_before {
+                            return Err(self.fail(&format!("cannot assign to '{name}' because it was moved in the same statement")));
+                        }
+                        self.moved.remove(&id);
+                        result.push(Statement::Assign(id, value, true));
                     } else {
                         self.take(Kind::Equal)?;
                         let moved_before = self.moved.contains(&id);
@@ -832,9 +986,14 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
                 Emitted { text: format!("(*v{id})"), ty: Type::Vec, owned: false, moves: Vec::new(), materialized: true }
             } else if ty.owned() {
                 // Runtime backstop: a moved value's slot is empty.
-                let probe = match ty { Type::Vec => format!("!v{id}.data"), _ => format!("!v{id}.ptr") };
-                let message = match ty { Type::Vec => "use of moved vector", _ => "use of moved string" };
-                out.push_str(&format!("    if ({probe}) ae_fail(\"{message}\", {line}, {column});\n"));
+                match ty {
+                    Type::Struct(_) => {}
+                    _ => {
+                        let probe = match ty { Type::Vec => format!("!v{id}.data"), _ => format!("!v{id}.ptr") };
+                        let message = match ty { Type::Vec => "use of moved vector", _ => "use of moved string" };
+                        out.push_str(&format!("    if ({probe}) ae_fail(\"{message}\", {line}, {column});\n"));
+                    }
+                }
                 if moving {
                     let t = *next; *next += 1;
                     out.push_str(&format!("    {}t{t} = v{id};\n", ty.c_temp()));
@@ -942,6 +1101,30 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             if n.owned { drop_owned_temp(out, &n); }
             Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
         }
+        Expr::StructLit(sid, values) => {
+            let mut parts = Vec::new();
+            let mut moves = Vec::new();
+            for v in values {
+                let e = emit_expr(v, out, next, true);
+                moves.extend(e.moves);
+                parts.push(e.text);
+            }
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_t{sid} t{id} = {{ {} }};\n", parts.join(", ")));
+            null_moves(out, &moves);
+            Emitted { text: format!("t{id}"), ty: Type::Struct(*sid), owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Field(base, fname, fty) => {
+            let b = emit_expr(base, out, next, false);
+            if fty.owned() {
+                // Owned fields are borrows: inline, consumer never releases.
+                Emitted { text: format!("{}.{}", b.text, fname), ty: *fty, owned: false, moves: b.moves, materialized: true }
+            } else {
+                // Scalars copy immediately: a later release of the base must
+                // not clobber the value (return paths release before return).
+                Emitted { text: format!("{}.{}", b.text, fname), ty: *fty, owned: false, moves: b.moves, materialized: false }
+            }
+        }
         Expr::StrEq(a, b, negated) => {
             let l = emit_expr(a, out, next, false);
             let r = emit_expr(b, out, next, false);
@@ -1004,6 +1187,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
 fn release_var(out: &mut String, id: usize, ty: Type) {
     match ty {
         Type::Vec => out.push_str(&format!("    ae_vec_release(&v{id});\n")),
+        Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&v{id});\n")),
         _ => out.push_str(&format!("    ae_str_release(&v{id});\n")),
     }
 }
@@ -1012,6 +1196,7 @@ fn drop_owned_temp(out: &mut String, emitted: &Emitted) {
     match emitted.ty {
         Type::Vec => out.push_str(&format!("    ae_vec_release(&{});\n", emitted.text)),
         Type::String => out.push_str(&format!("    ae_str_release(&{});\n", emitted.text)),
+        Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&{});\n", emitted.text)),
         _ => out.push_str(&format!("    free({});\n", emitted.text)),
     }
 }
@@ -1020,6 +1205,7 @@ fn null_moves(out: &mut String, moves: &[(usize, Type)]) {
         match ty {
             Type::Vec => out.push_str(&format!("    ae_vec_forfeit(&v{id});\n")),
             Type::String => out.push_str(&format!("    ae_str_forfeit(&v{id});\n")),
+            Type::Struct(k) => out.push_str(&format!("    ae_t{k}_forfeit(&v{id});\n")),
             _ => out.push_str(&format!("    v{id} = NULL;\n")),
         }
     }
@@ -1096,6 +1282,19 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                 let value = emit_expr(value, out, next, false);
                 out.push_str(&format!("    v{id}.data[t{checked}] = {};\n", value.text));
             }
+            Statement::FieldStore(id, fname, fty, value) => {
+                // Overwriting an owned field releases the old value first.
+                let release_old = match fty {
+                    Type::String => format!("    ae_str_release(&v{id}.{});\n", fname),
+                    Type::Vec => format!("    ae_vec_release(&v{id}.{});\n", fname),
+                    Type::Struct(k) => format!("    ae_t{k}_release(&v{id}.{});\n", fname),
+                    _ => String::new(),
+                };
+                out.push_str(&release_old);
+                let value = emit_expr(value, out, next, false);
+                out.push_str(&format!("    v{id}.{} = {};\n", fname, value.text));
+                null_moves(out, &value.moves);
+            }
             Statement::Assign(id, e, release_old) => {
                 let t = emit_expr(e, out, next, true);
                 if *release_old { release_var(out, *id, t.ty); }
@@ -1137,8 +1336,11 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
         }
     }
 }
-fn make_parser<'a>(file: &str, source: &'a str, tokens: Vec<Token>, functions: &'a mut HashMap<String, (usize, Vec<Type>, Type)>) -> Parser<'a> {
-    Parser { file: file.to_owned(), source, tokens, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), scopes: Vec::new() }
+#[derive(Debug, Default)]
+struct Program { files: Vec<Vec<Function>>, structs: Vec<StructDef> }
+
+fn make_parser<'a>(file: &str, source: &'a str, tokens: Vec<Token>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>) -> Parser<'a> {
+    Parser { file: file.to_owned(), source, tokens, pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), scopes: Vec::new() }
 }
 
 // Leading `use "path";` headers. Parsed from tokens before the Parser owns
@@ -1167,13 +1369,13 @@ fn scan_uses(file: &str, tokens: &[Token]) -> Result<Vec<String>, String> {
 }
 
 #[allow(dead_code)] // exercised by in-memory unit tests
-fn parse_source(file: &str, source: &str, shared: &mut HashMap<String, (usize, Vec<Type>, Type)>, next_id: &mut usize) -> Result<Vec<Function>, String> {
+fn parse_source(file: &str, source: &str, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, next_id: &mut usize) -> Result<Vec<Function>, String> {
     let tokens = lex(source)?;
     let uses = scan_uses(file, &tokens)?;
     if !uses.is_empty() {
         return Err(error(file, source, 0, "'use' is only supported when compiling a source file"));
     }
-    let mut p = make_parser(file, source, tokens, shared);
+    let mut p = make_parser(file, source, tokens, shared, structs, struct_names);
     p.collect_functions(next_id)?;
     let functions = p.program()?;
     if functions.iter().filter(|f| f.is_main).count() != 1 {
@@ -1182,7 +1384,7 @@ fn parse_source(file: &str, source: &str, shared: &mut HashMap<String, (usize, V
     Ok(functions)
 }
 
-fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::PathBuf>, shared: &mut HashMap<String, (usize, Vec<Type>, Type)>, next_id: &mut usize, out: &mut Vec<Vec<Function>>, mains: &mut usize) -> Result<(), String> {
+fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::PathBuf>, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, next_id: &mut usize, out: &mut Vec<Vec<Function>>, mains: &mut usize) -> Result<(), String> {
     let canonical = std::fs::canonicalize(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
     if !visited.insert(canonical) { return Err(format!("circular import of {}", path.display())); }
     let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -1191,9 +1393,9 @@ fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::Pat
     let uses = scan_uses(&file, &tokens).map_err(|e| format!("{file}:{e}"))?;
     let parent = path.parent().unwrap_or(Path::new(".")).to_owned();
     for import in uses {
-        load_file(&parent.join(&import), visited, shared, next_id, out, mains)?;
+        load_file(&parent.join(&import), visited, shared, structs, struct_names, next_id, out, mains)?;
     }
-    let mut p = make_parser(&file, &source, tokens, shared);
+    let mut p = make_parser(&file, &source, tokens, shared, structs, struct_names);
     p.skip_uses();
     p.collect_functions(next_id)?;
     let functions = p.program()?;
@@ -1202,15 +1404,17 @@ fn load_file(path: &Path, visited: &mut std::collections::HashSet<std::path::Pat
     Ok(())
 }
 
-fn load_program(entry: &Path) -> Result<Vec<Vec<Function>>, String> {
+fn load_program(entry: &Path) -> Result<Program, String> {
     let mut visited = std::collections::HashSet::new();
-    let mut shared: HashMap<String, (usize, Vec<Type>, Type)> = HashMap::new();
+    let mut shared: SharedFunctions = HashMap::new();
+    let mut structs: Vec<StructDef> = Vec::new();
+    let mut struct_names: HashMap<String, usize> = HashMap::new();
     let mut next_id = 0usize;
     let mut files = Vec::new();
     let mut mains = 0usize;
-    load_file(entry, &mut visited, &mut shared, &mut next_id, &mut files, &mut mains)?;
+    load_file(entry, &mut visited, &mut shared, &mut structs, &mut struct_names, &mut next_id, &mut files, &mut mains)?;
     if mains != 1 { return Err(format!("program must define exactly one main function (found {mains})")); }
-    Ok(files)
+    Ok(Program { files, structs })
 }
 
 pub fn check_path(path: &Path) -> Result<(), String> {
@@ -1218,9 +1422,22 @@ pub fn check_path(path: &Path) -> Result<(), String> {
 }
 #[allow(dead_code)] // exercised by in-memory unit tests
 pub fn check(source: &str) -> Result<(), String> {
-    let mut shared: HashMap<String, (usize, Vec<Type>, Type)> = HashMap::new();
+    let mut shared: SharedFunctions = HashMap::new();
+    let mut structs: Vec<StructDef> = Vec::new();
+    let mut struct_names: HashMap<String, usize> = HashMap::new();
     let mut next_id = 0usize;
-    parse_source("", source, &mut shared, &mut next_id).map(|_| ())
+    parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut next_id).map(|_| ())
+}
+fn c_type_field(ty: Type) -> String {
+    match ty {
+        Type::Int => "int64_t".to_owned(),
+        Type::Bool => "bool".to_owned(),
+        Type::String => "ae_string".to_owned(),
+        Type::Vec => "ae_vec".to_owned(),
+        Type::Struct(k) => format!("ae_t{k}"),
+        Type::VecRef => "const ae_vec *".to_owned(),
+        Type::Array(n) => format!("int64_t [{n}]"),
+    }
 }
 fn c_type(ty: Type, id: usize, declaration: bool) -> String {
     match ty {
@@ -1228,14 +1445,50 @@ fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Bool => format!("bool v{id}"),
         Type::String => format!("ae_string v{id}"),
         Type::Vec => format!("ae_vec v{id}"),
+        Type::Struct(k) => format!("ae_t{k} v{id}"),
         Type::VecRef if declaration => format!("const ae_vec *v{id}"),
         Type::VecRef => "const ae_vec *".to_owned(),
         Type::Array(_) if declaration => format!("const int64_t *v{id}"),
         Type::Array(_) => "const int64_t *".to_owned(),
     }
 }
-fn emit_program(files: Vec<Vec<Function>>) -> Result<String, String> {
+fn emit_program(program: Program) -> Result<String, String> {
+    let Program { files, structs } = program;
     let mut out = String::from(include_str!("runtime.c"));
+    // Struct layouts and their ownership helpers. Release zeroes every field
+    // and frees owned ones; forfeit only zeroes (the value moved elsewhere).
+    for (sid, def) in structs.iter().enumerate() {
+        let mut layout = String::new();
+        for (n, ty) in &def.fields {
+            layout.push_str(&format!("    {} {};\n", c_type_field(*ty), n));
+        }
+        let mut release = String::new();
+        let mut forfeit = String::new();
+        for (n, ty) in &def.fields {
+            match ty {
+                Type::String => {
+                    release.push_str(&format!("    ae_str_release(&v->{});\n", n));
+                    forfeit.push_str(&format!("    ae_str_forfeit(&v->{});\n", n));
+                }
+                Type::Vec => {
+                    release.push_str(&format!("    ae_vec_release(&v->{});\n", n));
+                    forfeit.push_str(&format!("    ae_vec_forfeit(&v->{});\n", n));
+                }
+                Type::Struct(k) => {
+                    release.push_str(&format!("    ae_t{k}_release(&v->{});\n", n));
+                    forfeit.push_str(&format!("    ae_t{k}_forfeit(&v->{});\n", n));
+                }
+                other => {
+                    let zero = match other { Type::Bool => "false", _ => "0" };
+                    release.push_str(&format!("    v->{} = {};\n", n, zero));
+                    forfeit.push_str(&format!("    v->{} = {};\n", n, zero));
+                }
+            }
+        }
+        out.push_str(&format!("\ntypedef struct {{\n{layout}}} ae_t{sid};\n"));
+        out.push_str(&format!("static void ae_t{sid}_release(ae_t{sid} *v) {{\n{release}}}\n"));
+        out.push_str(&format!("static void ae_t{sid}_forfeit(ae_t{sid} *v) {{\n{forfeit}}}\n"));
+    }
     let all: Vec<&Function> = files.iter().flatten().collect();
     for function in &all {
         if function.is_main { continue; }
@@ -1261,10 +1514,12 @@ fn emit_program(files: Vec<Vec<Function>>) -> Result<String, String> {
 }
 #[allow(dead_code)] // exercised by in-memory unit tests
 pub fn compile(source: &str) -> Result<String, String> {
-    let mut shared: HashMap<String, (usize, Vec<Type>, Type)> = HashMap::new();
+    let mut shared: SharedFunctions = HashMap::new();
+    let mut structs: Vec<StructDef> = Vec::new();
+    let mut struct_names: HashMap<String, usize> = HashMap::new();
     let mut next_id = 0usize;
-    let functions = parse_source("", source, &mut shared, &mut next_id)?;
-    emit_program(vec![functions])
+    let functions = parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut next_id)?;
+    emit_program(Program { files: vec![functions], structs })
 }
 pub fn compile_path(path: &Path) -> Result<String, String> {
     emit_program(load_program(path)?)

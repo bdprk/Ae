@@ -808,6 +808,37 @@ fn for_in_iterates_vector_elements_by_value() {
     }
 }
 #[test]
+fn structs_construct_access_and_move() {
+    let source = "struct Point { x: i64, y: i64 } struct Named { id: i64, name: string } fn describe(n: Named) -> i64 { print(n.name); return n.id; } fn main() { var p = Point{x: 3, y: 4}; print(p.x + p.y); p.x = 30; print(p.x * p.y); let n = Named{id: 7, name: \"ae\"}; print(describe(n)); var q = Point{x: 1, y: 2}; q = Point{x: q.x + 10, y: q.y}; print(q.x + q.y); let s = \"tail\"; print(s == slice(\"head-tail\", 5, 9)); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "7\n120\nae\n7\n13\ntrue\n");
+    for source in [
+        "struct P { x: i64 } fn main() { let p = P{x: 1}; print(p.z); }",
+        "struct P { x: i64 } fn main() { let p = P{x: 1, y: 2}; }",
+        "struct P { x: i64 } fn main() { let p = P{y: 1}; }",
+        "struct P { x: i64, s: string } fn main() { let p = P{x: 1, s: \"a\"}; let t = p.s; }",
+        "struct P { x: i64 } fn main() { var p = P{x: 1}; p.x = true; }",
+        "struct P { x: i64, p: P } fn main() { let q = P{x: 1}; }",
+        "struct P { x: i64 } fn main() { let P = 1; }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-struct-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "{source}");
+    }
+}
+#[test]
+fn struct_fields_release_on_all_exit_paths() {
+    // Owned fields inside structs must release on scope exit, early return,
+    // and break, without double-free (ASan on Linux verifies).
+    let source = "struct Holder { tag: i64, data: string } fn pick(n: i64) -> i64 { var h = Holder{tag: n, data: \"payload\"}; if n == 0 { return h.tag; } for i in 0..2 { let tmp = Holder{tag: i, data: \"t\"}; if i == 1 { break; } } print(h.data); return h.tag; } fn main() { print(pick(0)); print(pick(5)); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "0\npayload\n5\n");
+}
+#[test]
 fn vec_borrows_are_read_only_and_forwardable() {
     // Borrowed vectors forward like array borrows; mutation and moves are rejected.
     let source = "fn total(v: &vec) -> i64 { var t = 0; for i in 0..len(v) { t = t + v[i]; } return t; } fn last_two(v: &vec) -> i64 { return v[len(v) - 2] + v[len(v) - 1]; } fn main() { var data = vec[1, 2, 3]; print(total(&data)); print(last_two(&data)); data[0] = 10; print(total(&data)); }";
