@@ -710,6 +710,36 @@ static void ae_map_put(ae_map *m, ae_strview key, int64_t value, size_t line, si
     slot->state = AE_MAP_FULL;
     m->len = m->len + 1;
 }
+// `map_inc(m, key, delta)`: the canonical counting operation. One hash
+// locates the slot, the delta is added in place, and the new value comes
+// back; a missing key starts from zero, which is what every histogram wants
+// (Go's `m[k] += d`, Rust's `entry(k).or_insert(0) += d`). Unlike
+// ae_map_get there is no error value: absence is part of the semantics.
+// An existing key is never copied; only a first sighting allocates.
+static int64_t ae_map_inc(ae_map *m, ae_strview key, int64_t delta, size_t line, size_t column) {
+    ae_map_grow(m, line, column);
+    int64_t at = ae_map_slot_of(key, m->cap);
+    int64_t reuse = -1;
+    for (;;) {
+        ae_map_slot *slot = &m->slots[at];
+        if (slot->state == AE_MAP_EMPTY) break;
+        if (slot->state == AE_MAP_DELETED) {
+            if (reuse < 0) reuse = at;
+        } else if (ae_str_eq(AE_VIEW(slot->key), key)) {
+            slot->value = slot->value + delta;
+            return slot->value;
+        }
+        at = (at + 1) & (m->cap - 1);
+    }
+    if (reuse >= 0) at = reuse;
+    else m->used = m->used + 1;
+    ae_map_slot *slot = &m->slots[at];
+    slot->key = ae_str_from_len(key.ptr, key.len, line, column);
+    slot->value = delta;
+    slot->state = AE_MAP_FULL;
+    m->len = m->len + 1;
+    return delta;
+}
 static bool ae_map_lookup(const ae_map *m, ae_strview key, int64_t *out) {
     const int64_t at = ae_map_find(m, key);
     if (at < 0) return false;

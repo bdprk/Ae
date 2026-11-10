@@ -1,0 +1,19 @@
+// `map_inc` counts in one lookup: missing keys start from zero and the new
+// value comes back, so a histogram needs no get/match/put dance. Compare
+// with bench/map.ae, which spells the same counting in get + match + store.
+
+fn main() {
+    var counts = map_new();
+    let words = split("a b a c b a c c d", " ");
+    for word in words {
+        let n = map_inc(counts, word, 1);
+    }
+    let names = keys(counts);
+    for name in names {
+        let c = map_get(counts, name);
+        match c {
+            IntResult::Ok(n) => { print(name + "=" + to_string(n)); }
+            IntResult::Err(reason) => { print("missing " + name); }
+        }
+    }
+}

@@ -1,0 +1,32 @@
+{
+ "map": {
+  "runs": [
+   326.5,
+   233.9,
+   224.9,
+   214.7,
+   215.1,
+   220.9,
+   221.1,
+   221.9,
+   237.8
+  ],
+  "median_ms": 221.9
+ },
+ "map-inc": {
+  "runs": [
+   294.2,
+   190.8,
+   215.4,
+   232.1,
+   192.2,
+   194.1,
+   196.9,
+   196.4,
+   204.2
+  ],
+  "median_ms": 196.9
+ },
+ "note": "Same compiler binary, API-shape comparison: map.ae (get + match + index store) vs map-inc.ae (one map_inc per draw). Checksum loop identical, outputs byte-identical (checksum=5001661237). Machine noticeably warmer than earlier same-run archives \u2014 only the relative value is meaningful; absolute values are not comparable across sessions.",
+ "improvement": "-11.2% median"
+}

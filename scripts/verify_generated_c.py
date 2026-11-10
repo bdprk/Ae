@@ -42,6 +42,9 @@ def run():
         # Hash map: keys() returns a sorted copy, so the report order is stable
         # across platforms; the map is released when the program exits.
         ("word_count.ae", b"distinct 8\nbrown 1\ndog 1\nfox 2\njumps 1\nlazy 1\nover 1\nquick 1\nthe 3", True),
+        # map_inc: the counting compound inserts on first sight and updates in
+        # place afterwards; sorted keys() keeps the report stable.
+        ("map_count.ae", b"a=3\nb=2\nc=3\nd=1", True),
         # Character-safe truncation: every cut lands on a UTF-8 boundary, so the
         # ellipsis is never preceded by half a character.
         # Filesystem + clock + ordering in one program: creates its own fixture

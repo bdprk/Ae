@@ -3130,3 +3130,36 @@ fn test_runner_works_with_modules_and_finds_failures_there() {
     assert_eq!(stdout, "RUN test_twice\nPASS test_twice\nok: 1 passed\n");
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn map_inc_counts_and_returns_the_new_value() {
+    let output = execute(
+        "fn main() {\n    var m = map_new();\n    let first = map_inc(m, \"k\", 1);\n    let second = map_inc(m, \"k\", 1);\n    let big = map_inc(m, \"k\", 40);\n    let negative = map_inc(m, \"other\", 0 - 3);\n    print(first);\n    print(second);\n    print(big);\n    print(negative);\n    print(len(m));\n    let seen = map_get(m, \"k\");\n    match seen {\n        IntResult::Ok(n) => { print(n); }\n        IntResult::Err(reason) => { print(\"missing\"); }\n    }\n}");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(stdout, "1\n2\n42\n-3\n2\n42\n");
+}
+
+#[test]
+fn map_inc_rejects_bad_shapes_and_moved_maps() {
+    let rejects = [
+        ("fn main() { var m = map_new(); let n = map_inc(m, 5, 1); print(n); }", "string key"),
+        ("fn main() { var m = map_new(); let n = map_inc(m, \"k\", \"x\"); print(n); }", "i64 delta"),
+        ("fn main() { var m = map_new(); let b = m; let n = map_inc(m, \"k\", 1); print(n); }", "moved map"),
+    ];
+    for (source, needle) in rejects {
+        let message = check_rejects(source);
+        // A moved map is usually caught by the general move rule before the
+        // builtin's own check runs; either rejection is correct.
+        assert!(message.contains(needle) || message.contains("was moved"), "{source:?}: {message}");
+    }
+}
+
+#[test]
+fn map_inc_works_on_struct_fields_like_the_other_map_builtins() {
+    let output = execute(
+        "struct Bag { counts: map[string, i64], tag: i64 }\nfn main() {\n    var b = Bag { counts: map_new(), tag: 1 };\n    let first = map_inc(b.counts, \"a\", 2);\n    let now = map_inc(b.counts, \"a\", 2);\n    print(first);\n    print(now);\n    print(len(b.counts));\n}");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(stdout, "2\n4\n1\n");
+}
