@@ -1,0 +1,33 @@
+// ADR-40. A constraint is checked against the generic body at the declaration,
+// before any call site is seen. The effective type set is the intersection of
+// the constraint whitelists; every type in it must support the operators the
+// body applies to T. This is a diagnostic, not a proof: each instantiation is
+// still fully type-checked as before (ADR-33).
+
+// `T: Add` admits i64, string and f64; all three support `+`.
+fn combine[T: Add](a: T, b: T) -> T {
+    return a + b;
+}
+
+// `T: Ord` narrows T to i64 and f64. Both support `+` and `>`, so this body is
+// accepted even though no `Add` constraint is written.
+fn capped_sum[T: Ord](a: T, b: T, cap: T) -> T {
+    let total = a + b;
+    if total > cap { return cap; }
+    return total;
+}
+
+// `T: Eq` admits i64, bool, string and f64; all four support `==`.
+fn is_same[T: Eq](a: T, b: T) -> bool {
+    return a == b;
+}
+
+fn main() {
+    print(combine[i64](2, 3));
+    print(combine[string]("ae", "ther"));
+    print(combine[f64](1.5, 2.5));
+    print(capped_sum[i64](4, 9, 10));
+    print(capped_sum[f64](1.5, 2.0, 4.0));
+    print(is_same[bool](true, false));
+    print(is_same[string]("x", "x"));
+}

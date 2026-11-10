@@ -1,0 +1,6 @@
+functions=200 source_bytes=10114 runs=7
+with constraints   ms: [68.184, 67.605, 68.187, 66.715, 66.463, 68.192, 66.604] median=67.605
+without constraints ms: [62.364, 63.619, 60.428, 61.476, 60.432, 62.199, 62.102] median=62.102
+delta (upper bound) ms: 5.503
+generated C bytes=20352 identical=True
+wrote /tmp/ae-w4/audit-timings-200.json

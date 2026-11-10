@@ -1092,6 +1092,54 @@ fn main() {
 }
 
 #[test]
+fn generic_body_capabilities_are_checked_at_the_declaration() {
+    // ADR-40: Copy still admits bool, which cannot be added. The diagnostic
+    // appears at the declaration even though the function is never called.
+    let path = std::env::temp_dir().join(format!("ae-weak-bound-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, "fn f[T: Copy](a: T, b: T) -> T { return a + b; }\nfn main() { print(1); }").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+    fs::remove_file(&path).unwrap();
+    assert!(!output.status.success());
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(message.contains("declares T: Copy"), "{message}");
+    assert!(message.contains("does not support it"), "{message}");
+    assert!(message.contains(":1:5:"), "diagnostic must point at the constraint: {message}");
+
+    // Narrowing the constraint to the exact supported set is accepted and runs
+    // with each admitted type; no new runtime machinery is involved.
+    let source = r#"fn f[T: Add](a: T, b: T) -> T { return a + b; }
+fn main() { print(f[i64](2, 3)); print(f[string]("a", "b")); print(f[f64](1.5, 2.5)); }"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "5\nab\n4.0\n");
+}
+
+#[test]
+fn capability_audit_applies_to_imported_generic_functions() {
+    let dir = std::env::temp_dir().join(format!("ae-w4-import-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir(&dir).unwrap();
+    let lib = dir.join("lib.ae");
+    let main = dir.join("main.ae");
+    fs::write(&main, "use \"lib.ae\";\nfn main() { print(combine[i64](1, 2)); }\n").unwrap();
+
+    // The imported generic is audited in its own file: a weak constraint must
+    // be rejected before the importer's call site is ever checked.
+    fs::write(&lib, "pub fn combine[T: Eq](a: T, b: T) -> T { return a + b; }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&main).output().unwrap();
+    assert!(!output.status.success());
+    let message = String::from_utf8_lossy(&output.stderr);
+    assert!(message.contains("declares T: Eq"), "{message}");
+    assert!(message.contains("lib.ae"), "diagnostic must name the defining file: {message}");
+
+    fs::write(&lib, "pub fn combine[T: Add](a: T, b: T) -> T { return a + b; }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&main).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "3\n");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn question_mark_propagates_none_as_well_as_err() {
     // An Option has the same two-variant shape as a result: None is returned
     // to the caller, Some binds its payload. A bare `call()?;` discards the

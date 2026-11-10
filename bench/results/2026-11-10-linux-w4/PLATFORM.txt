@@ -1,0 +1,71 @@
+AE Linux native verification, 2026-11-10 (ADR-40)
+Scope: declaration-site capability coverage check for constrained generics
+
+Platform
+  OS: Debian 13 x86-64 (instabox-node sandbox, 4 vCPU)
+  C compiler: gcc 14.2.0
+  Rust: cargo / rustc 1.99.0
+  Sanitizers: AddressSanitizer + UndefinedBehaviorSanitizer available
+
+Source tree
+  Remote tree ~/ae-lang synced from the Windows working tree immediately
+  after commit 6566262 (ADR-39), plus the uncommitted ADR-40 changes:
+    tar -czf - src tests scripts examples docs Cargo.toml Cargo.lock \
+        bench/build_timings.py bench/constraint_audit_timings.py \
+        bench/run.py bench/phases.py | ssh instabox-node 'cd ~/ae-lang && tar -xzf -'
+  The remote tree has no .git; the Windows archive is committed together with
+  this tree, so git history identifies the exact sources. bench/results/ was
+  not overwritten.
+
+Commands (run from ~/ae-lang)
+  cargo build --locked
+  cargo test --locked
+  python3 scripts/verify_generated_c.py --leak
+  python3 scripts/verify_generated_c.py --sanitize
+  python3 bench/build_timings.py --runs 3 --json /tmp/ae-w4/timings.json
+  python3 bench/constraint_audit_timings.py --runs 7 --functions 200 \
+      --json /tmp/ae-w4/audit-timings-200.json
+  python3 bench/constraint_audit_timings.py --runs 7 --functions 800 \
+      --json /tmp/ae-w4/audit-timings-800.json
+  ae check on every examples/*.ae
+  ae deps examples/modules/main.ae
+  ae emit-c examples/float_math.ae / print(1)
+
+Results
+  cargo-test.log: 14 unit + 138 integration tests, 0 failures
+  verify-c-leak.log: 25 generated-C cases PASS, 0 live allocation blocks
+  verify-c-sanitize.log: 25 cases PASS, 0 ASan/UBSan/runtime-error reports
+  examples-check.log: empty, all 32 examples/*.ae pass check
+  deps-output.txt: identical to the Windows file after CRLF/LF normalization
+    (233 bytes)
+  generated-c-header-check.txt: float_math.ae omits <windows.h>,
+    print(1) generated C is 20,352 bytes
+  timings.json / timings.txt: four build scenarios
+  audit-timings-200.* / audit-timings-800.*: within-run comparison of two
+    equal-byte-count programs, with and without constraints
+
+Measured effect
+  No generated C, executable or cache change: emit-c output is byte-identical
+  between the constrained and unconstrained probe sources (20,352 bytes),
+  -O0 executable 17,168 bytes.
+  Audit timing (median of 7 alternating `check` runs, wall clock ms):
+    200 declarations: with 67.6 | without 62.1 | delta 5.5
+    800 declarations: with 1012.6 | without 892.6 | delta 119.9
+  The delta is an UPPER BOUND, not the pure audit cost: the constrained source
+  has two extra tokens per line, and GenericFn still clones the whole token
+  stream per declaration (O(N^2), pre-existing since ADR-31). One 800-decl
+  sample reached 2,910 ms under load; absolute numbers must not be compared
+  across sessions or with the w3 / winhdr archives.
+  Four scenarios (ms): cold 36.9 | unchanged 4.9 | impl 35.4 | iface 36.6
+
+Boundaries (do not overstate)
+  - This is NOT trait/impl. No method table, no static dispatch, no orphan
+    rule, no user-defined constraints. Every instantiation is still fully
+    type-checked (ADR-33).
+  - The check can only reject. Unprovable cases are skipped and reported by
+    the per-instantiation check; unconstrained generics keep old behaviour.
+  - It is a deliberate tightening: a weak constraint now fails at the
+    declaration even if only valid types would ever be used. Migration is to
+    narrow the constraint or drop it.
+  - Not claimed: zero compile-time regression, an exact ratio, or any change
+    to runtime memory/CPU.

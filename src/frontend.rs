@@ -323,6 +323,196 @@ impl Bound {
         }
     }
 }
+
+// ADR-40. A generic declaration that writes constraints must not admit a type
+// that its body cannot use. This is a diagnostic, not a proof: every
+// instantiation is still parsed and fully type-checked (ADR-33). The audit can
+// only reject a declaration; it never lets unchecked code through.
+const AUDIT_TYPES: &[Type] = &[
+    Type::Int, Type::Bool, Type::F64, Type::String, Type::StrView,
+    Type::Vec, Type::StrVec, Type::VecRef, Type::StrVecRef, Type::Map,
+    Type::Array(0), Type::Struct(0), Type::Enum("audit", 0),
+];
+
+// Capabilities mirror the binary-operator rules in `expression`. They live
+// next to `Bound::allows` so adding a scalar type cannot silently desync the
+// constraint whitelist and the real type checker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Capability { Add, Arith, Modulo, Ord, Eq, Logic }
+impl Capability {
+    fn from_op(op: &Kind) -> Option<Capability> {
+        match op {
+            Kind::Plus => Some(Capability::Add),
+            Kind::Minus | Kind::Star | Kind::Slash => Some(Capability::Arith),
+            Kind::Percent => Some(Capability::Modulo),
+            Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq => Some(Capability::Ord),
+            Kind::EqEq | Kind::NotEq => Some(Capability::Eq),
+            Kind::And | Kind::Or => Some(Capability::Logic),
+            _ => None,
+        }
+    }
+    fn symbol(self) -> &'static str {
+        match self {
+            Capability::Add => "'+'", Capability::Arith => "arithmetic",
+            Capability::Modulo => "'%'", Capability::Ord => "ordering comparison",
+            Capability::Eq => "equality comparison", Capability::Logic => "'&&' / '||'",
+        }
+    }
+    fn supports(self, ty: Type) -> bool {
+        match self {
+            Capability::Add => matches!(ty, Type::Int | Type::F64 | Type::String | Type::StrView),
+            Capability::Arith => matches!(ty, Type::Int | Type::F64),
+            Capability::Modulo => matches!(ty, Type::Int),
+            Capability::Ord => matches!(ty, Type::Int | Type::F64),
+            Capability::Eq => matches!(ty, Type::Int | Type::F64 | Type::Bool | Type::String | Type::StrView),
+            Capability::Logic => matches!(ty, Type::Bool),
+        }
+    }
+    fn supported_types(self) -> &'static str {
+        match self {
+            Capability::Add => "i64, f64, string",
+            Capability::Arith => "i64, f64",
+            Capability::Modulo => "i64",
+            Capability::Ord => "i64, f64",
+            Capability::Eq => "i64, f64, bool, string",
+            Capability::Logic => "bool",
+        }
+    }
+}
+
+static AUDIT_EOF: Kind = Kind::Eof;
+// Borrow instead of cloning: the audit walks every token of a declaration, and
+// cloning `Kind::Ident(String)` on each visit would add a heap allocation per
+// identifier for a check that must stay cheap on the front-end path.
+fn audit_kind(tokens: &[Token], i: usize) -> &Kind {
+    tokens.get(i).map(|t| &t.kind).unwrap_or(&AUDIT_EOF)
+}
+
+// `start` points at the parameter list, `end` just past the closing brace.
+// Only declarations with at least one constraint are audited: an unconstrained
+// generic keeps ADR-33 behaviour, where the per-instantiation check reports the
+// error. Unproven cases are skipped rather than rejected, so the check cannot
+// break a valid program; correctness still rests on the full type check.
+fn audit_generic_fn(
+    file: &str, source: &str, tokens: &[Token], start: usize, end: usize,
+    name: &str, params: &[String], bounds: &[Vec<Bound>], declared_at: usize,
+) -> Result<(), String> {
+    if !bounds.iter().any(|b| !b.is_empty()) { return Ok(()); }
+    let at = |i: usize| audit_kind(tokens, i);
+    if *at(start) != Kind::LParen { return Ok(()); }
+    let mut depth = 0usize;
+    let mut rparen = None;
+    for i in start..end {
+        match at(i) {
+            Kind::LParen => depth += 1,
+            Kind::RParen => { depth -= 1; if depth == 0 { rparen = Some(i); break; } }
+            _ => {}
+        }
+    }
+    let Some(rparen) = rparen else { return Ok(()); };
+
+    // Bind each parameter variable to a type-parameter index. Concrete types,
+    // `&T` and compound types are deliberately left unknown, so an operator can
+    // never be attributed to the wrong type parameter.
+    let mut vars: HashMap<String, Option<usize>> = HashMap::new();
+    let mut piece = start + 1;
+    let mut pieces = Vec::new();
+    for i in (start + 1)..rparen {
+        if *at(i) == Kind::Comma { pieces.push((piece, i)); piece = i + 1; }
+    }
+    pieces.push((piece, rparen));
+    for (a, b) in pieces {
+        let Some(colon) = (a..b).find(|&i| *at(i) == Kind::Colon) else { continue; };
+        if colon == a { continue; }
+        let Kind::Ident(var) = at(colon - 1) else { continue; };
+        let bound_to = if b == colon + 2 {
+            match at(colon + 1) {
+                Kind::Ident(t) => params.iter().position(|p| p == t),
+                _ => None,
+            }
+        } else { None };
+        vars.insert(var.clone(), bound_to);
+    }
+
+    let Some(body_start) = ((rparen + 1)..end).find(|&i| *at(i) == Kind::LBrace) else { return Ok(()); };
+    let mut depth = 0usize;
+    let mut body_end = None;
+    for i in body_start..end {
+        match at(i) {
+            Kind::LBrace => depth += 1,
+            Kind::RBrace => { depth -= 1; if depth == 0 { body_end = Some(i); break; } }
+            _ => {}
+        }
+    }
+    let Some(body_end) = body_end else { return Ok(()); };
+
+    let mut demands: Vec<(usize, Capability)> = Vec::new();
+    let mut i = body_start + 1;
+    while i < body_end {
+        match at(i) {
+            Kind::Let | Kind::Var => {
+                if let Kind::Ident(var) = at(i + 1) {
+                    let mut taint = None;
+                    let mut unknown = false;
+                    if let Some(eq) = ((i + 2)..body_end).find(|&j| *at(j) == Kind::Equal) {
+                        for j in (eq + 1)..body_end {
+                            match at(j) {
+                                Kind::Semi | Kind::RBrace => break,
+                                Kind::LBrace => { unknown = true; break; }
+                                Kind::Ident(n) => match vars.get(n) {
+                                    Some(Some(t)) => {
+                                        if taint.is_some() && taint != Some(*t) { unknown = true; }
+                                        taint = Some(*t);
+                                    }
+                                    _ => {}
+                                },
+                                _ => {}
+                            }
+                        }
+                    } else { unknown = true; }
+                    vars.insert(var.clone(), if unknown { None } else { taint });
+                }
+            }
+            Kind::For => {
+                if let Kind::Ident(var) = at(i + 1) { vars.insert(var.clone(), None); }
+            }
+            _ => {}
+        }
+        // Only an identifier immediately adjacent to the operator is treated as
+        // an operand of a type parameter. Anything else (call results, indices,
+        // fields, literals) is left to the per-instantiation check.
+        if let Some(cap) = Capability::from_op(at(i)) {
+            for neighbour in [i.wrapping_sub(1), i + 1] {
+                if neighbour < body_start + 1 || neighbour >= body_end { continue; }
+                if let Kind::Ident(n) = at(neighbour) {
+                    if let Some(Some(t)) = vars.get(n) { demands.push((*t, cap)); }
+                }
+            }
+        }
+        i += 1;
+    }
+
+    for (index, cap) in demands {
+        let declared = &bounds[index];
+        if declared.is_empty() { continue; }
+        let effective: Vec<Type> = AUDIT_TYPES.iter().copied()
+            .filter(|ty| declared.iter().all(|b| b.allows(*ty)))
+            .collect();
+        let bad: Vec<String> = effective.iter().copied()
+            .filter(|ty| !cap.supports(*ty))
+            .map(|ty| ty.name())
+            .collect();
+        if bad.is_empty() { continue; }
+        let constraint_text = declared.iter().map(|b| b.name()).collect::<Vec<_>>().join(" + ");
+        let effective_text = effective.iter().map(|t| t.name()).collect::<Vec<_>>().join(", ");
+        return Err(error(file, source, declared_at, &format!(
+            "generic function '{name}' declares {}: {} but its body applies {} to {}; the constraint still admits {}, which does not support it ({} allows {}; current effective set is {})",
+            params[index], constraint_text, cap.symbol(), params[index], bad.join(", "),
+            cap.symbol(), cap.supported_types(), effective_text)));
+    }
+    Ok(())
+}
+
 // `fn pick[T](a: T, b: T) -> T { ... }` before any call site picks arguments.
 // The declaration keeps its own token slice and source text so an instantiation
 // can be parsed later, even from another file (ADR-31).
@@ -1554,7 +1744,7 @@ impl<'a> Parser<'a> {
     }
     // Skip `(params) -> Ret { body }` without interpreting it. Used for a
     // generic declaration, whose body is parsed at each instantiation instead.
-    fn skip_function_body(&mut self) -> Result<(), String> {
+    fn skip_function_body(&mut self) -> Result<usize, String> {
         while *self.current() != Kind::LBrace {
             if *self.current() == Kind::Eof { return Err(self.fail("expected '{' before end of file")); }
             self.pos += 1;
@@ -1570,7 +1760,7 @@ impl<'a> Parser<'a> {
             }
             self.pos += 1;
         }
-        Ok(())
+        Ok(self.pos)
     }
     fn skip_enum_def(&mut self) {
         self.pos += 2; // 'enum' Name
@@ -1600,13 +1790,16 @@ impl<'a> Parser<'a> {
                 // A generic function has no signature of its own: only its
                 // instantiations exist, and each gets an id when constructed.
                 if name == "main" { return Err(self.fail("main cannot be generic")); }
+                let declared_at = self.tokens[self.pos].offset;
                 let declared = self.type_params_with_bounds()?;
-                let params = declared.iter().map(|(n, _)| n.clone()).collect();
-                let bounds = declared.into_iter().map(|(_, b)| b).collect();
+                let params: Vec<String> = declared.iter().map(|(n, _)| n.clone()).collect();
+                let bounds: Vec<Vec<Bound>> = declared.into_iter().map(|(_, b)| b).collect();
+                let start = self.pos;
+                let end = self.skip_function_body()?;
+                audit_generic_fn(&self.file, self.source, &self.tokens, start, end, &name, &params, &bounds, declared_at)?;
                 let gid = self.generics.fn_defs.len();
                 self.generics.fn_names.insert(name.clone(), gid);
-                self.generics.fn_defs.push(GenericFn { name, params, bounds, start: self.pos, tokens: self.tokens.clone(), source: self.source.to_owned(), file: self.file.clone(), public });
-                self.skip_function_body()?;
+                self.generics.fn_defs.push(GenericFn { name, params, bounds, start, tokens: self.tokens.clone(), source: self.source.to_owned(), file: self.file.clone(), public });
                 continue;
             }
             self.take(Kind::LParen)?;
@@ -4133,5 +4326,66 @@ mod tests {
             }
         }
         assert!(checked >= 16, "expected at least 16 Win32-dependent functions, found {checked}");
+    }
+
+    #[test]
+    fn capability_tables_match_the_real_operator_rules() {
+        // ADR-40: a constraint whitelist must be a subset of the types that
+        // actually support the operation, or the declaration would promise
+        // something the per-instantiation type checker cannot deliver.
+        for &ty in AUDIT_TYPES {
+            if Bound::Add.allows(ty) { assert!(Capability::Add.supports(ty), "Add admits {}", ty.name()); }
+            if Bound::Ord.allows(ty) { assert!(Capability::Ord.supports(ty), "Ord admits {}", ty.name()); }
+            if Bound::Eq.allows(ty) { assert!(Capability::Eq.supports(ty), "Eq admits {}", ty.name()); }
+        }
+    }
+
+    #[test]
+    fn capability_audit_agrees_with_per_instantiation_checks() {
+        // Differential test: with no constraint the audit steps aside and the
+        // per-instantiation check decides. bool + bool must still fail while
+        // i64, f64 and string pass.
+        let body = "fn f[T](a: T, b: T) -> T { return a + b; }";
+        for (ty, args, expected) in [
+            ("i64", "1, 2", true), ("f64", "1.0, 2.0", true),
+            ("string", "\"x\", \"y\"", true), ("bool", "true, false", false),
+        ] {
+            let source = format!("{body} fn main() {{ print(f[{ty}]({args})); }}");
+            assert_eq!(compile(&source).is_ok(), expected, "{ty}: {source}");
+        }
+        // Copy still admits bool, so the declaration is rejected even when the
+        // function is never instantiated: the error moves to the declaration.
+        let weak = "fn f[T: Copy](a: T, b: T) -> T { return a + b; } fn main() { print(1); }";
+        let err = compile(weak).unwrap_err();
+        assert!(err.contains("declares T: Copy") && err.contains("bool"), "{err}");
+        assert!(err.contains("1:5:"), "diagnostic must point at the constraint: {err}");
+        // Narrowing the effective set to the supported types fixes it.
+        assert!(compile("fn f[T: Add](a: T, b: T) -> T { return a + b; } fn main() { print(f[i64](1, 2)); }").is_ok());
+        assert!(compile("fn f[T: Ord](a: T, b: T) -> T { return a + b; } fn main() { print(f[f64](1.0, 2.0)); }").is_ok());
+    }
+
+    #[test]
+    fn capability_audit_rejects_weak_constraints_without_false_positives() {
+        for source in [
+            "fn f[T: Add](a: T, b: T) -> T { return a - b; } fn main() { print(1); }",
+            "fn f[T: Add](a: T, b: T) -> T { return a % b; } fn main() { print(1); }",
+            "fn f[T: Eq](a: T, b: T) -> bool { return a && b; } fn main() { print(1); }",
+            "fn f[T: Copy](a: T, b: T) -> bool { return a < b; } fn main() { print(1); }",
+            "fn f[T: Copy](a: T, b: T) -> T { let y = a; return y + b; } fn main() { print(1); }",
+        ] {
+            assert!(compile(source).is_err(), "weak constraint accepted: {source}");
+        }
+        for source in [
+            "fn f[T: Add](a: T, b: T) -> T { return a + b; } fn main() { print(f[i64](1, 2)); }",
+            "fn f[T: Ord](a: T, b: T) -> T { let t = a + b; if t > a { return t; } return b; } fn main() { print(f[i64](1, 2)); }",
+            "fn f[T: Eq](a: T, b: T) -> bool { return a == b; } fn main() { print(f[bool](true, false)); }",
+            "fn f[T: Copy](a: T) -> T { return a; } fn main() { print(f[i64](1)); }",
+            // An operator on a concrete-typed variable is never attributed to T.
+            "fn f[T: Eq](a: T, n: i64) -> i64 { return n + 1; } fn main() { print(f[i64](1, 2)); }",
+            // An unconstrained generic keeps ADR-33 behaviour.
+            "fn f[T](a: T, b: T) -> T { return a + b; } fn main() { print(f[i64](1, 2)); }",
+        ] {
+            if let Err(err) = compile(source) { panic!("valid declaration rejected: {source}: {err}"); }
+        }
     }
 }

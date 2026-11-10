@@ -1,0 +1,6 @@
+functions=200 source_bytes=10114 runs=7
+with constraints   ms: [120.585, 110.76, 113.382, 107.221, 103.791, 117.9, 127.367] median=113.382
+without constraints ms: [107.266, 102.614, 103.117, 109.658, 92.536, 104.097, 94.823] median=103.117
+delta (upper bound) ms: 10.265
+generated C bytes=20352 identical=True
+wrote bench\results\2026-11-10-windows-w4\audit-timings-200.json

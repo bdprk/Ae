@@ -1,0 +1,68 @@
+AE Windows local verification, 2026-11-10 (ADR-40)
+Scope: declaration-site capability coverage check for constrained generics
+
+Platform
+  OS: Windows x86-64 (native, MinGW-W64 UCRT toolchain)
+  C compiler: gcc.exe (MinGW-W64 x86_64-ucrt-posix-seh) 16.2.0
+  Rust: cargo / rustc 1.99.1
+  AddressSanitizer: unavailable on MinGW; allocation counting uses -Wl,--wrap
+
+Source tree
+  Local working tree immediately after commit 6566262 (ADR-39), plus the
+  uncommitted ADR-40 changes. This archive is committed together with that
+  tree, so git history identifies the exact sources.
+
+Commands (run from the repository root)
+  cargo build --locked
+  cargo test --locked
+  python scripts/verify_generated_c.py --leak
+  python bench/build_timings.py --runs 3 --json <archive>/timings.json
+  python bench/constraint_audit_timings.py --runs 7 --functions 200 \
+      --json <archive>/audit-timings-200.json
+  python bench/constraint_audit_timings.py --runs 7 --functions 800 \
+      --json <archive>/audit-timings-800.json
+  ae check on every examples/*.ae
+  ae deps examples/modules/main.ae
+  ae emit-c examples/float_math.ae / examples/file_tidy.ae / print(1)
+  ae check/run on the weak- and narrowed-constraint probes
+
+Results
+  cargo-test.log: 14 unit + 138 integration tests, 0 failures
+  verify-c-leak.log: 25 generated-C cases PASS, every program exits at the
+    UCRT baseline of 2 live allocation blocks
+  examples-check.log: empty, all 32 examples/*.ae pass check
+  deps-output.txt: identical to the Linux file after CRLF/LF normalization
+    (233 bytes)
+  generated-c-header-check.txt: float_math.ae omits <windows.h>,
+    file_tidy.ae keeps it, print(1) generated C is 20,352 bytes
+  declaration-audit.txt: a weak `T: Copy` body using `+` is rejected at 1:5;
+    the narrowed `T: Add` version runs and prints 5
+  timings.json / timings.txt: four build scenarios
+  audit-timings-200.* / audit-timings-800.*: within-run comparison of two
+    equal-byte-count programs, with and without constraints
+
+Measured effect
+  No generated C, executable or cache change: emit-c output is byte-identical
+  between the constrained and unconstrained probe sources (20,352 bytes),
+  -O0 executable 64,195 bytes.
+  Audit timing (median of 7 alternating `check` runs, wall clock ms):
+    200 declarations: with 113.4 | without 103.1 | delta 10.3
+    800 declarations: with 1433.0 | without 1338.8 | delta 94.2
+  The delta is an UPPER BOUND, not the pure audit cost: the constrained source
+  has two extra tokens per line, and GenericFn still clones the whole token
+  stream per declaration (O(N^2), pre-existing since ADR-31). Load varies a
+  lot on this machine; do not read these as a speedup, nor compare absolute
+  numbers with the w3 / winhdr archives.
+  Four scenarios (ms): cold 412.6 | unchanged 118.2 | impl 370.1 | iface 391.7
+
+Boundaries (do not overstate)
+  - This is NOT trait/impl. No method table, no static dispatch, no orphan
+    rule, no user-defined constraints. Every instantiation is still fully
+    type-checked (ADR-33).
+  - The check can only reject. Unprovable cases are skipped and reported by
+    the per-instantiation check; unconstrained generics keep old behaviour.
+  - It is a deliberate tightening: a weak constraint now fails at the
+    declaration even if only valid types would ever be used. Migration is to
+    narrow the constraint or drop it.
+  - Not claimed: zero compile-time regression, an exact ratio, or any change
+    to runtime memory/CPU.

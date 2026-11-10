@@ -1,0 +1,4 @@
+--- weak constraint is rejected at the declaration ---
+ae: target/probe/w4/copy_plus.ae:1:5: generic function 'f' declares T: Copy but its body applies '+' to T; the constraint still admits bool, which does not support it ('+' allows i64, f64, string; current effective set is i64, bool, f64)
+--- narrowed constraint is accepted ---
+3
