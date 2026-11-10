@@ -1956,3 +1956,105 @@ fn generic_enums_respect_file_visibility() {
     assert!(err.contains("enum 'Quiet[i64]' is private to"), "{err}");
     fs::remove_dir_all(dir).unwrap();
 }
+#[test]
+fn sort_and_reverse_order_vectors_in_place() {
+    let output = execute(r#"fn main() {
+    var numbers = vec[3, 1, 2];
+    sort(numbers);
+    print(numbers[0]);
+    print(numbers[1]);
+    print(numbers[2]);
+    reverse(numbers);
+    print(numbers[0]);
+    var names = split("pear apple fig", " ");
+    sort(names);
+    print(names[0]);
+    print(names[2]);
+    reverse(names);
+    print(names[0]);
+    var empty = vec[];
+    sort(empty);
+    reverse(empty);
+    print(len(empty));
+    var one = vec[7];
+    sort(one);
+    print(one[0]);
+}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "1\n2\n3\n3\napple\npear\npear\n0\n7\n"
+    );
+}
+#[test]
+fn sort_requires_a_mutable_vector_and_keeps_borrows_out() {
+    for source in [
+        "fn main() { sort(1); }",
+        "fn main() { let v = vec[1]; sort(v); }",
+        "fn main() { var s = \"text\"; sort(s); }",
+        "fn main() { var v = vec[1]; for x in v { sort(v); } }",
+    ] {
+        let path = std::env::temp_dir().join(format!("ae-sort-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(!output.status.success(), "accepted invalid program: {source}");
+    }
+}
+#[test]
+fn clock_reports_a_plausible_epoch() {
+    let output = execute("fn main() { let seconds = now_s(); print(seconds > 1600000000); print(now_ms() >= seconds * 1000); print(now_ms() < (seconds + 2) * 1000); }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "true\ntrue\ntrue\n");
+}
+#[test]
+fn environment_lookup_separates_missing_from_empty() {
+    let source = r#"fn show(name: &string) -> string {
+    let found = env(name);
+    match found {
+        ReadResult::Ok(value) => { return "[" + value + "]"; }
+        ReadResult::Err(reason) => { return "missing"; }
+    }
+}
+fn main() {
+    print(show("AE_TEST_PRESENT"));
+    print(show("AE_TEST_ABSENT"));
+}"#;
+    let output = execute_with_env(source, &[("AE_TEST_PRESENT", "value")]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "[value]\nmissing\n");
+    // A variable that exists but holds nothing is still a value, not an error.
+    let output = execute_with_env(source, &[("AE_TEST_PRESENT", "")]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "[]\nmissing\n");
+    // An empty name is a caller mistake, reported rather than looked up.
+    let output = execute_with_env("fn main() { let r = env(\"\"); match r { ReadResult::Ok(v) => { print(\"found\"); } ReadResult::Err(e) => { print(e); } } }", &[]);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "variable name is empty");
+}
+#[test]
+fn append_adds_to_a_file_that_write_truncates() {
+    let path = std::env::temp_dir().join(format!("ae-append-{}-{}.txt", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    let _ = fs::remove_file(&path);
+    let literal = path.display().to_string().replace('\\', "/");
+    let source = format!(r#"fn main() {{
+    let first = try_append_file("{literal}", "one\n");
+    match first {{ WriteResult::Ok(n) => {{ print(n); }} WriteResult::Err(r) => {{ print(r); }} }}
+    let second = try_append_file("{literal}", "two\n");
+    match second {{ WriteResult::Ok(n) => {{ print(n); }} WriteResult::Err(r) => {{ print(r); }} }}
+    let text = read_file("{literal}");
+    print(len(text));
+    let replaced = try_write_file("{literal}", "gone");
+    match replaced {{ WriteResult::Ok(n) => {{ print(n); }} WriteResult::Err(r) => {{ print(r); }} }}
+    print(read_file("{literal}"));
+    let missing = try_append_file("{literal}/nested/x.txt", "x");
+    match missing {{ WriteResult::Ok(n) => {{ print("unexpected"); }} WriteResult::Err(r) => {{ print("failed"); }} }}
+}}"#, literal = literal);
+    let output = execute(&source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "4\n4\n8\n4\ngone\nfailed\n"
+    );
+    let _ = fs::remove_file(&path);
+}

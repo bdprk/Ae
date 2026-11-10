@@ -8,6 +8,7 @@
 // with Ok at variant index 0 and Err at index 1.
 
 #include <errno.h>
+#include <time.h>
 #ifndef _WIN32
 #include <dirent.h>
 #include <sys/stat.h>
@@ -39,6 +40,29 @@ static AE_STATUS_RESULT ae_status_ok(void) {
 static AE_STATUS_RESULT ae_status_failed(ae_string message) {
     AE_STATUS_RESULT out = { AE_STATUS_ERR, { .v1 = { message } } };
     return out;
+}
+
+// Wall-clock time in milliseconds since the Unix epoch. File metadata reports
+// whole seconds, so now_s exists to compare against it without dividing on
+// every call. Both are i64: the epoch range fits comfortably, and negative
+// values (before 1970) stay meaningful.
+static int64_t ae_now_ms(void) {
+#ifdef _WIN32
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    const int64_t ticks = ((int64_t)ft.dwHighDateTime << 32) | (int64_t)ft.dwLowDateTime;
+    // 100-nanosecond ticks since 1601 -> milliseconds since 1970.
+    return ticks / 10000 - 11644473600000LL;
+#else
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) return 0;
+    return (int64_t)ts.tv_sec * 1000 + (int64_t)(ts.tv_nsec / 1000000);
+#endif
+}
+static int64_t ae_now_s(void) {
+    const int64_t ms = ae_now_ms();
+    // Floor division, so a negative timestamp still rounds consistently.
+    return ms / 1000 - (ms % 1000 < 0 ? 1 : 0);
 }
 
 static ae_string ae_io_message(int code, size_t line, size_t column) {
@@ -91,6 +115,100 @@ static AE_WRITE_RESULT ae_try_write_file(const char *path, ae_strview content, s
     }
     AE_WRITE_RESULT out = { AE_WRITE_OK, { .v0 = { (int64_t)written } } };
     return out;
+}
+
+// Appending exists as its own operation because "read, concatenate, write" is
+// not the same thing: it rewrites the whole file, loses the atomicity of a
+// single append, and fails on files the process may only append to.
+static AE_WRITE_RESULT ae_try_append_file(const char *path, ae_strview content, size_t line, size_t column) {
+    errno = 0;
+    FILE *f = ae_fopen(path, "ab");
+    if (!f) { AE_WRITE_RESULT out = { AE_WRITE_ERR, { .v1 = { ae_io_message(errno, line, column) } } }; return out; }
+    const size_t written = fwrite(content.ptr, 1, (size_t)content.len, f);
+    const bool closed = fclose(f) == 0;
+    if (!closed || written != (size_t)content.len) {
+        AE_WRITE_RESULT out = { AE_WRITE_ERR, { .v1 = { ae_io_message(errno, line, column) } } };
+        return out;
+    }
+    AE_WRITE_RESULT out = { AE_WRITE_OK, { .v0 = { (int64_t)written } } };
+    return out;
+}
+
+// Environment lookup. A variable that is set but empty is Ok(""), a variable
+// that does not exist is Err: collapsing the two would silently turn "PATH is
+// empty" into "PATH is missing".
+static AE_READ_RESULT ae_try_env(const char *name, size_t line, size_t column) {
+    if (name[0] == 0) {
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("variable name is empty", line, column) } } };
+        return out;
+    }
+#ifdef _WIN32
+    wchar_t *wname = ae_widen(name);
+    if (!wname) {
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("out of memory", line, column) } } };
+        return out;
+    }
+    // A variable whose value is empty also reports 0, so the last error is
+    // cleared first: ERROR_SUCCESS afterwards means "set but empty", and only
+    // ERROR_ENVVAR_NOT_FOUND means the name is absent.
+    SetLastError(ERROR_SUCCESS);
+    const DWORD needed = GetEnvironmentVariableW(wname, NULL, 0);
+    if (needed == 0) {
+        const DWORD code = GetLastError();
+        ae_free(wname);
+        if (code == ERROR_SUCCESS) {
+            AE_READ_RESULT empty = { AE_READ_OK, { .v0 = { ae_str_from("", line, column) } } };
+            return empty;
+        }
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { code == ERROR_ENVVAR_NOT_FOUND ? ae_str_from("variable not set", line, column) : ae_status_message("cannot read variable", code, line, column) } } };
+        return out;
+    }
+    wchar_t *buffer = ae_alloc_try((size_t)needed * sizeof(wchar_t));
+    if (!buffer) {
+        ae_free(wname);
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("out of memory", line, column) } } };
+        return out;
+    }
+    SetLastError(ERROR_SUCCESS);
+    const DWORD length = GetEnvironmentVariableW(wname, buffer, needed);
+    const DWORD read_code = GetLastError();
+    ae_free(wname);
+    if (length >= needed) {
+        ae_free(buffer);
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("variable changed while reading", line, column) } } };
+        return out;
+    }
+    if (length == 0 && read_code != ERROR_SUCCESS) {
+        ae_free(buffer);
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_status_message("cannot read variable", read_code, line, column) } } };
+        return out;
+    }
+    // An empty value is a successful read of zero characters: narrow() rejects
+    // a zero length, so build the empty string directly.
+    ae_string value = length == 0 ? ae_str_from("", line, column) : (ae_string){ NULL, 0 };
+    if (length > 0) {
+        char *utf8 = ae_narrow(buffer, (int)length);
+        if (!utf8) {
+            ae_free(buffer);
+            AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("out of memory", line, column) } } };
+            return out;
+        }
+        value = ae_str_from(utf8, line, column);
+        ae_free(utf8);
+    }
+    ae_free(buffer);
+    AE_READ_RESULT out = { AE_READ_OK, { .v0 = { value } } };
+    return out;
+#else
+    (void)line; (void)column;
+    const char *value = getenv(name);
+    if (!value) {
+        AE_READ_RESULT out = { AE_READ_ERR, { .v1 = { ae_str_from("variable not set", line, column) } } };
+        return out;
+    }
+    AE_READ_RESULT out = { AE_READ_OK, { .v0 = { ae_str_from(value, line, column) } } };
+    return out;
+#endif
 }
 
 // Strict integer parsing: optional sign, ASCII digits only, whole string, and
@@ -167,6 +285,18 @@ static int ae_name_compare(const void *left, const void *right) {
     const int order = shared > 0 ? memcmp(a->ptr, b->ptr, (size_t)shared) : 0;
     if (order != 0) return order;
     return a->len < b->len ? -1 : (a->len > b->len ? 1 : 0);
+}
+// In-place orderings for owned string vectors, byte-order like keys() and
+// directory listings so every sorted output is comparable across platforms.
+static void ae_strvec_sort(ae_strvec *v) {
+    if (v->len > 1) qsort(v->data, (size_t)v->len, sizeof(ae_string), ae_name_compare);
+}
+static void ae_strvec_reverse(ae_strvec *v) {
+    for (int64_t i = 0, j = v->len - 1; i < j; i = i + 1, j = j - 1) {
+        const ae_string swap = v->data[i];
+        v->data[i] = v->data[j];
+        v->data[j] = swap;
+    }
 }
 static AE_DIR_RESULT ae_try_list_dir(const char *path, size_t line, size_t column) {
     ae_strvec names = ae_strvec_new(line, column);

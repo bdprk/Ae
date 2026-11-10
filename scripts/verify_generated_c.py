@@ -44,6 +44,16 @@ def run():
         ("word_count.ae", b"distinct 8\nbrown 1\ndog 1\nfox 2\njumps 1\nlazy 1\nover 1\nquick 1\nthe 3", True),
         # Character-safe truncation: every cut lands on a UTF-8 boundary, so the
         # ellipsis is never preceded by half a character.
+        # Filesystem + clock + ordering in one program: creates its own fixture
+        # so the listing and sizes are known, and every step matches on a result.
+        ("dir_report.ae", (
+            "ready\n"
+            "a.txt 6 bytes\ntrue\n"
+            "b.txt 4 bytes\ntrue\n"
+            "c.txt 8 bytes\ntrue\n"
+            "largest 8\n"
+            "entries 3"
+        ).encode("utf-8"), True),
         # Generic enums: Option[string] and Option[i64] are separate layouts,
         # and a moved-in payload is released with the value.
         ("maybe.ae", b"longest line: three\nlongest line: (none)\nfirst number: 42\nfirst number: (none)", True),

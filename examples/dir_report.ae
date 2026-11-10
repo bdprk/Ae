@@ -1,0 +1,65 @@
+// A directory report: every step can fail at runtime (permissions, races,
+// vanished entries), so each one is matched on instead of assumed. `now_s()`
+// comes from the clock, `try_file_info` from the filesystem, and both speak
+// seconds since the Unix epoch, which is what makes ages comparable.
+
+fn seed(dir: &string, name: &string, text: &string) -> bool {
+    let written = try_write_file(path_join(dir, name), text);
+    match written {
+        WriteResult::Ok(n) => { return n == len(text); }
+        WriteResult::Err(reason) => { print("cannot write " + name + ": " + reason); return false; }
+    }
+}
+
+fn report(dir: &string) -> i64 {
+    let listed = try_list_dir(dir);
+    match listed {
+        DirResult::Ok(names) => {
+            let now = now_s();
+            var sizes = vec[];
+            for name in names {
+                let info = try_file_info(path_join(dir, name));
+                match info {
+                    FileResult::Ok(size, mtime, is_dir) => {
+                        if is_dir {
+                            print(name + "/");
+                        } else {
+                            print(name + " " + to_string(size) + " bytes");
+                            push(sizes, size);
+                            // A file written before this run is always older
+                            // than the moment we read the clock.
+                            print(mtime <= now);
+                        }
+                    }
+                    FileResult::Err(reason) => { print(name + ": " + reason); }
+                }
+            }
+            sort(sizes);
+            reverse(sizes);
+            if len(sizes) > 0 {
+                print("largest " + to_string(sizes[0]));
+            }
+            return len(names);
+        }
+        DirResult::Err(reason) => { print("cannot list: " + reason); return 0; }
+    }
+}
+
+// `main` cannot return early, so the work lives in a function that can.
+fn run() -> i64 {
+    let dir = "ae-report";
+    let made = try_create_dir(dir);
+    match made {
+        StatusResult::Ok => { print("ready"); }
+        StatusResult::Err(reason) => { print("cannot create: " + reason); }
+    }
+    if !seed(dir, "b.txt", "two\n") { return 0; }
+    if !seed(dir, "a.txt", "alpha\n") { return 0; }
+    if !seed(dir, "c.txt", "charlie\n") { return 0; }
+    print("entries " + to_string(report(dir)));
+    return 0;
+}
+
+fn main() {
+    assert(run() == 0);
+}

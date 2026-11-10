@@ -60,7 +60,7 @@ const PRELUDE: &str = "<prelude>";
 const MAX_ENUM_TYPES: usize = 256;
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
-const RESERVED: [&str; 43] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with"];
+const RESERVED: [&str; 49] = ["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file"];
 // Provisional prelude: fallible operations report failure as values instead of
 // terminating the process (§4.5). These enums are registered before any user
 // type, so a program can name them without importing anything. They are
@@ -197,7 +197,8 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Trim(Box<Expr>, usize, usize), StartsWith(Box<Expr>, Box<Expr>, usize, usize), EndsWith(Box<Expr>, Box<Expr>, usize, usize), Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+enum Expr { Number(i64), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Trim(Box<Expr>, usize, usize), StartsWith(Box<Expr>, Box<Expr>), EndsWith(Box<Expr>, Box<Expr>),
+    TryAppendFile(Box<Expr>, Box<Expr>, Type, usize, usize), Env(Box<Expr>, Type, usize, usize), NowMs, NowS, Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 // A map reachable without a move: either a variable slot or a field of one.
 #[derive(Debug)]
 enum MapPlace { Var(usize), Field(usize, String) }
@@ -219,7 +220,7 @@ enum Argument { Value(Expr), Borrow(usize, bool), View(Expr) } // Borrow bool: p
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
-enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), MapPut(MapPlace, Expr, Expr, usize, usize), Propagate(Expr, Type, Vec<Type>, Option<(usize, Type)>, Vec<(usize, Type)>), Break, Continue(Option<usize>), Frees(Vec<(usize, Type)>) }
+enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), Sort(usize, bool, usize, usize), Reverse(usize, bool, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), MapPut(MapPlace, Expr, Expr, usize, usize), Propagate(Expr, Type, Vec<Type>, Option<(usize, Type)>, Vec<(usize, Type)>), Break, Continue(Option<usize>), Frees(Vec<(usize, Type)>) }
 #[derive(Debug)]
 struct Function { id: usize, params: Vec<(usize, Type)>, body: Vec<Statement>, is_main: bool, returns: Type }
 fn returns(stmts: &[Statement]) -> bool {
@@ -503,6 +504,29 @@ impl<'a> Parser<'a> {
                     if !matches!(content_ty, Type::String | Type::StrView) { return Err(self.fail("try_write_file expects a string or string view content")); }
                     self.take(Kind::RParen)?;
                     (Expr::TryWriteFile(Box::new(path), Box::new(content), ty, line, col), ty)
+                } else if name == "try_append_file" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    let ty = self.prelude_type("WriteResult");
+                    self.take(Kind::LParen)?;
+                    let (path, path_ty) = self.expression(0, false)?;
+                    if !matches!(path_ty, Type::String | Type::StrView) { return Err(self.fail("try_append_file expects a string path")); }
+                    self.take(Kind::Comma)?;
+                    let (content, content_ty) = self.expression(0, false)?;
+                    if !matches!(content_ty, Type::String | Type::StrView) { return Err(self.fail("try_append_file expects a string or string view content")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::TryAppendFile(Box::new(path), Box::new(content), ty, line, col), ty)
+                } else if name == "env" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    let ty = self.prelude_type("ReadResult");
+                    self.take(Kind::LParen)?;
+                    let (variable, variable_ty) = self.expression(0, false)?;
+                    if !matches!(variable_ty, Type::String | Type::StrView) { return Err(self.fail("env expects a string variable name")); }
+                    self.take(Kind::RParen)?;
+                    (Expr::Env(Box::new(variable), ty, line, col), ty)
+                } else if (name == "now_ms" || name == "now_s") && *self.current() == Kind::LParen {
+                    self.take(Kind::LParen)?;
+                    self.take(Kind::RParen)?;
+                    (if name == "now_ms" { Expr::NowMs } else { Expr::NowS }, Type::Int)
                 } else if name == "try_list_dir" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     let ty = self.prelude_type("DirResult");
@@ -690,8 +714,8 @@ impl<'a> Parser<'a> {
                         self.take(Kind::RParen)?;
                         match name.as_str() {
                             "contains" => Expr::Contains(Box::new(first), Box::new(second), line, col),
-                            "starts_with" => Expr::StartsWith(Box::new(first), Box::new(second), line, col),
-                            _ => Expr::EndsWith(Box::new(first), Box::new(second), line, col),
+                            "starts_with" => Expr::StartsWith(Box::new(first), Box::new(second)),
+                            _ => Expr::EndsWith(Box::new(first), Box::new(second)),
                         }
                     } else {
                         self.take(Kind::Comma)?;
@@ -1503,7 +1527,7 @@ impl<'a> Parser<'a> {
                 Kind::Ident(name) => {
                     // Built-in mutation statements come before assignment so
                     // they stay unambiguous: push(v, x); pop(v);
-                    if (name == "push" || name == "pop") && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
+                    if matches!(name.as_str(), "push" | "pop" | "sort" | "reverse") && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
                         let (line, col) = self.position();
                         self.pos += 2;
                         let target = self.identifier()?;
@@ -1512,6 +1536,15 @@ impl<'a> Parser<'a> {
                         if !matches!(ty, Type::Vec | Type::StrVec) { return Err(self.fail(&format!("{name} expects a vec, found {}", ty.name()))); }
                         if !mutable { return Err(self.fail(&format!("cannot modify immutable variable '{target}'"))); }
                         if self.borrows.iter().any(|&(bid, _)| bid == id) { return Err(self.fail(&format!("cannot modify '{target}' while it is borrowed"))); }
+                        // Ordering in place: qsort for i64, byte order for
+                        // strings, so sorted output is identical on both
+                        // platforms. The vector keeps its length.
+                        if name == "sort" || name == "reverse" {
+                            self.take(Kind::RParen)?; self.take(Kind::Semi)?;
+                            let strings = ty == Type::StrVec;
+                            result.push(if name == "sort" { Statement::Sort(id, strings, line, col) } else { Statement::Reverse(id, strings, line, col) });
+                            continue;
+                        }
                         if name == "push" {
                             self.take(Kind::Comma)?;
                             let (value, value_ty) = self.expression(0, ty == Type::StrVec)?;
@@ -2119,7 +2152,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             if n.owned { drop_owned_temp(out, &n); }
             Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
         }
-        Expr::StartsWith(s, prefix, line, col) => {
+        Expr::StartsWith(s, prefix) => {
             let h = emit_expr(s, out, next, false);
             let p = emit_expr(prefix, out, next, false);
             let id = *next; *next += 1;
@@ -2128,7 +2161,7 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             if p.owned { drop_owned_temp(out, &p); }
             Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
         }
-        Expr::EndsWith(s, suffix, line, col) => {
+        Expr::EndsWith(s, suffix) => {
             let h = emit_expr(s, out, next, false);
             let p = emit_expr(suffix, out, next, false);
             let id = *next; *next += 1;
@@ -2246,7 +2279,36 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let id = *next; *next += 1;
             out.push_str(&format!("    {}t{id} = ae_try_write_file({}.ptr, AE_VIEW({}), {line}, {col});\n", ty.c_temp(), p.text, c.text));
             if c.owned { drop_owned_temp(out, &c); }
+            // The path may be an owned temporary too (path_join of two views,
+            // for instance); it is consumed by the call, not by the caller.
+            if p.owned { drop_owned_temp(out, &p); }
             Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryAppendFile(path, content, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let c = emit_expr(content, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_append_file({}.ptr, AE_VIEW({}), {line}, {col});\n", ty.c_temp(), p.text, c.text));
+            if c.owned { drop_owned_temp(out, &c); }
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Env(variable, ty, line, col) => {
+            let v = emit_expr(variable, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_env({}.ptr, {line}, {col});\n", ty.c_temp(), v.text));
+            if v.owned { drop_owned_temp(out, &v); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::NowMs => {
+            let id = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{id} = ae_now_ms();\n"));
+            Emitted { text: format!("t{id}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::NowS => {
+            let id = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{id} = ae_now_s();\n"));
+            Emitted { text: format!("t{id}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::TryListDir(path, ty, line, col) => {
             let p = emit_expr(path, out, next, false);
@@ -2571,6 +2633,14 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                 let value = emit_expr(value, out, next, false);
                 out.push_str(&format!("    ae_vec_push(&v{id}, {}, {line}, {col});\n", value.text));
                 null_moves(out, &value.moves);
+            }
+            Statement::Sort(id, strings, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                out.push_str(&format!("    ae_{}_sort(&v{id});\n", if *strings { "strvec" } else { "vec" }));
+            }
+            Statement::Reverse(id, strings, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                out.push_str(&format!("    ae_{}_reverse(&v{id});\n", if *strings { "strvec" } else { "vec" }));
             }
             Statement::VecPop(id, line, col) => {
                 out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));

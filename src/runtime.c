@@ -458,6 +458,26 @@ static void ae_vec_forfeit(ae_vec *v) {
     v->cap = 0;
 }
 
+// In-place orderings for i64 vectors. qsort is the C library's introsort and
+// the comparator is a plain function, so no allocation and no closure state is
+// involved; vectors are at most INT64_MAX/8 elements, which qsort accepts as a
+// size_t count on both platforms.
+static int ae_cmp_i64(const void *left, const void *right) {
+    const int64_t a = *(const int64_t *)left;
+    const int64_t b = *(const int64_t *)right;
+    return (a > b) - (a < b);
+}
+static void ae_vec_sort(ae_vec *v) {
+    if (v->len > 1) qsort(v->data, (size_t)v->len, sizeof(int64_t), ae_cmp_i64);
+}
+static void ae_vec_reverse(ae_vec *v) {
+    for (int64_t i = 0, j = v->len - 1; i < j; i = i + 1, j = j - 1) {
+        const int64_t swap = v->data[i];
+        v->data[i] = v->data[j];
+        v->data[j] = swap;
+    }
+}
+
 // File I/O. Paths are UTF-8; on Windows they are widened for _wfopen so
 // non-ASCII paths behave like the rest of the platform layer.
 #ifdef _WIN32

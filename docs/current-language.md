@@ -108,6 +108,16 @@
 
 `for name in names` 与这些函数组合即可写出「列出→判定→搬移→清理」的文件整理流程，示例见 `examples/file_tidy.ae`。
 
+## 排序、时钟与环境变量
+
+`sort(v)` 与 `reverse(v)` **就地**重排可变向量：`i64` 向量按数值升序，`vec[string]` 按字节序（与 `keys()`、目录列表同一口径，所以输出在两平台一致）。空向量与单元素向量是空操作。`v` 必须是 `var` 变量，且不能在被借用期间（例如 `for x in v` 体内）调用；想反序就 `sort(v); reverse(v);`。
+
+`now_s()` / `now_ms()` 返回 Unix 纪元以来的秒/毫秒（`i64`）。`now_s()` 与 `try_file_info` 的 mtime 同单位，可直接相减算出「多久以前」。
+
+`env(name) -> ReadResult`：存在返回 `Ok(值)`，不存在返回 `Err("variable not set")`，**存在但为空**返回 `Ok("")`——「空」与「没有」是两件不同的事，混为一谈会让 `PATH=""` 悄悄变成「没有 PATH」。空名字报 `Err("variable name is empty")`。环境变量只读：没有 `set_env`，也没有枚举。
+
+`try_append_file(path, text) -> WriteResult` 以追加模式写入并返回字节数；`try_write_file` 仍然整体覆盖。每次调用都会开合文件，写很多小行时应先拼成一个字符串再一次写入。`sort`/`reverse`/`now_ms`/`now_s`/`env`/`try_append_file` 为保留名。
+
 ## 哈希表
 
 `var counts = map_new();` 建立一个空的 `map[string, i64]`——当前唯一的映射实例化：键必须是 `string`，值必须是 `i64`，类型书写为 `map[string, i64]`（可用于变量标注、参数、返回类型与结构体字段）。
