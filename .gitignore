@@ -7,3 +7,4 @@ bench-input.txt
 examples/*.summary
 ae-report/
 ae-json/
+__pycache__/
