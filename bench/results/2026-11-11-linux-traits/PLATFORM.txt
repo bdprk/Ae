@@ -1,0 +1,28 @@
+trait/impl 静态分派 · Linux 回填归档（2026-11-11）
+
+## 源码树身份
+提交 ed780a2（ADR-47），tar 管道同步到 ~/ae-traits；验证由 nohup
+后台任务在沙箱内完成（证书窗口短，任务不受连接影响）。
+
+## 平台
+instabox-node 沙箱：Debian 13，内核 6.18.54-instabox，x86-64，4 vCPU；
+gcc 14.2.0-19；rustc 1.99.0（环境见 env.txt）。
+
+## 命令（沙箱内后台执行，工作目录 = ~/ae-traits）
+- cargo build --locked && cargo test --locked
+- cargo build --release --locked
+- python3 scripts/verify_generated_c.py --leak
+- python3 scripts/verify_generated_c.py --sanitize
+- target/release/ae run examples/traits.ae
+全部输出在 traits-all.log。
+
+## 结果摘要
+- cargo test：31 单元 + 154 集成全通过（与 Windows 同数，含 3 个新 trait 集成：
+  分派语义、八类拒绝、跨文件一致性）。
+- 净化器 + 泄漏：54 个用例 PASS（27 --leak + 27 --sanitize，含 traits.ae），
+  退出分配块 0（glibc 基线），无 ASan/UBSan 报告。
+- examples/traits.ae 输出 area=49 / area=12 / 12（与 Windows 逐字一致）。
+
+## 结论与边界
+ADR-47 在 Linux 上正确性验证通过，升级为**双平台验证**。
+分派无运行时开销（即直接调用），无独立性能对照需要；绝对时间不跨平台比较。
