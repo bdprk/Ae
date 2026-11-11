@@ -32,7 +32,7 @@
 
 **跨平台文本**：精确值（`sqrt(4.0)`→`2.0`、`floor`/`ceil`/`round` 的整值、`exp(0.0)`、`log(1.0)`、`sin(0.0)`、`cos(0.0)`、`pow(2.0,10.0)`）与 `nan` 拼写在两平台一致（文本由运行时自产，见上）；超越函数（`sin(1.0)` 等）不同 libm 可能差 1 ulp，**跨平台比较用容差**（`abs(value - expected) < 1e-15`），不逐字节比打印文本。示例见 `examples/math_basics.ae`。
 
-`f64` 可作参数、返回值、结构体字段、枚举负载和泛型实参（`Option[f64]`）；`vec` 仍只装 `i64`，`map` 的值仍只有 `i64`，`&f64` 不可借用（只读借用只有 `string`、`vec`、`vec[string]` 三种）。数学内建之外尚无 `f32`、十进制小数、`min`/`max`、`f64` 容器（`vec[f64]`/`map[string, f64]`）。
+`f64` 可作参数、返回值、结构体字段、枚举负载和泛型实参（`Option[f64]`），也是 `vec[f64]` 的元素（ADR-61，见下文向量章节）；`map` 的值仍只有 `i64`，`&f64` 不可借用（只读借用是 `string`、`vec`、`vec[string]`、`vec[f64]` 四种）。数学内建之外尚无 `f32`、十进制小数、`min`/`max`、`map[string, f64]`。
 
 ## 拥有型字符串与移动语义
 
@@ -42,7 +42,7 @@
 
 ## 控制流程
 
-`if 条件 { ... } else { ... }`：条件必须是 `bool` 表达式；支持 `else if` 链，末尾 `else` 可省略。`while 条件 { ... }` 每次循环重新计算条件。`for i in 开始..结束 { ... }` 迭代半开区间：界只求值一次且自左向右，`i` 是循环作用域内的不可变 `i64`，隐藏的自增是受检算术（到达 `i64` 最大值会安全失败）。`for x in 向量变量 { ... }` 按值迭代元素：`i64` 向量里 `x` 是不可变拷贝，`vec[string]` 里 `x` 是元素视图；长度在循环开始时捕获一次。被迭代的向量在整个循环体内被借用，因此循环体内**移动或原地修改**它（`push`/`pop`/索引写）都在编译期拒绝——尽管长度快照让 `push` 在语义上可行，当前实现选择保守。`break` 立即退出最内层循环；`continue` 跳过剩余主体——在 `for` 中仍执行自增。`break`/`continue` 仅允许出现在循环内。三种循环都适用同一条移动规则：**循环体不得把循环外声明的拥有型值移出去**（`let t = s;`、`f(s)`、`return s`），除非在本次循环体结束前重新赋值给它——否则下一次迭代会读到已移动的值；诊断指向循环关键字。`while` 与两种 `for` 的循环体内部声明的拥有值在每轮结束时释放。
+`if 条件 { ... } else { ... }`：条件必须是 `bool` 表达式；支持 `else if` 链，末尾 `else` 可省略。`while 条件 { ... }` 每次循环重新计算条件。`for i in 开始..结束 { ... }` 迭代半开区间：界只求值一次且自左向右，`i` 是循环作用域内的不可变 `i64`，隐藏的自增是受检算术（到达 `i64` 最大值会安全失败）。`for x in 向量变量 { ... }` 按值迭代元素：`i64` 向量里 `x` 是不可变拷贝，`vec[string]` 里 `x` 是元素视图，`vec[f64]` 里 `x` 是不可变的 `f64` 拷贝；长度在循环开始时捕获一次。被迭代的向量在整个循环体内被借用，因此循环体内**移动或原地修改**它（`push`/`pop`/索引写）都在编译期拒绝——尽管长度快照让 `push` 在语义上可行，当前实现选择保守。`break` 立即退出最内层循环；`continue` 跳过剩余主体——在 `for` 中仍执行自增。`break`/`continue` 仅允许出现在循环内。三种循环都适用同一条移动规则：**循环体不得把循环外声明的拥有型值移出去**（`let t = s;`、`f(s)`、`return s`），除非在本次循环体结束前重新赋值给它——否则下一次迭代会读到已移动的值；诊断指向循环关键字。`while` 与两种 `for` 的循环体内部声明的拥有值在每轮结束时释放。
 
 `exit(状态码);` 立刻终止进程，状态码必须是 `i64`（进程退出码按 `int` 截断，POSIX 上 shell 只看低 8 位）。终止前先刷新标准输出、再释放在场的全部拥有值——所以「打印后退出」不会丢最后一行，分配账目也保持平衡。`exit` 之后同块内的语句不可达但仍需通过解析。只经 `exit` 结束、从不返回值的函数可以写成任意返回类型而无需 `return`。
 
@@ -88,7 +88,7 @@ fn main() {
 
 ## 函数
 
-`fn add(a: i64, b: i64) -> i64 { return a + b; }` 定义函数；返回类型可为 `i64`、`bool`、`string` 或 `vec`；参数类型可为 `i64`、`bool`、`string`（按值，移动）、`vec`（按值，移动）、`&vec`（只读借用）、`&vec[string]`（只读借用字符串向量）、`&string`（只读借用字符串，绑定为视图）、枚举或结构体（按值，移动）或 `&[i64; N]`（只读借用数组），最多 64 个。`&string` 调用点直接写实参（`f(name)`、`f("literal")`、`f(view)`），不移动也不复制，函数体内按视图规则使用（含 `+` 拼接，会复制）。借用值没有独立存储：`let q = 借来的参数;` 被拒绝，借用只能作为参数或 `match` 绑定存在。实参从左到右求值；字符串实参移动所有权。函数可以在调用点之前或之后定义，支持自递归和相互递归。所有路径必须明确返回值；编译器目前保守地只认可直接 `return` 或 `if`/`else` 两个分支均返回。`main` 不接受参数或 `return`。`len` 是内置函数，不能被重新定义。递归深度受系统栈限制。
+`fn add(a: i64, b: i64) -> i64 { return a + b; }` 定义函数；返回类型可为 `i64`、`bool`、`string` 或 `vec`；参数类型可为 `i64`、`bool`、`f64`、`string`（按值，移动）、`vec`（按值，移动）、`vec[f64]`（按值，移动，ADR-61）、`&vec`（只读借用）、`&vec[string]`（只读借用字符串向量）、`&vec[f64]`（只读借用，ADR-61）、`&string`（只读借用字符串，绑定为视图）、枚举或结构体（按值，移动）或 `&[i64; N]`（只读借用数组），最多 64 个。`&string` 调用点直接写实参（`f(name)`、`f("literal")`、`f(view)`），不移动也不复制，函数体内按视图规则使用（含 `+` 拼接，会复制）。借用值没有独立存储：`let q = 借来的参数;` 被拒绝，借用只能作为参数或 `match` 绑定存在。实参从左到右求值；字符串实参移动所有权。函数可以在调用点之前或之后定义，支持自递归和相互递归。所有路径必须明确返回值；编译器目前保守地只认可直接 `return` 或 `if`/`else` 两个分支均返回。`main` 不接受参数或 `return`。`len` 是内置函数，不能被重新定义。递归深度受系统栈限制。
 
 ## 只读数组参数
 
@@ -142,6 +142,8 @@ v1 边界：trait 签名不支持 `&T`（借用的落地形状需要独立设计
 
 `split(s, sep) -> vec[string]` 按分隔符切分（保留空段，Python 语义；空分隔符为运行时错误）；`join(parts, sep) -> string` 以分隔符连接（借用向量，总长先溢出检查）；`args() -> vec[string]` 返回程序参数（含 argv[0]）。**参数一律是 UTF-8**：Windows 的 CRT 按 ANSI 代码页把命令行交给 `main`，`args()` 因此在入口处把它经 UTF-16 转成 UTF-8（ADR-54），所以命令行传来的中文路径可直接用于文件 API；代码页表示不了的字符在进入程序前就已丢失，这不是 `args()` 能恢复的。类型书写为 `vec[string]`（`vec` 单写是 `i64` 向量）。`vec[string]` 是拥有型容器：赋值/传参/返回移动；`push` 移入字符串，`pop` 释放并移除末元素；`v[i]` 读与 `v[i] = s;` 写按当前长度做边界检查（写入先检查下标、释放旧元素、再移入新值）。**元素是只读借用**：不能把元素移出向量（拼接或赋给新变量被拒绝）；`len(v)` 为 O(1)。`split`/`args`/`join`/`lines`/`count_lines_with`/`tokenize` 为保留名。`split` 与 `lines` 的结果向量把全部 token 放进一块字节区（ADR-49）：一次切分的分配次数与 token 数无关，元素仍是只读借用、不能移出；`push`、`args`、`keys` 产出的向量仍是逐元素自有。`lines(s) -> vec[string]` 按换行切分：尾部换行不产生末尾空行，内部空行保留，空输入为零行（换行扫描为运行时字长优化实现）。 `count_lines_with(text, pattern) -> i64` 统计包含模式的行数：单遍零分配的融合实现，空文本为零、空模式匹配每一行。
 
+**`vec[f64]`（ADR-61）**：`f64` 元素的拥有型向量，与 `vec`（`i64`）同构——赋值/传参/返回移动，作用域退出或提前返回时释放；`v[i]` 读与 `v[i] = x;` 写按当前长度做边界检查，元素是纯值（无借用元素、可整体覆盖）。字面量按元素类型推断：`vec[1, 2]` 是 `vec`，`vec[1.0, 2.0]` 是 `vec[f64]`，**混合元素直接报错**（不做隐式转换），空字面量 `vec[]` 仍是 `vec`；空的 `vec[f64]` 用 `f64vec_new()` 创建（对齐 `strvec_new`），`push`/`pop` 接受 `f64`。`for x in v` 里 `x` 是 `f64` 拷贝；`&vec[f64]` 是只读借用，可作参数与 `&T` 泛型实参，结构体字段与枚举负载可用 `vec[f64]` 并随所属值恰好释放一次。**`sort`/`reverse` 不支持 `vec[f64]`**：NaN 没有全序，比较器无法既快又与平台无关，显式拒绝而不是给出平台相关的顺序。生成 C 用 `ae_f64vec_*` 运行时家族（与 `ae_vec_*` 同构，8 字节/元素，无状态位）。示例见 `examples/float_stats.ae`。
+
 ## 借用字符串视图
 
 `slice_view(s, start, end) -> string view` 创建零拷贝借用视图。基可以是**裸字符串变量**，也可以是**结构体变量的字符串字段**（`slice_view(p.name, 0, 5)`，ADR-52）；后者借用的是**整个变量**——视图存活期（当前作用域）内该变量不可移动、不可整体赋值，**写它的任何字段**也会被拒绝（保守规则，不是字段级借用）。嵌套字段（`a.b.c`）、数组/向量元素上的字段（`v[0].name`）与非字符串字段仍被拒绝，每种都有各自的错误信息。视图是非拥有类型：赋值/传参即复制借用，永不释放。视图支持 `len`（O(1)）、`contains`、`==`/`!=`（按内容）、`print`、`bytes`、`slice`（得到拥有副本）、`slice_view`（再借用），**可与字符串拼接**（`+` 会把视图复制进新字符串，视图本身仍然可用）；不可作为函数返回类型（无跨函数生命周期跟踪），也不能当作 `string` 传给按值接收的函数。越界视图以位置报告运行时错误。`for x in vec[string]` 按借用视图迭代元素（不可移出元素，容器在循环内不可修改/移动）。
@@ -188,7 +190,7 @@ v1 边界：trait 签名不支持 `&T`（借用的落地形状需要独立设计
 
 程序预置八个结果枚举（无需导入，变体顺序固定，编号 0–7）：`ReadResult{Ok(string), Err(string)}`、`WriteResult{Ok(i64), Err(string)}`、`IntResult{Ok(i64), Err(string)}`、`DirResult{Ok(vec[string]), Err(string)}`、`FileResult{Ok(i64, i64, bool), Err(string)}`、`StatusResult{Ok, Err(string)}`、`BoolResult{Ok(bool), Err(string)}`、`CommandResult{Ok(i64, string), Err(string)}`。可失败内建：`try_read_file(path) -> ReadResult`、`try_write_file(path, content) -> WriteResult`（成功返回写入字节数）、`parse_int(text) -> IntResult`。失败返回 `Err` 负载的错误描述，**不终止进程**；`read_file`/`write_file` 仍是失败即终止的不可恢复版本。`parse_int` 严格按十进制：可选 `+`/`-`、只允许 ASCII 数字、整串必须消费完、正负分别以 `9223372036854775807`/`-9223372036854775808` 为界，其余情况均为 `Err`。`to_string(i64) -> string` 是十进制格式化，与 `parse_int` 构成往返。
 
-结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string`/`map_new`/`map_get`/`map_has`/`map_remove`/`keys`/`utf8_len`/`utf8_prefix`/`strvec_new`/`run_command` 与八个结果类型名均为保留名。
+结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string`/`map_new`/`map_get`/`map_has`/`map_remove`/`keys`/`utf8_len`/`utf8_prefix`/`strvec_new`/`f64vec_new`/`run_command`、数学内建 `sqrt`/`abs`/`floor`/`ceil`/`round`/`exp`/`log`/`sin`/`cos`/`pow`/`atan2`（ADR-60）与八个结果类型名均为保留名。
 
 ## 错误与「可能没有」传播 `?`
 
@@ -216,7 +218,7 @@ v1 边界：trait 签名不支持 `&T`（借用的落地形状需要独立设计
 
 ## 排序、时钟与环境变量
 
-`sort(v)` 与 `reverse(v)` **就地**重排可变向量：`i64` 向量按数值升序，`vec[string]` 按字节序（与 `keys()`、目录列表同一口径，所以输出在两平台一致）。空向量与单元素向量是空操作。`v` 必须是 `var` 变量，且不能在被借用期间（例如 `for x in v` 体内）调用；想反序就 `sort(v); reverse(v);`。
+`sort(v)` 与 `reverse(v)` **就地**重排可变向量：`i64` 向量按数值升序，`vec[string]` 按字节序（与 `keys()`、目录列表同一口径，所以输出在两平台一致）。`vec[f64]` 不支持两者：NaN 没有全序（ADR-61）。空向量与单元素向量是空操作。`v` 必须是 `var` 变量，且不能在被借用期间（例如 `for x in v` 体内）调用；想反序就 `sort(v); reverse(v);`。
 
 `now_s()` / `now_ms()` 返回 Unix 纪元以来的秒/毫秒（`i64`）。`now_s()` 与 `try_file_info` 的 mtime 同单位，可直接相减算出「多久以前」。
 

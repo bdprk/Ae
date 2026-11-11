@@ -70,6 +70,8 @@ cargo run -- version
 
 数学内建 v1（ADR-60）：`sqrt` `abs` `floor` `ceil` `round` `exp` `log` `sin` `cos` `pow` `atan2`，参数与返回值都是 `f64`，1:1 映射 C 库；定义域错误按 IEEE 返回（`sqrt(-1.0)` 是 `nan`）而不是终止，`round` 是 0.5 远离零。名字是保留名，不做隐式转换（`sqrt(4)` 报错）。示例 `cargo run -- run examples/math_basics.ae`。
 
+`vec[f64]`（ADR-61）：`f64` 元素的拥有型向量——字面量按元素推断（`vec[1.0, 2.0]`），受检下标读写、`push`/`pop`、按值 for-in、`&vec[f64]` 只读借用；空向量用 `f64vec_new()`。`sort`/`reverse` 对它显式拒绝（NaN 无全序）。示例 `cargo run -- run examples/float_stats.ae`（统计 + sqrt 联动）。
+
 生成的 C 只包含程序真正用到的运行时函数**及其注释**（ADR-50）：函数上方的 `//` 说明随函数一起被裁剪，`print(1)` 的生成 C 因此从 25,134 降到 11,105 字节，端到端冷构建实测 390.66 → 346.12 ms；`/* */` 分节注释与 `win32-header` 标记不受影响。Windows 上 `ae build` 也能处理绝对路径含非 ASCII 的输出（ADR-51）：C 编译器在临时目录内以相对文件名运行，绕开 MinGW 命令行按 ANSI 代码页转换导致的 `cannot open output file`。
 
 验证生成的 C：`cargo build` 后运行 `python scripts/verify_generated_c.py`；Linux 可加 `--sanitize` 启用地址和未定义行为检测，MinGW 无 libasan 时用 `--leak` 走 `-Wl,--wrap` 的分配计数（要求每个程序的退出分配块数等于空程序基线）。检测覆盖有限案例，不能证明实现完全安全。

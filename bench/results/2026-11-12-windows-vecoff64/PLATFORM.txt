@@ -1,0 +1,64 @@
+ADR-61 vec[f64]（f64 元素向量容器）· Windows 归档（2026-11-12）
+
+## 平台
+Windows x86-64，8 核 / 16 线程，MinGW-W64 GCC 16.2.0（UCRT）。AE 0.1.1。
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak（用例表新增 float_stats.ae）
+- python scripts/fmt_acceptance.py --json fmt-acceptance.json
+- for f in $(find examples -name "*.ae" ! -name "report.ae" ! -name "words.ae"); do ae check "$f"; done
+- cargo run -- run examples/float_stats.ae
+
+## 交付内容
+- 类型 `vec[f64]`（拥有型，元素是纯值：无所有权、无借用元素、无逐元素释放）
+  与只读借用 `&vec[f64]`；`Type::VecF`/`Type::VecFRef` 进入审计类型集与
+  `&T` 泛型借用可实例化集合。
+- 字面量 `vec[...]` 按元素类型推断：全 i64 → `vec`，全 f64 → `vec[f64]`，
+  混合报「does not convert implicitly」；`vec[]` 空字面量仍是 `vec`（i64），
+  空的 f64 向量用新内建 `f64vec_new()`（对齐 `strvec_new` 先例）。
+- 操作：受检下标读写、`len`、`push`/`pop`（语句内建，函数式写法）、
+  for-in 按值迭代、移动与释放（提前返回、`?`、结构体字段、枚举负载）、
+  `&vec[f64]` 只读借用与转发（借用变量发射时解引用为值）。
+- **不做**：`sort`/`reverse` 对 vec[f64] 显式拒绝（NaN 无全序，报错信息写明）；
+  `map[string, f64]`（独立设计：FloatResult 形状问题另立 ADR）；字段上的
+  元素索引（与既有 vec 字段限制一致）。
+- 运行时家族 `ae_f64vec_*`（new/push/pop/len/get/release/forfeit）与
+  `ae_vec_*` 同构；get 复用 `ae_vec_index` 做受检边界检查。
+
+## 结果
+- cargo test：35 单元 + 174 集成全通过。新增 4 个测试：存取/迭代/len/push/pop/
+  f64vec_new、移动+借用+提前返回释放、11 类拒绝（混合字面量、i64 实参 push、
+  sort/reverse、浮点下标、use-after-move、借用期间写、非 f64 赋值等）、
+  结构体字段与枚举负载的释放。另有 1 个旧测试更新：`vec[1.0]` 从「拒绝」
+  变为合法 vec[f64] 字面量（语言变化），改测混合字面量仍被拒绝。
+- **顺手收紧（两家族一致）**：`for x in v { v[0] = …; }` 在循环借用容器期间
+  改元素——i64 vec 此前也不拒绝（既有漏洞），本轮统一补上借用检查。
+- --leak：33 个用例 PASS（原 32 + float_stats），退出分配块数全部等于 UCRT
+  基线 2 块——结构体字段与枚举负载中的 vec[f64] 恰好释放一次。
+- fmt 验收：43 个文件幂等（新增 float_stats.ae 已是格式化形态）。
+- 41 个程序通过 `check`。
+- float_stats.ae 运行输出：count 8 / mean 5.0 / variance 4.0 / stddev 2.0 /
+  peak 9.0 / zscore 2.0 / doubled 8.0 / doubled last 18.0 / total 40.0
+  （全部精确可表示值，与数学内建联动）。
+
+## 资源成本
+- 生成 C：`print(1)` 13,822 → **13,909**（+87：ae_f64vec 的 typedef 与
+  ae_vec 的 typedef 同类，必须常驻——结构体布局会引用它；f64vec 函数
+  本身按符号可达闭包裁剪，不用数学/容器的程序一个函数都不保留。第一版把
+  240 字符说明注释放在 typedef 旁进了常驻前缀，按 ADR-50 纪律移进函数体）。
+- float_stats.ae 生成 C 32,783 字节（字符串拼接簇为主，与 ADR-60 归档一致）。
+- vec[f64] 槽大小：8 字节/元素（double），无状态位、无借用标记。
+
+## 说明
+- 过程发现（两处真实 bug，测试抓到）：
+  1. 字面量推断最初写 `element_ty.unwrap_or(Type::Vec)`——`element_ty` 是
+     Option<Type>，unwrap_or 返回的是**元素类型**（Int），不是向量类型；
+     `let v = vec[3]` 因此推断成 i64，15 个既有测试当场失败。教训：Option
+     解包的语义要盯着装的是什么。
+  2. for-in 元素构造的 by_ref 标志只写了 `first_ty == Type::VecRef`，漏了
+     VecFRef——借用参数上迭代的元素访问生成了值形态的 C（`v0.data`），gcc
+     以「v0 is a pointer」抓到。既有 i64 vec 的写法提醒了正确形状。
+- Linux 回填待做：同一提交树在 instabox-node 跑全套（`--sanitize` + `--leak`
+  + fmt 验收 + float_stats 输出对照），归档 `2026-11-12-linux-vecoff64/`，
+  状态才升级为双平台验证。

@@ -122,6 +122,21 @@ def run():
             "log(exp(1)) ok\n"
             "pow(2,0.5) ok"
         ).encode("utf-8"), True),
+        # vec[f64] (ADR-61): statistics over an owned float vector with the
+        # math builtins; the move into `total` happens last and the accumulator
+        # grows by push. All printed values are exactly representable, so the
+        # expected bytes are identical on both platforms.
+        ("float_stats.ae", (
+            "count 8\n"
+            "mean 5.0\n"
+            "variance 4.0\n"
+            "stddev 2.0\n"
+            "peak 9.0\n"
+            "zscore 2.0\n"
+            "doubled 8.0\n"
+            "doubled last 18.0\n"
+            "total 40.0"
+        ).encode("utf-8"), True),
         ("json_report.ae", (
             "ready\n"
             "wrote 175 bytes\n"

@@ -1,0 +1,50 @@
+// Statistics over a vec[f64] (ADR-61): literals, checked indexing, push into
+// an f64vec_new accumulator, and by-value for-in iteration — combined with the
+// math builtins (ADR-60), where sqrt turns the variance into the standard
+// deviation. Every printed value is exactly representable, so the output is
+// byte-identical on Windows and Linux; move semantics are exercised at the
+// end, where `total(samples)` consumes the vector.
+fn mean(values: &vec[f64]) -> f64 {
+    var total = 0.0;
+    for x in values { total = total + x; }
+    return total / to_f64(len(values));
+}
+
+fn variance(values: &vec[f64], center: f64) -> f64 {
+    var total = 0.0;
+    for x in values { let gap = x - center; total = total + gap * gap; }
+    return total / to_f64(len(values));
+}
+
+fn peak(values: &vec[f64]) -> f64 {
+    var best = values[0];
+    for x in values { if x > best { best = x; } }
+    return best;
+}
+
+fn total(values: vec[f64]) -> f64 {
+    var sum = 0.0;
+    for x in values { sum = sum + x; }
+    return sum;
+}
+
+fn main() {
+    let samples = vec[2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
+    print("count " + to_string(len(samples)));
+    let center = mean(&samples);
+    print("mean " + to_string(center));
+    let spread = variance(&samples, center);
+    print("variance " + to_string(spread));
+    print("stddev " + to_string(sqrt(spread)));
+    print("peak " + to_string(peak(&samples)));
+    print("zscore " + to_string((9.0 - center) / sqrt(spread)));
+
+    var doubled = f64vec_new();
+    for i in 0..len(samples) { push(doubled, samples[i] * 2.0); }
+    print("doubled " + to_string(doubled[3]));
+    print("doubled last " + to_string(doubled[len(doubled) - 1]));
+
+    // The move happens last: `total` consumes the vector, so `samples` is
+    // finished here.
+    print("total " + to_string(total(samples)));
+}

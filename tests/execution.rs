@@ -226,6 +226,54 @@ fn math_builtins_reject_wrong_types_arities_and_redefinition() {
     }
 }
 #[test]
+fn float_vectors_store_index_and_iterate() {
+    // ADR-61: vec[f64] behaves like vec with f64 elements — literal, checked
+    // indexing, len, push/pop, and by-value for-in iteration.
+    let source = "fn mean(values: &vec[f64]) -> f64 { var total = 0.0; for x in values { total = total + x; } return total / to_f64(len(values)); } fn main() { let v = vec[2.0, 4.0, 6.0]; print(len(v)); print(v[0]); print(v[2]); var w = vec[2.0, 4.0, 6.0]; w[1] = 5.5; print(w[1]); print(v[1]); push(w, 8.0); print(len(w)); pop(w); print(len(w)); var acc = f64vec_new(); push(acc, 1.5); push(acc, 2.5); print(len(acc)); print(acc[1]); print(mean(&v)); print(mean(&w)); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    // mean(v)=4.0; mean(w) with w[1]=5.5 and no trailing 8.0 → (2+5.5+6)/3=4.5
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "3\n2.0\n6.0\n5.5\n4.0\n4\n3\n2\n2.5\n4.0\n4.5\n");
+}
+#[test]
+fn float_vectors_move_release_and_borrow_like_other_owned_types() {
+    // Moves empty the source slot; borrows are read-only and refuse writes
+    // while active; an early return still releases the live vector.
+    let source = "fn consume(values: vec[f64]) -> f64 { if len(values) > 1 { return values[0] + values[1]; } return 0.0; } fn read_only(values: &vec[f64]) -> f64 { return values[1]; } fn maybe(keep: bool) -> f64 { var v = vec[10.0, 20.0, 30.0]; if !keep { return v[0]; } return v[2]; } fn main() { let v = vec[1.0, 2.0, 3.0]; print(read_only(&v)); print(consume(v)); print(maybe(true)); print(maybe(false)); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "2.0\n3.0\n30.0\n10.0\n");
+}
+#[test]
+fn float_vector_misuse_is_rejected() {
+    for (source, expected) in [
+        ("fn main() { let v = vec[1, 2.0]; }", "does not convert implicitly"),
+        ("fn main() { let v = vec[\"a\"]; }", "vector elements must be i64 or f64"),
+        ("fn main() { var v = vec[1.0]; push(v, 2); }", "vector elements must be f64"),
+        ("fn main() { var v = vec[1.0]; sort(v); }", "not supported for vec[f64]"),
+        ("fn main() { var v = vec[1.0]; reverse(v); }", "not supported for vec[f64]"),
+        ("fn main() { let v = vec[1.0]; print(v[0.5]); }", "index must be an integer"),
+        ("fn main() { let v = vec[1.0, 2.0]; let w = v; print(v[0]); }", "moved"),
+        ("fn main() { var v = vec[1.0]; v[0] = 1; }", "vector elements must be f64"),
+        ("fn main() { var v = vec[1.0]; for x in v { v[0] = 2.0; } }", "while it is borrowed"),
+        ("fn main() { var v = f64vec_new(); let x = v; push(v, 1.0); }", "moved"),
+        ("fn main() { let v = vec[1.0]; let x = v + 1.0; }", "mixed i64/f64 arithmetic"),
+    ] {
+        let message = check_rejects(source);
+        assert!(message.contains(expected), "{source}: {message}");
+    }
+}
+#[test]
+fn float_vectors_live_in_structs_and_enums_and_release_exactly_once() {
+    // Struct fields of vec[f64] type release with the struct (leak check runs
+    // in the generated-C suite); enum payloads bind as read-only vec[f64]
+    // borrows in the match arm, where element access works on the binding.
+    let source = "struct Sample { values: vec[f64], label: string } enum Reading { Wave(vec[f64]), None } fn main() { var s = Sample { values: vec[1.0, 2.0], label: \"a\" }; print(s.label); let r = Reading::Wave(vec[3.5, 4.5]); match r { Reading::Wave(w) => { print(w[0] + w[1]); } Reading::None => { print(0.0); } } print(\"done\"); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "a\n8.0\ndone\n");
+}
+#[test]
 fn arrays_support_checked_read_write_and_expression_order() {
     let source = "fn main() { let original = [3, 4]; var values = [original[1], 5 + 2]; values[1] = values[0] + values[1]; print(values[1]); print(original[0]); }";
     let output = execute(source);
@@ -3191,7 +3239,9 @@ fn float_rejections_keep_conversions_explicit() {
         ("fn main() { if 1.0 { print(1); } }", "boolean"),
         ("fn main() { print(1.0e400); }", "not finite"),
         ("fn main() { print(1.0e-400); }", "underflows"),
-        ("fn main() { let v = vec[1.0]; }", "must be i64"),
+        // vec[1.0] became a valid vec[f64] literal (ADR-61); what stays
+        // rejected is mixing element types inside one literal.
+        ("fn main() { let v = vec[1, 2.0]; }", "does not convert implicitly"),
         ("fn main() { print(to_f64(1.0)); }", "expects an i64"),
         ("fn main() { print(to_i64(1)); }", "expects an f64"),
         ("fn main() { print(to_string(true)); }", "expects an i64 or f64"),

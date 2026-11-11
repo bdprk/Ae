@@ -777,6 +777,52 @@ static void ae_vec_forfeit(ae_vec *v) {
     v->cap = 0;
 }
 
+typedef struct { double *data; int64_t len; int64_t cap; } ae_f64vec; // ADR-61
+static ae_f64vec ae_f64vec_new(size_t line, size_t column) {
+    // Same shape as ae_vec with double elements (ADR-61). The element
+    // type is a plain value — no ownership, no borrowed views, no release
+    // per element — so this family has no borrow tracking at all.
+    ae_f64vec v;
+    v.len = 0;
+    v.cap = 4;
+    v.data = ae_alloc((size_t)v.cap * sizeof(double), line, column);
+    return v;
+}
+static void ae_f64vec_push(ae_f64vec *v, double x, size_t line, size_t column) {
+    if (v->len == v->cap) {
+        if (v->cap > INT64_MAX / 2) ae_fail("vector too large", line, column);
+        int64_t ncap = v->cap * 2;
+        double *nd = ae_alloc_resize(v->data, (size_t)ncap * sizeof(double), line, column);
+        v->data = nd;
+        v->cap = ncap;
+    }
+    v->data[v->len] = x;
+    v->len = v->len + 1;
+}
+static void ae_f64vec_pop(ae_f64vec *v, size_t line, size_t column) {
+    if (v->len == 0) ae_fail("pop from empty vector", line, column);
+    v->len = v->len - 1;
+}
+static int64_t ae_f64vec_len(ae_f64vec v, size_t line, size_t column) {
+    (void)line; (void)column;
+    return v.len;
+}
+static double ae_f64vec_get(ae_f64vec v, int64_t index, size_t line, size_t column) {
+    ae_vec_index(index, v.len, line, column);
+    return v.data[index];
+}
+static void ae_f64vec_release(ae_f64vec *v) {
+    ae_free(v->data);
+    v->data = NULL;
+    v->len = 0;
+    v->cap = 0;
+}
+static void ae_f64vec_forfeit(ae_f64vec *v) {
+    v->data = NULL;
+    v->len = 0;
+    v->cap = 0;
+}
+
 // In-place orderings for i64 vectors. qsort is the C library's introsort and
 // the comparator is a plain function, so no allocation and no closure state is
 // involved; vectors are at most INT64_MAX/8 elements, which qsort accepts as a
