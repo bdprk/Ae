@@ -1,0 +1,5 @@
+print    C bytes  25134 ->  11105 (0.442x)  gcc  149.82 ->  146.21 ms (saved   3.61)
+strings  C bytes  25813 ->  12042 (0.467x)  gcc  155.21 ->  141.42 ms (saved  13.79)
+map      C bytes  32947 ->  22481 (0.682x)  gcc  165.82 ->  166.17 ms (saved  -0.35)
+cold build --release: 390.66 -> 346.12 ms (saved 44.54, 11.4%)
+wrote bench/results/2026-11-11-windows-prune-comments/prune-timings.json

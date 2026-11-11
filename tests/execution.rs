@@ -22,6 +22,32 @@ fn arithmetic_failures_are_reported() {
     }
 }
 #[test]
+fn build_accepts_non_ascii_absolute_output_paths() {
+    // The compiler used to pass the temporary directory to gcc as an absolute
+    // path. On Windows the MinGW toolchain converts the command line to the ANSI
+    // code page, so a path like `...\用户\...` reached the linker mangled and
+    // the build failed with "cannot open output file" — invisible whenever the
+    // cache answered first, because then gcc never ran. The temporary files are
+    // now named relative to the compiler's working directory.
+    let dir = unique_temp_dir("nonascii");
+    let cjk = dir.join("中文目录");
+    fs::create_dir(&cjk).unwrap();
+    let source = dir.join("hello.ae");
+    fs::write(&source, "fn main() { print(42); }\n").unwrap();
+    let cache = dir.join("cache");
+    fs::create_dir(&cache).unwrap();
+    let output = cjk.join(if cfg!(windows) { "程序.exe" } else { "程序" });
+    let out = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("build").arg(&source).arg("-o").arg(&output)
+        .env("AE_CACHE", &cache)
+        .output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(output.is_file(), "missing {}", output.display());
+    let run = Command::new(&output).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n").trim(), "42");
+    let _ = fs::remove_dir_all(&dir);
+}
+#[test]
 fn build_creates_executable_and_refuses_to_overwrite() {
     let dir = std::env::temp_dir().join(format!("ae-build-test-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
     fs::create_dir(&dir).unwrap();

@@ -1,0 +1,15 @@
+ADR-51 非 ASCII 绝对路径构建 · Linux 归档（2026-11-11）
+
+## 平台
+instabox-node：Debian 13 / gcc 14.2.0-19。
+
+## 命令
+AE_CACHE=/tmp/ae-pc/fresh ae build /tmp/ae-pc/cjk/h.ae -o "/tmp/ae-pc/中文目录/程序"
+
+## 结果
+exit=0，产物 17,168 字节，运行输出 42。Linux 的工具链不做 ANSI 代码页转换，该路径本来可用；
+这条记录是无回归证据（修复只在编译器调用处加了 current_dir 与相对文件名）。
+
+## 备注
+首次尝试失败是因为父目录「中文目录」不存在，CLI 明确报
+`cannot create temporary directory in ...: No such file or directory`——这是正确行为，不是缺陷。

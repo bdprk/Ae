@@ -1,0 +1,4 @@
+print(1) generated C bytes:
+11105
+string program str_from/str_eq hits:
+2

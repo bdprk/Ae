@@ -227,7 +227,14 @@ fn build_c(c: &str, dir: &Path, release: bool, use_cache: bool) -> Result<PathBu
     }
 
     let started = Instant::now();
-    let status = Command::new(&cc).arg("-std=c11").arg(optimization).arg(&cfile).arg("-o").arg(&exe)
+    // Run the compiler *inside* the temporary directory with bare file names.
+    // On Windows the MinGW toolchain converts the command line to the ANSI code
+    // page, so an absolute path holding characters outside that code page (a
+    // directory named 用户, for example) reaches the linker mangled and the
+    // build dies with "cannot open output file". Relative names keep the
+    // command line ASCII whatever the project or output path is.
+    let status = Command::new(&cc).current_dir(dir).arg("-std=c11").arg(optimization)
+        .arg("program.c").arg("-o").arg(exe_name)
         .status().map_err(|e| format!("cannot start C compiler {:?}: {e}; set AE_CC to its executable", cc))?;
     if timings_enabled() {
         eprintln!("ae cache: miss");

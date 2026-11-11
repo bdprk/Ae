@@ -1,0 +1,9 @@
+--- before the fix (pre-ADR-51 binary), fresh cache ---
+exit=1
+D:/DevTools/WinLibs/mingw64/bin/../lib/gcc/x86_64-w64-mingw32/16.2.0/../../../../x86_64-w64-mingw32/bin/ld.exe: cannot open output file D:/用户/trevv/桌面/ae/target/probe/nonascii/中文目录\.ae-24016-0\program.exe: No such file or directory
+collect2.exe: error: ld returned 1 exit status
+ae: C compiler failed: exit code: 1
+--- after the fix, fresh cache ---
+exit=0
+after.exe bytes 64195
+program output: 42

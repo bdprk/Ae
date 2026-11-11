@@ -1,0 +1,19 @@
+ADR-51 非 ASCII 绝对路径构建 · Windows 归档（2026-11-11）
+
+## 平台
+Windows x86-64，MinGW-W64 GCC 16.2.0（UCRT），控制台代码页 936（GBK）。
+
+## 复现
+源文件与输出都在含中文的绝对路径下，缓存为空（强制 gcc 真正运行）：
+  AE_CACHE=<空目录> ae build <...>\h.ae -o "<...>\中文目录\after.exe"
+
+## 结果（before-after.txt）
+- 修复前（ADR-50 之前的二进制）：exit=1，ld 报
+  `cannot open output file D:/<乱码>/.../����Ŀ¼\.ae-<pid>-0\program.exe: No such file or directory`
+  ——命令行里的中文路径已被按 ANSI 代码页替换。
+- 修复后：exit=0，产物 64,195 字节，运行输出 42。
+- 缓存命中时不运行 gcc，所以该缺陷只在首次构建/缓存未命中时暴露。
+
+## 回归测试
+`build_accepts_non_ascii_absolute_output_paths`（tests/execution.rs）：临时目录下建「中文目录」，
+输出「程序(.exe)」，AE_CACHE 指向空目录；回滚修复后该测试失败（git stash 验证），修复后通过。

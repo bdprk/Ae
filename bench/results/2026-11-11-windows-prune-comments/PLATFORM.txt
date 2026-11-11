@@ -1,0 +1,30 @@
+ADR-50 运行时注释随函数裁剪 · Windows 归档（2026-11-11）
+
+## 平台
+Windows x86-64，MinGW-W64 GCC 16.2.0（UCRT）。
+
+## 基线
+`target/probe/ae-precomment.exe`：改动前的 debug 二进制（ADR-49 之后、ADR-50 之前）。
+
+## 命令
+- python bench/prune_timings.py --old-exe <pre-ADR-50> --runs 7 --json prune-timings.json
+  （生成 C 体积、同一份 C 的 gcc -O0 -c 交替计时、每次新缓存的 build --release）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak
+- for f in examples/*.ae; do ae check "$f"; done
+- ae emit-c <print(1)> / <字符串程序>
+
+## 结果
+- 生成 C 体积（旧 → 新）：print 25,134 → 11,105（0.442x）；strings 25,813 → 12,042（0.467x）；
+  map 32,947 → 22,481（0.682x）。
+- 同一份 C 的 gcc -O0 -c（7 次交替中位）：print 149.82 → 146.21 ms（省 3.61）；
+  strings 155.21 → 141.42 ms（省 13.79）；map 165.82 → 166.17 ms（−0.35，噪声内）。
+  **单文件 gcc 差值小且不稳定**，只当方向；收益主要是少写/少读/少解析文本。
+- 端到端 `build examples/hello.ae --release`（每次新缓存，7 次交替）：390.66 → 346.12 ms
+  （省 44.5 ms，11.4%）。该差值大于单文件 gcc 差值，机制未完全归因，只报实测值。
+- cargo test：35 单元 + 157 集成全通过；--leak 28 用例 PASS、基线 2 块；35 examples check 全过。
+- 字符串程序仍保留 ae_str_from/ae_str_eq（2 处），`hi` 输出正确——裁剪按可达性走。
+
+## 边界
+可执行文件大小不变（剪掉的是链接器会丢的死代码）；缓存键覆盖生成的 C，升级后首次构建全重建。
+不宣称「编译器普遍提速 11%」：这是每程序常量收益，程序越大比例越小。

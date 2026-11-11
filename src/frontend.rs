@@ -4341,6 +4341,12 @@ fn runtime_function_start(line: &str) -> Option<(&str, &str, &str, &str)> {
 fn runtime_units(prefix: &str) -> Vec<(Option<String>, String)> {
     let mut units: Vec<(Option<String>, String)> = Vec::new();
     let mut pending = String::new();
+    // `//` comments and blank lines directly above a function belong to it: a
+    // pruned function must not leave its explanation behind in the generated C
+    // (ADR-50). A comment above code that is not a function is flushed back into
+    // `pending`, and multi-line `/* */` blocks always stay there, so the file
+    // header and section banners survive.
+    let mut lead = String::new();
     let mut depth = 0i32;
     let mut state = CScan::Code;
     let mut in_function = false;
@@ -4351,7 +4357,7 @@ fn runtime_units(prefix: &str) -> Vec<(Option<String>, String)> {
                 if !pending.is_empty() {
                     units.push((None, std::mem::take(&mut pending)));
                 }
-                let mut text = String::new();
+                let mut text = std::mem::take(&mut lead);
                 text.push_str(head); text.push_str(signature); text.push('{'); text.push_str(tail); text.push('\n');
                 units.push((Some(name.to_owned()), text));
                 let mut first = String::from("{");
@@ -4361,13 +4367,20 @@ fn runtime_units(prefix: &str) -> Vec<(Option<String>, String)> {
                 in_function = depth > 0;
                 continue;
             }
-            pending.push_str(line);
+            let trimmed = raw.trim_start();
+            if trimmed.is_empty() || trimmed.starts_with("//") {
+                lead.push_str(line);
+            } else {
+                if !lead.is_empty() { pending.push_str(&std::mem::take(&mut lead)); }
+                pending.push_str(line);
+            }
             continue;
         }
         units.last_mut().unwrap().1.push_str(line);
         depth += c_brace_delta(raw, &mut state);
         if depth <= 0 { depth = 0; in_function = false; state = CScan::Code; }
     }
+    if !lead.is_empty() { pending.push_str(&lead); }
     if !pending.is_empty() { units.push((None, pending)); }
     units
 }
@@ -4707,6 +4720,26 @@ mod tests {
     #[test] fn arithmetic_and_variables_compile() {
         assert!(compile("fn main() { let x = 2; var y = x + 3 * 4; y = y / 2; print(y); }").is_ok());
     }
+    #[test]
+    fn runtime_units_attach_leading_comments_to_the_function() {
+        // A `//` comment (and the blank lines above it) belongs to the function
+        // below, so pruning that function also drops its explanation instead of
+        // leaving it in every generated program.
+        let units = runtime_units("// explanation\n\nstatic void ae_x(void) { }\n");
+        let function = units.iter().find(|(name, _)| name.is_some()).expect("function unit");
+        assert!(function.1.starts_with("// explanation"), "{}", function.1);
+        // A comment above code that is not a function stays in the always-kept
+        // text, otherwise the file header would vanish with the first pruned
+        // function.
+        let units = runtime_units("// header\n#include <stdio.h>\n");
+        assert!(units.iter().all(|(name, _)| name.is_none()));
+        assert!(units[0].1.contains("// header"));
+        // A multi-line block comment is not moved into a function unit.
+        let units = runtime_units("/* banner\n   here */\nstatic void ae_y(void) { }\n");
+        let function = units.iter().find(|(name, _)| name.is_some()).expect("function unit");
+        assert!(!function.1.contains("banner"), "{}", function.1);
+    }
+
     #[test] fn prune_runtime_drops_unneeded_windows_header() {
         let prefix = concat!(
             "#ifdef _WIN32\n",

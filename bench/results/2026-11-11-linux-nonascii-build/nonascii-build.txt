@@ -1,0 +1,4 @@
+--- non-ASCII absolute output path, fresh cache ---
+exit=0
+17168
+42

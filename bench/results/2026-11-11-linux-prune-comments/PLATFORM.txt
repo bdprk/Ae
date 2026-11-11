@@ -1,0 +1,19 @@
+ADR-50 运行时注释随函数裁剪 · Linux 归档（2026-11-11）
+
+## 平台
+instabox-node 沙箱：Debian 13，内核 6.18.54-instabox，x86-64，4 vCPU；gcc 14.2.0-19。
+
+## 命令（工作目录 = ~/ae-lang）
+- cargo build --locked && cargo test --locked
+- python3 scripts/verify_generated_c.py --leak / --sanitize
+- for f in examples/*.ae; do target/debug/ae check "$f"; done
+- target/debug/ae emit-c <print(1)> / <字符串程序>
+
+## 结果
+- cargo test：35 单元 + 157 集成全通过。
+- --leak 28 用例 PASS、退出块 0；--sanitize 28 用例 PASS、0 报告；35 examples check 全过。
+- print(1) 生成 C 11,105 字节（与 Windows 相同）；字符串程序保留 ae_str_from/str_eq 2 处。
+
+## 备注
+Linux 侧未单独做旧/新计时对照（同机无旧二进制）；生成 C 字节数与 Windows 一致，裁剪逻辑是
+平台无关的纯文本处理。
