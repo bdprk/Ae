@@ -1208,4 +1208,4 @@
   - min/max 不接受整数、不做隐式转换（`min(1, 2)` 报错，测试覆盖）。
   - NaN 忽略语义与某些语言的 `min`（NaN 传播）不同——这是选择，写进规范，不是「标准答案」。
 - 过程发现：批量插入含 `\r\n` 转义的测试代码再次走了 heredoc→python 路线（2026-11-11 教训的第二次违反），转义层级错位让测试文件编译失败；已把该教训升格为硬规则写入失败日志：**含转义序列的编辑一律 Write/Edit 工具**。
-- 验证：Windows 36 单元 + 176 集成、`--leak` 33 用例 PASS（基线 2 块）、fmt 43 文件、41 程序 `check`；归档 `bench/results/2026-11-12-windows-minmax/`。状态：**单平台验证**，Linux 回填（`2026-11-12-linux-minmax/`）前不得升级。
+- 验证：Windows 36 单元 + 176 集成、`--leak` 33 用例 PASS（基线 2 块）、fmt 43 文件、41 程序 `check`；归档 `bench/results/2026-11-12-windows-minmax/`。Linux 回填（同一源码树 bcd7e3f，`bench/results/2026-11-12-linux-minmax/`）：36 + 176 全通过、`--leak` 33 用例基线 0 块、`--sanitize` 33 用例 0 报告、fmt 43 文件幂等、**math_basics 输出两平台逐字节一致**——`min(-0.0, 0.0) = -0.0` 在 glibc 与 UCRT 上完全一致，±0 全序规则的可测性质成立、生成 C 字节数两平台相同。状态：**双平台验证**（2026-11-12）。

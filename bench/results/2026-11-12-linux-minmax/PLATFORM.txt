@@ -1,0 +1,26 @@
+ADR-64 `min`/`max` · Linux 回填（2026-11-12）
+
+## 平台
+instabox-node 沙箱：Debian 13，Linux 6.18.54，x86-64，4 vCPU；
+gcc 14.2.0-19；rustc 1.99.0；Python 3.13.5。AE 0.1.1。
+代码由 ssh tar 管道同步自 Windows 工作区（提交 bcd7e3f，与 Windows 归档同一源码树）。
+
+## 命令（工作目录 = ~/ae-backfill）
+- cargo build --locked && cargo build --release --locked
+- cargo test --locked（含 min/max 两个新测试）
+- python3 scripts/verify_generated_c.py --leak / --sanitize（math_basics 用例含 min/max 五行）
+- python3 scripts/fmt_acceptance.py --json fmt-acceptance.json
+- for f in $(find examples -name "*.ae" ! -name "report.ae" ! -name "words.ae"); do target/debug/ae check "$f"; done
+- target/debug/ae run examples/math_basics.ae（math-basics-output.txt）
+
+## 结果
+- cargo test：36 单元 + 176 集成全通过（与 Windows 相同计数）。
+- `--leak`：33 个用例 PASS，基线 0 块；`--sanitize`：33 个用例 0 报告。
+- fmt 验收：43 个文件幂等。
+- **math_basics 输出与 Windows 逐字节一致**（行尾归一化后），关键五行：
+  `min 2.0 / max 3.0 / min nan 5.0 / min -0 -0.0 / max -0 0.0`——±0.0 全序
+  平局在 glibc 上与 UCRT 完全一致，证明「运行时写死规则」的决策达成目的。
+- 生成 C 字节数与 Windows 相同：print(1) 13,909、math_basics 27,406。
+
+## 说明
+- 至此 ADR-64 升级为**双平台验证**（2026-11-12）。
