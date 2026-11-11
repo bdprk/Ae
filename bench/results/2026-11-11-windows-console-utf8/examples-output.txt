@@ -1,0 +1,41 @@
+all examples/*.ae run by the pre-ADR-55 compiler and by this one, stdout compared after CRLF normalisation
+
+arithmetic.ae: same
+arrays.ae: same
+borrow.ae: same
+concat.ae: same
+constraints.ae: same
+control-flow.ae: same
+copy_notes.ae: same
+dir_report.ae: same
+enums.ae: same
+field_view.ae: same
+file_tidy.ae: same
+find_files.ae: same
+find_text.ae: same
+float_math.ae: same
+functions.ae: same
+generic_borrow.ae: same
+generic_constraints.ae: same
+generic_fn.ae: same
+grep.ae: same
+grep_cli.ae: same
+hello.ae: same
+json_report.ae: same
+loops.ae: same
+map_count.ae: same
+maybe.ae: same
+option_propagate.ae: same
+pairs.ae: same
+pipe_stats.ae: same
+run_tool.ae: same
+split_arena.ae: same
+strings.ae: same
+sum_numbers.ae: same
+text_preview.ae: same
+tokens.ae: same
+traits.ae: same
+vectors.ae: same
+word_count.ae: same
+
+mismatches: none

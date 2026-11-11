@@ -5,6 +5,73 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+// ---- Output (ADR-55) --------------------------------------------------------
+// A console decodes the bytes it receives with its own output code page (936 on
+// a Chinese Windows), so raw UTF-8 showed up there as unrelated characters.
+#ifdef _WIN32
+static void *ae_console(void) { /* win32-declared */
+    // Declared here, not through <windows.h>: the header costs about half a
+    // second of build time, and a declaration inside a function is pruned with
+    // it, where top-level text is always kept. The types match the header, so
+    // both coexist where a program needs the header for something else (ADR-55).
+    extern void *GetStdHandle(unsigned long index);
+    extern int GetConsoleMode(void *handle, unsigned long *mode);
+    // GetConsoleMode fails on a pipe or a file: exactly when bytes must pass
+    // through untouched. Resolved once, so a redirected run pays two calls.
+    static void *handle = NULL;
+    static int resolved = 0;
+    if (!resolved) {
+        unsigned long mode = 0;
+        handle = GetStdHandle((unsigned long)-11);
+        if (!handle || handle == (void *)-1 || !GetConsoleMode(handle, &mode)) handle = NULL;
+        resolved = 1;
+    }
+    return handle;
+}
+// WriteConsoleW accepts fewer units than asked for; retry rather than drop.
+static bool ae_write_units(void *handle, const wchar_t *text, int count) { /* win32-declared */
+    extern int WriteConsoleW(void *handle, const void *text, unsigned long count, unsigned long *written, void *reserved);
+    while (count > 0) {
+        unsigned long written = 0;
+        if (!WriteConsoleW(handle, text, (unsigned long)count, &written, NULL) || written == 0) return false;
+        text += written;
+        count -= (int)written;
+    }
+    return true;
+}
+static bool ae_write_console(void *handle, const char *ptr, int64_t len, int newline) { /* win32-declared */
+    extern int MultiByteToWideChar(unsigned page, unsigned long flags, const char *text, int bytes, wchar_t *wide, int units);
+    // Converts in 1 KiB chunks, so printing a multi-megabyte string costs a 2 KiB
+    // stack frame rather than a heap buffer the size of the text. A chunk never
+    // ends inside a character, an invalid sequence becomes U+FFFD (a console
+    // decodes, it does not validate), and the newline joins the last chunk
+    // because one console write costs microseconds: a printed line is one call.
+    wchar_t buffer[1024];
+    const int capacity = newline ? 1023 : 1024;
+    int units = 0;
+    for (;;) {
+        int chunk = len > capacity ? capacity : (int)len;
+        while (chunk > 1 && (int64_t)chunk < len && ((unsigned char)ptr[chunk] & 0xC0) == 0x80) chunk -= 1;
+        units = chunk > 0 ? MultiByteToWideChar(65001, 0, ptr, chunk, buffer, capacity) : 0;
+        if (chunk > 0 && units <= 0) return false;
+        ptr += chunk;
+        len -= chunk;
+        if (len <= 0) break;
+        if (units > 0 && !ae_write_units(handle, buffer, units)) return false;
+    }
+    if (newline) buffer[units++] = L'\n';
+    return units == 0 || ae_write_units(handle, buffer, units);
+}
+#endif
+static bool ae_emit(const char *ptr, int64_t len, int newline) {
+#ifdef _WIN32
+    void *console = ae_console();
+    if (console) return ae_write_console(console, ptr, len, newline);
+#endif
+    if (fwrite(ptr, 1, (size_t)len, stdout) != (size_t)len) return false;
+    return !newline || fputc('\n', stdout) != EOF;
+}
+
 // Deliberate termination with a status. Buffered output is flushed first, so a
 // program that prints and then exits does not lose the last line to a pipe. The
 // code is truncated to int: POSIX shells only see the low eight bits, and
@@ -13,8 +80,10 @@ _Noreturn static void ae_exit(int64_t code) {
     fflush(stdout);
     exit((int)code);
 }
+// Runtime messages are fixed ASCII text (an operation that quotes user data
+// returns an Err the program prints itself, through the console sink), so stderr
+// keeps plain fprintf and a program that never prints carries none of it.
 _Noreturn static void ae_fail(const char *message, size_t line, size_t column) { fprintf(stderr, "ae:%zu:%zu: %s\n", line, column, message); exit(1); }
-
 // ---- Allocation interface (ADR-16) ------------------------------------------
 // Every buffer the runtime owns is obtained through one of these three
 // pointers, so a host (future embed API, a test harness, a tracing allocator)
@@ -118,6 +187,22 @@ typedef struct { char *ptr; int64_t len; } ae_string;
 typedef struct { const char *ptr; int64_t len; } ae_strview;
 #define AE_VIEW(s) ((ae_strview){(s).ptr, (s).len})
 
+// `print`'s shapes, all ending in a newline and all through one sink, so output
+// keeps the order the program wrote it in.
+static void ae_print_view(ae_strview text) {
+    if (!ae_emit(text.ptr, text.len, 1)) ae_fail("output error", 0, 0);
+}
+static void ae_print_i64(int64_t value) {
+    char buffer[32];
+    const int length = snprintf(buffer, sizeof buffer, "%" PRId64, value);
+    if (length <= 0 || !ae_emit(buffer, length, 1)) ae_fail("output error", 0, 0);
+}
+static void ae_print_cstr(const char *text) {
+    ae_print_view((ae_strview){ text, (int64_t)strlen(text) });
+}
+static void ae_print_bool(bool value) {
+    if (!ae_emit(value ? "true" : "false", value ? 4 : 5, 1)) ae_fail("output error", 0, 0);
+}
 static ae_string ae_str_from(const char *text, size_t line, size_t column) {
     size_t n = strlen(text);
     char *copy = ae_alloc(n + 1, line, column);

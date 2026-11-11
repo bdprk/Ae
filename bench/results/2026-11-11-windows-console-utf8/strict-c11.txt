@@ -1,0 +1,2 @@
+strict C11 syntax of args+print program: ok
+windows.h in that program: 1 (args needs it; the output calls declare their own entry points)

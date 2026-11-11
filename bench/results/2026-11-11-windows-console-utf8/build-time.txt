@@ -1,0 +1,4 @@
+build time of a printing program (9 alternating runs, whole `ae build`)
+
+before  median   74.6 ms  raw [81.2, 75.4, 74.6, 73.6, 74.6, 73.1, 76.5, 73.5, 73.6]
+after   median   75.7 ms  raw [335.4, 95.8, 75.6, 75.5, 73.9, 75.1, 96.9, 80.9, 75.7]

@@ -1,0 +1,6 @@
+20,000 lines redirected to a file (pipe path: fwrite, no conversion), 7 alternating runs
+
+before  median    17.6 ms  raw [23.6, 17.2, 17.6, 17.1, 17.0, 17.9, 17.8]
+after   median    18.2 ms  raw [22.4, 18.3, 18.2, 17.5, 18.4, 17.5, 18.2]
+
+bytes written: 260000

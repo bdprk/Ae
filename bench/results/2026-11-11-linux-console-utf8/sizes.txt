@@ -1,0 +1,12 @@
+print(1) bytes:
+15243
+no print bytes:
+11811
+strict C11:
+ok
+WriteConsoleW occurrences in emitted C:
+3
+windows.h omitted marker count:
+1
+pipe bytes of 中文测试 then 42:
+ e4 b8 ad e6 96 87 e6 b5 8b e8 af 95 0a 34 32 0a

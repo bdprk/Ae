@@ -1,0 +1,7 @@
+20,000 lines of "line 中文" to a console, 9 alternating runs
+
+before  median   860.3 ms  raw [863.2, 871.6, 857.9, 801.1, 842.2, 908.5, 888.9, 860.3, 742.8]
+after   median   832.0 ms  raw [881.9, 873.1, 816.0, 870.1, 827.9, 880.4, 832.0, 801.3, 697.3]
+
+Same one-write-per-line shape as before: the sink merges the value and its newline
+into a single WriteConsoleW, so the extra conversion does not add a syscall.

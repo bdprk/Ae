@@ -1,0 +1,4 @@
+fn main() {
+    let s = read_file("target/probe/console/invalid.bin");
+    print(s);
+}

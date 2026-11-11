@@ -3909,18 +3909,20 @@ fn emit_print(printed: &Printed, out: &mut String, next: &mut usize) {
             match t.ty {
                 Type::String | Type::StrView => {
                     let pv = *next; *next += 1;
-                    out.push_str(&format!("    ae_strview t{pv} = AE_VIEW({}); if (fwrite(t{pv}.ptr, 1, (size_t)t{pv}.len, stdout) != (size_t)t{pv}.len || fputc('\\n', stdout) == EOF) ae_fail(\"output error\", 0, 0);\n", t.text));
+                    out.push_str(&format!("    ae_strview t{pv} = AE_VIEW({});\n", t.text));
+                    out.push_str(&format!("    ae_print_view(t{pv});\n"));
                     if t.owned { drop_owned_temp(out, &t); }
                 }
-                Type::Bool => out.push_str(&format!("    if (printf(\"%s\\n\", {} ? \"true\" : \"false\") < 0) ae_fail(\"output error\", 0, 0);\n", t.text)),
+                Type::Bool => out.push_str(&format!("    ae_print_bool({});\n", t.text)),
                 Type::F64 => out.push_str(&format!("    ae_f64_print({});\n", t.text)),
-                _ => out.push_str(&format!("    if (printf(\"%\" PRId64 \"\\n\", {}) < 0) ae_fail(\"output error\", 0, 0);\n", t.text)),
+                _ => out.push_str(&format!("    ae_print_i64({});\n", t.text)),
             }
         }
         Printed::Text(text) => {
-            // The literal body is already a valid C string body (escapes were
-            // checked by the lexer); fputs avoids format-specifier surprises.
-            out.push_str(&format!("    if (fputs(\"{text}\\n\", stdout) == EOF) ae_fail(\"output error\", 0, 0);\n"));
+            // The literal body is already a valid C string body (the lexer
+            // checked the escapes), so it is passed as a plain C string: one copy
+            // in the generated C, no format string to misinterpret.
+            out.push_str(&format!("    ae_print_cstr(\"{text}\");\n"));
         }
     }
 }
@@ -4524,6 +4526,12 @@ fn ae_symbols(text: &str) -> Vec<String> {
 /// from `<windows.h>`. The marker rides along with the function unit, so
 /// pruning removes it exactly when the last such function is removed.
 const WIN32_HEADER_MARKER: &str = "/* win32-header */";
+/// A function that calls Win32 entry points this runtime declares itself; it
+/// needs no header, so it must not force <windows.h> into every program (ADR-55:
+/// `print` is used by nearly every program, and the header costs about half a
+/// second of build time).
+#[cfg(test)]
+const WIN32_DECLARED_MARKER: &str = "/* win32-declared */";
 const WIN32_HEADER_INCLUDE: &str = "#include <windows.h>";
 const WIN32_HEADER_OMITTED: &str = "/* windows.h omitted */";
 
@@ -4887,20 +4895,43 @@ mod tests {
             "WIN32_FILE_ATTRIBUTE_DATA", "FindFirstFileW", "CreateProcessW",
             "STARTUPINFOW", "GetLastError", "RemoveDirectoryW", "DeleteFileW",
             "CreateDirectoryW", "MoveFileExW", "SetCurrentDirectoryW",
+            "GetStdHandle", "GetConsoleMode", "WriteConsoleW",
         ];
         let sources = [("runtime.c", include_str!("runtime.c")), ("runtime_ex.c", include_str!("runtime_ex.c"))];
         assert!(sources[0].1.contains(WIN32_HEADER_INCLUDE), "include line must still exist in runtime.c");
         let mut checked = 0usize;
+        let mut declared_users = 0usize;
         for (file, source) in sources {
             for (name, text) in runtime_units(source) {
                 let Some(name) = name else { continue; };
                 if !WIN32_DECLS.iter().any(|needle| text.contains(needle)) { continue; }
                 checked += 1;
-                assert!(text.contains(WIN32_HEADER_MARKER),
-                    "{file}: {name} uses a Win32 declaration but has no {WIN32_HEADER_MARKER} marker");
+                // Either the header is kept for this function, or the runtime
+                // declares the entry point itself -- and then the declaration has
+                // to be there, or the program builds without a prototype.
+                assert!(text.contains(WIN32_HEADER_MARKER) || text.contains(WIN32_DECLARED_MARKER),
+                    "{file}: {name} uses a Win32 declaration but carries neither marker");
+                if text.contains(WIN32_DECLARED_MARKER) && !text.contains(WIN32_HEADER_MARKER) {
+                    declared_users += 1;
+                }
             }
         }
         assert!(checked >= 16, "expected at least 16 Win32-dependent functions, found {checked}");
+        assert!(declared_users >= 3, "expected the declared-marker functions to exist, found {declared_users}");
+        // The other direction: every symbol the runtime declares for itself is
+        // audited above, so a hand-written declaration cannot slip in unmarked.
+        // The declarations live inside the functions that call them (top-level
+        // text is always kept, so a program that never prints would carry them),
+        // which is why this scan trims the indentation.
+        let mut declared = 0usize;
+        for line in sources[0].1.lines().map(|line| line.trim_start()) {
+            if !line.starts_with("extern ") { continue; }
+            let name = line[..line.find('(').expect("declaration has a parameter list")]
+                .rsplit(' ').next().unwrap().trim_start_matches('*');
+            assert!(WIN32_DECLS.contains(&name), "self-declared Win32 symbol not in the audit list: {name}");
+            declared += 1;
+        }
+        assert_eq!(declared, 4, "expected four self-declared Win32 entry points");
     }
 
     #[test]

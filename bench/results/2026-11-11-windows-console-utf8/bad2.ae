@@ -1,0 +1,4 @@
+fn main() {
+    let n = write_file("不存在的目录/报告.txt", "内容");
+    print(n);
+}

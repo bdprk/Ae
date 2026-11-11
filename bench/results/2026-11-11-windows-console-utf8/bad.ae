@@ -1,0 +1,4 @@
+fn main() {
+    let text = read_file("不存在的文件.txt");
+    print(len(text));
+}

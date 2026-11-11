@@ -1,0 +1,47 @@
+ADR-55 `print` 在 Windows 控制台上按 UTF-16 写出 · Windows 归档（2026-11-11）
+
+## 平台
+Windows x86-64，MinGW-W64 GCC 16.2.0（UCRT），控制台输出代码页 936（GBK）。
+
+## 缺陷与修法
+运行时一直写出正确的 UTF-8 字节（管道里 `od` 可见 `e4 b8 ad ...`），但控制台按**自己的**
+输出代码页解码收到的字节，于是 `print("中文测试")` 在屏幕上显示为 `涓枃娴嬭瘯`。
+修复：`print` 的四种形态统一走一个汇点，运行期判断 stdout 是否为控制台——是则把 UTF-8
+按 1 KiB 块转成 UTF-16（栈上 2 KiB，块边界不切字符）并把换行并进同一次 `WriteConsoleW`，
+否则原样写字节。四个 Win32 入口在用到它们的函数体内手写声明，不引入 `<windows.h>`
+（顶层文本永远保留，函数内声明随函数裁剪）。
+
+## 取证方法
+`console_run.c` 自建一个控制台（`AllocConsole` + `SetConsoleOutputCP(936)` + 缓冲区 120×400），
+把 `CONOUT$` 句柄通过 `STARTF_USESTDHANDLES` 交给被测程序，等它退出后用
+`ReadConsoleOutputCharacterW` 按行宽读回屏幕缓冲区——存的就是用户看到的字符。
+`readback.c` 是「同一段字节，窄写 vs 宽写」的最小对照；`emoji.c` 直接调用 `WriteConsoleW`
+写一个代理对，用来分辨「运行时丢字」与「控制台替换字符」。
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak
+- for f in examples/*.ae; do ae check "$f"; done
+- gcc -std=c11 -O1 -municode console_run.c -o console_run.exe
+- console_run.exe <log> <program>（程序由 ae build 生成：zh.ae / boundary.ae / long.ae / invalid.ae / loop.ae）
+- gcc -std=c11 -pedantic-errors -Werror=return-type -fsyntax-only <emit-c 输出>
+
+## 结果
+- cargo test：35 单元 + 162 集成全通过。
+- --leak：30 个用例 PASS，退出分配块数等于 2 块基线。
+- 37 个 examples 通过 check（0 失败）。
+- console.txt：修复前 `涓枃娴嬭瘯` / 修复后 `中文测试`；同一程序在同一控制台上把输出代码页换成 65001（UTF-8）后
+  显示相同，emoji 在两种代码页下都是 U+FFFD（`emoji.c` 直接调用 `WriteConsoleW` 也如此，所以是控制台的非 BMP
+  处理与字体，不是运行时的转换）；1022 ASCII + 跨 1 KiB 块边界的
+  3 字节字符逐字符复原（1028 字符，无 U+FFFD）；3000 个汉字多次分块逐字符复原；
+  非法 UTF-8 字节在控制台显示为 a U+FFFD b U+FFFD c，同一程序写管道仍是 `61 ff 62 fe 63`。
+- throughput.txt：2 万行中文到控制台，9 次交替，860.3 → 832.0 ms（一行一次 WriteConsoleW）。
+- sizes.txt：print(1) 11,341 → 15,243 字节；不打印的程序 11,286 → 11,811；
+  print("hi") 11,330 → 15,384；args+print 15,178 → 20,742。
+- build-time.txt：9 次交替，74.6 → 75.7 ms（噪声内）。
+- strict-c11.txt：args+print 的生成 C（同时保留 windows.h 与自声明入口）通过严格 C11 语法检查。
+
+## 边界
+控制台表示不了的字符（CP-936 下的 emoji）显示为 U+FFFD——直接调用 `WriteConsoleW` 的
+`emoji.c` 同样如此，与运行时无关；同一段文本写进文件仍是完整 UTF-8。
+只处理 stdout（运行时错误消息是 ASCII，仍是 fprintf）；不改控制台代码页，退出后父 shell 环境不变。

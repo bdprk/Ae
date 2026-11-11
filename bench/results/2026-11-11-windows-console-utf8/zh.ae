@@ -1,0 +1,9 @@
+fn main() {
+    print("中文测试");
+    print("emoji 😀 与 4 字节字符");
+    let s = "混合 ascii 与 中文";
+    print(s);
+    print(42);
+    print(true);
+    print(2.5);
+}

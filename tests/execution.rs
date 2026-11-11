@@ -1293,6 +1293,33 @@ fn program_arguments_arrive_as_utf8_on_every_platform() {
 }
 
 #[test]
+fn print_keeps_every_shape_in_order_with_non_ascii_text() {
+    // ADR-55 moved every shape onto one sink so a console run (unbuffered) keeps
+    // the order the program wrote. Through a pipe the bytes must be exactly the
+    // UTF-8 the program produced, with one newline per value and nothing else.
+    let source = r#"
+fn main() {
+    print("中文测试");
+    let s = "混合 ascii 与 中文";
+    print(s);
+    print(42);
+    print(true);
+    print(2.5);
+    print("引号 \" 与 制表符 \t 结束");
+}
+"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let text = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(text, "中文测试\n混合 ascii 与 中文\n42\ntrue\n2.5\n引号 \" 与 制表符 \t 结束\n");
+    // A `\n` escape inside a literal is one newline on output and does not
+    // truncate what follows it, now that every shape shares the same sink.
+    let output = execute("fn main() { print(\"a\\nb\"); }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "a\nb\n");
+}
+
+#[test]
 fn tokens_stream_the_same_boundaries_as_split_without_materialising() {
     // The lazy cursor must agree with split token for token, restart on a second
     // loop over the same binding, accept a struct field as its base, and keep

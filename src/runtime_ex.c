@@ -501,7 +501,7 @@ static ae_string ae_f64_to_string(double value, size_t line, size_t column) {
 static void ae_f64_print(double value) {
     char buffer[96];
     const size_t length = ae_f64_text(value, buffer, sizeof buffer);
-    if (fwrite(buffer, 1, length, stdout) != length || fputc('\n', stdout) == EOF) ae_fail("output error", 0, 0);
+    if (!ae_emit(buffer, (int64_t)length, 1)) ae_fail("output error", 0, 0);
 }
 
 static double ae_f64_div(double a, double b, size_t line, size_t column) {

@@ -1,0 +1,6 @@
+generated C size (bytes): compiler before ADR-55 -> this one
+
+no print           11286 ->   11811
+print(1)           11341 ->   15243
+print("hi")        11330 ->   15384
+args + print       15178 ->   20742

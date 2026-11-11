@@ -1,0 +1,27 @@
+ADR-55 `print` 在 Windows 控制台上按 UTF-16 写出 · Linux 归档（2026-11-11）
+
+## 平台
+instabox-node 沙箱：Debian 13，x86-64，4 vCPU；gcc 14.2.0-19；rustc 1.99.0。
+代码经 tar 管道同步自工作区。
+
+## 命令（工作目录 = ~/ae-lang）
+- cargo build --locked && cargo build --release --locked && cargo test --locked
+- python3 scripts/verify_generated_c.py --leak
+- python3 scripts/verify_generated_c.py --sanitize
+- for f in examples/*.ae; do target/debug/ae check "$f"; done
+- target/debug/ae emit-c <print(1)> / <no-print>，后者与前者再走严格 C11 检查
+- target/debug/ae run <中文测试程序> | od
+
+## 结果
+- cargo test：35 单元 + 162 集成全通过（新增的 `print_keeps_every_shape_in_order_with_non_ascii_text`
+  在本平台验证的是「管道路径字节不变」，控制台路径在 `#ifdef _WIN32` 内不参与编译）。
+- --leak 30 用例 PASS、退出块数 0；--sanitize 30 用例 PASS、0 份 ASan/UBSan 报告。
+- 37 个 examples 通过 check（0 失败）。
+- print(1) 生成 C 15,243 字节、不打印的程序 11,811 字节——与 Windows 归档**同一数值**（生成 C 是
+  平台无关的文本，Win32 分支以 #ifdef 形式存在但不参与编译）。
+- 严格 C11 语法检查通过；`/* windows.h omitted */` 仍出现在不打印的程序里。
+- 管道输出：`中文测试` = e4 b8 ad e6 96 87 e6 b5 8b e8 af 95，行尾为 LF（POSIX 无 CRLF）。
+
+## 说明
+本平台的终端按约定就是 UTF-8，缺陷只存在于 Windows（见 2026-11-11-windows-console-utf8/）。
+这里验证的是「新代码不改变 POSIX 行为」：字节与改动前一致、无新增分配、净化器干净。

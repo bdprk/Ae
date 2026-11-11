@@ -1,0 +1,26 @@
+--- before (console output code page 936) ---
+涓枃娴嬭瘯
+emoji 馃榾 涓?4 瀛楄妭瀛楃
+娣峰悎 ascii 涓?涓枃
+42
+true
+2.5
+--- after (console output code page 936) ---
+中文测试
+emoji � 与 4 字节字符
+混合 ascii 与 中文
+42
+true
+2.5
+--- boundary: 1028 chars, exact match: True, U+FFFD: False ---
+--- long: 3000 chars, exact match: True, U+FFFD: False ---
+--- invalid UTF-8 bytes: console shows ['0x61', '0xfffd', '0x62', '0xfffd', '0x63'] ---
+
+--- same program on the same console with code page 65001 (UTF-8) ---
+中文测试
+emoji � 与 4 字节字符
+混合 ascii 与 中文
+42
+true
+2.5
+non-BMP characters become U+FFFD under both code pages: this is the console, not the runtime
