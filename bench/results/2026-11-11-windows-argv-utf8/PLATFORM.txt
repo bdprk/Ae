@@ -1,0 +1,25 @@
+ADR-54 `args()` 转 UTF-8 · Windows 归档（2026-11-11）
+
+## 平台
+Windows x86-64，MinGW-W64 GCC 16.2.0（UCRT），控制台代码页 936（GBK）。
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak
+- for f in examples/*.ae; do ae check "$f"; done
+- ae run <len.ae> -- "中文目录"（修复前后各一次）
+- ae build <w.ae> 后用中文绝对路径做 write_file + read_file（修复前后各一次）
+- ae emit-c <print(1)> / <args-only>
+
+## 结果（before-after.txt）
+- 修复前（HEAD 5aeb8a8 构建的编译器）：len(args[1]) = 8（GBK 字节），
+  中文绝对路径 `cannot write file`。
+- 修复后：len(args[1]) = 12（UTF-8），中文绝对路径 write_file + read_file 走通（7 / payload）。
+- cargo test：35 单元 + 161 集成全通过（新增的 UTF-8 参数用例在回滚修复后确实失败）。
+- --leak：30 个用例 PASS，基线 2 块；37 个 examples 通过 check（0 失败）。
+- 裁剪未受影响：print(1) 11,299 字节且仍带 `/* windows.h omitted */`；
+  只用 args() 的程序 16,317 字节（保留 windows.h，代价已记入 ADR-54）。
+
+## 边界
+命令行进入 `main` 前已被 CRT 转成 ANSI 代码页，代码页表示不了的字符（部分 emoji）已丢失，无法恢复。
+`__wgetmainargs` 取原始 UTF-16 命令行在这套 UCRT 工具链上段错误，已记录不再重试。

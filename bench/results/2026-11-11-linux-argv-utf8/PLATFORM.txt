@@ -1,0 +1,22 @@
+ADR-54 `args()` 转 UTF-8 · Linux 归档（2026-11-11）
+
+## 平台
+instabox-node 沙箱：Debian 13，内核 6.18.54-instabox，x86-64，4 vCPU；gcc 14.2.0-19；rustc 1.99.0。
+
+## 命令（工作目录 = ~/ae-lang）
+- cargo build --locked && cargo test --locked
+- python3 scripts/verify_generated_c.py --leak / --sanitize
+- for f in examples/*.ae; do target/debug/ae check "$f"; done
+- target/debug/ae run <len.ae> -- "中文目录"
+- /tmp/ae-argv/w "/tmp/ae-argv/中文目录/note.txt"（write_file + read_file）
+- target/debug/ae emit-c <print(1)>
+
+## 结果
+- cargo test：35 单元 + 161 集成全通过。
+- --leak 30 用例 PASS、退出块 0；--sanitize 30 用例 PASS、0 报告；37 个 examples check 全过。
+- len(args[1]) = 12（三个字节/汉字）；中文绝对路径的 write_file + read_file 走通（输出 2 / ok）。
+- print(1) 生成 C 11,299 字节，与 Windows 相同。
+
+## 说明
+POSIX 的 argv 本来就是 UTF-8，本平台验证的是「新代码不破坏已有行为」，
+缺陷本身只在 Windows 上存在（见 2026-11-11-windows-argv-utf8/）。

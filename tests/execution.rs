@@ -1263,6 +1263,36 @@ fn split_and_args_produce_string_vectors() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("array index out of bounds"));
 }
 #[test]
+fn program_arguments_arrive_as_utf8_on_every_platform() {
+    // Windows hands `main` the command line in the ANSI code page, so a path
+    // typed on a Chinese system used to arrive as GBK bytes while every file API
+    // expects UTF-8: the program could not open its own arguments. `args()` now
+    // converts each argument through UTF-16 once (ADR-54). The temporary
+    // directory name is ASCII but the subdirectory and the file are not, which is
+    // exactly the shape that failed.
+    let dir = unique_temp_dir("argv-utf8");
+    let cjk = dir.join("中文目录");
+    fs::create_dir(&cjk).unwrap();
+    let target = cjk.join("note.txt");
+    let source = dir.join("argv.ae");
+    fs::write(&source, "fn main() { let p = args(); let n = write_file(p[1], \"ok\"); print(n); print(read_file(p[1])); }").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("run").arg(&source).arg("--").arg(&target)
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n").trim(), "2\nok");
+    // The same text is a valid UTF-8 argument: three bytes per character.
+    let source = dir.join("len.ae");
+    fs::write(&source, "fn main() { let p = args(); print(len(p[1])); }").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("run").arg(&source).arg("--").arg("中文目录")
+        .output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n").trim(), "12");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn tokens_stream_the_same_boundaries_as_split_without_materialising() {
     // The lazy cursor must agree with split token for token, restart on a second
     // loop over the same binding, accept a struct field as its base, and keep

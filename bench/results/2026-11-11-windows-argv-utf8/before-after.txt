@@ -1,0 +1,12 @@
+--- before the fix (pre-ADR-54 compiler) ---
+len(args[1]) for 中文目录: 8
+read/write a CJK absolute path: ae:4:13: cannot write file
+exit=0
+--- after the fix ---
+len(args[1]) for 中文目录: 12
+read/write a CJK absolute path: 7 payload 
+exit=0
+--- pruning unchanged ---
+print(1) bytes: 11299
+windows.h omitted: 1
+args-only program bytes: 16317

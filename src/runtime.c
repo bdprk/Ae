@@ -620,13 +620,6 @@ static int64_t ae_count_lines_with(ae_strview s, ae_strview pat, size_t line, si
 // Program arguments bridge: the generated main records argc/argv here.
 static int64_t ae_argc_g = 0;
 static char **ae_argv_g = NULL;
-static ae_strvec ae_args(size_t line, size_t column) {
-    ae_strvec out = ae_strvec_new(line, column);
-    for (int64_t i = 0; i < ae_argc_g; i++) {
-        ae_strvec_push(&out, ae_str_from(ae_argv_g[i], line, column), line, column);
-    }
-    return out;
-}
 
 // Owned growable i64 vector. Moves copy the struct and forfeit the source
 // slot (zeroed without freeing); releases are idempotent, so overlapping
@@ -743,6 +736,49 @@ static FILE *ae_fopen(const char *path, const char *mode) { /* win32-header */
 #else
 static FILE *ae_fopen(const char *path, const char *mode) { return fopen(path, mode); }
 #endif
+
+#ifdef _WIN32
+// Windows hands `main` the command line in the ANSI code page, so a path typed
+// on a Chinese system arrives as GBK bytes while every file API expects UTF-8 --
+// the program could not open its own arguments (ADR-54). Convert each argument
+// through UTF-16 once, here, so `args()` matches the rest of the language.
+// This keeps <windows.h> in programs that read their arguments; programs that
+// do not still prune it (ADR-39).
+static char *ae_utf8_from_acp(const char *text) { /* win32-header */
+    const int wide_len = MultiByteToWideChar(CP_ACP, 0, text, -1, NULL, 0);
+    if (wide_len <= 0) return NULL;
+    wchar_t *wide = ae_alloc_try((size_t)wide_len * sizeof(wchar_t));
+    if (!wide) return NULL;
+    char *utf8 = NULL;
+    if (MultiByteToWideChar(CP_ACP, 0, text, -1, wide, wide_len) > 0) {
+        const int size = WideCharToMultiByte(CP_UTF8, 0, wide, wide_len - 1, NULL, 0, NULL, NULL);
+        if (size > 0) {
+            utf8 = ae_alloc_try((size_t)size + 1);
+            if (utf8) {
+                WideCharToMultiByte(CP_UTF8, 0, wide, wide_len - 1, utf8, size, NULL, NULL);
+                utf8[size] = 0;
+            }
+        }
+    }
+    ae_free(wide);
+    return utf8;
+}
+#endif
+static ae_strvec ae_args(size_t line, size_t column) {
+    ae_strvec out = ae_strvec_new(line, column);
+    for (int64_t i = 0; i < ae_argc_g; i++) {
+#ifdef _WIN32
+        // Falls back to the raw bytes if the conversion fails (out of memory),
+        // which keeps an argument usable even when it cannot be decoded.
+        char *utf8 = ae_utf8_from_acp(ae_argv_g[i]);
+        ae_strvec_push(&out, ae_str_from(utf8 ? utf8 : ae_argv_g[i], line, column), line, column);
+        ae_free(utf8);
+#else
+        ae_strvec_push(&out, ae_str_from(ae_argv_g[i], line, column), line, column);
+#endif
+    }
+    return out;
+}
 
 static ae_string ae_read_file(const char *path, size_t line, size_t column) {
     FILE *f = ae_fopen(path, "rb");
