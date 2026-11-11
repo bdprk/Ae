@@ -1,0 +1,34 @@
+ADR-61 vec[f64] · Linux 回填（2026-11-12）
+
+## 平台
+instabox-node 沙箱：Debian 13，Linux 6.18.54，x86-64，4 vCPU；
+gcc 14.2.0-19；rustc 1.99.0；Python 3.13.5。AE 0.1.1。
+代码由 ssh tar 管道同步自 Windows 工作区（提交 9caeaa6，与 Windows 归档同一源码树），
+位于 `~/ae-backfill`；批次脚本 `~/run-backfill.sh`，日志 `~/backfill-logs/`。
+
+## 命令（工作目录 = ~/ae-backfill）
+- cargo build --locked && cargo build --release --locked
+- cargo test --locked
+- python3 scripts/verify_generated_c.py --leak / --sanitize（用例表含 float_stats.ae）
+- python3 scripts/fmt_acceptance.py --json fmt-acceptance.json
+- for f in $(find examples -name "*.ae" ! -name "report.ae" ! -name "words.ae"); do target/debug/ae check "$f"; done
+- target/debug/ae run examples/float_stats.ae（float-stats-output.txt）
+
+## 结果
+- cargo test：35 单元 + 174 集成全通过（含 4 个 vec[f64] 测试与
+  「循环借用期间索引写被拒绝」的新行为——两平台一致拒绝）。
+- `--leak`：33 个用例 PASS（含 float_stats.ae），退出分配块数全部等于 glibc
+  基线 0——vec[f64] 的字面量、字段、枚举负载路径都恰好释放一次。
+- `--sanitize`：33 个用例 PASS，无 ASan/UBSan 报告。
+- fmt 验收：43 个文件幂等（0 个未格式化）。
+- 41 个程序通过 `check`。
+- **float_stats.ae 的 stdout 与 Windows 逐字节一致**（行尾归一化后；9 行 CRLF/LF
+  差异是已声明的平台差异）：count 8 / mean 5.0 / variance 4.0 / stddev 2.0 /
+  peak 9.0 / zscore 2.0 / doubled 8.0 / doubled last 18.0 / total 40.0。
+- 生成 C 字节数与 Windows 相同：print(1) 13,909（f64vec typedef 常驻）；
+  math_basics 25,131；float_math 32,025——均为 Windows 数字 + 87 字节 typedef，
+  与「typedef 常驻、函数按可达闭包裁剪」的预期完全一致。
+
+## 说明
+- 至此 ADR-61 升级为**双平台验证**（2026-11-12）。
+- vec[f64] 的受检下标、移动释放与借用规则在两个 CRT/分配器组合下行为一致。

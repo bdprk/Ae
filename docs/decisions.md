@@ -1148,4 +1148,4 @@
 - 过程发现：
   1. **Option 解包装的是什么**：字面量推断最初写 `element_ty.unwrap_or(Type::Vec)`，而 `element_ty: Option<Type>` 装的是**元素类型**——`vec[3]` 因此推断成 i64，15 个既有测试当场失败。解包前先问「Option 里装的到底是谁」。
   2. **by_ref 标志的第二处漏改**：for-in 元素构造的 `first_ty == Type::VecRef` 没带 VecFRef，借用参数上迭代生成了值形态 C，gcc 以「v0 is a pointer」抓到。新增类型的每个布尔标志都要问「还有哪些类型共享这条路径」。
-- 验证：Windows 35 单元 + 174 集成、`--leak` 33 用例 PASS（基线 2 块）、fmt 验收 43 文件、41 程序 `check`；归档 `bench/results/2026-11-12-windows-vecoff64/`。状态：**单平台验证**，Linux 回填（`2026-11-12-linux-vecoff64/`）前不得升级。
+- 验证：Windows 35 单元 + 174 集成、`--leak` 33 用例 PASS（基线 2 块）、fmt 验收 43 文件、41 程序 `check`；归档 `bench/results/2026-11-12-windows-vecoff64/`。Linux 回填（同一源码树 9caeaa6，`bench/results/2026-11-12-linux-vecoff64/`）：35 + 174 全通过、`--leak` 33 用例基线 0 块、`--sanitize` 33 用例 0 报告、fmt 43 文件幂等、**float_stats 输出两平台逐字节一致**（行尾归一化后）、生成 C 字节数两平台相同（print(1) 13,909）。状态：**双平台验证**（2026-11-12）。

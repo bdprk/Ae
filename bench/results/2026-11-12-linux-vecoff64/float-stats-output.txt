@@ -1,0 +1,9 @@
+count 8
+mean 5.0
+variance 4.0
+stddev 2.0
+peak 9.0
+zscore 2.0
+doubled 8.0
+doubled last 18.0
+total 40.0
