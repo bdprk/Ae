@@ -132,7 +132,7 @@ v1 边界：trait 签名不支持 `&T`（借用的落地形状需要独立设计
 
 ## 字符串向量
 
-`split(s, sep) -> vec[string]` 按分隔符切分（保留空段，Python 语义；空分隔符为运行时错误）；`join(parts, sep) -> string` 以分隔符连接（借用向量，总长先溢出检查）；`args() -> vec[string]` 返回程序参数（含 argv[0]；Windows 的 argv 为 ANSI 编码，如实标注）。类型书写为 `vec[string]`（`vec` 单写是 `i64` 向量）。`vec[string]` 是拥有型容器：赋值/传参/返回移动；`push` 移入字符串，`pop` 释放并移除末元素；`v[i]` 读与 `v[i] = s;` 写按当前长度做边界检查（写入先检查下标、释放旧元素、再移入新值）。**元素是只读借用**：不能把元素移出向量（拼接或赋给新变量被拒绝）；`len(v)` 为 O(1)。`split`/`args`/`join`/`lines`/`count_lines_with` 为保留名。`lines(s) -> vec[string]` 按换行切分：尾部换行不产生末尾空行，内部空行保留，空输入为零行（换行扫描为运行时字长优化实现）。 `count_lines_with(text, pattern) -> i64` 统计包含模式的行数：单遍零分配的融合实现，空文本为零、空模式匹配每一行。
+`split(s, sep) -> vec[string]` 按分隔符切分（保留空段，Python 语义；空分隔符为运行时错误）；`join(parts, sep) -> string` 以分隔符连接（借用向量，总长先溢出检查）；`args() -> vec[string]` 返回程序参数（含 argv[0]；Windows 的 argv 为 ANSI 编码，如实标注）。类型书写为 `vec[string]`（`vec` 单写是 `i64` 向量）。`vec[string]` 是拥有型容器：赋值/传参/返回移动；`push` 移入字符串，`pop` 释放并移除末元素；`v[i]` 读与 `v[i] = s;` 写按当前长度做边界检查（写入先检查下标、释放旧元素、再移入新值）。**元素是只读借用**：不能把元素移出向量（拼接或赋给新变量被拒绝）；`len(v)` 为 O(1)。`split`/`args`/`join`/`lines`/`count_lines_with` 为保留名。`split` 与 `lines` 的结果向量把全部 token 放进一块字节区（ADR-49）：一次切分的分配次数与 token 数无关，元素仍是只读借用、不能移出；`push`、`args`、`keys` 产出的向量仍是逐元素自有。`lines(s) -> vec[string]` 按换行切分：尾部换行不产生末尾空行，内部空行保留，空输入为零行（换行扫描为运行时字长优化实现）。 `count_lines_with(text, pattern) -> i64` 统计包含模式的行数：单遍零分配的融合实现，空文本为零、空模式匹配每一行。
 
 ## 借用字符串视图
 

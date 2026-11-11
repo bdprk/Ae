@@ -1,0 +1,6 @@
+print(1) generated C bytes:
+25134
+split_arena generated C bytes:
+36311
+strict C11 syntax:
+ok

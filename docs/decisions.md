@@ -814,3 +814,33 @@
   - 不宣称「检查不需要构建」是普遍事实——它对 `check`/`check --json` 成立（纯前端），对 `run`/`build` 不成立。
 - 验证：两平台各跑一次全套命令，均为 34 单元 + 155 集成通过（新增 3 个 JSON 转义单元测试与 1 个集成测试：两种参数顺序、成功 `[]`、失败对象、Windows 反斜杠转义）；Windows `--leak` 27 个用例 PASS、基线 2 块；Linux `--leak` 27 用例 PASS（0 块基线）、`--sanitize` 27 用例 PASS 且 0 报告；两平台全部 34 个 `examples/*.ae` 通过 `check`；`print(1)` 生成 C 两平台同为 24,034 字节。`check --json` 的五种输入（正常、未知名字、缺失文件、反斜杠路径、参数顺序颠倒）与默认 `check` 的单行输出归档在 `bench/results/2026-11-11-{windows,linux}-checkjson/json-diagnostics.txt`，平台说明见各自的 `PLATFORM.txt`。
 - 验证中暴露并修复的问题：集成测试最初**无条件**断言路径里包含反斜杠转义，Linux 上必然失败（路径分隔符是 `/`，第一轮 Linux 运行为 154/155）。修正为 `#[cfg(windows)]` 断言转义、`#[cfg(unix)]` 断言 `"file":"/` 的绝对路径，两平台重跑全绿。教训与 ADR-47 的模糊测试教训同类：**断言里含平台形状时必须用 cfg 分开**，不能把 Windows 的形状当通用事实。
+
+## ADR-49：`split`/`lines` 单块 arena——按 token 数的分配降为常数次
+
+- 背景：text 负载（50,000 行、2.59 MB、约 45 万 token）的变体差值法显示，`split` 本身占 27.3 ms（总 44.8 ms 的 61%），而遍历 token 几乎免费（−0.4 ms，噪声内）。读码归因：`ae_split` 对每个 token 调一次 `ae_str_from_len`（一次 `malloc` + `memcpy` + 写 NUL），指针数组还要按 2 倍增长扩容 `log2(N)` 次。这与 map 负载的教训同型——**慢在字符串构造，不在容器操作**。
+- 关键观察：`vec[string]` 的元素是**只读借用**（语言层面不能把元素移出向量），所以没有任何用户代码需要单独释放某个元素的字节。整个向量的元素可以共用一块字节区，释放由向量统一负责。
+- 决策：
+  1. `ae_strvec` 增加 `char *arena; int64_t arena_len;`。`arena == NULL` 表示逐元素自有（`push`、`args`、`keys` 构造的向量不变），`split`/`lines` 的输出指向 arena。
+  2. 新增 `ae_strvec_borrowed(v, s)`：用 `uintptr_t` 比较元素指针是否落在 `[arena, arena + arena_len)`（跨对象指针比较在 ISO C 里没有定义序，整数比较是安全的写法）。`pop`、`release`、`clear_slot` 对 arena 内元素只清零槽位、不 `free`；arena 随向量一起释放。
+  3. `split`/`lines` 改两遍：第一遍数 token 数与字节数，第二遍一次性分配**精确容量**的指针数组和一块字节 arena，逐 token 拷贝并保留 NUL 结尾（`ptr` 仍可直接交给 C 字符串 API）。
+  4. 扫描路径：单字节分隔符（`" "`、`"\n"` 这两个最常见形状）走 `memchr`，由 libc 做 SIMD；多字节分隔符保持逐位 `memcmp`。`lines` 原来的 SWAR 循环整体替换为 `memchr` 两遍扫描（该宏只在这一处使用）。
+  5. 前端 `Statement::StrVecStore` 的发射从直接 `ae_str_release(&v.data[i])` 改为 `ae_strvec_clear_slot(&v, i, line, col)`，否则覆盖元素的路径会把 arena 内部指针交给 `free`。
+- 已排除的做法：
+  - **零拷贝 token（元素指向输入缓冲区）**：需要生命周期/借用分析（现有借用模型只覆盖三种视图），而且 `text` 可能在 `tokens` 之前被释放，直接悬垂。语言仍是拷贝语义。
+  - **给 `ae_string` 加 owned 标志**：结构体从 16 字节变 24 字节，影响所有字符串的内存占用与生成代码；向量级 arena 区间判断同样正确，且不动这个到处按值传递的结构。
+  - **全局 arena / 替换分配器**：改动面覆盖所有分配路径，风险与收益不对称。
+  - **只做精确容量（不做 arena）**：省掉的只是 `log2(N)` 次指针数组扩容，实测远小于逐 token malloc 的部分。
+- 资源成本（逐条回答 §21 的验收问题）：
+  - **运行 CPU**：Windows 同次运行对照（两个真实二进制、7 次交替、中位）：`full` 44.78 → 24.37 ms（1.84 倍，省 20.4 ms），`count` 44.83 → 23.62 ms，`read`（只读文件）16.73 → 16.61 ms（差在噪声内，说明收益来自 split 而非 I/O）；由同一次运行推导的 `split` 成本（`count − read`）从 28.10 ms 降到 7.01 ms。两处优化各有同次对照：一次中间构建显示**只做 arena** 已把 split 成本从 27.3 降到 15.0 ms，再加入 `memchr` 扫描得到最终的 7.01 ms（中间值来自另一次同次运行，不与归档值相减）。Linux：`full` 25.08 → 10.22 ms（2.45 倍），`split` 成本 22.28 → 8.86 ms。
+  - **内存**：每个 split/lines 向量的分配次数由 `N + O(log N)` 降到 2；指针数组按精确 token 数分配（原来是 2 的幂，最多两倍）。**未做峰值内存采样**，不宣称具体峰值数字；arena 会保留被 pop 掉元素的字节直到向量释放（按块释放的代价）。
+  - **编译速度**：运行时文本增加约 70 行，前端新增一个发射替换，未单独计时。
+  - **产物/缓存体积**：`print(1)` 的生成 C 从 24,034 增至 25,134 字节（+1,100，新增 arena 代码与注释），但**可执行文件大小不变**（Windows `-O0` 66,849 / `-O2` 66,893 字节）——未引用的运行时单元仍被 ADR-38 的闭包裁剪去掉；真正使用 `split` 的程序 `split_arena.ae` 从 72,960 增至 75,301 字节（+2,341，+3.2%），这是使用融合路径的诚实代价。缓存键覆盖生成的 C，因此升级后首次构建会全部重建一次。
+  - **安全语义**：未关闭任何检查；元素仍是只读借用、不能移出；pop/store/push 的行为与返回类型不变。
+- 边界（对外表述不得越过）：
+  - 不是零拷贝：每个 token 仍复制字节并自带 NUL；
+  - 只覆盖 `split` 与 `lines`；`push`/`args`/`keys` 仍是逐元素自有；
+  - 不宣称「所有字符串处理变快」，也不把 text 负载的 1.84/2.45 倍当普遍加速比；
+  - 未测 Linux 同次对照前不把 Windows 数字当跨平台结论（本轮已补 Linux 记录）。
+- 验证：两平台各跑一次全套命令，均为 34 单元 + 156 集成通过（新增 1 个 arena 边界集成测试：多字节分隔符的非重叠扫描、空字段、空输入、`lines` 的 CRLF 与尾部换行、以及 pop/store/push 组合）；`--leak` 28 个用例（新增 `examples/split_arena.ae`，Windows 2 块 / Linux 0 块基线），Linux `--sanitize` 28 个用例 0 报告；35 个 `examples/*.ae` 通过 `check`；`split_arena.ae` 的生成 C 通过 `-std=c11 -pedantic-errors -Werror=return-type -fsyntax-only`；`print(1)` 生成 C 两平台一致（25,134 字节，逐字节相同）。Linux 同次对照：`full` 25.08 → 10.22 ms（2.45 倍），`count` 23.68 → 10.32 ms，`read` 1.40 → 1.46 ms（噪声内），split 成本 8.86 ms——收益方向与量级和 Windows 一致，但两平台绝对值不可比；同一实现的另一次 Linux 运行给出 2.31 倍，说明该比值只能当量级。日志、对照 JSON（含 7 次原始值）与生成 C 见 `bench/results/2026-11-11-{windows,linux}-split-arena/`。
+- 验证中抓到的真实缺陷：`lines("")` 返回的向量按**精确容量**构造，容量为 0；此时 `push` 走 `cap * 2` 会申请 0 字节再写 `data[0]`，越界写。修复是给扩容加下界（`cap < 4 ? 4 : cap * 2`），并把这个形状写进 `examples/split_arena.ae`（于是也进 `--leak` 与 Linux 净化器用例）与集成测试。精确容量把「容量为 0」这个状态第一次变成可达状态，这类边界只有在写完测试后才暴露。
+- 过程教训：建立基线二进制时曾把**工作区当前**的 `runtime.c`/`runtime_ex.c` 复制进旧树（为规避 `git archive` 的 CRLF），那会让对照变成「新 vs 新」。改为用 `git show HEAD:src/runtime.c` 并归一化行尾，并在构建后断言旧树不含新符号（`grep arena` = 0）才继续。**基线二进制必须验证它真的是基线**。

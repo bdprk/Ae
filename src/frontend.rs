@@ -3906,7 +3906,7 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                 out.push_str(&format!("    int64_t t{checked} = ae_strvec_index({}, v{id}.len, {line}, {col});\n", i.text));
                 let value = emit_expr(value, out, next, !*borrowed);
                 let text = if *borrowed { format!("ae_str_copy_view(AE_VIEW({}), {line}, {col})", value.text) } else { value.text.clone() };
-                out.push_str(&format!("    ae_str_release(&v{id}.data[t{checked}]);\n"));
+                out.push_str(&format!("    ae_strvec_clear_slot(&v{id}, t{checked}, {line}, {col});\n"));
                 out.push_str(&format!("    v{id}.data[t{checked}] = {text};\n"));
                 null_moves(out, &value.moves);
             }

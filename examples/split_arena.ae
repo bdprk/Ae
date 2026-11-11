@@ -1,0 +1,23 @@
+// A split result owns one byte arena, and its elements point into it. Popping
+// an element, overwriting one and pushing past the exact capacity must all
+// leave the arena and the replacement strings releasable exactly once (ADR-49);
+// the allocation-count baseline for this program checks that they do.
+
+fn main() {
+    var parts = split("alpha beta gamma delta", " ");
+    pop(parts);
+    parts[0] = "ALPHA";
+    push(parts, "tail");
+    print(len(parts));
+    print(parts[0]);
+    print(join(parts, "|"));
+    let rows = lines("one\ntwo\nthree\n");
+    print(len(rows));
+    print(rows[2]);
+    // An empty split/lines result starts at capacity zero; pushing onto it must
+    // grow the pointer array rather than doubling zero.
+    var empty = lines("");
+    push(empty, "grown");
+    print(len(empty));
+    print(empty[0]);
+}

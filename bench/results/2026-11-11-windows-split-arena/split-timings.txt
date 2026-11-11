@@ -1,0 +1,5 @@
+read   old=  16.73 ms new=  16.61 ms saved=  0.12 ms ratio= 1.01x
+count  old=  44.83 ms new=  23.62 ms saved= 21.22 ms ratio= 1.90x
+full   old=  44.78 ms new=  24.37 ms saved= 20.41 ms ratio= 1.84x
+new split cost (count-read) = 7.01 ms; iteration (full-count) = 0.75 ms
+wrote bench/results/2026-11-11-windows-split-arena/split-timings.json

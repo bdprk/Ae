@@ -1,0 +1,28 @@
+ADR-49 split/lines 单块 arena · Linux 归档（2026-11-11）
+
+## 源码树身份
+ADR-49 提交树（arena + memchr 两遍扫描 + cap 下界修复）。tar 管道同步到 ~/ae-lang；
+基线用同一提交之前的 src（git show 取 blob 并归一化行尾，构建后断言不含新符号）。
+
+## 平台
+instabox-node 沙箱：Debian 13，内核 6.18.54-instabox，x86-64，4 vCPU；gcc 14.2.0-19；rustc 1.99.0。
+
+## 命令
+- cargo build --locked && cargo build --release --locked && cargo test --locked
+- python3 scripts/verify_generated_c.py --leak
+- python3 scripts/verify_generated_c.py --sanitize
+- for f in examples/*.ae; do target/debug/ae check "$f"; done
+- python3 bench/split_timings.py --old-exe ~/ae-old-arena/target/release/ae --runs 7
+- target/debug/ae emit-c <print(1)>
+
+## 结果
+- cargo test：34 单元 + 156 集成全通过。
+- --leak：28 个用例 PASS，退出分配块 0（glibc 基线）；--sanitize：28 个用例 PASS，0 报告。
+- 35 个 examples 通过 check（0 失败）。
+- 同次运行对照（7 次交替，中位）：read 1.40 → 1.46 ms（噪声内）；count 23.68 → 10.32 ms（2.29 倍）；
+  full 25.08 → 10.22 ms（2.45 倍）；split 成本 22.28 → 8.86 ms；遍历差值 −0.10 ms（噪声内）。
+  两平台绝对值不可比，只比方向与量级；同一实现的另一次 Linux 运行给出 2.31 倍，说明比值只能当量级。
+- print(1) 生成 C 25,134 字节，与 Windows 逐字节相同。
+
+## 边界
+不是零拷贝；只覆盖 split/lines；push/args/keys 仍逐元素自有；未采样峰值内存。

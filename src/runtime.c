@@ -297,18 +297,38 @@ static ae_string ae_trim(ae_strview s, size_t line, size_t column) {
 }
 
 // Owned vector of owned strings. Elements are borrow-only reads.
-typedef struct { ae_string *data; int64_t len; int64_t cap; } ae_strvec;
+//
+// `arena` is NULL for vectors built element by element (`push`, `args`, `keys`):
+// every element owns its own buffer and is released individually. `split` and
+// `lines` instead copy all tokens into one arena and point every element into
+// it, so N tokens cost two allocations instead of N (ADR-49). Elements whose
+// pointer lies inside the arena are cleared without freeing; the arena is
+// released with the vector.
+typedef struct { ae_string *data; int64_t len; int64_t cap; char *arena; int64_t arena_len; } ae_strvec;
+static int ae_strvec_borrowed(const ae_strvec *v, const ae_string *s) {
+    // Compare as integers: two pointers into unrelated objects have no defined
+    // ordering in ISO C, but their uintptr_t values are comparable here.
+    return v->arena != NULL
+        && s->ptr != NULL
+        && (uintptr_t)s->ptr >= (uintptr_t)v->arena
+        && (uintptr_t)s->ptr < (uintptr_t)v->arena + (uintptr_t)v->arena_len;
+}
 static ae_strvec ae_strvec_new(size_t line, size_t column) {
     ae_strvec v;
     v.len = 0;
     v.cap = 4;
     v.data = ae_alloc((size_t)v.cap * sizeof(ae_string), line, column);
+    v.arena = NULL;
+    v.arena_len = 0;
     return v;
 }
 static void ae_strvec_push(ae_strvec *v, ae_string s, size_t line, size_t column) {
     if (v->len == v->cap) {
+        // A fused `lines("")` vector starts at capacity 0, so growth must have a
+        // floor; doubling from zero would ask for zero bytes and then write
+        // past it.
         if (v->cap > INT64_MAX / 2) ae_fail("vector too large", line, column);
-        int64_t ncap = v->cap * 2;
+        int64_t ncap = v->cap < 4 ? 4 : v->cap * 2;
         ae_string *nd = ae_alloc_resize(v->data, (size_t)ncap * sizeof(ae_string), line, column);
         v->data = nd;
         v->cap = ncap;
@@ -319,7 +339,12 @@ static void ae_strvec_push(ae_strvec *v, ae_string s, size_t line, size_t column
 static void ae_strvec_pop(ae_strvec *v, size_t line, size_t column) {
     if (v->len == 0) ae_fail("pop from empty vector", line, column);
     v->len = v->len - 1;
-    ae_str_release(&v->data[v->len]);
+    if (ae_strvec_borrowed(v, &v->data[v->len])) {
+        v->data[v->len].ptr = NULL;
+        v->data[v->len].len = 0;
+    } else {
+        ae_str_release(&v->data[v->len]);
+    }
 }
 static int64_t ae_strvec_len(ae_strvec v, size_t line, size_t column) {
     (void)line; (void)column;
@@ -339,34 +364,95 @@ static const ae_string *ae_strvec_get_const(const ae_strvec *v, int64_t index, s
     return &v->data[index];
 }
 static void ae_strvec_release(ae_strvec *v) {
-    for (int64_t i = 0; i < v->len; i++) ae_str_release(&v->data[i]);
+    for (int64_t i = 0; i < v->len; i++) {
+        if (ae_strvec_borrowed(v, &v->data[i])) {
+            v->data[i].ptr = NULL;
+            v->data[i].len = 0;
+        } else {
+            ae_str_release(&v->data[i]);
+        }
+    }
     ae_free(v->data);
+    ae_free(v->arena);
     v->data = NULL;
+    v->arena = NULL;
+    v->arena_len = 0;
     v->len = 0;
     v->cap = 0;
+}
+// Overwriting an element releases the old value first; an element inside the
+// vector's own arena is cleared without freeing (ADR-49).
+static void ae_strvec_clear_slot(ae_strvec *v, int64_t index, size_t line, size_t column) {
+    ae_strvec_index(index, v->len, line, column);
+    if (ae_strvec_borrowed(v, &v->data[index])) {
+        v->data[index].ptr = NULL;
+        v->data[index].len = 0;
+    } else {
+        ae_str_release(&v->data[index]);
+    }
 }
 static void ae_strvec_forfeit(ae_strvec *v) {
     v->data = NULL;
+    v->arena = NULL;
+    v->arena_len = 0;
     v->len = 0;
     v->cap = 0;
 }
+// Next separator position at or after `from`, or -1 when none is left. A
+// one-byte separator (the common `" "` and `"\n"` shapes) goes through memchr,
+// which is SIMD-optimised in both libc implementations, instead of comparing
+// byte by byte (ADR-49).
+static int64_t ae_find_sep(const char *base, int64_t from, int64_t len, ae_strview sep) {
+    if (from >= len) return -1;
+    if (sep.len == 1) {
+        const char *hit = memchr(base + from, sep.ptr[0], (size_t)(len - from));
+        return hit == NULL ? -1 : (int64_t)(hit - base);
+    }
+    for (int64_t i = from; i + sep.len <= len; i++) {
+        if (memcmp(base + i, sep.ptr, (size_t)sep.len) == 0) return i;
+    }
+    return -1;
+}
+
 // Views only: splitting never takes ownership of its operands, so a borrowed
 // `&string` argument works exactly like an owned one.
+//
+// Two passes (ADR-49): the first counts tokens and the bytes they carry, so the
+// pointer array and the byte arena are allocated once at their exact size.
+// Each token keeps its terminator, so `ptr` stays usable with C string APIs.
 static ae_strvec ae_split(ae_strview s, ae_strview sep, size_t line, size_t column) {
     if (sep.len == 0) ae_fail("empty separator", line, column);
-    ae_strvec out = ae_strvec_new(line, column);
-    int64_t start = 0;
-    int64_t i = 0;
-    while (i + sep.len <= s.len) {
-        if (memcmp(s.ptr + i, sep.ptr, (size_t)sep.len) == 0) {
-            ae_strvec_push(&out, ae_str_from_len(s.ptr + start, i - start, line, column), line, column);
-            i = i + sep.len;
-            start = i;
-        } else {
-            i = i + 1;
-        }
+    int64_t count = 1;
+    for (int64_t at = ae_find_sep(s.ptr, 0, s.len, sep); at >= 0; at = ae_find_sep(s.ptr, at + sep.len, s.len, sep)) {
+        count += 1;
     }
-    ae_strvec_push(&out, ae_str_from_len(s.ptr + start, s.len - start, line, column), line, column);
+    if (count > INT64_MAX / (int64_t)sizeof(ae_string)) ae_fail("vector too large", line, column);
+    // Input bytes minus the separators, plus one terminator per token.
+    int64_t bytes = (s.len - (count - 1) * sep.len) + count;
+    ae_strvec out;
+    out.data = ae_alloc((size_t)count * sizeof(ae_string), line, column);
+    out.len = 0;
+    out.cap = count;
+    out.arena = ae_alloc((size_t)bytes, line, column);
+    out.arena_len = bytes;
+    char *cursor = out.arena;
+    int64_t start = 0;
+    for (int64_t at = ae_find_sep(s.ptr, 0, s.len, sep); at >= 0; at = ae_find_sep(s.ptr, at + sep.len, s.len, sep)) {
+        int64_t n = at - start;
+        if (n > 0) memcpy(cursor, s.ptr + start, (size_t)n);
+        cursor[n] = 0;
+        out.data[out.len].ptr = cursor;
+        out.data[out.len].len = n;
+        out.len += 1;
+        cursor += n + 1;
+        start = at + sep.len;
+    }
+    int64_t n = s.len - start;
+    if (n > 0) memcpy(cursor, s.ptr + start, (size_t)n);
+    cursor[n] = 0;
+    out.data[out.len].ptr = cursor;
+    out.data[out.len].len = n;
+    out.len += 1;
     return out;
 }
 
@@ -395,32 +481,51 @@ static ae_string ae_join(const ae_strvec *v, ae_strview sep, size_t line, size_t
     return result;
 }
 
-// lines(): split on newlines with a word-at-a-time scan (SWAR). Trailing
-// newlines do not produce a final empty line, matching common stdlib lines().
-#define AE_HASZERO(x) (((x) - 0x0101010101010101ULL) & ~(x) & 0x8080808080808080ULL)
+// lines(): split on newlines. Trailing newlines do not produce a final empty
+// line, matching common stdlib lines(). Two passes with memchr (ADR-49): count
+// lines first, then fill one exact-size pointer array and one byte arena.
 static ae_strvec ae_lines(ae_strview s, size_t line, size_t column) {
-    ae_strvec out = ae_strvec_new(line, column);
-    int64_t start = 0;
-    int64_t i = 0;
-    while (i < s.len) {
-        while (i + 8 <= s.len) {
-            uint64_t chunk;
-            memcpy(&chunk, s.ptr + i, 8);
-            chunk ^= 0x0a0a0a0a0a0a0a0aULL;
-            if (AE_HASZERO(chunk)) { break; }
-            i += 8;
-        }
-        if (i >= s.len) { break; }
-        if (s.ptr[i] == 0x0a) {
-            ae_strvec_push(&out, ae_str_from_len(s.ptr + start, i - start, line, column), line, column);
-            i = i + 1;
-            start = i;
-        } else {
-            i = i + 1;
-        }
+    int64_t newlines = 0;
+    const char *p = s.ptr;
+    int64_t rem = s.len;
+    while (rem > 0) {
+        const char *hit = memchr(p, '\n', (size_t)rem);
+        if (hit == NULL) break;
+        newlines += 1;
+        rem -= (int64_t)(hit - p) + 1;
+        p = hit + 1;
     }
-    if (start < s.len) {
-        ae_strvec_push(&out, ae_str_from_len(s.ptr + start, s.len - start, line, column), line, column);
+    int64_t count = newlines + ((s.len > 0 && s.ptr[s.len - 1] != '\n') ? 1 : 0);
+    if (count > INT64_MAX / (int64_t)sizeof(ae_string)) ae_fail("vector too large", line, column);
+    int64_t bytes = (s.len - newlines) + count;
+    ae_strvec out;
+    out.data = ae_alloc((size_t)(count > 0 ? count : 1) * sizeof(ae_string), line, column);
+    out.len = 0;
+    out.cap = count;
+    out.arena = ae_alloc((size_t)(bytes > 0 ? bytes : 1), line, column);
+    out.arena_len = bytes > 0 ? bytes : 1;
+    char *cursor = out.arena;
+    p = s.ptr;
+    rem = s.len;
+    while (rem > 0) {
+        const char *hit = memchr(p, '\n', (size_t)rem);
+        if (hit == NULL) break;
+        int64_t n = (int64_t)(hit - p);
+        if (n > 0) memcpy(cursor, p, (size_t)n);
+        cursor[n] = 0;
+        out.data[out.len].ptr = cursor;
+        out.data[out.len].len = n;
+        out.len += 1;
+        cursor += n + 1;
+        rem -= n + 1;
+        p = hit + 1;
+    }
+    if (rem > 0) {
+        if (rem > 0) memcpy(cursor, p, (size_t)rem);
+        cursor[rem] = 0;
+        out.data[out.len].ptr = cursor;
+        out.data[out.len].len = rem;
+        out.len += 1;
     }
     return out;
 }

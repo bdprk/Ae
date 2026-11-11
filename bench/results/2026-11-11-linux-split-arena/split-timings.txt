@@ -1,0 +1,5 @@
+read   old=   1.40 ms new=   1.46 ms saved= -0.06 ms ratio= 0.96x
+count  old=  23.68 ms new=  10.32 ms saved= 13.36 ms ratio= 2.29x
+full   old=  25.08 ms new=  10.22 ms saved= 14.86 ms ratio= 2.45x
+new split cost (count-read) = 8.86 ms; iteration (full-count) = -0.10 ms
+wrote /tmp/ae-sa/split-timings.json

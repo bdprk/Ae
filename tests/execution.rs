@@ -1237,6 +1237,28 @@ fn split_and_args_produce_string_vectors() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("array index out of bounds"));
 }
 #[test]
+fn fused_split_and_lines_keep_their_edge_cases() {
+    // ADR-49 gives split/lines one fused arena. The scanning rules must not
+    // change: left-to-right, non-overlapping multi-byte separators, empty
+    // fields preserved, and no trailing empty line after a final newline.
+    let output = execute("fn main() { let v = split(\"aaaa\", \"aa\"); print(len(v)); print(len(v[0])); print(len(v[2])); let w = split(\",a,\", \",\"); print(len(w)); print(w[0]); print(w[2]); let e = split(\"\", \",\"); print(len(e)); print(len(e[0])); }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "3\n0\n0\n3\n\n\n1\n0\n");
+    let output = execute("fn main() { print(len(lines(\"\"))); print(len(lines(\"a\\n\"))); print(len(lines(\"\\n\"))); print(len(lines(\"a\\n\\nb\"))); let crlf = lines(\"a\\r\\nb\"); print(len(crlf)); print(len(crlf[0])); print(len(lines(\"a\"))); }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "0\n1\n1\n3\n2\n2\n1\n");
+    // Destroying arena elements (pop, store) and growing past the exact
+    // capacity (push) must not free arena memory or leak the replacement.
+    let output = execute("fn main() { var v = split(\"a b c d e\", \" \"); pop(v); print(len(v)); v[0] = \"zz\"; print(v[0]); push(v, \"tail\"); print(v[4]); print(join(v, \"|\")); }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "4\nzz\ntail\nzz|b|c|d|tail\n");
+    // An empty lines() result has exact capacity 0; pushing must grow the
+    // pointer array instead of doubling zero bytes.
+    let output = execute("fn main() { var v = lines(\"\"); print(len(v)); push(v, \"grown\"); print(len(v)); print(v[0]); var s = split(\"\", \",\"); push(s, \"b\"); print(len(s)); print(s[1]); }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "0\n1\ngrown\n2\nb\n");
+}
+#[test]
 fn strvec_elements_are_borrow_only_and_push_pop_work() {
     let source = "fn main() { var v = split(\"one,two\", \",\"); print(len(v)); push(v, \"three\"); print(len(v)); print(v[2]); pop(v); print(len(v)); v[0] = \"ONE\"; print(v[0]); print(contains(v[1], \"wo\")); }";
     let output = execute(source);
