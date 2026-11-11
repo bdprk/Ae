@@ -3228,3 +3228,39 @@ fn trait_impl_lives_with_its_trait_or_type_and_third_files_are_refused() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("impl of 'Area' for 'struct"), "{}", String::from_utf8_lossy(&output.stderr));
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn check_json_reports_structured_diagnostics_or_an_empty_array() {
+    let ae = || Command::new(env!("CARGO_BIN_EXE_ae"));
+
+    let dir = unique_temp_dir("checkjson");
+    let good = dir.join("good.ae");
+    fs::write(&good, "fn main() { print(1); }\n").unwrap();
+    let output = ae().arg("check").arg("--json").arg(&good).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n").trim(), "[]");
+    // The flag is also accepted after the path; both spellings are documented.
+    let output = ae().arg("check").arg(&good).arg("--json").output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n").trim(), "[]");
+
+    let bad = dir.join("bad.ae");
+    fs::write(&bad, "fn main() { print(who_am_i); }\n").unwrap();
+    let output = ae().arg("check").arg("--json").arg(&bad).output().unwrap();
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert!(stdout.trim_start().starts_with('['), "{stdout}");
+    assert!(stdout.contains("\"file\""), "{stdout}");
+    assert!(stdout.contains("\"line\":"), "{stdout}");
+    assert!(stdout.contains("\"column\":"), "{stdout}");
+    assert!(stdout.contains("unknown variable"), "{stdout}");
+    assert!(stdout.trim_end().ends_with(']'), "{stdout}");
+    // Windows paths carry backslashes, so the escaping must survive them; on
+    // Unix the separator is `/` and the same assertion would be vacuous, so
+    // the path itself is the thing worth checking.
+    #[cfg(windows)]
+    assert!(stdout.contains("\\\\"), "separators not escaped: {stdout}");
+    #[cfg(unix)]
+    assert!(stdout.contains("\"file\":\"/"), "absolute unix path missing: {stdout}");
+    let _ = fs::remove_dir_all(&dir);
+}

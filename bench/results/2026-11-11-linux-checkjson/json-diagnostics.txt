@@ -1,0 +1,15 @@
+--- good file ---
+[]
+exit=0
+--- unknown name ---
+[{"file":"/tmp/ae-cj/probe/bad.ae","line":1,"column":19,"message":"unknown variable 'who_am_i'"}]
+exit=1
+--- flag after path ---
+[{"file":"/tmp/ae-cj/probe/bad.ae","line":1,"column":19,"message":"unknown variable 'who_am_i'"}]
+exit=1
+--- missing file (no location) ---
+[{"file":null,"line":null,"column":null,"message":"cannot open /tmp/ae-cj/probe/nope.ae: No such file or directory (os error 2)"}]
+exit=1
+--- default check still one human-readable line ---
+ae: /tmp/ae-cj/probe/bad.ae:1:19: unknown variable 'who_am_i'
+exit=1

@@ -1,0 +1,25 @@
+ADR-48 编辑器诊断（`check --json`）· Windows 归档（2026-11-11）
+
+## 平台
+Windows x86-64，MinGW-W64 GCC 16.2.0（UCRT），rustc 本机工具链。
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak
+- for f in examples/*.ae; do ae check "$f"; done
+- ae check --json <good.ae> / <bad.ae> / <missing> / 反斜杠相对路径 / 参数顺序颠倒
+- ae check <bad.ae>（默认单行输出对照）
+- ae emit-c <print(1) 探针> | wc -c
+
+## 结果
+- cargo test：34 单元 + 155 集成全通过。
+- --leak：27 个用例全部 PASS，退出分配块数等于 2 块基线。
+- 全部 34 个 examples 通过 check（0 个失败）。
+- check --json：成功 `[]` + 退出 0；失败一个对象（file/line/column/message）+ 退出 1；
+  缺失文件给 null 位置与原始消息；反斜杠路径输出 `target\\probe\\json\\bad.ae`（JSON 转义）；
+  `check <file> --json` 与 `check --json <file>` 等价；默认 check 仍是单行 `ae: file:1:19: ...`。
+- print(1) 生成 C 24,034 字节（与 Linux 相同）。
+
+## 边界
+数组形状是契约、长度不是（fail-fast，当前至多 1 个元素）；不是 LSP；无增量与错误恢复；
+message 不保证逐字稳定。

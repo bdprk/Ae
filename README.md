@@ -15,6 +15,7 @@ AE 是自主研发的实验性原生编程语言，首批目标平台为 Windows
 ```sh
 cargo test
 cargo run -- check examples/hello.ae
+cargo run -- check --json examples/hello.ae   # 编辑器用：stdout 恰为一个 JSON 数组
 cargo run -- emit-c examples/hello.ae
 cargo run -- fmt examples/hello.ae
 cargo run -- test tests_demo/strings_test.ae   # 约定：fn test_<名称>() -> i64，0 为通过
@@ -63,6 +64,8 @@ cargo run -- version
 编译器前端按源文件共享词法结果（ADR-41）：`GenericFn` 不再为每个泛型声明复制整份 token 流与源码，含大量泛型声明的文件 `check` 明显变快，生成 C 与诊断完全不变。`bench/shared_tokens_timings.py` 用改动前后的两个二进制在同一脚本内交替测 `check`，并断言两者 `emit-c` 逐字节相同、声明处诊断一致；`bench/constraint_audit_timings.py` 则用于度量能力审计本身的上界。
 
 `run` 支持把程序参数放在 `--` 之后转发给被运行的程序（`args()` 才能看到它们）：`cargo run -- run examples/find_files.ae -- examples txt`。设置 `AE_TIMINGS=1` 输出前端、C 编译与链接耗时及缓存命中情况；设置 `AE_ALLOC_LIMIT=N` 把运行时的累计分配字节数限制在 N，用于确定性地验证分配失败诊断（超出后按「out of memory」终止并给出位置，不是内存配额）；`check` 只做词法、语法与语义检查，不需要 C 编译器。
+
+`check --json` 是给编辑器的稳定接口（ADR-48）：stdout 恰为一个 JSON 数组，成功是 `[]` 并以 0 退出，失败是一个含 `file`/`line`/`column`/`message` 的对象并以 1 退出；无法定位的失败把整条消息放进 `message`、位置为 `null`，不猜位置。数组的**形状**是契约、长度不是（前端目前 fail-fast，所以至多一个元素）。`message` 是展示文本，不保证逐字稳定，请按 `file`/`line`/`column` 分支。默认 `check` 的单行人类可读输出与退出码不变。
 
 验证生成的 C：`cargo build` 后运行 `python scripts/verify_generated_c.py`；Linux 可加 `--sanitize` 启用地址和未定义行为检测，MinGW 无 libasan 时用 `--leak` 走 `-Wl,--wrap` 的分配计数（要求每个程序的退出分配块数等于空程序基线）。检测覆盖有限案例，不能证明实现完全安全。
 

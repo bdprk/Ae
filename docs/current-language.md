@@ -88,7 +88,7 @@ fn main() {
 
 ## 工具链
 
-`ae check|emit-c|fmt|test|run|build|cache|deps|version`。`build` 与 `run` 的产物基于内容寻址缓存：键覆盖生成的 C、优化模式、C 编译器标识与其路径、AE 版本与目标平台；条目带 `字节数 + SHA-256` 的 manifest，命中前校验，损坏条目会被删除并重建；编译器身份无法查询时本次禁用缓存（`AE_TIMINGS=1` 会说明原因）。缓存命中与全量构建语义一致。更换 libc/SDK 等键外因素后应 `ae cache clear`。`AE_CACHE` 覆盖缓存位置，`AE_CACHE_LIMIT` 以字节为单位限制缓存总量（未设置或 `0` 表示不限制，超出后按最近使用时间删除整条条目），`cache dir|clear|stats` 查看与清理（`stats` 会显示当前上限）。`AE_CC` 指定 C 编译器；默认开发模式 `-O0`，`--release` 使用 `-O2`；两种模式保持相同语言语义与检查。`run` 把 `--` 之后的参数转发给被运行的程序（`args()` 可见，含 argv[0]）；其他子命令不接受程序参数，传入即报错。`AE_TIMINGS=1` 输出阶段耗时与缓存命中情况；`AE_ALLOC_LIMIT=N` 把运行时累计分配字节数限制在 N，用于确定性地验证分配失败诊断（超出后以「out of memory」终止并给出位置，不是内存配额，非数字值被忽略）。
+`ae check|emit-c|fmt|test|run|build|cache|deps|version`。`check` 只做词法、语法与语义检查（纯前端，不需要 C 编译器）；`check --json <file>`（或 `<file> --json`）是编辑器接口（ADR-48）：stdout 恰为一个 JSON 数组，无诊断输出 `[]` 并以 0 退出，有诊断输出一个 `{"file","line","column","message"}` 对象并以 1 退出；无法定位的消息把整条文本放进 `message`、位置为 `null`，不猜位置。数组形状是契约、长度不是（前端 fail-fast，当前至多一个元素）；`message` 不保证逐字稳定。默认 `check` 的单行输出与退出码不变。`build` 与 `run` 的产物基于内容寻址缓存：键覆盖生成的 C、优化模式、C 编译器标识与其路径、AE 版本与目标平台；条目带 `字节数 + SHA-256` 的 manifest，命中前校验，损坏条目会被删除并重建；编译器身份无法查询时本次禁用缓存（`AE_TIMINGS=1` 会说明原因）。缓存命中与全量构建语义一致。更换 libc/SDK 等键外因素后应 `ae cache clear`。`AE_CACHE` 覆盖缓存位置，`AE_CACHE_LIMIT` 以字节为单位限制缓存总量（未设置或 `0` 表示不限制，超出后按最近使用时间删除整条条目），`cache dir|clear|stats` 查看与清理（`stats` 会显示当前上限）。`AE_CC` 指定 C 编译器；默认开发模式 `-O0`，`--release` 使用 `-O2`；两种模式保持相同语言语义与检查。`run` 把 `--` 之后的参数转发给被运行的程序（`args()` 可见，含 argv[0]）；其他子命令不接受程序参数，传入即报错。`AE_TIMINGS=1` 输出阶段耗时与缓存命中情况；`AE_ALLOC_LIMIT=N` 把运行时累计分配字节数限制在 N，用于确定性地验证分配失败诊断（超出后以「out of memory」终止并给出位置，不是内存配额，非数字值被忽略）。
 
 ## 格式化
 

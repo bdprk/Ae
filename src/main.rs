@@ -6,7 +6,7 @@ mod harness;
 mod sha256;
 use frontend::compile_path;
 
-const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae>\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--release]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae check --json <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae>\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--release]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -128,6 +128,54 @@ fn prune_cache(limit: u64) {
 }
 
 fn timings_enabled() -> bool { env::var_os("AE_TIMINGS").as_deref() == Some(std::ffi::OsStr::new("1")) }
+
+/// Escapes a string for JSON output. The project has no dependencies by
+/// design, so the escaping is spelled out: quotes, backslashes (paths on
+/// Windows are full of them), and control characters.
+fn json_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Splits one fail-fast diagnostic into its structured parts. The format is
+/// `file:line:column: message` (or `line:column: message` for sources with no
+/// file name); a message that does not parse becomes a whole-string
+/// diagnostic rather than a mangled one.
+fn diagnostic_json(message: &str) -> String {
+    let (at, rest) = match message.split_once(": ") {
+        Some((at, rest)) => (at, rest),
+        None => return format!("{{\"file\":null,\"line\":null,\"column\":null,\"message\":\"{}\"}}", json_escape(message)),
+    };
+    let parts: Vec<&str> = at.split(':').collect();
+    let (file, line, column): (Option<String>, Option<usize>, Option<usize>) = match parts.as_slice() {
+        [file, line, column] => (Some((*file).to_owned()), line.parse().ok(), column.parse().ok()),
+        // A Windows drive letter splits the path into two pieces
+        // (`D` + `\用户\...`); rejoin them.
+        [drive, file, line, column] if drive.len() == 1 && (file.starts_with('\\') || file.starts_with('/')) =>
+            (Some(format!("{drive}:{file}")), line.parse().ok(), column.parse().ok()),
+        [line, column] => (None, line.parse().ok(), column.parse().ok()),
+        _ => (None, None, None),
+    };
+    // A location that does not parse is a formatting bug or a foreign
+    // message; reporting the whole text beats reporting a mangled position.
+    let (Some(line), Some(column)) = (line, column) else {
+        return format!("{{\"file\":null,\"line\":null,\"column\":null,\"message\":\"{}\"}}", json_escape(message));
+    };
+    format!("{{\"file\":{},\"line\":{line},\"column\":{column},\"message\":\"{}\"}}",
+        file.as_ref().map_or("null".to_owned(), |f| format!("\"{}\"", json_escape(f))),
+        json_escape(rest))
+}
 
 /// Build the generated C. Results are cached under a key covering every
 /// input that can change the executable: generated C text, optimization
@@ -268,6 +316,37 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         print!("{}", frontend::describe_path(Path::new(&args[1]))?);
         return Ok(0);
     }
+    // `check --json <file>` is the documented spelling; `check <file> --json`
+    // is accepted too because both readings are natural and the flag has no
+    // other position to be confused with.
+    let json_check = match (cmd.as_str(), args.len()) {
+        ("check", 3) => {
+            let first = args[1].to_str();
+            let second = args[2].to_str();
+            match (first, second) {
+                (Some("--json"), Some(file)) => Some(file),
+                (Some(file), Some("--json")) => Some(file),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    if let Some(source) = json_check {
+        // Editor diagnostics: one structured array on stdout, nothing else.
+        // Success prints `[]` and exits 0; failure prints one object (the
+        // front end is fail-fast, so the array has one element until error
+        // recovery exists — the array shape is the contract, not its length).
+        let started = Instant::now();
+        let report = match frontend::check_path(Path::new(source)) {
+            Ok(()) => "[]".to_owned(),
+            Err(message) => format!("[{}]", diagnostic_json(&message)),
+        };
+        println!("{report}");
+        if timings_enabled() {
+            eprintln!("ae timing: frontend_ms={:.3}", started.elapsed().as_secs_f64() * 1000.0);
+        }
+        return Ok(if report == "[]" { 0 } else { 1 });
+    }
     if args.len() < 2 { return Err(USAGE.into()); }
     let release = match cmd.as_str() {
         "run" if args.len() == 3 && args[2] == "--release" => true,
@@ -357,5 +436,39 @@ fn main() -> ExitCode {
     match result {
         Ok(code) => ExitCode::from(code),
         Err(e) => { eprintln!("ae: {e}"); ExitCode::FAILURE }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostics_split_into_structured_parts() {
+        let json = diagnostic_json("src/main.ae:3:14: unknown variable 'x'");
+        assert_eq!(json, "{\"file\":\"src/main.ae\",\"line\":3,\"column\":14,\"message\":\"unknown variable 'x'\"}");
+        // No file name (in-memory sources).
+        let json = diagnostic_json("2:5: assertion failed");
+        assert_eq!(json, "{\"file\":null,\"line\":2,\"column\":5,\"message\":\"assertion failed\"}");
+    }
+
+    #[test]
+    fn non_location_messages_survive_whole() {
+        // "program must define exactly one main function (found 0)" has a
+        // colon but no numbers; a foreign message has no colon at all.
+        let json = diagnostic_json("program must define exactly one main function (found 0)");
+        assert!(json.contains("\"file\":null") && json.contains("\"line\":null"), "{json}");
+        assert!(json.contains("(found 0)"), "{json}");
+        let json = diagnostic_json("no colons at all");
+        assert!(json.contains("\"message\":\"no colons at all\""), "{json}");
+    }
+
+    #[test]
+    fn windows_paths_and_quotes_are_escaped() {
+        // Backslashes (Windows paths), quotes and a non-ASCII name all pass
+        // through the escaper unchanged in meaning.
+        let json = diagnostic_json("D:\\用户\\trevv\\main.ae:1:1: cannot read \"input\": missing");
+        assert_eq!(json,
+            "{\"file\":\"D:\\\\用户\\\\trevv\\\\main.ae\",\"line\":1,\"column\":1,\"message\":\"cannot read \\\"input\\\": missing\"}");
     }
 }

@@ -1,0 +1,18 @@
+--- good file ---
+[]
+exit=0
+--- unknown name ---
+[{"file":"target/probe/json/bad.ae","line":1,"column":19,"message":"unknown variable 'who_am_i'"}]
+exit=1
+--- flag after path ---
+[{"file":"target/probe/json/bad.ae","line":1,"column":19,"message":"unknown variable 'who_am_i'"}]
+exit=1
+--- missing file (no location) ---
+[{"file":null,"line":null,"column":null,"message":"cannot open target/probe/json/nope.ae: 系统找不到指定的文件。 (os error 2)"}]
+exit=1
+--- relative path with backslashes ---
+[{"file":"target\\probe\\json\\bad.ae","line":1,"column":19,"message":"unknown variable 'who_am_i'"}]
+exit=1
+--- default check still one human-readable line ---
+ae: target/probe/json/bad.ae:1:19: unknown variable 'who_am_i'
+exit=1

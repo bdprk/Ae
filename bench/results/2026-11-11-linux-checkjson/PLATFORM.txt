@@ -1,0 +1,28 @@
+ADR-48 编辑器诊断（`check --json`）· Linux 归档（2026-11-11）
+
+## 源码树身份
+ADR-48 提交树（含平台断言修正），tar 管道同步到 ~/ae-lang。
+
+## 平台
+instabox-node 沙箱：Debian 13，内核 6.18.54-instabox，x86-64，4 vCPU；gcc 14.2.0-19；rustc 1.99.0。
+
+## 命令（工作目录 = ~/ae-lang）
+- cargo build --locked && cargo test --locked
+- python3 scripts/verify_generated_c.py --leak
+- python3 scripts/verify_generated_c.py --sanitize
+- for f in examples/*.ae; do target/debug/ae check "$f"; done
+- target/debug/ae check --json <good.ae> / <bad.ae> / <missing> / 参数顺序颠倒
+- target/debug/ae check <bad.ae>（默认单行输出对照）
+- target/debug/ae emit-c <print(1) 探针> | wc -c
+
+## 结果
+- cargo test：34 单元 + 155 集成全通过。
+- --leak：27 个用例 PASS，退出分配块 0（glibc 基线）；--sanitize：27 个用例 PASS，0 报告。
+- 全部 34 个 examples 通过 check（0 个失败）。
+- check --json 输出与 Windows 同形状，路径为 `/tmp/...`（无转义需要）。
+- print(1) 生成 C 24,034 字节（与 Windows 相同）。
+
+## 首轮暴露并修复的问题
+集成测试最初无条件断言路径含反斜杠转义，Linux 上必然失败（路径分隔符是 `/`）。
+修正为 `#[cfg(windows)]` 断言转义、`#[cfg(unix)]` 断言绝对路径后两平台全绿。
+教训：断言输入形状的平台差异必须用 cfg 分开，不能把 Windows 的形状当通用事实。
