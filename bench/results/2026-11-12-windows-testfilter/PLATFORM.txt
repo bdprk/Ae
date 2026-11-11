@@ -1,0 +1,32 @@
+ADR-62 `ae test` 过滤（`test <file.ae> <filter>`）· Windows 归档（2026-11-12）
+
+## 平台
+Windows x86-64，8 核 / 16 线程，MinGW-W64 GCC 16.2.0（UCRT）。AE 0.1.1。
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak
+- python scripts/fmt_acceptance.py --json fmt-acceptance.json
+- for f in $(find examples -name "*.ae" ! -name "report.ae" ! -name "words.ae"); do ae check "$f"; done
+
+## 交付内容
+- `ae test <source.ae> [filter]`：filter 是测试名的**子串**（cargo test 惯例），
+  只运行名字包含它的测试；`ok: N passed` 只计过滤后的集合。
+- **空匹配是错误**（`no test functions match filter 'x'`，非零退出）——拼错的
+  过滤器不能看起来像全绿。
+- 非 UTF-8 filter 显式报错而不是静默全跑；发现阶段仍全量校验测试签名
+  （约定错误的 test_* 依旧在过滤前就被拒绝）。
+- 实现零前端语义改动：过滤发生在 harness 的测试清单上，合成 main 只包含
+  选中测试，走既有 check/缓存/运行管线。
+
+## 结果
+- cargo test：36 单元（+1 harness 过滤单元测试：子串选择、合成 main 内容、
+  空匹配报错、无过滤全量）+ 174 集成（test_runner 集成测试扩展 3 段：
+  过滤子串运行、无过滤全量、空匹配报错）全通过。
+- --leak：33 用例 PASS，基线 2 块不变（过滤不触碰生成管线）。
+- fmt 验收：43 文件幂等；41 程序 `check` 通过。
+
+## 说明
+- 并行执行不在本轮：v1 失败即停 + 顺序输出是已写明的行为，并行需要先决定
+  输出聚合与失败语义，另立设计。
+- Linux 回填待做：归档 `2026-11-12-linux-testfilter/`，状态才升级为双平台验证。

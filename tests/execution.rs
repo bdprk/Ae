@@ -3485,6 +3485,22 @@ fn test_runner_reports_pass_fail_and_panic_with_exit_codes() {
     assert!(!stdout.contains("RUN test_third"), "{stdout}");
     assert!(!stdout.contains("ok:"), "{stdout}");
 
+    // A filter is a substring on the test name; only matching tests run and
+    // the ok line counts the filtered set. An empty match is an error, not a
+    // green run (ADR-62).
+    let filtered = dir.join("filter.ae");
+    fs::write(&filtered, "fn test_trim_start() -> i64 {\n    return 0;\n}\n\nfn test_trim_end() -> i64 {\n    return 0;\n}\n\nfn test_join() -> i64 {\n    return 0;\n}\n").unwrap();
+    let output = ae().arg("test").arg(&filtered).arg("trim").output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(stdout, "RUN test_trim_start\nPASS test_trim_start\nRUN test_trim_end\nPASS test_trim_end\nok: 2 passed\n");
+    let output = ae().arg("test").arg(&filtered).output().unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("ok: 3 passed"));
+    let output = ae().arg("test").arg(&filtered).arg("unicode").output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no test functions match filter 'unicode'"), "{}", String::from_utf8_lossy(&output.stderr));
+
     // A panicking test keeps the existing failure behaviour: location on
     // stderr, exit status 1.
     let panicking = dir.join("panic.ae");

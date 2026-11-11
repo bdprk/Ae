@@ -95,10 +95,20 @@ impl Drop for TestProgram {
     fn drop(&mut self) { let _ = std::fs::remove_file(&self.staging); }
 }
 
-pub(crate) fn prepare(path: &Path) -> Result<TestProgram, String> {
+pub(crate) fn prepare(path: &Path, filter: Option<&str>) -> Result<TestProgram, String> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let tests = discover(&source).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut tests = discover(&source).map_err(|e| format!("{}: {e}", path.display()))?;
+    // A filter is a plain substring on the test name (ADR-62): `ae test
+    // file.ae trim` runs only the tests whose names contain `trim`. An empty
+    // match is an error, not a green run — a typo'd filter must not look like
+    // everything passed.
+    if let Some(filter) = filter {
+        tests.retain(|name| name.contains(filter));
+        if tests.is_empty() {
+            return Err(format!("no test functions match filter '{filter}'"));
+        }
+    }
     let name = path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "tests.ae".to_owned());
@@ -130,6 +140,34 @@ mod tests {
             let message = discover(broken).unwrap_err();
             assert!(message.contains("fn test_x() -> i64"), "{broken:?}: {message}");
         }
+    }
+
+    #[test]
+    fn filter_selects_substrings_and_refuses_empty_matches() {
+        let path_source = "fn test_trim_start() -> i64 { return 0; }
+fn test_trim_end() -> i64 { return 0; }
+fn test_join() -> i64 { return 0; }
+";
+        let dir = std::env::temp_dir().join(format!("ae-harness-filter-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("sample.ae");
+        std::fs::write(&file, path_source).unwrap();
+        let picked = prepare(&file, Some("trim")).unwrap();
+        assert_eq!(picked.tests, vec!["test_trim_start".to_owned(), "test_trim_end".to_owned()]);
+        let text = std::fs::read_to_string(&picked.staging).unwrap();
+        assert!(text.contains("RUN test_trim_start") && text.contains("RUN test_trim_end"), "{text}");
+        assert!(!text.contains("RUN test_join"), "{text}");
+        assert!(text.contains("ok: 2 passed"), "{text}");
+        drop(picked);
+        let message = match prepare(&file, Some("unicode")) {
+            Err(message) => message,
+            Ok(program) => { drop(program); panic!("empty filter match should fail"); }
+        };
+        assert!(message.contains("no test functions match filter 'unicode'"), "{message}");
+        let everything = prepare(&file, None).unwrap();
+        assert_eq!(everything.tests.len(), 3);
+        drop(everything);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
