@@ -3163,3 +3163,68 @@ fn map_inc_works_on_struct_fields_like_the_other_map_builtins() {
     let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
     assert_eq!(stdout, "2\n4\n1\n");
 }
+
+#[test]
+fn trait_dispatch_resolves_per_type_and_matches_the_hand_written_call() {
+    let output = execute(
+        "trait Area {\n    fn area(shape: T) -> i64;\n}\n\nimpl Area for i64 {\n    fn area(shape: i64) -> i64 { return shape * shape; }\n}\n\nstruct Rect { w: i64, h: i64 }\n\nimpl Area for Rect {\n    fn area(shape: Rect) -> i64 { return shape.w * shape.h; }\n}\n\nfn report[T: Area](shape: T) -> string {\n    return \"area=\" + to_string(area(shape));\n}\n\nfn rect_area(shape: Rect) -> i64 { return shape.w * shape.h; }\n\nfn main() {\n    print(report[i64](7));\n    print(report[Rect](Rect { w: 3, h: 4 }));\n    print(rect_area(Rect { w: 3, h: 4 }));\n}");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(stdout, "area=49\narea=12\n12\n");
+}
+
+#[test]
+fn trait_rules_are_enforced() {
+    let rejects = [
+        // No impl for the argument the call site chose.
+        ("trait Area {\n    fn area(shape: T) -> i64;\n}\nimpl Area for i64 {\n    fn area(shape: i64) -> i64 { return shape; }\n}\nfn report[T: Area](shape: T) -> i64 {\n    return area(shape);\n}\nfn main() {\n    print(report[string](\"x\"));\n}", "no impl of trait 'Area' for 'string'"),
+        // The body calls the method but the parameter is not constrained.
+        ("fn report[T](shape: T) -> i64 {\n    return area(shape);\n}\nfn main() {\n    print(report[i64](1));\n}", "unknown function 'area'"),
+        // Two impls for the same (trait, type) pair.
+        ("trait Area {\n    fn area(shape: T) -> i64;\n}\nimpl Area for i64 {\n    fn area(shape: i64) -> i64 { return shape; }\n}\nimpl Area for i64 {\n    fn area(shape: i64) -> i64 { return 0; }\n}\nfn main() {\n    print(1);\n}", "duplicate impl of 'Area' for 'i64'"),
+        // The impl's signature disagrees with the trait.
+        ("trait Area {\n    fn area(shape: T) -> i64;\n}\nimpl Area for i64 {\n    fn area(shape: bool) -> i64 { return 1; }\n}\nfn main() {\n    print(1);\n}", "impl method 'area' must take (i64)"),
+        // The bound names something that is not a trait.
+        ("fn report[T: Area](shape: T) -> i64 {\n    return 1;\n}\nfn main() {\n    print(report[i64](1));\n}", "unknown constraint"),
+        // The impl names an unknown trait.
+        ("impl Area for i64 {\n    fn area(shape: i64) -> i64 { return 1; }\n}\nfn main() {\n    print(1);\n}", "impl names unknown trait 'Area'"),
+        // The impl invents a method the trait never declared.
+        ("trait Area {\n    fn area(shape: T) -> i64;\n}\nimpl Area for i64 {\n    fn width(shape: i64) -> i64 { return 1; }\n}\nfn main() {\n    print(1);\n}", "trait 'Area' has no method 'width'"),
+        // The impl's return type disagrees.
+        ("trait Area {\n    fn area(shape: T) -> i64;\n}\nimpl Area for i64 {\n    fn area(shape: i64) -> bool { return true; }\n}\nfn main() {\n    print(1);\n}", "impl method 'area' must return i64"),
+    ];
+    for (source, needle) in rejects {
+        let message = check_rejects(source);
+        assert!(message.contains(needle), "{source:?}: {message}");
+    }
+}
+
+#[test]
+fn trait_impl_lives_with_its_trait_or_type_and_third_files_are_refused() {
+    // Coherence, v1 shape: an impl belongs to the file that declares the
+    // trait or the type. (Diamond imports are circular imports in the module
+    // system, so a separate impl file that re-imports the trait file cannot
+    // be combined with a direct import of the same file — the impl therefore
+    // lives in one of the two authors' files.)
+    let dir = unique_temp_dir("traitmod");
+    let modules = dir.join("modules");
+    fs::create_dir(&modules).unwrap();
+    fs::write(modules.join("shape.ae"),
+        "pub trait Area {\n    fn area(shape: T) -> i64;\n}\n\npub struct Rect { w: i64, h: i64 }\n\nimpl Area for Rect {\n    fn area(shape: Rect) -> i64 { return shape.w * shape.h; }\n}\n").unwrap();
+    fs::write(modules.join("main_t.ae"),
+        "use \"shape.ae\";\n\nfn report[T: Area](shape: T) -> i64 {\n    return area(shape);\n}\n\nfn main() {\n    print(report[Rect](Rect { w: 3, h: 4 }));\n}\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(modules.join("main_t.ae")).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "12\n");
+
+    // A third file that declares neither the trait nor the type may not
+    // write the impl, even though both are exported.
+    fs::write(modules.join("third.ae"),
+        "use \"shape.ae\";\n\nimpl Area for Rect {\n    fn area(shape: Rect) -> i64 { return 0; }\n}\n").unwrap();
+    fs::write(modules.join("main_bad.ae"),
+        "use \"third.ae\";\nfn main() {\n    print(1);\n}\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(modules.join("main_bad.ae")).output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("impl of 'Area' for 'struct"), "{}", String::from_utf8_lossy(&output.stderr));
+    let _ = fs::remove_dir_all(&dir);
+}

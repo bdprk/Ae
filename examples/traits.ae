@@ -1,0 +1,35 @@
+// Traits and impls: one generic function, per-type behaviour resolved when
+// the generic is instantiated. Static dispatch only — the call emits the
+// impl's own function, and there is no method table anywhere.
+
+trait Area {
+    fn area(shape: T) -> i64;
+}
+
+impl Area for i64 {
+    fn area(shape: i64) -> i64 { return shape * shape; }
+}
+
+struct Rect { w: i64, h: i64 }
+
+impl Area for Rect {
+    fn area(shape: Rect) -> i64 { return shape.w * shape.h; }
+}
+
+// The body calls `area` through the trait; with T = i64 it squares, with
+// T = Rect it multiplies. Move rules apply per instantiation: Rect is
+// owned, so the shape moves into the method exactly like a direct call.
+fn report[T: Area](shape: T) -> string {
+    return "area=" + to_string(area(shape));
+}
+
+// Trait methods are callable inside generic bodies whose constraint names
+// their trait; outside, the same behaviour is written as a plain function.
+fn rect_area(shape: Rect) -> i64 { return shape.w * shape.h; }
+
+fn main() {
+    print(report[i64](7));
+    print(report[Rect](Rect { w: 3, h: 4 }));
+    // Differential: dispatching through the trait equals the hand-written call.
+    print(rect_area(Rect { w: 3, h: 4 }));
+}

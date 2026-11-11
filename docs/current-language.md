@@ -118,6 +118,14 @@ fn main() {
 
 `map_inc(m, key, delta) -> i64` 一次查找完成计数：把 `key` 的值加 `delta` 并返回新值，缺键从 0 开始（插入）。与 `map_get` 不同，缺键**不返回 Err**——缺席即零是递增语义的一部分。`m` 限于 map 变量或其字段，moved map 拒绝；`delta` 必须是 `i64`。命中的键零拷贝。直方图形状（`bench/map.ae` 的 get + match + 存储）由此收敛为单调用；返回值是表达式，不能作为裸调用语句丢弃。
 
+## 特征与实现（trait/impl）
+
+`trait Name { fn method(first: T, ...) -> R; }` 声明一组能力：类型参数固定拼写 `T`，方法首参必须是 `T` 按值，其余参数与返回值可以是 `T` 或具体类型，无方法体。`impl Name for Type { fn method(...) -> R { body } }` 为一个具体类型提供全部方法，签名必须逐点匹配（`T` 替换为该类型）。
+
+泛型函数用 `[T: Name]` 引入 trait 约束后，函数体内可以直接调用该 trait 的方法——**分派在实例化时解析**：T 的实参类型确定唯一的 impl 方法，调用发射的就是那个函数（静态分派，与手写函数调用等价，无方法表）。实例化时若某实参类型没有 impl，报 `no impl of trait 'X' for 'Y'; required by 'Z'`。trait 方法不能在泛型体外直接调用；trait 签名不支持 `&T`；不支持泛型 impl、默认方法与动态分派。
+
+一致性规则：impl 只能写在声明该 trait 或该类型的文件里（第三文件拒绝）；同一 (trait, type) 全程序唯一；每程序最多 64 个 trait、256 个 impl。`pub trait` 可被其他文件引用；impl 所在文件经 `use` 载入即注册（加载即注册，无需从中调用任何项）。见 `examples/traits.ae`。
+
 ## 字符串向量
 
 `split(s, sep) -> vec[string]` 按分隔符切分（保留空段，Python 语义；空分隔符为运行时错误）；`join(parts, sep) -> string` 以分隔符连接（借用向量，总长先溢出检查）；`args() -> vec[string]` 返回程序参数（含 argv[0]；Windows 的 argv 为 ANSI 编码，如实标注）。类型书写为 `vec[string]`（`vec` 单写是 `i64` 向量）。`vec[string]` 是拥有型容器：赋值/传参/返回移动；`push` 移入字符串，`pop` 释放并移除末元素；`v[i]` 读与 `v[i] = s;` 写按当前长度做边界检查（写入先检查下标、释放旧元素、再移入新值）。**元素是只读借用**：不能把元素移出向量（拼接或赋给新变量被拒绝）；`len(v)` 为 O(1)。`split`/`args`/`join`/`lines`/`count_lines_with` 为保留名。`lines(s) -> vec[string]` 按换行切分：尾部换行不产生末尾空行，内部空行保留，空输入为零行（换行扫描为运行时字长优化实现）。 `count_lines_with(text, pattern) -> i64` 统计包含模式的行数：单遍零分配的融合实现，空文本为零、空模式匹配每一行。

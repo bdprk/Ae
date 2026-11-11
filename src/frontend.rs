@@ -7,7 +7,7 @@ pub(crate) enum Kind {
     Ident(String), Number(i64), Float(f64), Text(String), Fn, Let, Var, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, Struct,
-    Enum, Match, ColonColon, FatArrow, Question, Eof,
+    Enum, Match, ColonColon, FatArrow, Question, Trait, Impl, Eof,
 }
 #[derive(Debug, Clone)]
 pub(crate) struct Token { pub(crate) kind: Kind, pub(crate) offset: usize, pub(crate) line: usize, pub(crate) column: usize }
@@ -144,7 +144,7 @@ fn kind_name(kind: &Kind) -> &'static str {
         Kind::Equal => "Equal", Kind::Plus => "Plus", Kind::Minus => "Minus", Kind::Star => "Star",
         Kind::Slash => "Slash", Kind::Percent => "Percent", Kind::Dot => "Dot", Kind::DotDot => "DotDot",
         Kind::ColonColon => "ColonColon", Kind::FatArrow => "FatArrow", Kind::Question => "Question",
-        Kind::Eof => "Eof",
+        Kind::Trait => "Trait", Kind::Impl => "Impl", Kind::Eof => "Eof",
     }
 }
 
@@ -200,7 +200,7 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
                 "for" => Kind::For, "in" => Kind::In,
                 "break" => Kind::Break, "continue" => Kind::Continue, "assert" => Kind::Assert,
                 "true" => Kind::True, "false" => Kind::False, "use" => Kind::Use, "struct" => Kind::Struct,
-                "enum" => Kind::Enum, "match" => Kind::Match,
+                "enum" => Kind::Enum, "match" => Kind::Match, "trait" => Kind::Trait, "impl" => Kind::Impl,
                 s => Kind::Ident(s.to_owned()),
             }
         } else if c.is_ascii_digit() {
@@ -323,6 +323,14 @@ enum Payload { Concrete(Type), Param(usize) }
 // EnumDef because a declaration has no layout: only instantiations do.
 #[derive(Debug, Clone)]
 struct GenericEnum { name: String, params: Vec<String>, variants: Vec<(String, Vec<Payload>)>, file: String, public: bool }
+// A trait declares the method signatures every impl must provide. The trait's
+// type parameter is always spelled `T`; `Payload::Param(0)` marks the positions
+// that stand for it, and every other type must be concrete. V1 deliberately
+// has no generic impls and no default method bodies.
+#[derive(Debug, Clone)]
+struct TraitMethod { name: String, params: Vec<Payload>, returns: Payload }
+#[derive(Debug, Clone)]
+struct TraitDef { name: String, methods: Vec<TraitMethod>, file: String, public: bool }
 // `struct Pair[K, V] { left: K, right: V }` before it is instantiated. Same
 // reason as GenericEnum: a declaration is a shape, not a layout.
 #[derive(Debug, Clone)]
@@ -550,14 +558,14 @@ fn audit_generic_fn(
 // per source file with `Rc`, so N generic declarations in one file do not make
 // N full copies of the token stream (an O(N^2) front-end cost).
 #[derive(Debug, Clone)]
-struct GenericFn { name: String, params: Vec<String>, bounds: Vec<Vec<Bound>>, start: usize, tokens: Rc<Vec<Token>>, source: Rc<str>, file: String, public: bool }
+struct GenericFn { name: String, params: Vec<String>, bounds: Vec<Vec<Bound>>, trait_bounds: Vec<Vec<usize>>, start: usize, tokens: Rc<Vec<Token>>, source: Rc<str>, file: String, public: bool }
 // An instantiated generic function: its id, parameter types and return type.
 type Instance = (usize, Vec<Type>, Type);
 // Instantiated generic enums, structs and functions, keyed by declaration and
 // arguments (ADR-21, ADR-30, ADR-31). `next_fn_id` is the one id space shared
 // by ordinary and instantiated functions, so C names never collide.
 #[derive(Default)]
-struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize }
+struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)> }
 #[derive(Debug)]
 struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 
@@ -568,7 +576,7 @@ struct Signature { id: usize, params: Vec<Type>, ret: Type, file: String, public
 
 type SharedFunctions = HashMap<String, Signature>;
 
-struct Parser<'a> { file: String, source: &'a str, tokens: Rc<Vec<Token>>, shared_source: Rc<str>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>>, subst: HashMap<String, Type>, pending: Vec<Function> }
+struct Parser<'a> { file: String, source: &'a str, tokens: Rc<Vec<Token>>, shared_source: Rc<str>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>>, subst: HashMap<String, Type>, trait_bounds: HashMap<String, Vec<usize>>, pending: Vec<Function> }
 impl<'a> Parser<'a> {
     fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
     fn fail(&self, message: &str) -> String { error(&self.file, self.source, self.tokens[self.pos].offset, message) }
@@ -1160,7 +1168,13 @@ impl<'a> Parser<'a> {
                     let args = self.call_arguments(&name, &types)?;
                     (Expr::Call(id, args, ret), ret)
                 } else if *self.current() == Kind::LParen {
-                    let signature = self.functions.get(&name).cloned().ok_or_else(|| error(&self.file, self.source, name_offset, &format!("unknown function '{name}'")))?;
+                    let signature = match self.functions.get(&name).cloned() {
+                        Some(signature) => signature,
+                        // Not a plain function: a trait method of one of this
+                        // generic's constrained parameters (or a genuine
+                        // unknown name, which resolve_trait_call reports).
+                        None => self.resolve_trait_call(&name, name_offset)?,
+                    };
                     if !signature.public && signature.file != PRELUDE && signature.file != self.file {
                         return Err(error(&self.file, self.source, name_offset, &format!("function '{name}' is private to {} (mark it 'pub' to export it)", signature.file)));
                     }
@@ -1523,33 +1537,54 @@ impl<'a> Parser<'a> {
     // uppercase letters keep a parameter from being mistaken for a real type.
     // `[T, U]` or `[T: Add + Ord, U: Copy]`. Constraints are parsed here for
     // every generic declaration, but only generic functions may use them.
-    fn type_params_with_bounds(&mut self) -> Result<Vec<(String, Vec<Bound>)>, String> {
-        let mut params: Vec<(String, Vec<Bound>)> = Vec::new();
+    fn type_params_with_bounds(&mut self) -> Result<Vec<(String, Vec<Bound>, Vec<usize>)>, String> {
+        let mut params: Vec<(String, Vec<Bound>, Vec<usize>)> = Vec::new();
         if *self.current() != Kind::LBracket { return Ok(params); }
         self.pos += 1;
         loop {
             if params.len() >= 8 { return Err(self.fail("type parameter limit exceeded (8)")); }
             let param = self.identifier()?;
             if param.len() != 1 || !param.chars().all(|c| c.is_ascii_uppercase()) { return Err(self.fail("type parameters are single uppercase letters, e.g. 'T'")); }
-            if params.iter().any(|(n, _)| n == &param) { return Err(self.fail(&format!("duplicate type parameter '{param}'"))); }
+            if params.iter().any(|(n, _, _)| n == &param) { return Err(self.fail(&format!("duplicate type parameter '{param}'"))); }
             let mut bounds = Vec::new();
+            let mut traits = Vec::new();
             if *self.current() == Kind::Colon {
                 self.pos += 1;
                 loop {
                     let at = self.tokens[self.pos].offset;
                     let label = self.identifier()?;
                     let bound = match label.as_str() {
-                        "Add" => Bound::Add, "Eq" => Bound::Eq,
-                        "Ord" => Bound::Ord, "Copy" => Bound::Copy,
-                        _ => return Err(error(&self.file, self.source, at, "unknown constraint; allowed: Add, Eq, Ord, Copy")),
+                        "Add" => Some(Bound::Add), "Eq" => Some(Bound::Eq),
+                        "Ord" => Some(Bound::Ord), "Copy" => Some(Bound::Copy),
+                        _ => None,
                     };
-                    if bounds.contains(&bound) { return Err(self.fail(&format!("duplicate constraint '{label}'"))); }
-                    bounds.push(bound);
+                    match bound {
+                        Some(bound) => {
+                            if bounds.contains(&bound) { return Err(self.fail(&format!("duplicate constraint '{label}'"))); }
+                            bounds.push(bound);
+                        }
+                        None => {
+                            // A user-declared trait. Traits are collected
+                            // before anything else in the file and imports
+                            // load first, so the name is either here or
+                            // nowhere; a private one from another file is
+                            // rejected like a private function would be.
+                            let tid = *self.generics.trait_names.get(&label).ok_or_else(|| {
+                                error(&self.file, self.source, at, "unknown constraint; allowed: Add, Eq, Ord, Copy, or a trait declared in this program")
+                            })?;
+                            let trait_file = self.generics.traits[tid].file.clone();
+                            if trait_file != self.file {
+                                self.require_public("trait", &label, &trait_file, self.generics.traits[tid].public).map_err(|e| error(&self.file, self.source, at, &e))?;
+                            }
+                            if traits.contains(&tid) { return Err(self.fail(&format!("duplicate constraint '{label}'"))); }
+                            traits.push(tid);
+                        }
+                    }
                     if *self.current() != Kind::Plus { break; }
                     self.pos += 1;
                 }
             }
-            params.push((param, bounds));
+            params.push((param, bounds, traits));
             if *self.current() != Kind::Comma { break; }
             self.pos += 1;
         }
@@ -1558,10 +1593,10 @@ impl<'a> Parser<'a> {
     }
     fn type_params(&mut self) -> Result<Vec<String>, String> {
         let params = self.type_params_with_bounds()?;
-        if params.iter().any(|(_, bounds)| !bounds.is_empty()) {
+        if params.iter().any(|(_, bounds, traits)| !bounds.is_empty() || !traits.is_empty()) {
             return Err(self.fail("constraints are only supported on generic functions"));
         }
-        Ok(params.into_iter().map(|(name, _)| name).collect())
+        Ok(params.into_iter().map(|(name, _, _)| name).collect())
     }
     fn variant_payload(&mut self, params: &[String]) -> Result<Payload, String> {
         if let Kind::Ident(name) = self.current() {
@@ -1838,11 +1873,40 @@ impl<'a> Parser<'a> {
         }
     }
     fn collect_functions(&mut self, next_id: &mut usize) -> Result<(), String> {
+        // Traits are registered before anything else so a bound in the same
+        // file can name a trait declared later; cross-file traits already
+        // exist because imports load first. The scan walks tokens directly:
+        // a `{` inside a string literal is part of its Text token, so brace
+        // depth over tokens is exact.
+        self.pos = 0;
+        let mut depth = 0usize;
+        let mut i = 0;
+        while i < self.tokens.len() - 1 {
+            match self.tokens[i].kind {
+                Kind::LBrace => depth += 1,
+                // The scan runs before anything validates the file, so a
+                // malformed `}` at depth zero must not panic (the
+                // malformed-input test feeds exactly such files).
+                Kind::RBrace => depth = depth.saturating_sub(1),
+                Kind::Trait if depth == 0 => {
+                    self.pos = i;
+                    self.parse_trait_def()?;
+                    i = self.pos;
+                    continue;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        self.pos = 0;
+        self.skip_uses();
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::Eof {
             let public = self.take_pub();
             if *self.current() == Kind::Struct { self.parse_struct_def(public)?; continue; }
             if *self.current() == Kind::Enum { self.parse_enum_def(public)?; continue; }
+            if *self.current() == Kind::Trait { self.skip_trait_def()?; continue; }
+            if *self.current() == Kind::Impl { self.collect_impl(next_id)?; continue; }
             self.take(Kind::Fn)?;
             let name = self.identifier()?;
             if !seen.insert(name.clone()) { return Err(self.fail(&format!("duplicate function '{name}'"))); }
@@ -1852,14 +1916,15 @@ impl<'a> Parser<'a> {
                 if name == "main" { return Err(self.fail("main cannot be generic")); }
                 let declared_at = self.tokens[self.pos].offset;
                 let declared = self.type_params_with_bounds()?;
-                let params: Vec<String> = declared.iter().map(|(n, _)| n.clone()).collect();
-                let bounds: Vec<Vec<Bound>> = declared.into_iter().map(|(_, b)| b).collect();
+                let params: Vec<String> = declared.iter().map(|(n, _, _)| n.clone()).collect();
+                let bounds: Vec<Vec<Bound>> = declared.iter().map(|(_, b, _)| b.clone()).collect();
+                let trait_bounds: Vec<Vec<usize>> = declared.into_iter().map(|(_, _, t)| t).collect();
                 let start = self.pos;
                 let end = self.skip_function_body()?;
                 audit_generic_fn(&self.file, self.source, self.tokens.as_ref(), start, end, &name, &params, &bounds, declared_at)?;
                 let gid = self.generics.fn_defs.len();
                 self.generics.fn_names.insert(name.clone(), gid);
-                self.generics.fn_defs.push(GenericFn { name, params, bounds, start, tokens: Rc::clone(&self.tokens), source: Rc::clone(&self.shared_source), file: self.file.clone(), public });
+                self.generics.fn_defs.push(GenericFn { name, params, bounds, trait_bounds, start, tokens: Rc::clone(&self.tokens), source: Rc::clone(&self.shared_source), file: self.file.clone(), public });
                 continue;
             }
             self.take(Kind::LParen)?;
@@ -1916,6 +1981,234 @@ impl<'a> Parser<'a> {
         self.skip_uses();
         Ok(())
     }
+    // ---- traits and impls (ADR-47) ------------------------------------------
+    // A trait method is only callable inside a generic body whose constrained
+    // parameter it dispatches on: resolution maps (trait, method, substituted
+    // parameter type) to the impl's mangled signature, and the call emits the
+    // impl function's id like any other call — static dispatch with no new
+    // runtime mechanism.
+
+    // Parses a trait's payload type: the trait's own `T`, or a concrete type.
+    fn trait_payload(&mut self, what: &str) -> Result<Payload, String> {
+        if matches!(self.current(), Kind::Amp) {
+            return Err(self.fail(&format!("{what} cannot borrow T in this version; take T by value or use a concrete type")));
+        }
+        if let Kind::Ident(text) = self.current() {
+            if text == "T" {
+                self.pos += 1;
+                return Ok(Payload::Param(0));
+            }
+        }
+        Ok(Payload::Concrete(self.parameter_type()?))
+    }
+
+    fn parse_trait_def(&mut self) -> Result<(), String> {
+        // The token scan landed on the `trait` keyword; a `pub` sits directly
+        // before it (`pub` is an identifier-shaped keyword consumed by the
+        // declaration passes only).
+        let public = self.pos > 0 && matches!(&self.tokens[self.pos - 1].kind, Kind::Ident(name) if name == "pub");
+        self.pos += 1; // trait
+        let name = self.identifier()?;
+        if self.generics.trait_names.contains_key(&name) {
+            return Err(self.fail(&format!("duplicate trait '{name}'")));
+        }
+        if self.generics.traits.len() >= 64 { return Err(self.fail("trait limit exceeded (64 per program)")); }
+        self.take(Kind::LBrace)?;
+        let mut methods: Vec<TraitMethod> = Vec::new();
+        while *self.current() != Kind::RBrace {
+            if *self.current() == Kind::Eof { return Err(self.fail("expected '}' before end of file")); }
+            self.take(Kind::Fn)?;
+            let method = self.identifier()?;
+            if method == "main" { return Err(self.fail("a trait method cannot be named main")); }
+            if methods.iter().any(|m: &TraitMethod| m.name == method) {
+                return Err(self.fail(&format!("duplicate method '{method}' in trait '{name}'")));
+            }
+            self.take(Kind::LParen)?;
+            let mut params = Vec::new();
+            if *self.current() != Kind::RParen {
+                loop {
+                    if params.len() >= 8 { return Err(self.fail("trait method parameter limit exceeded (8)")); }
+                    let _param = self.identifier()?;
+                    self.take(Kind::Colon)?;
+                    params.push(self.trait_payload("trait method parameter")?);
+                    if *self.current() != Kind::Comma { break; }
+                    self.pos += 1;
+                }
+            }
+            self.take(Kind::RParen)?;
+            if params.is_empty() || !matches!(params[0], Payload::Param(0)) {
+                return Err(self.fail("the first parameter of a trait method must be the trait's type T"));
+            }
+            self.take(Kind::Arrow)?;
+            let returns = self.trait_payload("trait method return")?;
+            self.take(Kind::Semi)?;
+            methods.push(TraitMethod { name: method, params, returns });
+        }
+        self.take(Kind::RBrace)?;
+        let tid = self.generics.traits.len();
+        self.generics.trait_names.insert(name.clone(), tid);
+        self.generics.traits.push(TraitDef { name, methods, file: self.file.clone(), public });
+        Ok(())
+    }
+
+    fn skip_trait_def(&mut self) -> Result<(), String> {
+        while *self.current() != Kind::LBrace {
+            if *self.current() == Kind::Eof { return Err(self.fail("expected '{' in trait declaration")); }
+            self.pos += 1;
+        }
+        self.skip_balanced_braces()
+    }
+
+    fn skip_balanced_braces(&mut self) -> Result<(), String> {
+        self.take(Kind::LBrace)?;
+        let mut depth = 1usize;
+        while depth > 0 {
+            match self.current() {
+                Kind::LBrace => depth += 1,
+                Kind::RBrace => depth -= 1,
+                Kind::Eof => return Err(self.fail("expected '}' before end of file")),
+                _ => {}
+            }
+            self.pos += 1;
+        }
+        Ok(())
+    }
+
+    // Pass one for `impl Trait for Type { fn ... }`: register each method's
+    // mangled signature and assign its id, so pass two (program) can parse
+    // the bodies in file order against `id_order`.
+    fn collect_impl(&mut self, next_id: &mut usize) -> Result<(), String> {
+        self.pos += 1; // impl
+        let trait_name = self.identifier()?;
+        let tid = *self.generics.trait_names.get(&trait_name)
+            .ok_or_else(|| self.fail(&format!("impl names unknown trait '{trait_name}'")))?;
+        self.take(Kind::For)?;
+        if let Kind::Ident(text) = self.current() {
+            if text == "T" { return Err(self.fail("an impl names the concrete type, not the trait's parameter T")); }
+        }
+        let ty = self.parameter_type()?;
+        let trait_file = self.generics.traits[tid].file.clone();
+        let type_file = match ty {
+            Type::Struct(id) => Some(self.structs[id].file.clone()),
+            Type::Enum(_, id) => Some(self.enums[id].file.clone()),
+            _ => None,
+        };
+        // Coherence, v1 shape: the impl lives where the trait or the type
+        // lives, so two files can never hand the same (trait, type) pair
+        // conflicting behaviour.
+        if trait_file != self.file && type_file.as_deref() != Some(self.file.as_str()) {
+            let where_must = type_file.unwrap_or_else(|| format!("the file declaring the trait ({trait_file})"));
+            return Err(self.fail(&format!(
+                "impl of '{trait_name}' for '{}' must be in the file that declares the trait ({trait_file}) or the type ({}); this file may not add it",
+                ty.name(), where_must)));
+        }
+        if !self.generics.impls.insert((tid, ty.name())) {
+            return Err(self.fail(&format!("duplicate impl of '{trait_name}' for '{}'", ty.name())));
+        }
+        if self.generics.impls.len() > 256 { return Err(self.fail("impl limit exceeded (256 per program)")); }
+        self.take(Kind::LBrace)?;
+        while *self.current() != Kind::RBrace {
+            if *self.current() == Kind::Eof { return Err(self.fail("expected '}' before end of file")); }
+            self.take(Kind::Fn)?;
+            let method = self.identifier()?;
+            if method == "main" { return Err(self.fail("an impl method cannot be named main")); }
+            let mid = self.generics.traits[tid].methods.iter().position(|m| m.name == method)
+                .ok_or_else(|| self.fail(&format!("trait '{trait_name}' has no method '{method}'")))?;
+            let expected = self.generics.traits[tid].methods[mid].clone();
+            let substitute = |payload: &Payload| match payload {
+                Payload::Param(0) => ty,
+                Payload::Concrete(t) => *t,
+                _ => unreachable!("trait payloads only use parameter 0"),
+            };
+            self.take(Kind::LParen)?;
+            let mut types = Vec::new();
+            if *self.current() != Kind::RParen {
+                loop {
+                    if types.len() >= 8 { return Err(self.fail("impl method parameter limit exceeded (8)")); }
+                    if let Kind::Ident(text) = self.current() {
+                        if text == "T" { return Err(self.fail("an impl method signature uses the concrete type, not the trait's parameter T")); }
+                    }
+                    let _param = self.identifier()?;
+                    self.take(Kind::Colon)?;
+                    types.push(self.parameter_type()?);
+                    if *self.current() != Kind::Comma { break; }
+                    self.pos += 1;
+                }
+            }
+            self.take(Kind::RParen)?;
+            let expected_params: Vec<Type> = expected.params.iter().map(substitute).collect();
+            if types != expected_params {
+                let want = expected_params.iter().map(|t| t.name()).collect::<Vec<_>>().join(", ");
+                let got = types.iter().map(|t| t.name()).collect::<Vec<_>>().join(", ");
+                return Err(self.fail(&format!("impl method '{method}' must take ({want}) to match trait '{trait_name}', found ({got})")));
+            }
+            self.take(Kind::Arrow)?;
+            let ret = self.parameter_type()?;
+            if ret != substitute(&expected.returns) {
+                return Err(self.fail(&format!("impl method '{method}' must return {} to match trait '{trait_name}', found {}", substitute(&expected.returns).name(), ret.name())));
+            }
+            self.generics.next_fn_id = self.generics.next_fn_id.max(*next_id);
+            let id = self.generics.next_fn_id;
+            self.generics.next_fn_id += 1;
+            *next_id = self.generics.next_fn_id;
+            self.id_order.push(id);
+            let mangled = format!("{}#{}#{}", trait_name, method, ty.name());
+            let signature = Signature { id, params: types, ret, file: self.file.clone(), public: true };
+            if self.functions.insert(mangled, signature).is_some() {
+                return Err(self.fail(&format!("duplicate impl method '{method}' for this type")));
+            }
+            self.skip_balanced_braces()?;
+        }
+        self.take(Kind::RBrace)
+    }
+
+    // Pass two: parse the impl method bodies in the same file order the
+    // signature pass used, so `id_order` lines up exactly like it does for
+    // the file's own functions.
+    fn parse_impl_bodies(&mut self, result: &mut Vec<Function>) -> Result<(), String> {
+        self.pos += 1; // impl
+        self.identifier()?;
+        self.take(Kind::For)?;
+        self.parameter_type()?;
+        self.take(Kind::LBrace)?;
+        while *self.current() != Kind::RBrace {
+            if *self.current() == Kind::Eof { return Err(self.fail("expected '}' before end of file")); }
+            self.take(Kind::Fn)?;
+            let _method = self.identifier()?;
+            let id = self.id_order[result.len()];
+            result.push(self.function_rest(false, id)?);
+        }
+        self.take(Kind::RBrace)
+    }
+
+    // Resolves a call that is not a plain function: a trait method of one of
+    // the enclosing generic's constrained parameters. The dispatch type is
+    // the parameter's substituted type, fixed when the generic was
+    // instantiated, so the impl lookup cannot be ambiguous at runtime.
+    fn resolve_trait_call(&mut self, method: &str, offset: usize) -> Result<Signature, String> {
+        let mut found: Vec<(String, usize, usize)> = Vec::new();
+        for (param, tids) in &self.trait_bounds {
+            for &tid in tids {
+                if let Some(mid) = self.generics.traits[tid].methods.iter().position(|m| m.name == method) {
+                    found.push((param.clone(), tid, mid));
+                }
+            }
+        }
+        if found.is_empty() {
+            return Err(error(&self.file, self.source, offset, &format!("unknown function '{method}'")));
+        }
+        if found.len() > 1 {
+            return Err(error(&self.file, self.source, offset, &format!("method '{method}' is ambiguous; several constrained parameters of this generic declare it")));
+        }
+        let (param, tid, mid) = found.remove(0);
+        let ty = self.subst.get(&param).cloned()
+            .ok_or_else(|| error(&self.file, self.source, offset, &format!("'{method}' dispatches on '{param}', which has no type argument here")))?;
+        let key = format!("{}#{}#{}", self.generics.traits[tid].name, self.generics.traits[tid].methods[mid].name, ty.name());
+        self.functions.get(&key).cloned().ok_or_else(|| {
+            error(&self.file, self.source, offset, &format!("no impl of trait '{}' for '{}'", self.generics.traits[tid].name, ty.name()))
+        })
+    }
+
     fn program(&mut self) -> Result<Vec<Function>, String> {
         let mut result = Vec::new();
         let mut main_found = false;
@@ -1923,6 +2216,8 @@ impl<'a> Parser<'a> {
             self.take_pub();
             if *self.current() == Kind::Struct { self.skip_struct_def(); continue; }
             if *self.current() == Kind::Enum { self.skip_enum_def(); continue; }
+            if *self.current() == Kind::Trait { self.skip_trait_def()?; continue; }
+            if *self.current() == Kind::Impl { self.parse_impl_bodies(&mut result)?; continue; }
             self.take(Kind::Fn)?;
             let name = self.identifier()?;
             // A generic declaration has no body of its own: the signature pass
@@ -2007,6 +2302,16 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+        for (index, traits) in def.trait_bounds.iter().enumerate() {
+            for &tid in traits {
+                let trait_name = self.generics.traits[tid].name.clone();
+                if !self.generics.impls.contains(&(tid, args[index].name())) {
+                    return Err(error(&self.file, self.source, offset, &format!(
+                        "no impl of trait '{}' for '{}'; required by '{}'",
+                        trait_name, args[index].name(), def.name)));
+                }
+            }
+        }
         let key = format!("{gid}:{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
         if let Some(instance) = self.generics.fn_done.get(&key) { return Ok(instance.clone()); }
         if self.generics.fn_in_progress.contains(&key) {
@@ -2016,7 +2321,11 @@ impl<'a> Parser<'a> {
         let id = self.generics.next_fn_id;
         self.generics.next_fn_id += 1;
         let mut subst = HashMap::new();
-        for (index, param) in def.params.iter().enumerate() { subst.insert(param.clone(), args[index]); }
+        let mut trait_bounds = HashMap::new();
+        for (index, param) in def.params.iter().enumerate() {
+            subst.insert(param.clone(), args[index]);
+            trait_bounds.insert(param.clone(), def.trait_bounds[index].clone());
+        }
         let mut sub = Parser {
             file: def.file.clone(), source: &*def.source, tokens: Rc::clone(&def.tokens), shared_source: Rc::clone(&def.source), pos: def.start,
             names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0,
@@ -2024,7 +2333,7 @@ impl<'a> Parser<'a> {
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
-            borrows: Vec::new(), scopes: Vec::new(), subst, pending: Vec::new(),
+            borrows: Vec::new(), scopes: Vec::new(), subst, trait_bounds, pending: Vec::new(),
         };
         let parsed = sub.function_rest(false, id);
         let mut nested = std::mem::take(&mut sub.pending);
@@ -3730,7 +4039,7 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
 struct Program { files: Vec<Vec<Function>>, structs: Vec<StructDef>, enums: Vec<EnumDef> }
 
 fn make_parser<'a>(file: &str, source: &'a str, tokens: Rc<Vec<Token>>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics) -> Parser<'a> {
-    Parser { file: file.to_owned(), source, tokens, shared_source: Rc::from(source), pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new(), subst: HashMap::new(), pending: Vec::new() }
+    Parser { file: file.to_owned(), source, tokens, shared_source: Rc::from(source), pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new(), subst: HashMap::new(), trait_bounds: HashMap::new(), pending: Vec::new() }
 }
 
 // Leading `use "path";` headers. Parsed from tokens before the Parser owns

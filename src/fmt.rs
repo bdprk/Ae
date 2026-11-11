@@ -38,7 +38,7 @@ enum Class {
     Fn, Let, Var, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use, Struct, Enum, Match,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, ColonColon, FatArrow, Question,
-    Eof,
+    Trait, Impl, Eof,
 }
 
 impl Class {
@@ -64,7 +64,7 @@ impl Class {
             Class::Equal => "Equal", Class::Plus => "Plus", Class::Minus => "Minus", Class::Star => "Star",
             Class::Slash => "Slash", Class::Percent => "Percent", Class::Dot => "Dot", Class::DotDot => "DotDot",
             Class::ColonColon => "ColonColon", Class::FatArrow => "FatArrow", Class::Question => "Question",
-            Class::Eof => "Eof",
+            Class::Trait => "Trait", Class::Impl => "Impl", Class::Eof => "Eof",
         }
     }
 }
@@ -159,6 +159,7 @@ fn lex_fmt(source: &str) -> Result<Vec<FmtToken>, String> {
                 "for" => Class::For, "in" => Class::In, "break" => Class::Break, "continue" => Class::Continue,
                 "assert" => Class::Assert, "true" => Class::True, "false" => Class::False, "use" => Class::Use,
                 "struct" => Class::Struct, "enum" => Class::Enum, "match" => Class::Match,
+                "trait" => Class::Trait, "impl" => Class::Impl,
                 _ => Class::Ident,
             };
         } else if c.is_ascii_digit() {
