@@ -368,10 +368,12 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
     }
     // `build` writes the file a user ships, so it is optimized unless --debug
     // asks for the fast build; `run` is the development loop and stays at -O0
-    // unless --release asks for -O2. Same program, same generated C: -O2 ran
-    // 1.30x (textlazy) to 4.70x (sum) faster and cost 12-89 ms more in gcc on
-    // a 14-27 KB file (ADR-59). `build --release` is still accepted: the flag
-    // now names the default, and existing scripts pass it.
+    // unless --release asks for -O2. Same program, same generated C: on the
+    // Windows bench workloads -O2 ran 1.29x (textlazy) to 1.66x (map) faster
+    // and cost the fresh-cache build +41 to +191 ms end-to-end on 14-27 KB of
+    // generated C, with slightly smaller executables (ADR-59). `build
+    // --release` is still accepted: the flag now names the default, and
+    // existing scripts pass it.
     let level = match args.last().and_then(|a| a.to_str()) {
         Some("--release") => Some(true),
         Some("--debug") => Some(false),

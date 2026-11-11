@@ -56,7 +56,7 @@ cargo run -- deps examples/modules/main.ae   # 模块依赖图与公开接口摘
 cargo run -- version
 ```
 
-默认构建使用 `-O0`，`run` 或 `build` 末尾加 `--release` 使用 `-O2`；两者均保留全部检查。`build` 与 `run` 的产物进入内容寻址缓存（键覆盖生成的 C、模式、C 编译器标识、编译器版本与平台），相同输入直接复用可执行文件；`AE_CACHE` 覆盖缓存位置，`cache dir|clear|stats` 管理。`run` 在系统临时目录中编译并执行；`build` 写入指定路径，拒绝覆盖已有文件。Linux 上可将输出命名为 `arithmetic`。
+`build` 交付用户运行的产物，默认 `-O2`，行尾加 `--debug` 退回快速 `-O0`；`run` 是开发循环，默认 `-O0`，行尾加 `--release` 用 `-O2`（ADR-59）。两种模式保留全部检查，优化标志要写在行尾、`--` 转发分隔符之前，未知标志直接报错。`build` 与 `run` 的产物进入内容寻址缓存（键覆盖生成的 C、模式、C 编译器标识、编译器版本与平台），相同输入直接复用可执行文件；`AE_CACHE` 覆盖缓存位置，`cache dir|clear|stats` 管理。`run` 在系统临时目录中编译并执行；`build` 写入指定路径，拒绝覆盖已有文件。Linux 上可将输出命名为 `arithmetic`。
 
 生成的 C 只保留本程序可达的运行时函数（按符号引用做保守的传递闭包），所以 `emit-c` 的字节数随所用内建变化，不要再把它当作固定值；`deps` 输出模块依赖图与公开接口摘要哈希，改函数体不改变摘要、改 `pub` 签名会改变，但它**尚未参与缓存失效判定**，用户模块仍是同一个翻译单元。生成 C 还会在程序完全不触及 Win32 层时省掉 `<windows.h>`（ADR-39）：用到文件、目录、时钟、环境变量、工作目录或子进程时照常保留，纯计算程序不再解析它；这不改动任何声明、不引入 ABI 假设，两平台生成的 C 文本相同，收益只体现在 Windows。规则与实测取舍见 [当前语言语义](docs/current-language.md) 与 ADR-38/39。套件有四个负载：`sum`、`text`（物化 token：`split`/`strings.Split`）、`textlazy`（惰性扫描：`tokenize`/手写索引扫描/Rust 的 `split(' ')`）与 `map`；`bench/tokens_timings.py` 单独对照同一程序的两种 token 形态并同时给出峰值内存。计时与峰值内存分两趟测量（采样器曾在 Windows 上把每个数字拉长约 15 ms）。`bench/build_timings.py` 可复跑冷构建、无修改、改实现、改接口四类场景的耗时；加 `--header-baseline` 会在同一次运行内把同一份生成 C 还原 `<windows.h>` 后交替计时，避免跨会话的墙钟数字不可比。
 

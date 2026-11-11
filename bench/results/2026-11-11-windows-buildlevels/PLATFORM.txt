@@ -1,0 +1,44 @@
+ADR-59 build 默认优化构建、--debug 快速构建 · Windows 归档（2026-11-11）
+
+## 平台
+Windows x86-64，8 核 / 16 线程，MinGW-W64 GCC 16.2.0（UCRT）。
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak
+- for f in $(find examples -name "*.ae" ! -name "report.ae" ! -name "words.ae"); do ae check "$f"; done
+  （report.ae / words.ae 是库模块，没有 main，check 正确拒绝它们——计入行为而非失败。）
+- python bench/build_levels_timings.py --runs 5 --run-runs 9 --json build-levels.json
+  （新增脚本：四个负载 × {-O0 即 --debug, -O2 即默认 build}，构建轮次用全新缓存目录
+   且计时前先删除产物（build 拒绝覆盖已有文件），运行轮次两个二进制交替，
+   先断言两档 stdout 逐字节一致再计时。）
+
+## 结果
+- cargo test：35 单元 + 167 集成全通过。新增 2 个集成测试：
+  `build_is_optimized_by_default_and_debug_builds_behave_the_same`（默认产物与
+  --debug 产物都运行且输出一致，未知标志被拒绝）、
+  `run_forwards_program_args_with_the_release_flag_before_the_separator`
+  （`run file --release -- hello` 的 flag 与程序参数混排仍正确转发）。
+- --leak：31 个用例 PASS，退出分配块数全部等于 UCRT 基线 2 块——两种优化模式
+  共用同一套运行时，分配行为不变。
+- 39 个程序通过 check（38 个顶层 + modules/main.ae）。
+- build-levels.json（端到端含 fresh-cache 构建与 gcc；Windows 绝对值仅供方向参考，
+  精确比值等 Linux 回填）：
+  | 负载 | 生成 C | exe O0→O2 | 构建 O0→O2 | 运行 O0→O2 | 运行加速 |
+  |---|---|---|---|---|---|
+  | sum      | 14,288 B | 65,738→65,076 B | 215.3→256.1 ms (+40.8) | 9.1→5.5 ms | 1.634× |
+  | text     | 26,470 B | 76,152→74,724 B | 658.0→849.3 ms (+191.3) | 21.3→14.2 ms | 1.499× |
+  | textlazy | 26,068 B | 75,704→74,338 B | 682.5→847.7 ms (+165.2) | 11.7→9.1 ms | 1.294× |
+  | map      | 27,173 B | 75,501→74,070 B | 234.3→423.2 ms (+188.9) | 208.4→125.2 ms | 1.664× |
+
+## 说明
+- 运行加速区间 1.29×–1.66×（textlazy 最小、map 最大），端到端构建代价
+  +41–191 ms（14–27 KB 生成 C）。两档产物逐字节输出一致。
+- -O2 的可执行文件在本机 MinGW 下略小（−662 至 −1,431 字节），方向如实记录，
+  不作为普遍结论（Windows PE 段对齐可能掩盖或放大差异）。
+- 运行时间含进程启动；本机进程启动开销使小负载绝对值不可用，加速比只报方向。
+- 过程更正：代码注释最初写「1.30x–4.70x、gcc +12–89 ms」，与本脚本同次实测
+  （1.29×–1.66×、端到端 +41–191 ms）不符，已改为实测值并以此归档为准。
+  旧数字来源不可追溯，按 §20.4 第 10 条不沿用。
+- Linux 回填待做：`bench/build_levels_timings.py` 在 Linux 原生跑同一脚本后
+  归档 `2026-11-11-linux-buildlevels/`，状态才升级为双平台验证。
