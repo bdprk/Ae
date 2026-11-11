@@ -268,7 +268,7 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Box<Expr>, Type, usize, usize), FloatToString(Box<Expr>, usize, usize), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), SetCwd(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapInc(MapPlace, Box<Expr>, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Trim(Box<Expr>, usize, usize), StartsWith(Box<Expr>, Box<Expr>), EndsWith(Box<Expr>, Box<Expr>),
+enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Box<Expr>, Type, usize, usize), FloatToString(Box<Expr>, usize, usize), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Option<String>, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), SetCwd(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapInc(MapPlace, Box<Expr>, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Trim(Box<Expr>, usize, usize), StartsWith(Box<Expr>, Box<Expr>), EndsWith(Box<Expr>, Box<Expr>),
     TryAppendFile(Box<Expr>, Box<Expr>, Type, usize, usize), Env(Box<Expr>, Type, usize, usize), JsonGet(Box<Expr>, Box<Expr>, Type, usize, usize), JsonInt(Box<Expr>, Box<Expr>, Type, usize, usize), JsonBool(Box<Expr>, Box<Expr>, Type, usize, usize), JsonLen(Box<Expr>, Box<Expr>, Type, usize, usize), JsonHas(Box<Expr>, Box<Expr>, usize, usize), Find(Box<Expr>, Box<Expr>, Type, usize, usize), ReadStdin(Type, usize, usize), Cwd(Type, usize, usize), StrVecNew(usize, usize), RunCommand(Box<Expr>, usize, Type, usize, usize), NowMs, NowS, Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 // A map reachable without a move: either a variable slot or a field of one.
 #[derive(Debug)]
@@ -737,9 +737,18 @@ impl<'a> Parser<'a> {
                 } else if name == "slice_view" && *self.current() == Kind::LParen {
                     self.take(Kind::LParen)?;
                     let (base, base_ty) = self.expression(0, false)?;
-                    let vid = match (&base, base_ty) {
-                        (Expr::Variable(id, Type::String, _, _), Type::String) => *id,
-                        _ => return Err(self.fail("slice_view expects a bare string variable (views borrow their base)")),
+                    // The view borrows its base. A bare string variable is the
+                    // direct case; a string field of a *variable* struct is
+                    // allowed too, and borrows the whole variable: any move,
+                    // field write or replacement of that variable would free
+                    // the bytes the view points at (ADR-52).
+                    let (vid, field) = match (&base, base_ty) {
+                        (Expr::Variable(id, Type::String, _, _), Type::String) => (*id, None),
+                        (Expr::Field(inner, fname, Type::String), Type::String) => match **inner {
+                            Expr::Variable(id, Type::Struct(_), _, _) => (id, Some(fname.clone())),
+                            _ => return Err(self.fail("slice_view can follow a string field only on a struct variable, not on a nested expression")),
+                        },
+                        _ => return Err(self.fail("slice_view expects a string variable or a string field of a struct variable (views borrow their base)")),
                     };
                     if self.moved.contains(&vid) { return Err(self.fail("cannot use a moved string in slice_view")); }
                     self.take(Kind::Comma)?;
@@ -755,7 +764,7 @@ impl<'a> Parser<'a> {
                     if !self.borrows.iter().any(|&(id, _)| id == vid) {
                         self.borrows.push((vid, depth));
                     }
-                    (Expr::SliceView(vid, Box::new(start), Box::new(end), 0, 0), Type::StrView)
+                    (Expr::SliceView(vid, field, Box::new(start), Box::new(end), 0, 0), Type::StrView)
                 } else if name == "count_lines_with" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     self.take(Kind::LParen)?;
@@ -2430,7 +2439,7 @@ impl<'a> Parser<'a> {
                 }
                 self.record_borrow_bases(idx);
             }
-            Expr::SliceView(_, a, b, _, _) => { self.record_borrow_bases(a); self.record_borrow_bases(b); }
+            Expr::SliceView(_, _, a, b, _, _) => { self.record_borrow_bases(a); self.record_borrow_bases(b); }
             Expr::StructLit(_, values) => { for v in values { self.record_borrow_bases(v); } }
             Expr::EnumLit(_, _, _, values) => { for v in values { self.record_borrow_bases(v); } }
             Expr::Binary(a, _, b, _, _, _) => { self.record_borrow_bases(a); self.record_borrow_bases(b); }
@@ -2690,6 +2699,12 @@ impl<'a> Parser<'a> {
                                 if value_ty != Type::Int { return Err(self.fail("map values must be i64")); }
                                 result.push(Statement::MapPut(MapPlace::Field(id, fname), key, value, line, col));
                                 continue;
+                            }
+                            // A view into one of the fields points at the bytes
+                            // this write would release, so the write is only
+                            // allowed once the view is gone (ADR-52).
+                            if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                                return Err(self.fail(&format!("cannot modify '{name}' while it is borrowed")));
                             }
                             self.take(Kind::Equal)?;
                             let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
@@ -3277,16 +3292,16 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             // Elements are borrow-only: the pointer view never owns.
             Emitted { text: format!("(*{access}, {}, {line}, {col}))", i.text), ty: Type::String, owned: false, moves: i.moves, materialized: true }
         }
-        Expr::SliceView(vid, start, end, line, col) => {
-            // The base is a borrowed bare string variable; it cannot move or
-            // be reassigned while the view exists (borrow tracker).
+        Expr::SliceView(vid, field, start, end, line, col) => {
+            // The base is a borrowed string (a variable, or a string field of a
+            // struct variable); it cannot move, be reassigned, or have that
+            // field written while the view exists (borrow tracker).
+            let access = match field { Some(name) => format!("v{vid}.{name}"), None => format!("v{vid}") };
             let st = emit_expr(start, out, next, false);
             let en = emit_expr(end, out, next, false);
             let id = *next; *next += 1;
-            out.push_str(&format!("    if (!v{vid}.ptr) ae_fail(\"use of moved string\", {line}, {col});
-"));
-            out.push_str(&format!("    ae_strview t{id} = ae_slice_view(AE_VIEW(v{vid}), {}, {}, {line}, {col});
-", st.text, en.text));
+            out.push_str(&format!("    if (!{access}.ptr) ae_fail(\"use of moved string\", {line}, {col});\n"));
+            out.push_str(&format!("    ae_strview t{id} = ae_slice_view(AE_VIEW({access}), {}, {}, {line}, {col});\n", st.text, en.text));
             Emitted { text: format!("t{id}"), ty: Type::StrView, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::Join(vid, sep, line, col) => {

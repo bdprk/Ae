@@ -51,6 +51,9 @@ def run():
         # Fused split/lines arena: popping, overwriting and pushing past the
         # exact capacity must not double-free arena bytes or leak replacements.
         ("split_arena.ae", b"4\nALPHA\nALPHA|beta|gamma|tail\n3\nthree\n1\ngrown", True),
+        # A view into a struct's string field: the brackets are byte offsets and
+        # the base stays readable because views are read-only.
+        ("field_view.ae", b"Grace\nHopper\n12", True),
         # Character-safe truncation: every cut lands on a UTF-8 boundary, so the
         # ellipsis is never preceded by half a character.
         # Filesystem + clock + ordering in one program: creates its own fixture

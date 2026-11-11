@@ -1,0 +1,21 @@
+ADR-52 字段视图 · Windows 归档（2026-11-11）
+
+## 平台
+Windows x86-64，MinGW-W64 GCC 16.2.0（UCRT）。
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak
+- for f in examples/*.ae; do ae check "$f"; done
+- ae emit-c examples/field_view.ae，再做 gcc -std=c11 -pedantic-errors -fsyntax-only
+
+## 结果
+- cargo test：35 单元 + 158 集成全通过（新增字段视图集成测试：正例 + 字段写入/整体赋值/移动/嵌套字段/非字符串字段五类拒绝）。
+- --leak：29 个用例 PASS（新增 examples/field_view.ae），退出块等于 2 块基线。
+- 36 个 examples 通过 check（0 失败）。
+- field_view.ae 生成 C 14,142 字节，含 3 处 AE_VIEW(v0.name)，严格 C11 语法检查通过；
+  print(1) 仍为 11,105 字节（本改动不影响其它程序）。
+- 运行输出：Grace / Hopper / 12（与 Linux 相同）。
+
+## 边界
+视图仍只读、不能作返回值或字段；借用粒度是整个变量（写同结构体的其它字段也拒绝）。

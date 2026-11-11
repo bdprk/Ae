@@ -1,0 +1,14 @@
+// A read-only view may follow a string field of a struct variable. The whole
+// variable counts as borrowed while the view lives, so assigning the field,
+// replacing the struct or moving it are all rejected (ADR-52).
+
+struct Person { name: string }
+
+fn main() {
+    let p = Person { name: "Grace Hopper" };
+    let first = slice_view(p.name, 0, 5);
+    let last = slice_view(p.name, 6, 12);
+    print(first);
+    print(last);
+    print(len(p.name));
+}

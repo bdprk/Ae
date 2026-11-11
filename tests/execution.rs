@@ -1263,6 +1263,26 @@ fn split_and_args_produce_string_vectors() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("array index out of bounds"));
 }
 #[test]
+fn field_views_borrow_the_whole_struct_variable() {
+    // Reading a string field through a view is allowed; the variable counts as
+    // borrowed, so writes and moves are rejected while the view can be read.
+    let output = execute("struct P { name: string } fn main() { let p = P { name: \"hello world\" }; let h = slice_view(p.name, 0, 5); print(h); print(len(p.name)); }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "hello\n11\n");
+    for (source, expected) in [
+        ("struct P { name: string } fn main() { var p = P { name: \"hello\" }; let h = slice_view(p.name, 0, 2); p.name = \"replaced\"; print(h); }", "while it is borrowed"),
+        ("struct P { name: string } fn main() { var p = P { name: \"hello\" }; let h = slice_view(p.name, 0, 2); p = P { name: \"replaced\" }; print(h); }", "while it is borrowed"),
+        ("struct P { name: string } fn main() { let p = P { name: \"hello\" }; let h = slice_view(p.name, 0, 2); let q = p; print(h); }", "while it is borrowed"),
+        ("struct I { name: string } struct O { inner: I } fn main() { let o = O { inner: I { name: \"x\" } }; let h = slice_view(o.inner.name, 0, 1); print(h); }", "only on a struct variable"),
+        ("struct P { count: i64 } fn main() { let p = P { count: 1 }; let h = slice_view(p.count, 0, 1); print(h); }", "slice_view expects"),
+    ] {
+        let out = execute(source);
+        assert!(!out.status.success(), "accepted: {source}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains(expected), "{source}: {err}");
+    }
+}
+#[test]
 fn fused_split_and_lines_keep_their_edge_cases() {
     // ADR-49 gives split/lines one fused arena. The scanning rules must not
     // change: left-to-right, non-overlapping multi-byte separators, empty

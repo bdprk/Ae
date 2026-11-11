@@ -1,0 +1,8 @@
+print(1) generated C bytes:
+11105
+field_view generated C bytes:
+14142
+field access in generated C:
+3
+strict C11 syntax:
+ok
