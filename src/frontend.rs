@@ -13,7 +13,7 @@ pub(crate) enum Kind {
 pub(crate) struct Token { pub(crate) kind: Kind, pub(crate) offset: usize, pub(crate) line: usize, pub(crate) column: usize }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecRef, StrVecRef, Map, Array(usize), Struct(usize), Enum(&'static str, usize) }
+enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecRef, StrVecRef, Map, Array(usize), Struct(usize), Enum(&'static str, usize), Tokens }
 impl Type {
     fn name(self) -> String {
         match self {
@@ -31,6 +31,9 @@ impl Type {
             Type::Array(n) => format!("&[i64; {n}]"),
             Type::Struct(id) => format!("struct #{}", id),
             Type::Enum(name, _) => name.to_owned(),
+            // A single-pass cursor over a string; it owns no memory and only
+            // `for` consumes it (ADR-53).
+            Type::Tokens => "token cursor".to_owned(),
         }
     }
     fn c_temp(self) -> String {
@@ -44,6 +47,7 @@ impl Type {
             Type::Map => "ae_map ".to_owned(),
             Type::Struct(k) => format!("ae_t{k} "),
             Type::Enum(_, k) => format!("ae_e{k} "),
+            Type::Tokens => "ae_tokens ".to_owned(),
             _ => "int64_t ".to_owned(),
         }
     }
@@ -64,7 +68,7 @@ const MAX_ENUM_TYPES: usize = 256;
 const MAX_STRUCT_TYPES: usize = 256;
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
-const RESERVED: &[&str] = &["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "map_inc", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "find", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "run_command", "set_cwd", "to_f64", "to_i64"];
+const RESERVED: &[&str] = &["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "map_inc", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "find", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "run_command", "set_cwd", "to_f64", "to_i64", "tokenize"];
 // Provisional prelude: fallible operations report failure as values instead of
 // terminating the process (§4.5). These enums are registered before any user
 // type, so a program can name them without importing anything. They are
@@ -268,7 +272,9 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
 // String literals keep their source text with escapes uninterpreted: the bytes
 // between the quotes are already valid C string body, so emission can reuse them.
 #[derive(Debug)]
-enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Box<Expr>, Type, usize, usize), FloatToString(Box<Expr>, usize, usize), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Option<String>, Box<Expr>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), SetCwd(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapInc(MapPlace, Box<Expr>, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Trim(Box<Expr>, usize, usize), StartsWith(Box<Expr>, Box<Expr>), EndsWith(Box<Expr>, Box<Expr>),
+enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Box<Expr>, Type, usize, usize), FloatToString(Box<Expr>, usize, usize), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Option<String>, Box<Expr>, Box<Expr>, usize, usize),
+    // Lazy token cursor: (base variable, base field, separator, line, column).
+    Tokens(usize, Option<String>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), SetCwd(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapInc(MapPlace, Box<Expr>, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Trim(Box<Expr>, usize, usize), StartsWith(Box<Expr>, Box<Expr>), EndsWith(Box<Expr>, Box<Expr>),
     TryAppendFile(Box<Expr>, Box<Expr>, Type, usize, usize), Env(Box<Expr>, Type, usize, usize), JsonGet(Box<Expr>, Box<Expr>, Type, usize, usize), JsonInt(Box<Expr>, Box<Expr>, Type, usize, usize), JsonBool(Box<Expr>, Box<Expr>, Type, usize, usize), JsonLen(Box<Expr>, Box<Expr>, Type, usize, usize), JsonHas(Box<Expr>, Box<Expr>, usize, usize), Find(Box<Expr>, Box<Expr>, Type, usize, usize), ReadStdin(Type, usize, usize), Cwd(Type, usize, usize), StrVecNew(usize, usize), RunCommand(Box<Expr>, usize, Type, usize, usize), NowMs, NowS, Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 // A map reachable without a move: either a variable slot or a field of one.
 #[derive(Debug)]
@@ -291,7 +297,7 @@ enum Argument { Value(Expr), Borrow(usize, bool), View(Expr) } // Borrow bool: p
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
-enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), Sort(usize, bool, usize, usize), Reverse(usize, bool, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize, bool), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize, bool), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), MapPut(MapPlace, Expr, Expr, usize, usize), Propagate(Expr, Type, Vec<Type>, Option<(usize, Type)>, Vec<(usize, Type)>), Break, Continue(Option<usize>), Exit(Expr, Vec<(usize, Type)>), Frees(Vec<(usize, Type)>) }
+enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), Sort(usize, bool, usize, usize), Reverse(usize, bool, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize, bool), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize, bool), FieldStore(usize, String, Type, Expr), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), ForTokens(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), MapPut(MapPlace, Expr, Expr, usize, usize), Propagate(Expr, Type, Vec<Type>, Option<(usize, Type)>, Vec<(usize, Type)>), Break, Continue(Option<usize>), Exit(Expr, Vec<(usize, Type)>), Frees(Vec<(usize, Type)>) }
 #[derive(Debug)]
 struct Function { id: usize, params: Vec<(usize, Type)>, body: Vec<Statement>, is_main: bool, returns: Type }
 fn returns(stmts: &[Statement]) -> bool {
@@ -730,11 +736,16 @@ impl<'a> Parser<'a> {
                         None => {
                             let (operand, ty) = self.expression(0, false)?;
                             self.take(Kind::RParen)?;
+                            // A token cursor has no length by design: counting
+                            // would consume the stream, and the whole point of
+                            // the cursor is not materialising the tokens.
+                            if ty == Type::Tokens { return Err(self.fail("a token cursor has no len: counting would consume the stream, so use split(text, sep) when the count is needed")); }
                             if !matches!(ty, Type::String | Type::StrView | Type::Vec | Type::StrVec | Type::VecRef | Type::Map) { return Err(self.fail("len expects a string, vec, map, or array variable")); }
                             (Expr::Len(Box::new(operand), line, col), Type::Int)
                         }
                     }
                 } else if name == "slice_view" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
                     self.take(Kind::LParen)?;
                     let (base, base_ty) = self.expression(0, false)?;
                     // The view borrows its base. A bare string variable is the
@@ -764,7 +775,36 @@ impl<'a> Parser<'a> {
                     if !self.borrows.iter().any(|&(id, _)| id == vid) {
                         self.borrows.push((vid, depth));
                     }
-                    (Expr::SliceView(vid, field, Box::new(start), Box::new(end), 0, 0), Type::StrView)
+                    (Expr::SliceView(vid, field, Box::new(start), Box::new(end), line, col), Type::StrView)
+                } else if name == "tokenize" && *self.current() == Kind::LParen {
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    let (base, base_ty) = self.expression(0, false)?;
+                    // The cursor reads through a view of its base, so the base
+                    // must be storage that outlives the loop: a string variable
+                    // or a string field of a struct variable. A temporary (a
+                    // concatenation, a call result) would be freed before the
+                    // first iteration, so it is rejected (ADR-53).
+                    let (vid, field) = match (&base, base_ty) {
+                        (Expr::Variable(id, Type::String, _, _), Type::String) => (*id, None),
+                        (Expr::Field(inner, fname, Type::String), Type::String) => match **inner {
+                            Expr::Variable(id, Type::Struct(_), _, _) => (id, Some(fname.clone())),
+                            _ => return Err(self.fail("tokenize can follow a string field only on a struct variable")),
+                        },
+                        _ => return Err(self.fail("tokenize expects a string variable or a string field of a struct variable (the cursor borrows its base)")),
+                    };
+                    if self.moved.contains(&vid) { return Err(self.fail("cannot tokenize a moved string")); }
+                    self.take(Kind::Comma)?;
+                    let (sep, sep_ty) = self.expression(0, false)?;
+                    if !matches!(sep_ty, Type::String | Type::StrView) { return Err(self.fail("tokenize expects a string or string view separator")); }
+                    self.take(Kind::RParen)?;
+                    // Same rule as a view: the base may not move or be
+                    // reassigned while the cursor can still read it.
+                    let depth = self.scopes.len();
+                    if !self.borrows.iter().any(|&(id, _)| id == vid) {
+                        self.borrows.push((vid, depth));
+                    }
+                    (Expr::Tokens(vid, field, Box::new(sep), line, col), Type::Tokens)
                 } else if name == "count_lines_with" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     self.take(Kind::LParen)?;
@@ -2782,6 +2822,37 @@ impl<'a> Parser<'a> {
                     if self.names.contains_key(&var_name) { return Err(self.fail(&format!("duplicate variable '{var_name}'"))); }
                     self.take(Kind::In)?;
                     let (first, first_ty) = self.expression(0, false)?;
+                    if first_ty == Type::Tokens {
+                        // `for token in cursor` streams the tokens as read-only
+                        // views: no vector, no per-token allocation, and the
+                        // loop body sees one token at a time (ADR-53). Each
+                        // loop restarts at the beginning of the base text.
+                        let cursor = match &first {
+                            Expr::Variable(id, Type::Tokens, _, _) => *id,
+                            _ => return Err(self.fail("for-in over a token cursor needs a bare cursor variable: bind it first, e.g. let toks = tokens(text, \" \");")),
+                        };
+                        if self.loop_depth >= 64 { return Err(self.fail("loop nesting limit exceeded (64)")); }
+                        let (line, col) = self.position();
+                        let var = self.next_var; self.next_var += 1;
+                        let label = self.next_label; self.next_label += 1;
+                        self.loop_depth += 1;
+                        let base = self.scopes.len();
+                        let moved_before = self.moved.clone();
+                        self.scopes.push(vec![(var, Type::StrView)]);
+                        self.loop_scopes.push(self.scopes.len());
+                        self.loop_labels.push(Some(label));
+                        self.names.insert(var_name.clone(), (var, false, Type::StrView));
+                        let body = self.block();
+                        self.loop_labels.pop();
+                        self.loop_scopes.pop();
+                        self.scopes.pop().unwrap();
+                        self.loop_depth -= 1;
+                        self.names.remove(&var_name);
+                        let body = body?;
+                        self.close_loop_moves(base, moved_before, loop_offset)?;
+                        result.push(Statement::ForTokens(cursor, var, body, label, line, col));
+                        continue;
+                    }
                     if *self.current() != Kind::DotDot {
                         // `for x in vec-variable` iterates owned elements by
                         // value: desugars to a hidden range loop plus an
@@ -3303,6 +3374,19 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             out.push_str(&format!("    if (!{access}.ptr) ae_fail(\"use of moved string\", {line}, {col});\n"));
             out.push_str(&format!("    ae_strview t{id} = ae_slice_view(AE_VIEW({access}), {}, {}, {line}, {col});\n", st.text, en.text));
             Emitted { text: format!("t{id}"), ty: Type::StrView, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Tokens(vid, field, sep, line, col) => {
+            // The cursor only remembers a view of the base and the separator;
+            // it allocates nothing, so it needs no release (ADR-53).
+            let access = match field { Some(name) => format!("v{vid}.{name}"), None => format!("v{vid}") };
+            let sp = emit_expr(sep, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    if (!{access}.ptr) ae_fail(\"use of moved string\", {line}, {col});\n"));
+            out.push_str(&format!("    ae_tokens t{id} = ae_tokens_new(AE_VIEW({access}), AE_VIEW({}), {line}, {col});\n", sp.text));
+            // The cursor copies the separator bytes, so the temporary can be
+            // released here without leaving a dangling pointer (ADR-53).
+            if sp.owned { drop_owned_temp(out, &sp); }
+            Emitted { text: format!("t{id}"), ty: Type::Tokens, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::Join(vid, sep, line, col) => {
             out.push_str(&format!("    if (!v{vid}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
@@ -4046,6 +4130,18 @@ fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
                 out.push_str(&format!("    v{var} = ae_add(v{var}, 1, {line}, {col});\n"));
                 out.push_str("    }\n");
             }
+            Statement::ForTokens(cursor, elem, body, label, _line, _col) => {
+                // Restart the cursor so a second loop over the same binding
+                // behaves like the first; the element is a view into the base,
+                // never a copy.
+                out.push_str(&format!("    ae_tokens_reset(&v{cursor});\n"));
+                out.push_str("    while (1) {\n");
+                out.push_str(&format!("    ae_strview v{elem};\n"));
+                out.push_str(&format!("    if (!ae_tokens_next(&v{cursor}, &v{elem})) break;\n"));
+                emit_statements(body, out, next);
+                out.push_str(&format!("    ae_next_{label}: ;\n"));
+                out.push_str("    }\n");
+            }
             Statement::Frees(ids) => { for &(id, ty) in ids { release_var(out, id, ty); } }
         }
     }
@@ -4258,6 +4354,8 @@ fn c_type_field(ty: Type) -> String {
         Type::VecRef => "const ae_vec *".to_owned(),
         Type::StrVecRef => "const ae_strvec *".to_owned(),
         Type::Array(n) => format!("int64_t [{n}]"),
+        // Unreachable: there is no syntax for a cursor-typed field.
+        Type::Tokens => "ae_tokens".to_owned(),
     }
 }
 fn c_type(ty: Type, id: usize, declaration: bool) -> String {
@@ -4276,6 +4374,8 @@ fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::VecRef => "const ae_vec *".to_owned(),
         Type::StrVecRef if declaration => format!("const ae_strvec *v{id}"),
         Type::StrVecRef => "const ae_strvec *".to_owned(),
+        Type::Tokens if declaration => format!("ae_tokens v{id}"),
+        Type::Tokens => "ae_tokens".to_owned(),
         Type::Array(_) if declaration => format!("const int64_t *v{id}"),
         Type::Array(_) => "const int64_t *".to_owned(),
     }

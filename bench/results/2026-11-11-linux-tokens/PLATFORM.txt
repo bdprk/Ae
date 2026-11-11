@@ -1,0 +1,30 @@
+ADR-53 流式 token 游标 `tokenize` · Linux 归档（2026-11-11）
+
+## 平台
+instabox-node 沙箱：Debian 13，内核 6.18.54-instabox，x86-64，4 vCPU / 7.8 GB；
+gcc 14.2.0-19；rustc 1.99.0；go 1.27.1。tar 管道同步自工作区。
+
+## 命令（工作目录 = ~/ae-lang）
+- cargo build --locked && cargo build --release --locked && cargo test --locked
+- python3 scripts/verify_generated_c.py --leak / --sanitize
+- for f in examples/*.ae; do target/debug/ae check "$f"; done
+- python3 bench/tokens_timings.py --exe target/release/ae --runs 9 --json tokens-timings.json
+- python3 bench/run.py --release > suite-release.json
+- target/debug/ae emit-c <print(1)> / examples/tokens.ae
+
+## 结果
+- cargo test：35 单元 + 160 集成全通过。
+- --leak 30 用例 PASS、退出块 0；--sanitize 30 用例 PASS、0 报告；37 个 examples check 全过。
+- tokens_timings（9 次交替中位）：read 1.69 / 物化 9.30 / 惰性 3.56 ms（**2.61 倍**）；
+  超出 I/O 的 token 化成本 7.61 → 1.87 ms；峰值内存 12.52 → 3.90 MB。
+- 四负载套件（release，5 次交错）：
+    sum      ae 0.88 / go 1.54 / rust 0.87 ms（峰值 0.008 / 0.273 / 0.016 MB）
+    text     ae 9.48 / go 11.83 / rust 3.66 / python 33.60 ms
+    textlazy ae 3.98 / go 3.62 / rust 3.71 ms（峰值 3.85 / 4.54 / 4.49 MB）
+    map      ae 67.96 / go 66.73 / rust 53.32 / python 238.52 ms（峰值 2.39 / 7.09 / 2.91 MB）
+  同一份套件在改动前一次运行的 textlazy 为 ae 3.67 / go 3.63 / rust 3.45，
+  说明三者同档、排序在噪声内不可分辨；峰值内存 AE 最低这一点两次一致。
+- 生成 C：print(1) 11,274 字节（不含游标函数），tokens.ae 23,397 字节，与 Windows 逐字节相同。
+
+## 边界
+不是通用迭代器；没有 `len`；游标不能 print/进容器/作返回值；分隔符上限 16 字节；`split` 未改。

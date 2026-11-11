@@ -1,0 +1,6 @@
+read      1.69 ms  peak=3.543 MB
+eager     9.30 ms  peak=12.516 MB
+lazy      3.56 ms  peak=3.895 MB
+tokenising beyond I/O: eager=7.61 ms lazy=1.87 ms
+eager/lazy = 2.61x
+wrote /tmp/ae-tok/tokens-timings.json

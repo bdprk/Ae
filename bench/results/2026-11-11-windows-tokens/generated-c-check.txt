@@ -1,0 +1,12 @@
+print(1) generated C bytes:
+11274
+cursor functions in print(1) C (expect 0):
+0
+cursor typedef in print(1) C (expect 1):
+1
+tokens.ae generated C bytes:
+23397
+cursor calls in tokens.ae C:
+19
+strict C11 syntax on tokens.ae C:
+ok

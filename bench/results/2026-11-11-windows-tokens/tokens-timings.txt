@@ -1,0 +1,6 @@
+read     15.09 ms  peak=10.977 MB
+eager    22.11 ms  peak=19.555 MB
+lazy     17.97 ms  peak=10.98 MB
+tokenising beyond I/O: eager=7.02 ms lazy=2.88 ms
+eager/lazy = 1.23x
+wrote bench/results/2026-11-11-windows-tokens/tokens-timings.json

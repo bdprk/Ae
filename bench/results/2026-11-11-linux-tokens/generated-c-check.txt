@@ -1,0 +1,6 @@
+print(1) generated C bytes:
+11274
+tokens.ae generated C bytes:
+23397
+cursor calls:
+14

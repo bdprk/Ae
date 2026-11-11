@@ -481,6 +481,60 @@ static ae_string ae_join(const ae_strvec *v, ae_strview sep, size_t line, size_t
     return result;
 }
 
+#define AE_TOKENS_SEP_MAX 16
+typedef struct { ae_strview text; char sep[AE_TOKENS_SEP_MAX]; int64_t sep_len; int64_t pos; int64_t done; } ae_tokens;
+// Lazy token cursor (ADR-53): the same token stream as `split`, but produced
+// one token at a time. It holds a view of the base string and an inline copy of
+// the separator, and allocates nothing, so iterating a 2.6 MB file costs no
+// per-token memory. The token boundaries match `split` exactly, including the
+// trailing empty token after a final separator and the single empty token for
+// empty input. The separator is copied into the cursor rather than pointed at:
+// the argument is usually a temporary that is released at the end of the
+// statement, and the cursor must stay valid for the whole loop. Sixteen bytes
+// cover every realistic delimiter, so the cursor owns no memory and a longer
+// one is rejected instead of allocated.
+static ae_tokens ae_tokens_new(ae_strview text, ae_strview sep, size_t line, size_t column) {
+    if (sep.len == 0) ae_fail("empty separator", line, column);
+    if (sep.len > AE_TOKENS_SEP_MAX) ae_fail("token separator longer than 16 bytes", line, column);
+    ae_tokens cursor;
+    cursor.text = text;
+    memcpy(cursor.sep, sep.ptr, (size_t)sep.len);
+    cursor.sep_len = sep.len;
+    cursor.pos = 0;
+    cursor.done = 0;
+    return cursor;
+}
+// Rewinds to the first token, so a second loop over the same binding sees the
+// same stream instead of an empty one.
+static void ae_tokens_reset(ae_tokens *cursor) { cursor->pos = 0; cursor->done = 0; }
+// Returns false once the stream is exhausted; `out` points into the base text.
+static bool ae_tokens_next(ae_tokens *cursor, ae_strview *out) {
+    if (cursor->done) return false;
+    int64_t start = cursor->pos;
+    int64_t at = -1;
+    if (cursor->sep_len == 1) {
+        const char *hit = memchr(cursor->text.ptr + start, cursor->sep[0], (size_t)(cursor->text.len - start));
+        if (hit) at = (int64_t)(hit - cursor->text.ptr);
+    } else {
+        int64_t i = start;
+        while (i + cursor->sep_len <= cursor->text.len) {
+            if (memcmp(cursor->text.ptr + i, cursor->sep, (size_t)cursor->sep_len) == 0) { at = i; break; }
+            i += 1;
+        }
+    }
+    if (at < 0) {
+        out->ptr = cursor->text.ptr + start;
+        out->len = cursor->text.len - start;
+        cursor->pos = cursor->text.len;
+        cursor->done = 1;
+    } else {
+        out->ptr = cursor->text.ptr + start;
+        out->len = at - start;
+        cursor->pos = at + cursor->sep_len;
+    }
+    return true;
+}
+
 // lines(): split on newlines. Trailing newlines do not produce a final empty
 // line, matching common stdlib lines(). Two passes with memchr (ADR-49): count
 // lines first, then fill one exact-size pointer array and one byte arena.

@@ -1,0 +1,20 @@
+// The same statistics as text.ae, computed with the streaming cursor (ADR-53):
+// tokens are handed out one at a time as views into the file contents, so the
+// program never materialises the ~450,000 tokens. Output must be identical to
+// text.ae (`len(text)`, token count, bytes inside tokens).
+
+fn main() {
+    let parts = args();
+    assert(len(parts) > 1);
+    let text = read_file(parts[1]);
+    let cur = tokenize(text, " ");
+    var count = 0;
+    var inside = 0;
+    for token in cur {
+        count = count + 1;
+        inside = inside + len(token);
+    }
+    print(len(text));
+    print(count);
+    print(inside);
+}

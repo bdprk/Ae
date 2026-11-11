@@ -54,6 +54,8 @@ def run():
         # A view into a struct's string field: the brackets are byte offsets and
         # the base stays readable because views are read-only.
         ("field_view.ae", b"Grace\nHopper\n12", True),
+        # Lazy token cursor: same boundaries as split, no per-token allocation.
+        ("tokens.ae", b"4\n16\n5\n14\n14\n3\none,two,three\n1", True),
         # Character-safe truncation: every cut lands on a UTF-8 boundary, so the
         # ellipsis is never preceded by half a character.
         # Filesystem + clock + ordering in one program: creates its own fixture

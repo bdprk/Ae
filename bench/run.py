@@ -12,14 +12,20 @@ each round (not randomized). Cold/hot refers only to the AE
 content-addressed cache: with --cold every AE build gets a fresh empty cache
 directory; the external toolchains' own caches are uncontrolled.
 
-Three workloads are available:
+Four workloads are available:
 
 * `sum` — a million checked additions; the languages are AE, Go and Rust.
 * `text` — read a generated 3 MiB text file, split it on spaces, and report the
   byte count, token count and summed token length. Python is included here
   because text processing is the case the design plan compares against Python,
   with the caveat that its runtime includes interpreter start-up and that its
-  "build" is nothing at all.
+  "build" is nothing at all. This workload materialises the tokens
+  (`split` / `strings.Split` / `collect`).
+* `textlazy` — the same statistics over the same input, but scanning the bytes
+  once and never materialising the tokens: AE's `tokenize` cursor, Go's
+  manual index scan, Rust's `split(' ')`. Having both entries keeps the two API
+  shapes separate instead of crediting one language for the other's algorithm
+  (ADR-53). Python is excluded because its `str.split` is eager.
 * `map` — a fixed-seed LCG feeds a million draws into a 10000-key
   `map[string, i64]` histogram, then a count-weighted checksum reads every
   bucket and `len` reports how many keys were reached. Python is included
@@ -107,23 +113,40 @@ def peak_bytes(pid):
     return None
 
 
-def timed(args, env=None):
-    cpu_before = child_cpu_ms()
-    start = time.perf_counter_ns()
-    process = subprocess.Popen([str(x) for x in args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+def peak_mb(args, env=None):
+    """Peak resident set of one run, in MB, or None when it cannot be sampled.
+
+    This runs the command a second time on purpose. Sampling inside the timed
+    loop used to distort every measurement: on Windows ``time.sleep(0.001)``
+    sleeps for the 15.6 ms timer tick, so a 4 ms program was reported as 20-45 ms
+    and the bias hit the fastest program hardest (ADR-53). Wall time and peak
+    memory are now separate passes.
+    """
+    process = subprocess.Popen([str(x) for x in args], stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, env=env)
     peak = None
     while process.poll() is None:
         value = peak_bytes(process.pid)
         if value is not None and (peak is None or value > peak):
             peak = value
         time.sleep(0.001)
-    out, err = process.communicate()
-    wall_ms = (time.perf_counter_ns() - start) / 1_000_000
+    process.wait()
     if process.returncode != 0:
-        raise subprocess.CalledProcessError(process.returncode, args, out, err)
+        # The timed pass already reported the failure with its stderr.
+        return None
+    return None if peak is None else peak / (1024 * 1024)
+
+
+def timed(args, env=None):
+    cpu_before = child_cpu_ms()
+    start = time.perf_counter_ns()
+    result = subprocess.run([str(x) for x in args], capture_output=True, env=env)
+    wall_ms = (time.perf_counter_ns() - start) / 1_000_000
     cpu_after = child_cpu_ms()
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(result.returncode, args, result.stdout, result.stderr)
     cpu_ms = None if cpu_before is None or cpu_after is None else max(0.0, cpu_after - cpu_before)
-    return {"wall_ms": wall_ms, "cpu_ms": cpu_ms, "peak_mb": None if peak is None else peak / (1024 * 1024)}
+    return {"wall_ms": wall_ms, "cpu_ms": cpu_ms, "peak_mb": peak_mb(args, env)}
 
 
 def _median(values):
@@ -155,14 +178,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--release", action="store_true", help="use AE -O2 and Rust opt-level=2")
     parser.add_argument("--cold", action="store_true", help="give every build a fresh empty AE cache (measures real compiles)")
-    parser.add_argument("--workload", choices=("sum", "text", "map", "all"), default="all")
+    parser.add_argument("--workload", choices=("sum", "text", "textlazy", "map", "all"), default="all")
     options = parser.parse_args()
     call(["cargo", "build", "--release", "--locked"], cwd=ROOT)
     suffix = ".exe" if os.name == "nt" else ""
     compiler = ROOT / "target" / "release" / ("ae" + suffix)
     cc = os.environ.get("AE_CC", "gcc")
     cpu_method = None if _resource is None else "resource.getrusage(RUSAGE_CHILDREN) deltas between calls, direct children only"
-    workloads = ("sum", "text", "map") if options.workload == "all" else (options.workload,)
+    workloads = ("sum", "text", "textlazy", "map") if options.workload == "all" else (options.workload,)
     report = {
         "note": ("Exploratory same-host measurements with external toolchain caches uncontrolled. AE uses GCC -O2 "
                  "and Rust opt-level=2 in release, otherwise both use no optimization; Go uses its default; Python is "
@@ -175,7 +198,7 @@ def main():
                  "cache dir."),
         "cpu_method": cpu_method,
         "peak_method": ("Windows GetProcessMemoryInfo PeakWorkingSetSize" if os.name == "nt"
-                        else "Linux /proc/<pid>/status VmHWM"),
+                        else "Linux /proc/<pid>/status VmHWM") + " sampled in a separate run from the timed one",
         "mode": ("cold-" if options.cold else "") + ("release" if options.release else "development"),
         "platform": platform.platform(), "machine": platform.machine(), "processor": platform.processor(),
         "versions": {"go": version("go", "version"), "rustc": version("rustc", "--version"),
@@ -196,7 +219,7 @@ def main():
 
 
 def run_workload(workload, tmp, compiler, options):
-    langs = ("ae", "go", "rust") if workload == "sum" else ("ae", "go", "rust", "python")
+    langs = ("ae", "go", "rust") if workload in ("sum", "textlazy") else ("ae", "go", "rust", "python")
     expected = SUM_EXPECTED if workload == "sum" else None
     suffix = ".exe" if os.name == "nt" else ""
     exe = {lang: tmp / (workload + "-" + lang + suffix) for lang in langs}
@@ -207,7 +230,7 @@ def run_workload(workload, tmp, compiler, options):
             run_args[lang] = [sys.executable, BENCH / f"{workload}.py"]
         else:
             run_args[lang] = [exe[lang]]
-        if workload == "text":
+        if workload in ("text", "textlazy"):
             run_args[lang] = run_args[lang] + [tmp / "input.txt"]
     builds = {lang: [] for lang in langs}
     runs = {lang: [] for lang in langs}

@@ -1263,6 +1263,99 @@ fn split_and_args_produce_string_vectors() {
     assert!(String::from_utf8_lossy(&output.stderr).contains("array index out of bounds"));
 }
 #[test]
+fn tokens_stream_the_same_boundaries_as_split_without_materialising() {
+    // The lazy cursor must agree with split token for token, restart on a second
+    // loop over the same binding, accept a struct field as its base, and keep
+    // working with break/continue (which release body-local strings).
+    let source = r#"
+struct Rec { body: string }
+fn mismatches(text: string, sep: string) -> i64 {
+    let parts = split(text, sep);
+    let cur = tokenize(text, sep);
+    var i = 0;
+    var bad = 0;
+    for t in cur {
+        if i >= len(parts) { bad = bad + 1; } else if parts[i] != t { bad = bad + 1; }
+        i = i + 1;
+    }
+    if i != len(parts) { bad = bad + 1; }
+    return bad;
+}
+fn main() {
+    print(mismatches("alpha beta gamma", " "));
+    print(mismatches("", " "));
+    print(mismatches(" ", " "));
+    print(mismatches("a b ", " "));
+    print(mismatches("a  b", " "));
+    print(mismatches("alpha::beta::::gamma", "::"));
+    print(mismatches("no-separator", "::"));
+    let line = "one two three four";
+    let cur = tokenize(line, " ");
+    var seen = 0;
+    for t in cur {
+        let copy = t + "!";
+        if len(t) == 3 { continue; }
+        if t == "four" { break; }
+        seen = seen + len(copy);
+    }
+    print(seen);
+    var again = 0;
+    for t in cur { again = again + 1; }
+    let rec = Rec { body: "p q r" };
+    let fields = tokenize(rec.body, " ");
+    var n = 0;
+    for f in fields { n = n + 1; }
+    print(again);
+    print(n);
+}
+"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "0\n0\n0\n0\n0\n0\n0\n6\n4\n3\n"
+    );
+}
+
+#[test]
+fn tokens_reject_a_base_that_moves_is_written_or_is_a_temporary() {
+    // The cursor borrows its base for the scope, so the base cannot be moved,
+    // reassigned or have its field written while the cursor is alive; a
+    // temporary makes no sense (it would be freed before the first iteration).
+    let cases = [
+        ("fn main() { var text = \"a b\"; let c = tokenize(text, \" \"); text = \"x\"; for t in c { print(t); } }", "while it is borrowed"),
+        ("fn main() { let text = \"a b\"; let c = tokenize(text, \" \"); let m = text; for t in c { print(t); } print(m); }", "while it is borrowed"),
+        ("struct R { body: string } fn main() { var r = R { body: \"a b\" }; let c = tokenize(r.body, \" \"); r.body = \"z\"; for t in c { print(t); } }", "while it is borrowed"),
+        ("fn main() { let text = \"a b\"; for t in tokenize(text, \" \") { print(t); } }", "bare cursor variable"),
+        ("fn main() { let text = \"a b\"; let c = tokenize(text, \" \"); print(len(c)); }", "token cursor"),
+        ("fn main() { let text = \"a b\"; let c = tokenize(text, \" \"); print(c); }", "token cursor"),
+        ("fn main() { let c = tokenize(\"a b\", \" \"); for t in c { print(t); } }", "tokenize expects a string variable"),
+    ];
+    for (source, expected) in cases {
+        let output = execute(source);
+        assert!(!output.status.success(), "accepted: {source}");
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(err.contains(expected), "{source}: {err}");
+    }
+    // An empty separator is a runtime failure at the call site, like split.
+    let output = execute("fn main() { let text = \"a b\"; let c = tokenize(text, \"\"); for t in c { print(t); } }");
+    assert!(!output.status.success());
+    let err = String::from_utf8_lossy(&output.stderr);
+    assert!(err.contains("empty separator"), "{err}");
+    // The failure points at the call, not at 0:0 (the cursor carries its site).
+    assert!(err.contains(":1:39"), "location missing: {err}");
+
+    // The separator is copied into the cursor, so it has a fixed 16-byte
+    // capacity: exactly 16 works, 17 is rejected rather than allocated.
+    let output = execute("fn main() { let t = \"a0123456789abcdefb\"; let c = tokenize(t, \"0123456789abcdef\"); var n = 0; for x in c { print(x); n = n + 1; } print(n); }");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "a\nb\n2\n");
+    let output = execute("fn main() { let t = \"aXb\"; let c = tokenize(t, \"0123456789abcdefX\"); for x in c { print(x); } }");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("longer than 16 bytes"));
+}
+
+#[test]
 fn field_views_borrow_the_whole_struct_variable() {
     // Reading a string field through a view is allowed; the variable counts as
     // borrowed, so writes and moves are rejected while the view can be read.

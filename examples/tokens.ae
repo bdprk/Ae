@@ -1,0 +1,52 @@
+// Streaming tokens: `tokenize(text, sep)` walks the same token boundaries as
+// `split(text, sep)`, but hands out one read-only view per iteration instead of
+// materialising a vector. Nothing is allocated per token, so a large file can be
+// scanned with a flat memory profile (ADR-53). The cursor borrows its base: the
+// string may not move or be reassigned while the cursor can still read it.
+
+struct Rec { body: string }
+
+fn main() {
+    let text = "the quick brown fox";
+    let cur = tokenize(text, " ");
+    var count = 0;
+    var inside = 0;
+    var longest = 0;
+    for token in cur {
+        count = count + 1;
+        inside = inside + len(token);
+        if len(token) > longest { longest = len(token); }
+    }
+    print(count);
+    print(inside);
+    print(longest);
+
+    // A second loop over the same binding starts at the first token again.
+    let line = "alpha beta gamma";
+    let words = tokenize(line, " ");
+    var first = 0;
+    for word in words { first = first + len(word); }
+    var second = 0;
+    for word in words { second = second + len(word); }
+    print(first);
+    print(second);
+
+    // A struct field works as the base, and the whole variable stays borrowed.
+    let record = Rec { body: "one two three" };
+    let fields = tokenize(record.body, " ");
+    var n = 0;
+    for field in fields { n = n + 1; }
+    print(n);
+
+    // Tokens are views: keeping them is an explicit copy into a vector.
+    var kept = strvec_new();
+    for field in fields { push(kept, field); }
+    print(join(kept, ","));
+
+    // Multi-byte separators match `split` exactly, including empty fields.
+    let path = "a::b::::c";
+    let parts = tokenize(path, "::");
+    var empty_fields = 0;
+    for part in parts { if len(part) == 0 { empty_fields = empty_fields + 1; } }
+    print(empty_fields);
+}

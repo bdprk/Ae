@@ -1,0 +1,33 @@
+ADR-53 流式 token 游标 `tokenize` · Windows 归档（2026-11-11）
+
+## 平台
+Windows x86-64，8 核 / 16 线程，MinGW-W64 GCC 16.2.0（UCRT）。
+**该机此时每次新建进程要付约 37–40 ms**（同一台机器上 `sum` 负载跑出 40 ms，Linux 同程序 0.88 ms），
+所以本归档的套件墙钟数字被启动开销主导，只作原始数据保留，不作跨语言结论。
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak
+- for f in examples/*.ae; do ae check "$f"; done
+- python bench/tokens_timings.py --exe target/release/ae.exe --runs 9 --json tokens-timings.json
+- python bench/run.py --release > suite-release.json
+- ae emit-c <print(1)> / examples/tokens.ae，后者再走 -std=c11 -pedantic-errors -fsyntax-only
+
+## 结果
+- cargo test：35 单元 + 160 集成全通过。
+- --leak：30 个用例全部 PASS，退出块等于 2 块基线。
+- 37 个 examples 通过 check（0 失败）。
+- tokens_timings（9 次交替中位）：read 15.09 / 物化 22.11 / 惰性 17.97 ms（1.23 倍）；
+  超出 I/O 的 token 化成本 7.02 → 2.88 ms；峰值内存 19.55 → 10.98 MB。
+  两个程序付同样的启动底噪，所以总量比值被压向 1；可用的是扣除底噪的 token 化差值与峰值内存。
+- 生成 C：print(1) 11,274 字节且**不含**任何游标函数（typedef 常驻，+169 字节）；
+  tokens.ae 23,397 字节（与 Linux 逐字节相同），严格 C11 语法检查通过。
+
+## 边界
+`tokenize` 只有「字符串 + 分隔符」一种形态；没有 `len`；游标不能 print/进容器/作返回值；分隔符上限 16 字节。
+`split` 一行未改。
+
+## 测量口径
+本轮的 `bench/run.py` 与 `bench/tokens_timings.py` 已把墙钟时间与峰值内存分成两趟测量。
+旧实现把采样放进计时循环，Windows 的 `time.sleep(0.001)` 实际睡满 15.6 ms 时钟中断，
+每个数字被拉长十几毫秒且「越快越被拉长」，因此更早的 Windows 归档与本轮不可跨会话比较。
