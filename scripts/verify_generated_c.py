@@ -120,7 +120,12 @@ def run():
             "cos(1) ok\n"
             "atan2(1,1) ok\n"
             "log(exp(1)) ok\n"
-            "pow(2,0.5) ok"
+            "pow(2,0.5) ok\n"
+            "min 2.0\n"
+            "max 3.0\n"
+            "min nan 5.0\n"
+            "min -0 -0.0\n"
+            "max -0 0.0"
         ).encode("utf-8"), True),
         # vec[f64] (ADR-61): statistics over an owned float vector with the
         # math builtins; the move into `total` happens last and the accumulator

@@ -28,4 +28,13 @@ fn main() {
     if close(atan2(1.0, 1.0), 0.7853981633974483, 0.000000000000001) { print("atan2(1,1) ok"); } else { print("atan2(1,1) FAIL"); }
     if close(log(exp(1.0)), 1.0, 0.000000000000001) { print("log(exp(1)) ok"); } else { print("log(exp(1)) FAIL"); }
     if close(pow(2.0, 0.5), sqrt(2.0), 0.000000000000001) { print("pow(2,0.5) ok"); } else { print("pow(2,0.5) FAIL"); }
+
+    // min/max are runtime functions (ADR-64): NaN is ignored and the ±0.0 tie
+    // follows the total order, so the text below is identical on both
+    // platforms and independent of argument order.
+    print("min " + to_string(min(2.0, 3.0)));
+    print("max " + to_string(max(2.0, 3.0)));
+    print("min nan " + to_string(min(sqrt(-1.0), 5.0)));
+    print("min -0 " + to_string(min(0.0, -0.0)));
+    print("max -0 " + to_string(max(0.0, -0.0)));
 }

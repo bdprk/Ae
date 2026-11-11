@@ -1,0 +1,42 @@
+ADR-64 `min`/`max`（f64，运行时实现）· Windows 归档（2026-11-12）
+
+## 平台
+Windows x86-64，8 核 / 16 线程，MinGW-W64 GCC 16.2.0（UCRT）。AE 0.1.1。
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak（math_basics 用例表扩展 min/max 五行）
+- python scripts/fmt_acceptance.py --json fmt-acceptance.json
+- for f in $(find examples -name "*.ae" ! -name "report.ae" ! -name "words.ae"); do ae check "$f"; done
+- cargo run -- run examples/math_basics.ae
+
+## 交付内容
+- `min(a: f64, b: f64) -> f64` 与 `max(a, b) -> f64`，保留名，元数固定，禁隐式转换。
+- **运行时实现而非 libm**（`ae_f64_min`/`ae_f64_max`，位于 runtime_ex.c，
+  随可达闭包裁剪）：
+  - NaN 忽略（IEEE 754-2008 minNum/maxNum 口径）：一边 NaN 返回另一边，
+    两边 NaN 返回 NaN；
+  - **±0.0 平局按 IEEE totalOrder**（−0.0 在 +0.0 之下）：`min(-0.0, 0.0)` 恒为
+    `-0.0` 且与参数顺序无关，`max` 恒为 `0.0`——libm 的 fmin 对这个平局是
+    「未指定」，直接调用会让跨平台文本不一致，所以必须在运行时写死规则。
+- 前端复用 ADR-60 的 MATH_FNS 通道（元数 2、f64×f64→f64、直接调用 C 符号）。
+
+## 结果
+- cargo test：36 单元 + 176 集成全通过。新增 2 个测试：
+  `min_max_ignore_nan_and_tie_zeros_deterministically`（11 个断言，含
+  min(-0.0,0.0)=-0.0 与参数顺序无关性、min(NaN,5)=5、max(NaN,NaN)=nan）、
+  `min_max_reject_wrong_types_and_redefinition`（i64 实参、元数、函数重定义、
+  变量重名）。
+- --leak：33 用例 PASS，基线 2 块不变。fmt 43 文件幂等；41 程序 `check`。
+- math_basics.ae 扩展 5 行 min/max 输出（verify 用例同步），运行输出见
+  math-basics-output.txt；`min -0 -0.0` 证明 ±0 规则可观察且确定。
+
+## 资源成本
+- `print(1)` 保持 13,909 字节——min/max 未被引用时随可达闭包裁剪，不用的
+  程序零成本；math_basics.ae 27,406 字节（新增调用 + 字符串拼接簇）。
+
+## 说明
+- 过程教训（已入失败日志）：批量插入含 `\r\n` 转义的测试代码又走了
+  heredoc→python 路线，转义层级错位（2026-11-11 同一条教训的第二次违反），
+  已升格为硬规则：含转义序列的编辑一律 Write/Edit 工具。
+- Linux 回填待做：归档 `2026-11-12-linux-minmax/`，状态才升级为双平台验证。

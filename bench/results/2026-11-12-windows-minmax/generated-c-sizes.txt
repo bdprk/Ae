@@ -1,0 +1,2 @@
+print(1) C bytes: 13909
+math_basics C bytes: 27406

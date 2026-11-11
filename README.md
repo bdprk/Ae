@@ -68,7 +68,7 @@ cargo run -- version
 
 `check --json` 是给编辑器的稳定接口（ADR-48）：stdout 恰为一个 JSON 数组，成功是 `[]` 并以 0 退出，失败是一个含 `file`/`line`/`column`/`message` 的对象并以 1 退出；无法定位的失败把整条消息放进 `message`、位置为 `null`，不猜位置。数组的**形状**是契约、长度不是（前端目前 fail-fast，所以至多一个元素）。`message` 是展示文本，不保证逐字稳定，请按 `file`/`line`/`column` 分支。默认 `check` 的单行人类可读输出与退出码不变。
 
-数学内建 v1（ADR-60）：`sqrt` `abs` `floor` `ceil` `round` `exp` `log` `sin` `cos` `pow` `atan2`，参数与返回值都是 `f64`，1:1 映射 C 库；定义域错误按 IEEE 返回（`sqrt(-1.0)` 是 `nan`）而不是终止，`round` 是 0.5 远离零。名字是保留名，不做隐式转换（`sqrt(4)` 报错）。示例 `cargo run -- run examples/math_basics.ae`。
+数学内建 v1（ADR-60）：`sqrt` `abs` `floor` `ceil` `round` `exp` `log` `sin` `cos` `pow` `atan2`，参数与返回值都是 `f64`，1:1 映射 C 库；定义域错误按 IEEE 返回（`sqrt(-1.0)` 是 `nan`）而不是终止，`round` 是 0.5 远离零。名字是保留名，不做隐式转换（`sqrt(4)` 报错）。示例 `cargo run -- run examples/math_basics.ae`。`min`/`max`（ADR-64）是运行时实现：NaN 忽略、±0 平局按全序，打印文本两平台确定。
 
 `ae test 文件.ae [过滤]`（ADR-62）支持测试名子串过滤，空匹配报错而非静默通过。
 

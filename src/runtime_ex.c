@@ -9,6 +9,24 @@
 
 #include <errno.h>
 #include <math.h>
+
+// min/max for f64 (ADR-64): implemented in the runtime, not libm, so the
+// result is bit-identical on every platform. NaN is ignored: one NaN operand
+// yields the other, two NaNs yield NaN. The ±0.0 tie follows the IEEE
+// totalOrder (−0.0 below +0.0), so min(-0.0, 0.0) is always −0.0 and the
+// printed text is portable — libm's fmin leaves that case unspecified.
+static double ae_f64_min(double a, double b) {
+    if (isnan(a)) return b;
+    if (isnan(b)) return a;
+    if (a == 0.0 && b == 0.0) return (signbit(a) && !signbit(b)) ? a : b;
+    return a < b ? a : b;
+}
+static double ae_f64_max(double a, double b) {
+    if (isnan(a)) return b;
+    if (isnan(b)) return a;
+    if (a == 0.0 && b == 0.0) return (!signbit(a) && signbit(b)) ? a : b;
+    return a > b ? a : b;
+}
 #include <time.h>
 #ifndef _WIN32
 #include <dirent.h>

@@ -212,6 +212,28 @@ fn math_transcendental_values_land_within_a_tolerance() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "true\ntrue\ntrue\ntrue\ntrue\ntrue\n");
 }
 #[test]
+fn min_max_ignore_nan_and_tie_zeros_deterministically() {
+    // ADR-64: runtime min/max, not libm — one NaN yields the other, the ±0.0
+    // tie follows totalOrder, so printed text is identical on every platform
+    // and independent of argument order.
+    let source = "fn main() { print(min(2.0, 3.0)); print(max(2.0, 3.0)); print(min(-0.0, 0.0)); print(min(0.0, -0.0)); print(max(-0.0, 0.0)); print(max(0.0, -0.0)); print(min(sqrt(-1.0), 5.0)); print(min(5.0, sqrt(-1.0))); print(max(sqrt(-1.0), 5.0)); print(max(sqrt(-1.0), sqrt(-1.0))); print(min(1.5, 1.5)); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "2.0\n3.0\n-0.0\n-0.0\n0.0\n0.0\n5.0\n5.0\n5.0\nnan\n1.5\n");
+}
+#[test]
+fn min_max_reject_wrong_types_and_redefinition() {
+    for (source, expected) in [
+        ("fn main() { print(min(1, 2)); }", "min expects an f64 argument"),
+        ("fn main() { print(max(1.0)); }", "max expects 2 f64 argument(s)"),
+        ("fn min(x: f64, y: f64) -> f64 { return x; } fn main() { print(min(1.0, 2.0)); }", "is a built-in"),
+        ("fn main() { var max = 1.0; print(max); }", "is a built-in name and cannot be a variable"),
+    ] {
+        let message = check_rejects(source);
+        assert!(message.contains(expected), "{source}: {message}");
+    }
+}
+#[test]
 fn math_builtins_reject_wrong_types_arities_and_redefinition() {
     for (source, expected) in [
         ("fn main() { print(sqrt(4)); }", "sqrt expects an f64 argument"),
