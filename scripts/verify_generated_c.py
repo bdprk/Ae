@@ -99,6 +99,29 @@ def run():
         # f64: one canonical text form on every platform, explicit conversions,
         # and a checked division that reports x/0.0 instead of returning inf.
         ("float_math.ae", b"count 8\nmean 5.0\nvariance 4.0\nshare 0.5\nthird 0.3333333333333333\nexact 5\nexact failed: f64 value is not an exact integer", True),
+        # Math builtins (ADR-60): exact libm results print identically on every
+        # platform, sqrt(-1) reads back as "nan", and the transcendental checks
+        # pass with a tolerance instead of betting on identical ulp.
+        ("math_basics.ae", (
+            "sqrt(4) 2.0\n"
+            "abs(-2.5) 2.5\n"
+            "floor(2.7) 2.0\n"
+            "ceil(2.1) 3.0\n"
+            "round(2.5) 3.0\n"
+            "round(-2.5) -3.0\n"
+            "pow(2,10) 1024.0\n"
+            "exp(0) 1.0\n"
+            "log(1) 0.0\n"
+            "sin(0) 0.0\n"
+            "cos(0) 1.0\n"
+            "sqrt(-1) nan\n"
+            "sqrt(2) ok\n"
+            "sin(1) ok\n"
+            "cos(1) ok\n"
+            "atan2(1,1) ok\n"
+            "log(exp(1)) ok\n"
+            "pow(2,0.5) ok"
+        ).encode("utf-8"), True),
         ("json_report.ae", (
             "ready\n"
             "wrote 175 bytes\n"
@@ -154,6 +177,10 @@ def run():
             extra = []
             if options.leak:
                 extra = [str(LEAKCHECK), "-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=free", "-Wl,--wrap=realloc"]
+            if os.name != "nt":
+                # Math builtins (ADR-60) call libm directly; MinGW serves the
+                # symbols from the C runtime, glibc wants an explicit -lm.
+                extra += ["-lm"]
             subprocess.run([cc, *flags, cfile, *extra, "-o", binary], check=True)
             result = subprocess.run([binary], capture_output=True, cwd=tmp)
             if ok:
@@ -175,8 +202,9 @@ def leak_counts(executable, cc, tmp, source, options):
     cfile = tmp / "leak-probe.c"
     binary = tmp / ("leak-probe.exe" if os.name == "nt" else "leak-probe")
     cfile.write_bytes(generated)
+    libs = [] if os.name == "nt" else ["-lm"]
     subprocess.run([cc, "-std=c11", "-pedantic-errors", "-O1", cfile, str(LEAKCHECK),
-                    "-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=free", "-Wl,--wrap=realloc", "-o", binary], check=True)
+                    "-Wl,--wrap=malloc", "-Wl,--wrap=calloc", "-Wl,--wrap=free", "-Wl,--wrap=realloc", *libs, "-o", binary], check=True)
     return parse_leak(subprocess.run([binary], capture_output=True, cwd=tmp).stderr)
 
 def parse_leak(stdout):

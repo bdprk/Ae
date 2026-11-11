@@ -194,6 +194,38 @@ fn run_forwards_program_args_with_the_release_flag_before_the_separator() {
     assert_eq!(String::from_utf8_lossy(&result.stdout).replace("\r\n", "\n"), "2\nhello\n");
 }
 #[test]
+fn math_builtins_compute_report_domain_errors() {
+    // ADR-60: thin libm calls. Exact results print identically everywhere;
+    // domain errors are IEEE (NaN), and the self-formatted text is stable.
+    let source = "fn main() { print(sqrt(4.0)); print(abs(-2.5)); print(floor(2.7)); print(ceil(2.1)); print(round(2.5)); print(round(-2.5)); print(pow(2.0, 10.0)); print(exp(0.0)); print(log(1.0)); print(sin(0.0)); print(cos(0.0)); print(sqrt(-1.0)); print(to_string(sqrt(-1.0)) == \"nan\"); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "2.0\n2.5\n2.0\n3.0\n3.0\n-3.0\n1024.0\n1.0\n0.0\n0.0\n1.0\nnan\ntrue\n");
+}
+#[test]
+fn math_transcendental_values_land_within_a_tolerance() {
+    // libm implementations may differ by an ulp across platforms, so the
+    // portable contract is closeness, not byte-identical transcendental text.
+    let source = "fn close(a: f64, b: f64) -> bool { let gap = abs(a - b); return gap < 0.000000000000001; } fn main() { print(close(sqrt(2.0), 1.4142135623730951)); print(close(sin(1.0), 0.8414709848078965)); print(close(cos(1.0), 0.5403023058681398)); print(close(atan2(1.0, 1.0), 0.7853981633974483)); print(close(log(exp(1.0)), 1.0)); print(close(pow(2.0, 0.5), sqrt(2.0))); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "true\ntrue\ntrue\ntrue\ntrue\ntrue\n");
+}
+#[test]
+fn math_builtins_reject_wrong_types_arities_and_redefinition() {
+    for (source, expected) in [
+        ("fn main() { print(sqrt(4)); }", "sqrt expects an f64 argument"),
+        ("fn main() { print(abs(true)); }", "abs expects an f64 argument"),
+        ("fn main() { print(atan2(1.0)); }", "atan2 expects 2 f64 argument(s)"),
+        ("fn main() { print(pow(1.0, 2.0, 3.0)); }", "pow takes 2 argument(s)"),
+        ("fn sqrt(x: f64) -> f64 { return x; } fn main() { print(sqrt(1.0)); }", "is a built-in"),
+        ("fn main() { var sqrt = 1.0; print(sqrt); }", "is a built-in name and cannot be a variable"),
+    ] {
+        let message = check_rejects(source);
+        assert!(message.contains(expected), "{source}: {message}");
+    }
+}
+#[test]
 fn arrays_support_checked_read_write_and_expression_order() {
     let source = "fn main() { let original = [3, 4]; var values = [original[1], 5 + 2]; values[1] = values[0] + values[1]; print(values[1]); print(original[0]); }";
     let output = execute(source);
@@ -613,7 +645,9 @@ fn cache_and_version_commands_work() {
     let version = Command::new(env!("CARGO_BIN_EXE_ae")).arg("version").output().unwrap();
     assert!(version.status.success());
     let text = String::from_utf8_lossy(&version.stdout);
-    assert!(text.contains("ae 0.1.0"), "{text}");
+    // Track the manifest instead of a hard-coded number, so a version bump
+    // (such as ADR-60's cache-key invalidation) cannot break this test.
+    assert!(text.contains(concat!("ae ", env!("CARGO_PKG_VERSION"))), "{text}");
     let unknown = Command::new(env!("CARGO_BIN_EXE_ae")).arg("cache").arg("wat").output().unwrap();
     assert!(!unknown.status.success());
     let _ = fs::remove_dir_all(&dir);

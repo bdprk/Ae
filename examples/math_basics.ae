@@ -1,0 +1,31 @@
+// The math builtins (ADR-60): thin calls into the platform's C library, so
+// domain errors follow IEEE — sqrt(-1) is NaN, log(0) is -inf — while exact
+// results print identically everywhere. Transcendental values are checked
+// with a tolerance instead of printed text, because libm implementations may
+// differ by an ulp across platforms; only exact values are printed directly.
+fn close(value: f64, expected: f64, tolerance: f64) -> bool {
+    let gap = abs(value - expected);
+    return gap < tolerance;
+}
+
+fn main() {
+    print("sqrt(4) " + to_string(sqrt(4.0)));
+    print("abs(-2.5) " + to_string(abs(-2.5)));
+    print("floor(2.7) " + to_string(floor(2.7)));
+    print("ceil(2.1) " + to_string(ceil(2.1)));
+    print("round(2.5) " + to_string(round(2.5)));
+    print("round(-2.5) " + to_string(round(-2.5)));
+    print("pow(2,10) " + to_string(pow(2.0, 10.0)));
+    print("exp(0) " + to_string(exp(0.0)));
+    print("log(1) " + to_string(log(1.0)));
+    print("sin(0) " + to_string(sin(0.0)));
+    print("cos(0) " + to_string(cos(0.0)));
+    print("sqrt(-1) " + to_string(sqrt(-1.0)));
+
+    if close(sqrt(2.0), 1.4142135623730951, 0.000000000000001) { print("sqrt(2) ok"); } else { print("sqrt(2) FAIL"); }
+    if close(sin(1.0), 0.8414709848078965, 0.000000000000001) { print("sin(1) ok"); } else { print("sin(1) FAIL"); }
+    if close(cos(1.0), 0.5403023058681398, 0.000000000000001) { print("cos(1) ok"); } else { print("cos(1) FAIL"); }
+    if close(atan2(1.0, 1.0), 0.7853981633974483, 0.000000000000001) { print("atan2(1,1) ok"); } else { print("atan2(1,1) FAIL"); }
+    if close(log(exp(1.0)), 1.0, 0.000000000000001) { print("log(exp(1)) ok"); } else { print("log(exp(1)) FAIL"); }
+    if close(pow(2.0, 0.5), sqrt(2.0), 0.000000000000001) { print("pow(2,0.5) ok"); } else { print("pow(2,0.5) FAIL"); }
+}

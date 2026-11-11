@@ -233,9 +233,14 @@ fn build_c(c: &str, dir: &Path, release: bool, use_cache: bool) -> Result<PathBu
     // directory named 用户, for example) reaches the linker mangled and the
     // build dies with "cannot open output file". Relative names keep the
     // command line ASCII whatever the project or output path is.
-    let status = Command::new(&cc).current_dir(dir).arg("-std=c11").arg(optimization)
-        .arg("program.c").arg("-o").arg(exe_name)
-        .status().map_err(|e| format!("cannot start C compiler {:?}: {e}; set AE_CC to its executable", cc))?;
+    // Math builtins (ADR-60) call libm directly. MinGW serves those symbols
+    // from the C runtime; glibc older than 2.35 needs an explicit -lm, so the
+    // Linux link line carries it (a no-op stub where libm merged into libc).
+    let mut command = Command::new(&cc);
+    command.current_dir(dir).arg("-std=c11").arg(optimization)
+        .arg("program.c").arg("-o").arg(exe_name);
+    if !cfg!(windows) { command.arg("-lm"); }
+    let status = command.status().map_err(|e| format!("cannot start C compiler {:?}: {e}; set AE_CC to its executable", cc))?;
     if timings_enabled() {
         eprintln!("ae cache: miss");
         eprintln!("ae timing: c_compile_and_link_ms={:.3}", started.elapsed().as_secs_f64() * 1000.0);

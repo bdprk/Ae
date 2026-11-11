@@ -68,7 +68,18 @@ const MAX_ENUM_TYPES: usize = 256;
 const MAX_STRUCT_TYPES: usize = 256;
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
-const RESERVED: &[&str] = &["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "map_inc", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "find", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "run_command", "set_cwd", "to_f64", "to_i64", "tokenize"];
+const RESERVED: &[&str] = &["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "map_put", "map_get", "map_has", "map_remove", "map_inc", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "find", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "run_command", "set_cwd", "to_f64", "to_i64", "tokenize", "sqrt", "abs", "floor", "ceil", "round", "exp", "log", "sin", "cos", "pow", "atan2"];
+// The math builtins (ADR-60): AE name, C symbol, arity. Every argument and
+// the result is f64, and each call maps 1:1 onto C libm, so domain errors are
+// IEEE NaN/-inf instead of language-level failures — unlike the checked `/`
+// operator, whose contract is part of the language itself. `abs` maps to
+// `fabs`: C's plain `abs` is the integer function in <stdlib.h>.
+const MATH_FNS: &[(&str, &str, usize)] = &[
+    ("sqrt", "sqrt", 1), ("abs", "fabs", 1), ("floor", "floor", 1),
+    ("ceil", "ceil", 1), ("round", "round", 1), ("exp", "exp", 1),
+    ("log", "log", 1), ("sin", "sin", 1), ("cos", "cos", 1),
+    ("pow", "pow", 2), ("atan2", "atan2", 2),
+];
 // Provisional prelude: fallible operations report failure as values instead of
 // terminating the process (§4.5). These enums are registered before any user
 // type, so a program can name them without importing anything. They are
@@ -275,7 +286,9 @@ pub(crate) fn lex(source: &str) -> Result<Vec<Token>, String> {
 enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Box<Expr>, Type, usize, usize), FloatToString(Box<Expr>, usize, usize), BoolLit(bool), StrLit(String, usize, usize), Variable(usize, Type, usize, usize), Call(usize, Vec<Argument>, Type), Index(usize, usize, Box<Expr>, usize, usize), VecLit(Vec<Expr>, usize, usize), VecIndex(usize, Box<Expr>, usize, usize, bool), Len(Box<Expr>, usize, usize), ReadFile(Box<Expr>, usize, usize), WriteFile(Box<Expr>, Box<Expr>, usize, usize), Bytes(Box<Expr>, usize, usize), Contains(Box<Expr>, Box<Expr>, usize, usize), Slice(Box<Expr>, Box<Expr>, Box<Expr>, usize, usize), Split(Box<Expr>, Box<Expr>, usize, usize), Args(usize, usize), Join(usize, Box<Expr>, usize, usize), StrVecIndex(usize, Box<Expr>, usize, usize, bool), SliceView(usize, Option<String>, Box<Expr>, Box<Expr>, usize, usize),
     // Lazy token cursor: (base variable, base field, separator, line, column).
     Tokens(usize, Option<String>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), SetCwd(Box<Expr>, Type, usize, usize), MapNew(usize, usize), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapInc(MapPlace, Box<Expr>, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Trim(Box<Expr>, usize, usize), StartsWith(Box<Expr>, Box<Expr>), EndsWith(Box<Expr>, Box<Expr>),
-    TryAppendFile(Box<Expr>, Box<Expr>, Type, usize, usize), Env(Box<Expr>, Type, usize, usize), JsonGet(Box<Expr>, Box<Expr>, Type, usize, usize), JsonInt(Box<Expr>, Box<Expr>, Type, usize, usize), JsonBool(Box<Expr>, Box<Expr>, Type, usize, usize), JsonLen(Box<Expr>, Box<Expr>, Type, usize, usize), JsonHas(Box<Expr>, Box<Expr>, usize, usize), Find(Box<Expr>, Box<Expr>, Type, usize, usize), ReadStdin(Type, usize, usize), Cwd(Type, usize, usize), StrVecNew(usize, usize), RunCommand(Box<Expr>, usize, Type, usize, usize), NowMs, NowS, Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+    TryAppendFile(Box<Expr>, Box<Expr>, Type, usize, usize), Env(Box<Expr>, Type, usize, usize), JsonGet(Box<Expr>, Box<Expr>, Type, usize, usize), JsonInt(Box<Expr>, Box<Expr>, Type, usize, usize), JsonBool(Box<Expr>, Box<Expr>, Type, usize, usize), JsonLen(Box<Expr>, Box<Expr>, Type, usize, usize), JsonHas(Box<Expr>, Box<Expr>, usize, usize), Find(Box<Expr>, Box<Expr>, Type, usize, usize), ReadStdin(Type, usize, usize), Cwd(Type, usize, usize), StrVecNew(usize, usize), RunCommand(Box<Expr>, usize, Type, usize, usize), NowMs, NowS, Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>),
+    // Math builtin (ADR-60): index into MATH_FNS, arguments, source position.
+    MathCall(u8, Vec<Box<Expr>>, usize, usize), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
 // A map reachable without a move: either a variable slot or a field of one.
 #[derive(Debug)]
 enum MapPlace { Var(usize), Field(usize, String) }
@@ -1149,6 +1162,24 @@ impl<'a> Parser<'a> {
                     if value_ty != Type::F64 { return Err(self.fail("to_i64 expects an f64")); }
                     self.take(Kind::RParen)?;
                     (Expr::ToI64(Box::new(value), ty, line, col), ty)
+                } else if MATH_FNS.iter().any(|(n, _, _)| *n == name.as_str()) && *self.current() == Kind::LParen {
+                    // Math builtins (ADR-60): fixed arity, every argument must
+                    // already be f64 — the language has no implicit conversion.
+                    let index = MATH_FNS.iter().position(|(n, _, _)| *n == name.as_str()).unwrap();
+                    let arity = MATH_FNS[index].2;
+                    let (line, col) = (vline, vcol);
+                    self.take(Kind::LParen)?;
+                    let mut args: Vec<Box<Expr>> = Vec::new();
+                    for position in 0..arity {
+                        if *self.current() == Kind::RParen { return Err(self.fail(&format!("{name} expects {} f64 argument(s)", arity))); }
+                        if position > 0 { self.take(Kind::Comma)?; }
+                        let (arg, arg_ty) = self.expression(0, false)?;
+                        if arg_ty != Type::F64 { return Err(self.fail(&format!("{name} expects an f64 argument; convert integers explicitly with to_f64"))); }
+                        args.push(Box::new(arg));
+                    }
+                    if *self.current() == Kind::Comma { return Err(self.fail(&format!("{name} takes {} argument(s)", arity))); }
+                    self.take(Kind::RParen)?;
+                    (Expr::MathCall(index as u8, args, line, col), Type::F64)
                 } else if matches!(name.as_str(), "read_file" | "write_file" | "bytes" | "contains" | "starts_with" | "ends_with" | "slice" | "split" | "trim") && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     self.pos += 1;
@@ -3141,6 +3172,20 @@ fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> E
             let id = *next; *next += 1;
             out.push_str(&format!("    {}t{id} = ae_f64_to_i64({}, {line}, {column});\n", ty.c_temp(), t.text));
             Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::MathCall(index, args, _line, _column) => {
+            // Direct libm call: <math.h> is already in every generated C (the
+            // float formatter needs it), no runtime function or pruning root
+            // is involved. f64 arguments own nothing, so no move tracking.
+            let c_symbol = MATH_FNS[*index as usize].1;
+            let mut parts = Vec::new();
+            for arg in args {
+                let t = emit_expr(arg, out, next, false);
+                parts.push(t.text);
+            }
+            let id = *next; *next += 1;
+            out.push_str(&format!("    double t{id} = {c_symbol}({});\n", parts.join(", ")));
+            Emitted { text: format!("t{id}"), ty: Type::F64, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::FloatToString(value, line, column) => {
             let t = emit_expr(value, out, next, false);

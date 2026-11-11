@@ -1,0 +1,345 @@
+{
+  "ae": "ae 0.1.1 (windows, x86-64)",
+  "standalone": [
+    {
+      "file": "examples/arithmetic.ae",
+      "fmt_ms": 7.557,
+      "fmt2_ms": 5.317,
+      "emit_c_lines": 410,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/arrays.ae",
+      "fmt_ms": 6.6,
+      "fmt2_ms": 4.897,
+      "emit_c_lines": 413,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/borrow.ae",
+      "fmt_ms": 7.68,
+      "fmt2_ms": 5.324,
+      "emit_c_lines": 412,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/concat.ae",
+      "fmt_ms": 6.591,
+      "fmt2_ms": 5.081,
+      "emit_c_lines": 634,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/constraints.ae",
+      "fmt_ms": 8.383,
+      "fmt2_ms": 6.042,
+      "emit_c_lines": 531,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/control-flow.ae",
+      "fmt_ms": 14.308,
+      "fmt2_ms": 6.744,
+      "emit_c_lines": 408,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/copy_notes.ae",
+      "fmt_ms": 6.95,
+      "fmt2_ms": 5.338,
+      "emit_c_lines": 1269,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/dir_report.ae",
+      "fmt_ms": 7.549,
+      "fmt2_ms": 5.353,
+      "emit_c_lines": 1172,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/enums.ae",
+      "fmt_ms": 7.434,
+      "fmt2_ms": 5.863,
+      "emit_c_lines": 837,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/field_view.ae",
+      "fmt_ms": 7.216,
+      "fmt2_ms": 5.554,
+      "emit_c_lines": 484,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/file_tidy.ae",
+      "fmt_ms": 7.672,
+      "fmt2_ms": 6.072,
+      "emit_c_lines": 1314,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/find_files.ae",
+      "fmt_ms": 8.11,
+      "fmt2_ms": 6.438,
+      "emit_c_lines": 849,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/find_text.ae",
+      "fmt_ms": 7.653,
+      "fmt2_ms": 6.18,
+      "emit_c_lines": 540,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/float_math.ae",
+      "fmt_ms": 8.193,
+      "fmt2_ms": 5.734,
+      "emit_c_lines": 813,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/functions.ae",
+      "fmt_ms": 8.802,
+      "fmt2_ms": 5.923,
+      "emit_c_lines": 414,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/generic_borrow.ae",
+      "fmt_ms": 6.998,
+      "fmt2_ms": 5.077,
+      "emit_c_lines": 690,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/generic_constraints.ae",
+      "fmt_ms": 6.583,
+      "fmt2_ms": 4.82,
+      "emit_c_lines": 663,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/generic_fn.ae",
+      "fmt_ms": 6.49,
+      "fmt2_ms": 4.816,
+      "emit_c_lines": 592,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/grep.ae",
+      "fmt_ms": 6.612,
+      "fmt2_ms": 4.883,
+      "emit_c_lines": 506,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/grep_cli.ae",
+      "fmt_ms": 6.421,
+      "fmt2_ms": 4.885,
+      "emit_c_lines": 812,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/hello.ae",
+      "fmt_ms": 6.969,
+      "fmt2_ms": 5.041,
+      "emit_c_lines": 388,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/json_report.ae",
+      "fmt_ms": 6.807,
+      "fmt2_ms": 4.969,
+      "emit_c_lines": 1528,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/loops.ae",
+      "fmt_ms": 6.516,
+      "fmt2_ms": 4.974,
+      "emit_c_lines": 447,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/map_count.ae",
+      "fmt_ms": 6.845,
+      "fmt2_ms": 5.21,
+      "emit_c_lines": 840,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/map_missing.ae",
+      "fmt_ms": 6.786,
+      "fmt2_ms": 5.255,
+      "emit_c_lines": 640,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/math_basics.ae",
+      "fmt_ms": 6.383,
+      "fmt2_ms": 5.093,
+      "emit_c_lines": 668,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/maybe.ae",
+      "fmt_ms": 7.41,
+      "fmt2_ms": 5.007,
+      "emit_c_lines": 896,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/option_propagate.ae",
+      "fmt_ms": 6.727,
+      "fmt2_ms": 4.993,
+      "emit_c_lines": 725,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/pairs.ae",
+      "fmt_ms": 6.994,
+      "fmt2_ms": 5.258,
+      "emit_c_lines": 581,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/pipe_stats.ae",
+      "fmt_ms": 6.76,
+      "fmt2_ms": 6.669,
+      "emit_c_lines": 744,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/run_tool.ae",
+      "fmt_ms": 6.678,
+      "fmt2_ms": 5.04,
+      "emit_c_lines": 932,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/split_arena.ae",
+      "fmt_ms": 7.509,
+      "fmt2_ms": 4.986,
+      "emit_c_lines": 701,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/strings.ae",
+      "fmt_ms": 7.105,
+      "fmt2_ms": 4.951,
+      "emit_c_lines": 496,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/sum_numbers.ae",
+      "fmt_ms": 8.156,
+      "fmt2_ms": 5.496,
+      "emit_c_lines": 914,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/text_preview.ae",
+      "fmt_ms": 7.112,
+      "fmt2_ms": 5.184,
+      "emit_c_lines": 868,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/tokens.ae",
+      "fmt_ms": 8.221,
+      "fmt2_ms": 5.24,
+      "emit_c_lines": 722,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/traits.ae",
+      "fmt_ms": 7.557,
+      "fmt2_ms": 5.308,
+      "emit_c_lines": 554,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/vectors.ae",
+      "fmt_ms": 7.11,
+      "fmt2_ms": 5.093,
+      "emit_c_lines": 562,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    },
+    {
+      "file": "examples/word_count.ae",
+      "fmt_ms": 7.234,
+      "fmt2_ms": 5.196,
+      "emit_c_lines": 1086,
+      "emit_c_differing_lines": 0,
+      "changed": false
+    }
+  ],
+  "modules": [
+    {
+      "file": "examples/modules/main.ae",
+      "fmt_ms": 7.183,
+      "fmt2_ms": 5.262,
+      "changed": false
+    },
+    {
+      "file": "examples/modules/report.ae",
+      "fmt_ms": 7.471,
+      "fmt2_ms": 5.42,
+      "changed": false
+    },
+    {
+      "file": "examples/modules/words.ae",
+      "fmt_ms": 7.495,
+      "fmt2_ms": 5.23,
+      "changed": false
+    }
+  ],
+  "module_program": {
+    "emit_c_lines": 934,
+    "emit_c_differing_lines": 0
+  },
+  "checked_files": 42,
+  "changed_files": [],
+  "total_fmt_ms": 310.83,
+  "note": "emit-c comparison ignores digit characters per line: runtime checks embed the source column, which reformatting may move. Any other difference fails the run. The repository copy of every example is untouched; formatting happened on temporary copies."
+}

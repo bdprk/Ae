@@ -68,6 +68,8 @@ cargo run -- version
 
 `check --json` 是给编辑器的稳定接口（ADR-48）：stdout 恰为一个 JSON 数组，成功是 `[]` 并以 0 退出，失败是一个含 `file`/`line`/`column`/`message` 的对象并以 1 退出；无法定位的失败把整条消息放进 `message`、位置为 `null`，不猜位置。数组的**形状**是契约、长度不是（前端目前 fail-fast，所以至多一个元素）。`message` 是展示文本，不保证逐字稳定，请按 `file`/`line`/`column` 分支。默认 `check` 的单行人类可读输出与退出码不变。
 
+数学内建 v1（ADR-60）：`sqrt` `abs` `floor` `ceil` `round` `exp` `log` `sin` `cos` `pow` `atan2`，参数与返回值都是 `f64`，1:1 映射 C 库；定义域错误按 IEEE 返回（`sqrt(-1.0)` 是 `nan`）而不是终止，`round` 是 0.5 远离零。名字是保留名，不做隐式转换（`sqrt(4)` 报错）。示例 `cargo run -- run examples/math_basics.ae`。
+
 生成的 C 只包含程序真正用到的运行时函数**及其注释**（ADR-50）：函数上方的 `//` 说明随函数一起被裁剪，`print(1)` 的生成 C 因此从 25,134 降到 11,105 字节，端到端冷构建实测 390.66 → 346.12 ms；`/* */` 分节注释与 `win32-header` 标记不受影响。Windows 上 `ae build` 也能处理绝对路径含非 ASCII 的输出（ADR-51）：C 编译器在临时目录内以相对文件名运行，绕开 MinGW 命令行按 ANSI 代码页转换导致的 `cannot open output file`。
 
 验证生成的 C：`cargo build` 后运行 `python scripts/verify_generated_c.py`；Linux 可加 `--sanitize` 启用地址和未定义行为检测，MinGW 无 libasan 时用 `--leak` 走 `-Wl,--wrap` 的分配计数（要求每个程序的退出分配块数等于空程序基线）。检测覆盖有限案例，不能证明实现完全安全。
