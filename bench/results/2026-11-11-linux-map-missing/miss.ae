@@ -1,0 +1,19 @@
+// Every iteration misses, so the Err payload is produced a million times.
+// The only work worth measuring is what a miss hands back: an allocated copy
+// of the message, or fixed bytes shared by every result. The key is hoisted
+// out of the loop because a literal argument is an owned temp that allocates
+// on every call, and that cost would mask the payload difference.
+fn main() {
+    var counts = map_new();
+    counts["present"] = 1;
+    let absent = "absent";
+    var seen = 0;
+    for i in 0..1000000 {
+        let result = map_get(counts, absent);
+        match result {
+            IntResult::Ok(n) => { seen = seen + n; }
+            IntResult::Err(reason) => { seen = seen + len(reason); }
+        }
+    }
+    print(seen);
+}

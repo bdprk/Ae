@@ -45,6 +45,9 @@ def run():
         # map_inc: the counting compound inserts on first sight and updates in
         # place afterwards; sorted keys() keeps the report stable.
         ("map_count.ae", b"a=3\nb=2\nc=3\nd=1", True),
+        # A thousand missing keys: the fixed Err text is shared read-only data,
+        # so none of those results may retain or double-release an allocation.
+        ("map_missing.ae", b"key not found\n7\n0\ndone", True),
         # Traits: dispatch through a trait bound equals the hand-written call,
         # and owned structs move into the impl method like any parameter.
         ("traits.ae", b"area=49\narea=12\n12", True),

@@ -2207,6 +2207,55 @@ fn maps_store_count_replace_and_report_keys_in_order() {
     );
 }
 #[test]
+fn missing_map_key_text_survives_every_owned_string_path() {
+    // ADR-58: a miss hands out fixed text in read-only data instead of a fresh
+    // allocation. Match binds the payload as a view, so the owned holder is
+    // the result value itself: this exercises reads, concatenation on either
+    // side, copying into a string vector, moving the whole result into a
+    // function, and `?` propagation across a function boundary.
+    let output = execute(r#"fn consume(r: IntResult) -> i64 {
+    match r { IntResult::Ok(n) => { return n; } IntResult::Err(e) => { return len(e); } }
+}
+fn propagated() -> IntResult {
+    var m = map_new();
+    let n = map_get(m, "absent")?;
+    return IntResult::Ok(n);
+}
+fn main() {
+    var m = map_new();
+    m["present"] = 7;
+    for i in 0..2000 {
+        let r = map_get(m, "absent");
+        match r {
+            IntResult::Ok(n) => { print("unexpected"); }
+            IntResult::Err(e) => {
+                if i == 0 { print(e); print(len(e)); print(e == "key not found"); print(e); }
+            }
+        }
+    }
+    let left = map_get(m, "absent");
+    match left { IntResult::Ok(n) => { print("unexpected"); } IntResult::Err(e) => { print("prefix: " + e); } }
+    let right = map_get(m, "absent");
+    match right { IntResult::Ok(n) => { print("unexpected"); } IntResult::Err(e) => { print(e + " suffix"); } }
+    let moved = map_get(m, "absent");
+    print(consume(moved));
+    let collected = map_get(m, "absent");
+    match collected {
+        IntResult::Ok(n) => { print("unexpected"); }
+        IntResult::Err(e) => { var notes = strvec_new(); push(notes, e); print(notes[0]); print(len(notes)); }
+    }
+    let p = propagated();
+    match p { IntResult::Ok(n) => { print("unexpected"); } IntResult::Err(e) => { print(e); } }
+    let hit = map_get(m, "present");
+    match hit { IntResult::Ok(n) => { print(n); } IntResult::Err(e) => { print("unexpected"); } }
+}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "key not found\n13\ntrue\nkey not found\nprefix: key not found\nkey not found suffix\n13\nkey not found\n1\nkey not found\n7\n"
+    );
+}
+#[test]
 fn keys_after_removal_skips_tombstones_and_sees_reused_slots() {
     // The state byte decides what keys() reports, so a tombstone must be invisible
     // and a slot reused by a later insert must show up exactly once (ADR-57 moved

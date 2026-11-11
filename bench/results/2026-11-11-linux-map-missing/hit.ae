@@ -1,0 +1,16 @@
+// The hit path must be untouched: same loop, same map, same hoisted key, but
+// the key is present so the Err payload is never built.
+fn main() {
+    var counts = map_new();
+    counts["present"] = 7;
+    let present = "present";
+    var seen = 0;
+    for i in 0..1000000 {
+        let result = map_get(counts, present);
+        match result {
+            IntResult::Ok(n) => { seen = seen + n; }
+            IntResult::Err(reason) => { seen = seen + len(reason); }
+        }
+    }
+    print(seen);
+}

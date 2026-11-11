@@ -1,0 +1,22 @@
+// A missing key carries fixed text. That text lives in read-only program data,
+// so a thousand misses allocate nothing for their error payloads; the release
+// of each result still has to leave the shared literal alone (ADR-58).
+fn main() {
+    var counts = map_new();
+    counts["present"] = 7;
+    var hits = 0;
+    for i in 0..1000 {
+        let result = map_get(counts, "absent");
+        match result {
+            IntResult::Ok(n) => { hits = hits + n; }
+            IntResult::Err(reason) => { if i == 0 { print(reason); } }
+        }
+    }
+    let found = map_get(counts, "present");
+    match found {
+        IntResult::Ok(n) => { print(n); }
+        IntResult::Err(reason) => { print("unexpected"); }
+    }
+    print(hits);
+    print("done");
+}

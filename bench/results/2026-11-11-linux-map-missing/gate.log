@@ -1,0 +1,188 @@
++ cd /data/home/ae-mapmiss-new
++ cargo build --locked
++ tail -3
+   Compiling ae v0.1.0 (/data/home/ae-mapmiss-new)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.97s
++ cargo test --locked
++ grep -E 'test result|running|FAILED|panicked'
+running 35 tests
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+running 165 tests
+test result: ok. 165 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.35s
++ python3 scripts/verify_generated_c.py --leak
+BASELINE leak blocks=0
+  leak blocks=0 bytes=0
+PASS vectors.ae
+  leak blocks=0 bytes=0
+PASS arrays.ae
+  leak blocks=0 bytes=0
+PASS borrow.ae
+  leak blocks=0 bytes=0
+PASS functions.ae
+  leak blocks=0 bytes=0
+PASS control-flow.ae
+  leak blocks=0 bytes=0
+PASS strings.ae
+  leak blocks=0 bytes=0
+PASS enums.ae
+  leak blocks=0 bytes=0
+PASS concat.ae
+  leak blocks=0 bytes=0
+PASS file_tidy.ae
+  leak blocks=0 bytes=0
+PASS copy_notes.ae
+  leak blocks=0 bytes=0
+PASS word_count.ae
+  leak blocks=0 bytes=0
+PASS map_count.ae
+  leak blocks=0 bytes=0
+PASS map_missing.ae
+  leak blocks=0 bytes=0
+PASS traits.ae
+  leak blocks=0 bytes=0
+PASS split_arena.ae
+  leak blocks=0 bytes=0
+PASS field_view.ae
+  leak blocks=0 bytes=0
+PASS tokens.ae
+  leak blocks=0 bytes=0
+PASS dir_report.ae
+  leak blocks=0 bytes=0
+PASS pairs.ae
+  leak blocks=0 bytes=0
+PASS generic_fn.ae
+  leak blocks=0 bytes=0
+PASS constraints.ae
+  leak blocks=0 bytes=0
+PASS generic_constraints.ae
+  leak blocks=0 bytes=0
+PASS option_propagate.ae
+  leak blocks=0 bytes=0
+PASS generic_borrow.ae
+  leak blocks=0 bytes=0
+PASS find_text.ae
+  leak blocks=0 bytes=0
+PASS float_math.ae
+  leak blocks=0 bytes=0
+PASS json_report.ae
+  leak blocks=0 bytes=0
+PASS maybe.ae
+  leak blocks=0 bytes=0
+PASS main.ae
+  leak blocks=0 bytes=0
+PASS text_preview.ae
+  leak blocks=0 bytes=0
+PASS bounds.ae
++ python3 scripts/verify_generated_c.py --sanitize
+PASS vectors.ae
+PASS arrays.ae
+PASS borrow.ae
+PASS functions.ae
+PASS control-flow.ae
+PASS strings.ae
+PASS enums.ae
+PASS concat.ae
+PASS file_tidy.ae
+PASS copy_notes.ae
+PASS word_count.ae
+PASS map_count.ae
+PASS map_missing.ae
+PASS traits.ae
+PASS split_arena.ae
+PASS field_view.ae
+PASS tokens.ae
+PASS dir_report.ae
+PASS pairs.ae
+PASS generic_fn.ae
+PASS constraints.ae
+PASS generic_constraints.ae
+PASS option_propagate.ae
+PASS generic_borrow.ae
+PASS find_text.ae
+PASS float_math.ae
+PASS json_report.ae
+PASS maybe.ae
+PASS main.ae
+PASS text_preview.ae
+PASS bounds.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/arithmetic.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/arrays.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/borrow.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/concat.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/constraints.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/control-flow.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/copy_notes.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/dir_report.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/enums.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/field_view.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/file_tidy.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/find_files.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/find_text.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/float_math.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/functions.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/generic_borrow.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/generic_constraints.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/generic_fn.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/grep.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/grep_cli.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/hello.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/json_report.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/loops.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/map_count.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/map_missing.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/maybe.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/option_propagate.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/pairs.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/pipe_stats.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/run_tool.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/split_arena.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/strings.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/sum_numbers.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/text_preview.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/tokens.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/traits.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/vectors.ae
++ for f in examples/*.ae
++ target/debug/ae check examples/word_count.ae
++ echo EXAMPLES_DONE
+EXAMPLES_DONE
++ python3 bench/run.py --release
++ echo SUITE_DONE 0
+SUITE_DONE 0

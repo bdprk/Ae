@@ -1,0 +1,41 @@
+ADR-58 map 未命中的理由文本改为只读常量 · Linux 归档（2026-11-11）
+
+## 平台
+instabox-node 沙箱：Debian 13，Linux 6.18.54，x86-64，4 vCPU；gcc 14.2.0-19；rustc 1.99.0。
+代码由 tar 管道同步自工作区：`~/ae-mapmiss-new`（本工作区）与
+`~/ae-mapmiss-old`（`git archive HEAD`，HEAD = 88965d8，ADR-57）。
+探针与脚本在 `~/mapmiss`，旧/新编译器分别生成 `miss-old`/`miss-new` 与 `hit-old`/`hit-new`。
+
+## 命令（工作目录 = 各自仓库根，除探针外）
+- cargo build --locked && cargo test --locked
+- python3 scripts/verify_generated_c.py --leak / --sanitize
+- for f in examples/*.ae; do target/debug/ae check "$f"; done
+- python3 bench/run.py --release > suite-release.json
+- cd ~/mapmiss && bash results.sh（21 次交替配对 + 同二进制对照组 + VmHWM 单独一轮）
+
+## 探针设计
+`miss.ae` / `hit.ae` 各跑 100 万次 `map_get`，表里只有一个键；键在循环外绑定成字符串变量，
+循环内只做查找与 `match`。**键必须提到循环外**：字面量实参每次调用都是一个拥有型临时值，
+每轮都要分配 + 释放（约 19 ms/1M），第一版探针因此把待测差异掩盖掉了一半。
+`miss.rs` 是同源 Rust 孪生程序（`HashMap` + `Option`，不构造字符串负载）。
+
+## 结果（21 次交替配对，比值逐对计算）
+- miss：43.06 → **24.26 ms**（**1.764×**，逐对比值 1.712–1.908；同会话另两轮 1.775× / 1.789×）
+- hit：27.11 → 26.93 ms（1.012×）——同二进制对照组 1.006× / 1.002×，即**命中路径无变化**
+- 未命中负载的分配：100 万次 → 0 次；旧版 `miss - hit = 15.9 ms/1M`（约 15.9 ns/次），
+  新版 `miss - hit = -2.7 ms`（未命中在空槽结束探测，比命中还便宜）
+- 峰值内存（VmHWM，计时与采样分两趟）：miss 1.36 → 1.43 MB、hit 1.35 → 1.48 MB。
+  两轮之间互有高低（另一次采样是 miss 1.54 → 1.35），**判为采样噪声，不作结论**
+- 可执行文件：22,272 → 22,280（+8 字节）
+- 生成 C：miss 22,928 → 23,019、hit 22,926 → 23,017（各 +91）；`print(1)` 15,302 → **13,822**
+
+## 正确性
+- cargo test：35 单元 + 165 集成全通过（新增 `missing_map_key_text_survives_every_owned_string_path`）
+- `--leak`：31 个用例 PASS，退出分配块数等于 **0** 基线（`map_missing.ae` 的 1000 次未命中不残留块）
+- `--sanitize`：31 个用例 PASS，0 条 ASan/UBSan 报告
+- 38 个 examples 通过 `check`
+
+## 参考
+四负载套件同一轮也跑了（`suite-release.json`），但这次 `sum` 的 Go 一栏是 7.01 ms（通常 1.6），
+说明本机当时有干扰，只把 map 负载当作参考：AE 64.11 ms / 2.86 MB，Go 75.26 / 7.45，Rust 57.76 / 3.00。
+不作跨语言结论。

@@ -913,9 +913,13 @@ static AE_STATUS_RESULT ae_try_remove_dir(const char *path, size_t line, size_t 
 // ---- Map helpers that need the prelude result types -------------------------
 // A missing key is a value, not a zero: `0` is a perfectly normal count.
 static AE_INT_RESULT ae_map_get(const ae_map *m, ae_strview key, size_t line, size_t column) {
+    // A miss allocates nothing; the location stays for a uniform signature.
+    (void)line; (void)column;
     int64_t value = 0;
     if (!ae_map_lookup(m, key, &value)) {
-        AE_INT_RESULT out = { AE_INT_ERR, { .v1 = { ae_str_from("key not found", line, column) } } };
+        // Still an owned string; release recognises this one address.
+        ae_string reason = { (char *)ae_missing_key_text, (int64_t)(sizeof ae_missing_key_text - 1) };
+        AE_INT_RESULT out = { AE_INT_ERR, { .v1 = { reason } } };
         return out;
     }
     AE_INT_RESULT out = { AE_INT_OK, { .v0 = { value } } };
@@ -1121,13 +1125,13 @@ static int ae_json_member(const char *t, int64_t n, int64_t *pos, const char *ke
         ae_string name;
         if (!ae_json_decode(t, n, &i, &name, line, column)) return 0;
         ae_json_ws(t, n, &i);
-        if (i >= n || t[i] != ':') { ae_free(name.ptr); return 0; }
+        if (i >= n || t[i] != ':') { ae_str_release(&name); return 0; }
         i += 1;
         ae_json_ws(t, n, &i);
         const int64_t start = i;
-        if (!ae_json_skip_value(t, n, &i, 0)) { ae_free(name.ptr); return 0; }
+        if (!ae_json_skip_value(t, n, &i, 0)) { ae_str_release(&name); return 0; }
         const int match = name.len == key_len && memcmp(name.ptr, key, (size_t)key_len) == 0;
-        ae_free(name.ptr);
+        ae_str_release(&name);
         if (match) { *vs = start; *ve = i; *found = 1; return 1; }
         ae_json_ws(t, n, &i);
         if (i >= n) return 0;

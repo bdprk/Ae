@@ -1,0 +1,43 @@
+== platform ==
+Linux 6.18.54-instabox x86_64
+4
+gcc (Debian 14.2.0-19) 14.2.0
+rustc 1.99.0 (b940084d7 2026-09-28)
+
+== paired probes, 21 alternating reps ==
+./miss-old median   43.06 ms
+./miss-new median   24.26 ms
+ratio ./miss-old/./miss-new median 1.764 min 1.712 max 1.908
+./hit-old  median   27.11 ms
+./hit-new  median   26.93 ms
+ratio ./hit-old/./hit-new median 1.012 min 0.904 max 1.111
+./miss-old median   43.94 ms
+./miss-rs  median    8.58 ms
+ratio ./miss-old/./miss-rs median 5.048 min 4.568 max 5.277
+
+== controls, identical binaries, 21 reps ==
+hit-new      median   26.74 ms  raw [27.3, 26.9, 26.7, 27.1, 26.7, 28.0, 26.7, 26.8, 26.4, 26.0, 26.7]
+hit-new-copy median   26.63 ms  raw [26.2, 26.2, 26.5, 26.8, 26.6, 27.3, 26.9, 29.2, 26.3, 27.4, 26.6]
+paired ratio a/b: median 1.006  raw [1.044, 1.028, 1.006, 1.012, 1.004, 1.026, 0.993, 0.918, 1.006, 0.95, 1.004]
+miss-new     median   23.87 ms  raw [23.7, 24.4, 23.8, 24.3, 23.9, 24.2, 23.9, 24.1, 23.6, 23.3, 23.5]
+miss-new-copy median   23.76 ms  raw [24.9, 31.8, 24.0, 23.8, 23.8, 23.9, 23.6, 23.5, 23.8, 23.2, 23.4]
+paired ratio a/b: median 1.002  raw [0.95, 0.769, 0.99, 1.023, 1.004, 1.014, 1.014, 1.023, 0.995, 1.001, 1.002]
+
+== peak memory, timing and sampling in separate passes ==
+miss-old       median   44.02 ms   peak   1.36 MB
+miss-new       median   26.44 ms   peak   1.43 MB
+hit-old        median   27.96 ms   peak   1.35 MB
+hit-new        median   27.95 ms   peak   1.48 MB
+
+== executable size ==
+-rwxr-xr-x 1 user user 22280 Nov 11 12:23 hit-new
+-rwxr-xr-x 1 user user 22272 Nov 11 12:19 hit-old
+-rwxr-xr-x 1 user user 22280 Nov 11 12:23 miss-new
+-rwxr-xr-x 1 user user 22272 Nov 11 12:19 miss-old
+
+== generated C size ==
+22928 miss-old.c
+23019 miss-new.c
+22926 hit-old.c
+23017 hit-new.c
+91890 total

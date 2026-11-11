@@ -178,10 +178,19 @@ static size_t ae_index(int64_t index, size_t len, size_t line, size_t column) {
 }
 
 // Owned length-carrying strings (ADR-8): len/slice are O(1); buffers stay
-// NUL-terminated for C interop. ae_str_cat consumes both operands;
-// moves copy the struct and forfeit the slot; releases are idempotent so
+// NUL-terminated for C interop. Concatenation consumes both operands; moves
+// copy the struct and forfeit the slot; releases are idempotent so
 // overlapping release paths can never double-free.
 typedef struct { char *ptr; int64_t len; } ae_string;
+static const char ae_missing_key_text[] = "key not found";
+static void ae_str_release(ae_string *slot) {
+    // The miss text is read-only data, so release skips it by identity instead
+    // of freeing it. Equality is defined for unrelated pointers; a range test
+    // with < or > would not be.
+    if (slot->ptr && slot->ptr != ae_missing_key_text) ae_free(slot->ptr);
+    slot->ptr = NULL;
+    slot->len = 0;
+}
 // Borrowed string view (ADR-8): zero-copy, never released. Views point into
 // an owning buffer; the compile-time borrow tracker keeps the base alive.
 typedef struct { const char *ptr; int64_t len; } ae_strview;
@@ -211,12 +220,13 @@ static ae_string ae_str_from(const char *text, size_t line, size_t column) {
     return s;
 }
 static ae_string ae_str_cat(ae_string a, ae_string b, size_t line, size_t column) {
-    if (a.len > INT64_MAX - b.len) { ae_free(a.ptr); ae_free(b.ptr); ae_fail("string too long", line, column); }
-    char *out = ae_alloc((size_t)(a.len + b.len) + 1, line, column);
+    if (a.len > INT64_MAX - b.len) { ae_str_release(&a); ae_str_release(&b); ae_fail("string too long", line, column); }
+    const int64_t total = a.len + b.len;
+    char *out = ae_alloc((size_t)total + 1, line, column);
     memcpy(out, a.ptr, (size_t)a.len);
     memcpy(out + a.len, b.ptr, (size_t)b.len + 1);
-    ae_free(a.ptr); ae_free(b.ptr);
-    ae_string s = { out, a.len + b.len };
+    ae_str_release(&a); ae_str_release(&b);
+    ae_string s = { out, total };
     return s;
 }
 // Concatenations with a literal keep the program text out of the allocator:
@@ -255,25 +265,26 @@ static ae_string ae_str_cat_buf_lit(const char *digits, int64_t len, const char 
 }
 static ae_string ae_str_cat_lit_left(const char *lit, ae_string b, size_t line, size_t column) {
     const size_t n = strlen(lit);
-    if (b.len > (int64_t)(INT64_MAX - (int64_t)n)) { ae_free(b.ptr); ae_fail("string too long", line, column); }
-    char *out = ae_alloc(n + (size_t)b.len + 1, line, column);
+    if (b.len > (int64_t)(INT64_MAX - (int64_t)n)) { ae_str_release(&b); ae_fail("string too long", line, column); }
+    const int64_t total = (int64_t)n + b.len;
+    char *out = ae_alloc((size_t)total + 1, line, column);
     memcpy(out, lit, n);
     memcpy(out + n, b.ptr, (size_t)b.len + 1);
-    ae_free(b.ptr);
-    ae_string s = { out, (int64_t)n + b.len };
+    ae_str_release(&b);
+    ae_string s = { out, total };
     return s;
 }
 static ae_string ae_str_cat_lit_right(ae_string a, const char *lit, size_t line, size_t column) {
     const size_t n = strlen(lit);
-    if ((int64_t)n > INT64_MAX - a.len) { ae_free(a.ptr); ae_fail("string too long", line, column); }
-    char *out = ae_alloc((size_t)a.len + n + 1, line, column);
+    if ((int64_t)n > INT64_MAX - a.len) { ae_str_release(&a); ae_fail("string too long", line, column); }
+    const int64_t total = a.len + (int64_t)n;
+    char *out = ae_alloc((size_t)total + 1, line, column);
     memcpy(out, a.ptr, (size_t)a.len);
     memcpy(out + a.len, lit, n + 1);
-    ae_free(a.ptr);
-    ae_string s = { out, a.len + (int64_t)n };
+    ae_str_release(&a);
+    ae_string s = { out, total };
     return s;
 }
-static void ae_str_release(ae_string *slot) { ae_free(slot->ptr); slot->ptr = NULL; slot->len = 0; }
 static void ae_str_forfeit(ae_string *slot) { slot->ptr = NULL; slot->len = 0; }
 static bool ae_str_eq(ae_strview a, ae_strview b) {
     if (a.len != b.len) return false;
