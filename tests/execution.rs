@@ -2207,6 +2207,33 @@ fn maps_store_count_replace_and_report_keys_in_order() {
     );
 }
 #[test]
+fn keys_after_removal_skips_tombstones_and_sees_reused_slots() {
+    // The state byte decides what keys() reports, so a tombstone must be invisible
+    // and a slot reused by a later insert must show up exactly once (ADR-57 moved
+    // the state out of the slot record; this pins the observable consequence).
+    let output = execute(r#"fn main() {
+    var m = map_new();
+    m["a"] = 1;
+    m["b"] = 2;
+    m["c"] = 3;
+    print(map_remove(m, "b"));
+    print(len(m));
+    let first = keys(m);
+    for k in first { print(k); }
+    m["d"] = 4;
+    m["b"] = 5;
+    let second = keys(m);
+    for k in second { print(k); }
+    print(len(m));
+}"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "true\n2\na\nc\na\nb\nc\nd\n4\n"
+    );
+}
+
+#[test]
 fn maps_survive_storage_in_struct_fields() {
     let output = execute(r#"struct Tally { label: string, counts: map[string, i64] }
 fn record(label: &string) -> Tally {

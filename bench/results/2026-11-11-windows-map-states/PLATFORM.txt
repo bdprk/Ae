@@ -1,0 +1,22 @@
+ADR-57 map 状态位搬出槽（32 → 24 字节）· Windows 归档（2026-11-11）
+
+## 平台
+Windows x86-64，8 核 / 16 线程，MinGW-W64 GCC 16.2.0（UCRT）。
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak
+- for f in examples/*.ae; do ae check "$f"; done
+- ae emit-c <print(1)> / <map 程序>，后者再走 -std=c11 -pedantic-errors -fsyntax-only
+
+## 结果
+- cargo test：35 单元 + 164 集成全通过（新增 `keys_after_removal_skips_tombstones_and_sees_reused_slots`：
+  删除后 `keys()` 只报幸存键、重插的键只出现一次）。
+- --leak：30 个用例 PASS，退出分配块数等于 2 块基线——槽表扩容时**两个数组**都要释放，这条路径没有漏。
+- 37 个 examples 通过 check（0 失败）。
+- 生成 C：`print(1)` 15,302 字节；map 程序 20,472 字节，严格 C11 语法检查通过。
+
+## 说明
+本机每次新建进程约 37–40 ms、负载波动大，定量结论只用 Linux 归档
+（`2026-11-11-linux-map-states/`：11 次交替配对的比值与 VmHWM 原始值）。
+这里记录的是「同一份代码在本平台也通过全部正确性检查」。

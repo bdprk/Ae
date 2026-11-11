@@ -1,0 +1,5 @@
+peak memory and median time, 7 runs each (VmHWM sampled in a separate pass)
+map-v2         median   59.39 ms   peak   3.43 MB
+map-v5         median   59.83 ms   peak   2.90 MB
+map-rs         median   54.10 ms   peak   3.04 MB
+map-go         median   70.50 ms   peak   7.77 MB

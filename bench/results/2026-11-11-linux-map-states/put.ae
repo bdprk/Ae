@@ -1,0 +1,24 @@
+// 1M overwrites of existing keys: isolates the write path.
+fn main() {
+    var counts = map_new();
+    for i in 0..10000 {
+        let k = "k" + to_string(i);
+        let n = map_inc(counts, k, 0);
+    }
+    var x = 1234567;
+    for j in 0..1000000 {
+        x = (x * 48271) % 2147483647;
+        let key = "k" + to_string(x % 10000);
+        counts[key] = j;
+    }
+    var acc = 0;
+    for i in 0..10000 {
+        let k = "k" + to_string(i);
+        let c = map_get(counts, k);
+        match c {
+            IntResult::Ok(n) => { acc = acc + n; }
+            IntResult::Err(reason) => { acc = acc + 0; }
+        }
+    }
+    print(acc);
+}

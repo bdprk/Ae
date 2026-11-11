@@ -906,12 +906,13 @@ static ae_vec ae_bytes(ae_strview s, size_t line, size_t column) {
 }
 
 // ---- Hash map: string keys -> i64 values ------------------------------------
-// Open addressing with linear probing. Slots are empty (state 0), full (1) or
-// deleted (2); a deleted slot keeps probing alive until the next rehash, so
-// removing a key never breaks a probe chain. Keys are owned copies, values are
-// plain i64, which makes release straightforward and deterministic.
-typedef struct { ae_string key; int64_t value; unsigned char state; } ae_map_slot;
-typedef struct { ae_map_slot *slots; int64_t cap; int64_t len; int64_t used; } ae_map;
+// Open addressing with linear probing. A slot holds the key and the value; the
+// empty (0), full (1) or deleted (2) byte lives in a parallel array (ADR-57), so
+// slots stay 24 bytes and a probe usually settles on packed state bytes without
+// touching one. A deleted slot keeps probing alive until the next rehash, so
+// removing a key never breaks a chain.
+typedef struct { ae_string key; int64_t value; } ae_map_slot;
+typedef struct { ae_map_slot *slots; unsigned char *states; int64_t cap; int64_t len; int64_t used; } ae_map;
 
 #define AE_MAP_EMPTY 0
 #define AE_MAP_FULL 1
@@ -921,6 +922,7 @@ static ae_map ae_map_new(size_t line, size_t column) {
     (void)line; (void)column;
     ae_map m;
     m.slots = NULL;
+    m.states = NULL;
     m.cap = 0;
     m.len = 0;
     m.used = 0;
@@ -943,9 +945,9 @@ static int64_t ae_map_find(const ae_map *m, ae_strview key) {
     if (m->cap == 0) return -1;
     int64_t at = ae_map_slot_of(key, m->cap);
     for (int64_t probes = 0; probes < m->cap; probes++) {
-        const ae_map_slot *slot = &m->slots[at];
-        if (slot->state == AE_MAP_EMPTY) return -1;
-        if (slot->state == AE_MAP_FULL && ae_str_eq(AE_VIEW(slot->key), key)) return at;
+        const unsigned char state = m->states[at];
+        if (state == AE_MAP_EMPTY) return -1;
+        if (state == AE_MAP_FULL && ae_str_eq(AE_VIEW(m->slots[at].key), key)) return at;
         at = (at + 1) & (m->cap - 1);
     }
     return -1;
@@ -962,19 +964,24 @@ static void ae_map_grow(ae_map *m, size_t line, size_t column) {
         cap = cap * 2;
     }
     if (cap == m->cap && m->used == m->len) return;
-    // Zeroed by hand rather than with a calloc-style interface: the slot table
-    // needs EMPTY in every byte, and keeping one allocation primitive makes the
-    // allocator interface a single implementation instead of two.
+    // Both arrays are allocated and cleared by hand rather than with a
+    // calloc-style interface: every state byte must start EMPTY, and keeping one
+    // allocation primitive makes the allocator interface a single
+    // implementation instead of two.
     ae_map_slot *slots = ae_alloc((size_t)cap * sizeof(ae_map_slot), line, column);
-    memset(slots, 0, (size_t)cap * sizeof(ae_map_slot));
+    unsigned char *states = ae_alloc((size_t)cap, line, column);
+    memset(states, AE_MAP_EMPTY, (size_t)cap);
     for (int64_t i = 0; i < m->cap; i++) {
-        if (m->slots[i].state != AE_MAP_FULL) continue;
+        if (m->states[i] != AE_MAP_FULL) continue;
         int64_t at = ae_map_slot_of(AE_VIEW(m->slots[i].key), cap);
-        while (slots[at].state == AE_MAP_FULL) at = (at + 1) & (cap - 1);
+        while (states[at] == AE_MAP_FULL) at = (at + 1) & (cap - 1);
         slots[at] = m->slots[i];
+        states[at] = AE_MAP_FULL;
     }
     ae_free(m->slots);
+    ae_free(m->states);
     m->slots = slots;
+    m->states = states;
     m->cap = cap;
     m->used = m->len;
 }
@@ -984,22 +991,21 @@ static void ae_map_put(ae_map *m, ae_strview key, int64_t value, size_t line, si
     int64_t at = ae_map_slot_of(key, m->cap);
     int64_t reuse = -1;
     for (;;) {
-        ae_map_slot *slot = &m->slots[at];
-        if (slot->state == AE_MAP_EMPTY) break;
-        if (slot->state == AE_MAP_DELETED) {
+        const unsigned char state = m->states[at];
+        if (state == AE_MAP_EMPTY) break;
+        if (state == AE_MAP_DELETED) {
             if (reuse < 0) reuse = at;
-        } else if (ae_str_eq(AE_VIEW(slot->key), key)) {
-            slot->value = value;
+        } else if (ae_str_eq(AE_VIEW(m->slots[at].key), key)) {
+            m->slots[at].value = value;
             return;
         }
         at = (at + 1) & (m->cap - 1);
     }
     if (reuse >= 0) at = reuse;
     else m->used = m->used + 1;
-    ae_map_slot *slot = &m->slots[at];
-    slot->key = ae_str_from_len(key.ptr, key.len, line, column);
-    slot->value = value;
-    slot->state = AE_MAP_FULL;
+    m->slots[at].key = ae_str_from_len(key.ptr, key.len, line, column);
+    m->slots[at].value = value;
+    m->states[at] = AE_MAP_FULL;
     m->len = m->len + 1;
 }
 // `map_inc(m, key, delta)`: the canonical counting operation. One hash
@@ -1013,22 +1019,21 @@ static int64_t ae_map_inc(ae_map *m, ae_strview key, int64_t delta, size_t line,
     int64_t at = ae_map_slot_of(key, m->cap);
     int64_t reuse = -1;
     for (;;) {
-        ae_map_slot *slot = &m->slots[at];
-        if (slot->state == AE_MAP_EMPTY) break;
-        if (slot->state == AE_MAP_DELETED) {
+        const unsigned char state = m->states[at];
+        if (state == AE_MAP_EMPTY) break;
+        if (state == AE_MAP_DELETED) {
             if (reuse < 0) reuse = at;
-        } else if (ae_str_eq(AE_VIEW(slot->key), key)) {
-            slot->value = slot->value + delta;
-            return slot->value;
+        } else if (ae_str_eq(AE_VIEW(m->slots[at].key), key)) {
+            m->slots[at].value = m->slots[at].value + delta;
+            return m->slots[at].value;
         }
         at = (at + 1) & (m->cap - 1);
     }
     if (reuse >= 0) at = reuse;
     else m->used = m->used + 1;
-    ae_map_slot *slot = &m->slots[at];
-    slot->key = ae_str_from_len(key.ptr, key.len, line, column);
-    slot->value = delta;
-    slot->state = AE_MAP_FULL;
+    m->slots[at].key = ae_str_from_len(key.ptr, key.len, line, column);
+    m->slots[at].value = delta;
+    m->states[at] = AE_MAP_FULL;
     m->len = m->len + 1;
     return delta;
 }
@@ -1048,7 +1053,7 @@ static bool ae_map_remove(ae_map *m, ae_strview key, size_t line, size_t column)
     if (at < 0) return false;
     ae_str_release(&m->slots[at].key);
     m->slots[at].value = 0;
-    m->slots[at].state = AE_MAP_DELETED;
+    m->states[at] = AE_MAP_DELETED;
     m->len = m->len - 1;
     return true;
 }
@@ -1058,16 +1063,19 @@ static int64_t ae_map_len(const ae_map *m, size_t line, size_t column) {
 }
 static void ae_map_release(ae_map *m) {
     for (int64_t i = 0; i < m->cap; i++) {
-        if (m->slots[i].state == AE_MAP_FULL) ae_str_release(&m->slots[i].key);
+        if (m->states[i] == AE_MAP_FULL) ae_str_release(&m->slots[i].key);
     }
     ae_free(m->slots);
+    ae_free(m->states);
     m->slots = NULL;
+    m->states = NULL;
     m->cap = 0;
     m->len = 0;
     m->used = 0;
 }
 static void ae_map_forfeit(ae_map *m) {
     m->slots = NULL;
+    m->states = NULL;
     m->cap = 0;
     m->len = 0;
     m->used = 0;
