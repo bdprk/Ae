@@ -3350,6 +3350,53 @@ fn test_runner_works_with_modules_and_finds_failures_there() {
 }
 
 #[test]
+fn map_grows_reuses_removed_slots_and_keeps_every_survivor() {
+    // ADR-56 halved the load factor, so the table grows at a different point and
+    // tombstones interact with growth differently than before. Insert enough keys
+    // to grow several times, delete every other one, then insert a second family:
+    // survivors must keep their values, removed keys must stay absent, and a slot
+    // reused from a tombstone must not shadow a live key.
+    let source = r#"
+fn main() {
+    var m = map_new();
+    for i in 0..5000 { let k = "k" + to_string(i); let n = map_inc(m, k, i); }
+    print(len(m));
+    var removed = 0;
+    for i in 0..5000 {
+        if i % 2 == 0 {
+            let k = "k" + to_string(i);
+            if map_remove(m, k) { removed = removed + 1; }
+        }
+    }
+    print(removed);
+    print(len(m));
+    for i in 0..5000 { let k = "n" + to_string(i); let n = map_inc(m, k, 1); }
+    print(len(m));
+    var bad = 0;
+    for i in 0..5000 {
+        let k = "k" + to_string(i);
+        let c = map_get(m, k);
+        match c {
+            IntResult::Ok(n) => { if i % 2 == 0 || n != i { bad = bad + 1; } }
+            IntResult::Err(reason) => { if i % 2 == 1 { bad = bad + 1; } }
+        }
+    }
+    for i in 0..5000 {
+        let k = "n" + to_string(i);
+        if !map_has(m, k) { bad = bad + 1; }
+    }
+    print(bad);
+}
+"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "5000\n2500\n2500\n7500\n0\n"
+    );
+}
+
+#[test]
 fn map_inc_counts_and_returns_the_new_value() {
     let output = execute(
         "fn main() {\n    var m = map_new();\n    let first = map_inc(m, \"k\", 1);\n    let second = map_inc(m, \"k\", 1);\n    let big = map_inc(m, \"k\", 40);\n    let negative = map_inc(m, \"other\", 0 - 3);\n    print(first);\n    print(second);\n    print(big);\n    print(negative);\n    print(len(m));\n    let seen = map_get(m, \"k\");\n    match seen {\n        IntResult::Ok(n) => { print(n); }\n        IntResult::Err(reason) => { print(\"missing\"); }\n    }\n}");

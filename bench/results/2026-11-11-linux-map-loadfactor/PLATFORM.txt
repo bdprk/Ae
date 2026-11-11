@@ -1,0 +1,53 @@
+ADR-56 map 装载因子 0.75 → 0.5 · Linux 归档（2026-11-11）
+
+## 平台
+instabox-node 沙箱：Debian 13，x86-64，4 vCPU；gcc 14.2.0-19；rustc 1.99.0；go 1.27.1。
+代码经 tar 管道同步自工作区；对照二进制在 `~/mapprobe`（`-v0` = 0.75 装载因子、
+`-v2` = 0.5 + 短键比较、`-v3` = 5/8 + 短键比较、`-rs`/`-go` 为同源孪生程序）。
+
+## 归因（先量再改）
+四个探针把 map 负载的每轮成本拆开（`key.ae` = 只有 LCG + 键构造、`hit.ae` = 再加 1M 次
+命中查找、`put.ae` = 再加 1M 次覆盖写、`arith.ae` = 只有 LCG）：
+
+| 探针 | AE | Rust |
+|---|---|---|
+| arith（纯算术） | 3.76 ms | 3.57 ms |
+| key（+ 1M 次短字符串） | 32.55 | 30.82 |
+| hit（+ 1M 次命中查找） | 60.71 | 55.67 |
+| put（+ 1M 次覆盖写） | 58.27 | 53.76 |
+
+结论：键构造（1M 次分配 + 整数格式化）约占真负载的一半，两者同级；差距在 map 操作——
+每次命中查找 28.2 ns（Rust 25.1），覆盖写 24.8 ns（Rust 24.6）。Rust 用的是贵得多的
+SipHash，所以我们慢的不是哈希函数，而是**线性探测的次数**：0.75 装载因子下 10000 个键落在
+16384 个槽里（有效装载率 0.61），平均要探 2.5 次。
+
+## 改动
+1. 增长阈值 `(len+1)*4 >= cap*3` → `(len+1)*2 >= cap`：有效装载率 0.61 → 0.31，平均探测次数
+   约 1.3。代价是槽表翻倍（槽 32 字节，10000 个键的表 512 KB → 1 MB）。
+2. `ae_str_eq` 对 ≤8 字节的字符串走字节循环而不是 `memcmp` 调用（映射键都是 `k1234` 形状）。
+
+## 命令（工作目录 = ~/ae-lang）
+- cargo build --locked && cargo build --release --locked && cargo test --locked
+- python3 scripts/verify_generated_c.py --leak / --sanitize
+- for f in examples/*.ae; do target/debug/ae check "$f"; done
+- python3 bench/run.py --release > suite-release.json
+- cd ~/mapprobe && python3 pair.py map-v0 map-v2（11 次交替、配对比值）
+- cd ~/mapprobe && python3 measure.py map-v0（7 次，VmHWM 单独一趟采样）
+
+## 结果
+- cargo test：35 单元 + 163 集成全通过（新增 `map_grows_reuses_removed_slots_and_keeps_every_survivor`：
+  5000 键多次增长、删一半、再插 5000，幸存值/缺失/新键全部核对）。
+- --leak 30 用例 PASS、退出块 0；--sanitize 30 用例 PASS、0 报告；37 examples check 全过。
+- 配对测量（11 次交替，比值逐对计算）：
+  - map 负载 67.92 → 58.08 ms（**1.172×**，11 个比值全部 ≥1.12）
+  - hit 探针 58.31 → 50.53 ms（1.159×）
+  - put 探针 56.48 → 48.03 ms（1.178×）
+- 峰值内存（VmHWM，7 轮取最大）：map 负载 2.44 → **3.43 MB**；Rust 3.11、Go 7.55。
+  5/8 变体只省内存不省时间：2.58 MB / 69.31 ms（相对 0.75 只有 1.03×），所以没采用。
+- 四负载套件（release，5 次交错）：sum 0.88 / text 9.37 / textlazy 3.64 /
+  **map 57.72 ms、峰值 3.14 MB**（Rust 55.37 / 2.98，Go 58.29 / 7.48，Python 236.88）。
+
+## 边界
+`keys` 按字节序排序，与哈希和槽布局无关，所以迭代顺序不变；本轮的收益是负载相关的——
+探测密集的表收益明显，几个键的小表几乎无差别，而内存代价对所有表都成立（每槽 32 字节、
+0.5 装载率）。不把「1.17×」当普遍加速比。

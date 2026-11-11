@@ -1,0 +1,19 @@
+ADR-56 map 装载因子 0.75 → 0.5 · Windows 归档（2026-11-11）
+
+## 平台
+Windows x86-64，8 核 / 16 线程，MinGW-W64 GCC 16.2.0（UCRT）。
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak
+- for f in examples/*.ae; do ae check "$f"; done
+
+## 结果
+- cargo test：35 单元 + 163 集成全通过（含新增的增长 + 墓碑复用用例）。
+- --leak：30 个用例 PASS，退出分配块数等于 2 块基线——槽表扩容时释放旧表这条路径没有漏。
+- 37 个 examples 通过 check（0 失败）。
+
+## 说明
+本机每次新建进程要付约 37–40 ms，且负载波动可达 30% 以上，因此**定量结论只用 Linux 归档**
+（`2026-11-11-linux-map-loadfactor/`，含 11 次交替的配对比值与 VmHWM 原始值）。
+这里只记录「同一份代码在本平台也通过全部正确性检查」。

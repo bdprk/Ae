@@ -276,7 +276,16 @@ static ae_string ae_str_cat_lit_right(ae_string a, const char *lit, size_t line,
 static void ae_str_release(ae_string *slot) { ae_free(slot->ptr); slot->ptr = NULL; slot->len = 0; }
 static void ae_str_forfeit(ae_string *slot) { slot->ptr = NULL; slot->len = 0; }
 static bool ae_str_eq(ae_strview a, ae_strview b) {
-    return a.len == b.len && (a.len == 0 || memcmp(a.ptr, b.ptr, (size_t)a.len) == 0);
+    if (a.len != b.len) return false;
+    // Map keys are short ("k1234"): a byte loop inlines and beats a memcmp call
+    // whose fixed cost is several times the comparison itself (ADR-56).
+    if (a.len <= 8) {
+        for (int64_t i = 0; i < a.len; i++) {
+            if (a.ptr[i] != b.ptr[i]) return false;
+        }
+        return true;
+    }
+    return memcmp(a.ptr, b.ptr, (size_t)a.len) == 0;
 }
 static int64_t ae_str_len(ae_strview s, size_t line, size_t column) {
     (void)line; (void)column;
@@ -943,9 +952,12 @@ static int64_t ae_map_find(const ae_map *m, ae_strview key) {
 }
 static void ae_map_grow(ae_map *m, size_t line, size_t column) {
     int64_t cap = m->cap == 0 ? 8 : m->cap;
-    // Rehash into a table twice as large when live entries fill three quarters,
-    // which also drops every tombstone.
-    while ((m->len + 1) * 4 >= cap * 3) {
+    // Rehash into a table twice as large once live entries fill half of it,
+    // which also drops every tombstone. Half rather than three quarters: linear
+    // probing walks one slot at a time, so the average probe count is what the
+    // load factor really buys (ADR-56: measured 1.17x on the map workload for
+    // one extra table, against 1.03x at five eighths).
+    while ((m->len + 1) * 2 >= cap) {
         if (cap > INT64_MAX / 4) ae_fail("map too large", line, column);
         cap = cap * 2;
     }
