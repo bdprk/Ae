@@ -1170,4 +1170,4 @@
   - 不宣称「测试并行/`--list`/覆盖率」已可用：本轮只有子串过滤。
   - 过滤不改变「失败即停」：选中集合内第二个失败仍不会继续跑第三个。
   - `ok: N passed` 的 N 是**过滤后**的数量；不宣称它是套件总数。
-- 验证：Windows 36 单元 + 174 集成、`--leak` 33 用例 PASS（基线 2 块）、fmt 验收 43 文件、41 程序 `check`；归档 `bench/results/2026-11-12-windows-testfilter/`。状态：**单平台验证**，Linux 回填（`2026-11-12-linux-testfilter/`）前不得升级。
+- 验证：Windows 36 单元 + 174 集成、`--leak` 33 用例 PASS（基线 2 块）、fmt 验收 43 文件、41 程序 `check`；归档 `bench/results/2026-11-12-windows-testfilter/`。Linux 回填（同一源码树 9259b65，`bench/results/2026-11-12-linux-testfilter/`）：36 + 174 全通过、`--leak` 33 用例基线 0 块、`--sanitize` 33 用例 0 报告、fmt 43 文件幂等、CLI 过滤行为两平台逐字一致（`filter-cli-demo.txt` 原样记录：过滤 ok: 2 passed / 空匹配 exit 1 / 无过滤 ok: 3 passed）。状态：**双平台验证**（2026-11-12）。

@@ -1,0 +1,9 @@
+RUN test_trim_start
+PASS test_trim_start
+RUN test_trim_end
+PASS test_trim_end
+ok: 2 passed
+---EMPTY---
+ae: no test functions match filter 'unicode'
+---ALL---
+ok: 3 passed

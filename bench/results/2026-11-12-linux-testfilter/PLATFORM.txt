@@ -1,0 +1,26 @@
+ADR-62 `ae test` 过滤 · Linux 回填（2026-11-12）
+
+## 平台
+instabox-node 沙箱：Debian 13，Linux 6.18.54，x86-64，4 vCPU；
+gcc 14.2.0-19；rustc 1.99.0；Python 3.13.5。AE 0.1.1。
+代码由 ssh tar 管道同步自 Windows 工作区（提交 9259b65，与 Windows 归档同一源码树）。
+
+## 命令（工作目录 = ~/ae-backfill）
+- cargo build --locked && cargo build --release --locked
+- cargo test --locked（含 harness 过滤单元测试与 test_runner 过滤集成测试）
+- python3 scripts/verify_generated_c.py --leak / --sanitize
+- python3 scripts/fmt_acceptance.py --json fmt-acceptance.json
+- CLI 过滤演示（filter-cli-demo.txt）：三个测试的文件上分别跑
+  `ae test /tmp/filter-demo.ae trim`（exit 0，ok: 2 passed，只跑 trim_*）、
+  `ae test /tmp/filter-demo.ae unicode`（exit 1，
+  `no test functions match filter 'unicode'`）、无过滤（ok: 3 passed）。
+
+## 结果
+- cargo test：36 单元 + 174 集成全通过（与 Windows 相同的计数——
+  过滤逻辑与全部既有测试在两平台一致）。
+- `--leak`：33 个用例 PASS，基线 0 块；`--sanitize`：33 个用例 0 报告。
+- fmt 验收：43 个文件幂等。
+- CLI 过滤行为与 Windows 逐字一致（filter-cli-demo.txt 原样记录）。
+
+## 说明
+- 至此 ADR-62 升级为**双平台验证**（2026-11-12）。
