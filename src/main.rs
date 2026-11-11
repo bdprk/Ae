@@ -6,7 +6,7 @@ mod harness;
 mod sha256;
 use frontend::compile_path;
 
-const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae check --json <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae>\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--release]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae check --json <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae>\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -355,14 +355,10 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         return Ok(if report == "[]" { 0 } else { 1 });
     }
     if args.len() < 2 { return Err(USAGE.into()); }
-    let release = match cmd.as_str() {
-        "run" if args.len() == 3 && args[2] == "--release" => true,
-        "build" if args.len() == 5 && args[4] == "--release" => true,
-        _ => false,
-    };
     // `run` forwards everything after `--` to the program, so a script that
     // reads `args()` can be exercised through the toolchain instead of being
-    // built and invoked by hand.
+    // built and invoked by hand. The split happens before the flags are read,
+    // so an optimization flag may sit on either side of the separator.
     let mut program_args: Vec<OsString> = Vec::new();
     let mut args = args;
     if let Some(at) = args.iter().position(|a| a.to_str() == Some("--")) {
@@ -370,10 +366,25 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         args.pop();
         if cmd != "run" { return Err(format!("'{cmd}' does not take program arguments\n{USAGE}")); }
     }
+    // `build` writes the file a user ships, so it is optimized unless --debug
+    // asks for the fast build; `run` is the development loop and stays at -O0
+    // unless --release asks for -O2. Same program, same generated C: -O2 ran
+    // 1.30x (textlazy) to 4.70x (sum) faster and cost 12-89 ms more in gcc on
+    // a 14-27 KB file (ADR-59). `build --release` is still accepted: the flag
+    // now names the default, and existing scripts pass it.
+    let level = match args.last().and_then(|a| a.to_str()) {
+        Some("--release") => Some(true),
+        Some("--debug") => Some(false),
+        _ => None,
+    };
+    let release = match cmd.as_str() {
+        "build" => level.unwrap_or(true),
+        _ => level.unwrap_or(false),
+    };
     let output = match cmd.as_str() {
         "check" | "emit-c" | "run" if args.len() == 2 => None,
-        "run" if release => None,
-        "build" if (args.len() == 4 || release) && args[2] == "-o" => Some(PathBuf::from(&args[3])),
+        "run" if level.is_some() => None,
+        "build" if (args.len() == 4 || level.is_some()) && args[2] == "-o" => Some(PathBuf::from(&args[3])),
         "check" | "emit-c" | "run" | "build" => return Err(USAGE.into()),
         _ => return Err(format!("unknown command: {cmd}\n{USAGE}")),
     };

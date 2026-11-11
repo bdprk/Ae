@@ -159,6 +159,41 @@ fn release_mode_preserves_checked_arithmetic_and_output() {
     fs::remove_dir_all(dir).unwrap();
 }
 #[test]
+fn build_is_optimized_by_default_and_debug_builds_behave_the_same() {
+    // ADR-59: `build` writes the artifact a user ships, so it defaults to -O2;
+    // --debug asks for the fast -O0 build. Both keep every check and must
+    // produce the same output.
+    let dir = std::env::temp_dir().join(format!("ae-build-levels-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::create_dir(&dir).unwrap();
+    let source = dir.join("input.ae");
+    let optimized = dir.join(if cfg!(windows) { "optimized.exe" } else { "optimized" });
+    let debug = dir.join(if cfg!(windows) { "debug.exe" } else { "debug" });
+    fs::write(&source, "fn main() { var total = 0; for i in 0..1000 { total = total + i; } print(total); }").unwrap();
+    for (flag, output) in [(None, &optimized), (Some("--debug"), &debug)] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ae"));
+        command.arg("build").arg(&source).arg("-o").arg(output);
+        if let Some(flag) = flag { command.arg(flag); }
+        let result = command.output().unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        let result = Command::new(output).output().unwrap();
+        assert!(result.status.success());
+        assert_eq!(String::from_utf8_lossy(&result.stdout).trim(), "499500");
+    }
+    // An unknown flag is still refused instead of being ignored.
+    let result = Command::new(env!("CARGO_BIN_EXE_ae")).arg("build").arg(&source).arg("-o").arg(dir.join("nope")).arg("--faster").output().unwrap();
+    assert!(!result.status.success());
+    fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn run_forwards_program_args_with_the_release_flag_before_the_separator() {
+    let path = std::env::temp_dir().join(format!("ae-run-forward-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, "fn main() { let a = args(); print(len(a)); print(a[1]); }").unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&path).arg("--release").arg("--").arg("hello").output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    assert_eq!(String::from_utf8_lossy(&result.stdout).replace("\r\n", "\n"), "2\nhello\n");
+}
+#[test]
 fn arrays_support_checked_read_write_and_expression_order() {
     let source = "fn main() { let original = [3, 4]; var values = [original[1], 5 + 2]; values[1] = values[0] + values[1]; print(values[1]); print(original[0]); }";
     let output = execute(source);
