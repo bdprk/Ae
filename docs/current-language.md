@@ -120,11 +120,15 @@ fn main() {
 
 ## 特征与实现（trait/impl）
 
-`trait Name { fn method(first: T, ...) -> R; }` 声明一组能力：类型参数固定拼写 `T`，方法首参必须是 `T` 按值，其余参数与返回值可以是 `T` 或具体类型，无方法体。`impl Name for Type { fn method(...) -> R { body } }` 为一个具体类型提供全部方法，签名必须逐点匹配（`T` 替换为该类型）。
+`trait Name { fn method(first: T, ...) -> R; }` 声明一组能力（ADR-47）：类型参数固定拼写 `T`，方法首参必须是 `T` 按值，其余参数与返回值可以是 `T` 或具体类型，无方法体；每个方法最多 8 个参数，每个程序最多 64 个 trait。`impl Name for Type { fn method(...) -> R { body } }` 为一个具体类型提供全部方法，签名必须逐点匹配（`T` 替换为该类型）；方法体是普通函数体，按普通函数的规则检查所有权与释放。
 
-泛型函数用 `[T: Name]` 引入 trait 约束后，函数体内可以直接调用该 trait 的方法——**分派在实例化时解析**：T 的实参类型确定唯一的 impl 方法，调用发射的就是那个函数（静态分派，与手写函数调用等价，无方法表）。实例化时若某实参类型没有 impl，报 `no impl of trait 'X' for 'Y'; required by 'Z'`。trait 方法不能在泛型体外直接调用；trait 签名不支持 `&T`；不支持泛型 impl、默认方法与动态分派。
+泛型函数用 `[T: Name]` 引入 trait 约束后，函数体内可以直接调用该 trait 的方法——**分派在实例化时解析**：T 的实参类型确定唯一的 impl 方法，调用发射的就是那个函数（静态分派，与手写函数调用等价，无方法表、无函数指针）。约束可以和内建约束混写（`T: Add + Area`）；同名的 trait 方法只能由**一个**受约束参数声明，否则调用报 `method 'x' is ambiguous`。实例化时若某实参类型没有 impl，报 `no impl of trait 'X' for 'Y'; required by 'Z'`。
 
-一致性规则：impl 只能写在声明该 trait 或该类型的文件里（第三文件拒绝）；同一 (trait, type) 全程序唯一；每程序最多 64 个 trait、256 个 impl。`pub trait` 可被其他文件引用；impl 所在文件经 `use` 载入即注册（加载即注册，无需从中调用任何项）。见 `examples/traits.ae`。
+**调用形式只有一种**：在把该 trait 写进约束的泛型体内按普通调用写 `method(value, ...)`（不带 trait 名、不带点号）。泛型体外无法调用 trait 方法；impl 的方法体是普通函数体，其中没有任何受约束参数，因此 impl 方法之间也**不能互相调用**——需要共享的逻辑请写成普通函数。impl 的函数体不以方法名注册，所以不会被直接调用，也不会与普通函数重名。
+
+一致性规则：impl 只能写在声明该 trait 或该类型的文件里（第三文件拒绝）；同一 (trait, type) 全程序唯一；每程序最多 256 个 impl。`pub trait` 可被其他文件引用；impl 所在文件经 `use` 载入即注册（加载即注册，无需从中调用任何项）。
+
+v1 边界：trait 签名不支持 `&T`（借用的落地形状需要独立设计）；不支持泛型 impl（`impl Area for Pair[K, V]`）、默认方法体、动态分派/trait 对象、关联类型与 `where` 子句。缺 impl 在实例化点报错，不在声明处预检。见 `examples/traits.ae`。
 
 ## 字符串向量
 
