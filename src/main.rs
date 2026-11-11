@@ -374,8 +374,9 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
     // `build` writes the file a user ships, so it is optimized unless --debug
     // asks for the fast build; `run` is the development loop and stays at -O0
     // unless --release asks for -O2. Same program, same generated C: on the
-    // Windows bench workloads -O2 ran 1.29x (textlazy) to 1.66x (map) faster
-    // and cost the fresh-cache build +41 to +191 ms end-to-end on 14-27 KB of
+    // bench workloads -O2 ran 1.34x (text) to 4.05x (sum) faster on Linux and
+    // 1.29x (textlazy) to 1.66x (map) on Windows, costing the fresh-cache
+    // build +13 to +87 ms on Linux / +41 to +191 ms on Windows on 14-27 KB of
     // generated C, with slightly smaller executables (ADR-59). `build
     // --release` is still accepted: the flag now names the default, and
     // existing scripts pass it.

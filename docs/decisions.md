@@ -1085,12 +1085,12 @@
   - **体积**：本机 `-O2` 产物反而小 662–1,431 字节，方向如实记录，不作普遍结论。
   - **正确性**：两档 stdout 逐字节一致（脚本断言）；`--leak` 31 用例基线不变。
 - 边界（对外表述不得越过）：
-  - 加速比与构建代价是**同次交替、端到端含进程启动**的 Windows 数字，绝对值不可跨机比较，精确比值等 Linux 回填（`2026-11-11-linux-buildlevels/`）。
+  - 加速比与构建代价是**同次交替、端到端含进程启动**的数字：Linux 是定量基准（1.34×–4.05×，+12.8–87.4 ms），Windows 供方向参考（1.29×–1.66×，+41–191 ms，进程启动开销使绝对值不可用）；两平台归档各自可重跑。
   - `-O2` 产物略小是本机 MinGW 的观察，不宣称「优化构建总是更小」。
   - flag 必须在行尾：`build file.ae --debug -o out`（flag 夹在中间）仍会被拒绝，这是原有严格顺序的保留而非新限制，但要如实告知。
   - 不宣称「-O2 与 -O0 语义完全等价对任意程序成立」：断言覆盖的是套件与基准负载；语言规则本来就是「开发与发布行为一致」（受检算术不因优化关闭），这条由既有测试矩阵保证，不由本 ADR 新证。
 - 过程发现：上一轮会话的代码注释引用了「1.30x–4.70x、gcc +12–89 ms」，来源不可追溯；本轮同次实测为 1.29×–1.66×、端到端 +41–191 ms，注释已改为实测值。教训照旧：**注释里的数字必须指向可重跑的归档**，否则宁可只写方向。
-- 验证：Windows 35 单元 + 167 集成全通过（新增 2 个），`--leak` 31 用例 PASS（基线 2 块），39 个程序通过 `check`（report.ae/words.ae 是库模块，被正确拒绝计入行为）。归档 `bench/results/2026-11-11-windows-buildlevels/`（PLATFORM.txt、cargo-test.log、examples-check.log、verify-c-leak.log、build-levels.json）。状态：**单平台验证**，Linux 回填前不得升级。
+- 验证：Windows 35 单元 + 167 集成全通过（新增 2 个），`--leak` 31 用例 PASS（基线 2 块），39 个程序通过 `check`（report.ae/words.ae 是库模块，被正确拒绝计入行为）。归档 `bench/results/2026-11-11-windows-buildlevels/`。Linux 回填（同一源码树 3916057，`bench/results/2026-11-11-linux-buildlevels/`）：170 集成全通过，运行加速 **1.34×（text）至 4.05×（sum）**、构建代价 +12.8–87.4 ms——sum 的 4.05× 说明 `-O0` 热循环里受检算术的检查很贵，这正是默认值的数据支撑。状态：**双平台验证**（2026-11-11）。
 
 ## ADR-60：数学内建 v1——11 个薄封装，IEEE 语义，Linux 链接行加 `-lm`
 
@@ -1120,4 +1120,4 @@
   1. **fmt 验收的失败是陈旧二进制**：`unknown function 'abs'` 来自 `target/release` 的旧 `ae.exe`（构建于数学库之前），重建后 42 个文件全过。「跑验收前先确认 release 与源码同步」值得写进流程记忆。
   2. **版本测试硬编码**：`cache_and_version_commands_work` 断言 `ae 0.1.0`，版本提升立刻把它打破；已改为跟随 `CARGO_PKG_VERSION`，以后版本提升不再破坏测试。
   3. **emission 风格从既有代码取**：新发射分支最初写了行内 `/* line:column */` 注释，核对既有生成 C（零内联块注释）后删除——保持风格一致比多留信息更好。
-- 验证：Windows 35 单元 + 170 集成、`--leak` 32 用例 PASS（基线 2 块）、fmt 验收 42 文件、40 程序 `check`；归档 `bench/results/2026-11-11-windows-math/`（PLATFORM.txt、cargo-test.log、verify-c-leak.log、fmt-acceptance.{log,json}、examples-check.log）。状态：**单平台验证**，Linux 回填（`2026-11-11-linux-math/`）前不得升级。
+- 验证：Windows 35 单元 + 170 集成、`--leak` 32 用例 PASS（基线 2 块）、fmt 验收 42 文件、40 程序 `check`；归档 `bench/results/2026-11-11-windows-math/`。Linux 回填（同一源码树 3916057，`bench/results/2026-11-11-linux-math/`）：35 单元 + 170 集成全通过、`--leak` 32 用例基线 0 块、`--sanitize` 32 用例 0 报告、fmt 验收 42 文件幂等、**math_basics 输出与 Windows 逐字节一致**（含 `pow(2,10)=1024.0` 精确值——「libm 实践性质」在本机得到实测确认）、生成 C 字节数与 Windows 相同。状态：**双平台验证**（2026-11-11）。

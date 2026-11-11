@@ -1,0 +1,34 @@
+ADR-60 数学内建 · Linux 回填（2026-11-11）
+
+## 平台
+instabox-node 沙箱：Debian 13，Linux 6.18.54，x86-64，4 vCPU；
+gcc 14.2.0-19；rustc 1.99.0；Python 3.13.5。AE 0.1.1。
+代码由 ssh tar 管道同步自 Windows 工作区（提交 3916057，与 Windows 归档同一源码树），
+位于 `~/ae-backfill`；批次脚本 `~/run-backfill.sh`，日志 `~/backfill-logs/`。
+
+## 命令（工作目录 = ~/ae-backfill）
+- cargo build --locked && cargo build --release --locked
+- cargo test --locked
+- python3 scripts/verify_generated_c.py --leak
+- python3 scripts/verify_generated_c.py --sanitize
+- python3 scripts/fmt_acceptance.py --json fmt-acceptance.json
+- for f in $(find examples -name "*.ae" ! -name "report.ae" ! -name "words.ae"); do target/debug/ae check "$f"; done
+- target/debug/ae run examples/math_basics.ae
+- target/debug/ae emit-c（print(1) / math_basics / float_math 的字节数）
+
+## 结果
+- cargo test：35 单元 + 170 集成全通过。
+- `--leak`：32 个用例 PASS，退出分配块数全部等于 glibc 基线 0——数学内建不分配。
+- `--sanitize`：32 个用例 PASS，无 ASan/UBSan 报告。
+- fmt 验收：42 个文件幂等（0 个未格式化）。
+- 40 个程序通过 `check`（report.ae/words.ae 为库模块，被正确拒绝计入行为）。
+- **math_basics.ae 的 stdout 与 Windows 归档逐字节一致**（行尾归一化后；
+  Linux 本身输出 LF）——包括 `pow(2,10) 1024.0`（glibc 对小整数指数的 pow
+  给出精确整值）、`sqrt(-1) nan`、六个容差检查全部 ok。
+- 生成 C 字节数与 Windows 相同：print(1) 13,822；math_basics 25,044；
+  float_math 31,938。链接行含 `-lm`（脚本在 POSIX 上自动加）。
+
+## 说明
+- ADR-59/ADR-60 的待办「pow(2,10)=1024 精确性由 libm 实践保证」在本机得到
+  实测确认；跨平台文本一致性由运行时自产文本 + 精确值成立，不是 printf 巧合。
+- 至此 ADR-60 升级为**双平台验证**。
