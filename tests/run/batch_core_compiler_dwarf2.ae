@@ -1,0 +1,62 @@
+// tests/run/batch_core_compiler_dwarf2.ae
+// Verification of SLEB128 encoding, DwarfExprOp, DwarfDie, and DwarfCie primitives.
+
+use "../../std/core/ir_leb128_signed.ae";
+use "../../std/core/ir_dwarf_expr.ae";
+use "../../std/core/ir_dwarf_die.ae";
+use "../../std/core/ir_dwarf_cie.ae";
+
+fn main() {
+    print("--- batch_core_compiler_dwarf2 test start ---");
+
+    // 1. SLEB128
+    assert(sleb128_encoded_len(0) == 1);
+    assert(sleb128_encoded_len(-1) == 1);
+    assert(sleb128_encoded_len(63) == 1);
+    assert(sleb128_encoded_len(-64) == 1);
+    assert(sleb128_encoded_len(64) == 2);
+    assert(sleb128_encoded_len(-65) == 2);
+    assert(sleb128_encoded_len(-12345) == 3);
+
+    // 0 in SLEB128 is [0]
+    assert(sleb128_extract_byte(0, 0) == 0);
+    // -1 in SLEB128 is [0x7f] = [127]
+    assert(sleb128_extract_byte(-1, 0) == 127);
+    print("sleb128 ok");
+
+    // 2. DWARF Expression
+    let op_fb = dwarf_expr_new(145, -16); // DW_OP_fbreg, offset -16
+    assert(dwarf_expr_is_fbreg(op_fb));
+    let op_fb_b = dwarf_expr_new(145, -16);
+    assert(dwarf_expr_operand(op_fb_b) == -16);
+
+    let op_dup = dwarf_expr_new(18, 0); // DW_OP_dup
+    assert(!dwarf_expr_is_fbreg(op_dup));
+    let op_dup_b = dwarf_expr_new(18, 0);
+    assert(dwarf_expr_opcode(op_dup_b) == 18);
+    print("dwarf_expr ok");
+
+    // 3. DWARF DIE
+    let die_sub = dwarf_die_new(46, true, 512); // DW_TAG_subprogram
+    assert(dwarf_die_is_subprogram(die_sub));
+    let die_sub_b = dwarf_die_new(46, true, 512);
+    assert(dwarf_die_has_children(die_sub_b));
+    let die_sub_c = dwarf_die_new(46, true, 512);
+    assert(dwarf_die_offset(die_sub_c) == 512);
+
+    let die_cu = dwarf_die_new(17, true, 0); // DW_TAG_compile_unit
+    assert(!dwarf_die_is_subprogram(die_cu));
+    print("dwarf_die ok");
+
+    // 4. DWARF CIE
+    // code_align=1, data_align=-8 (x86_64 downward stack), ret_reg=16 (RIP)
+    let cie = dwarf_cie_new(1, -8, 16);
+    assert(dwarf_cie_code_align(cie) == 1);
+    let cie_b = dwarf_cie_new(1, -8, 16);
+    assert(dwarf_cie_data_align(cie_b) == -8);
+    let cie_c = dwarf_cie_new(1, -8, 16);
+    assert(dwarf_cie_ret_reg(cie_c) == 16);
+    print("dwarf_cie ok");
+
+    print("--- batch_core_compiler_dwarf2 test end ---");
+}

@@ -1,0 +1,6 @@
+--- batch_core_compiler_dwarf2 test start ---
+sleb128 ok
+dwarf_expr ok
+dwarf_die ok
+dwarf_cie ok
+--- batch_core_compiler_dwarf2 test end ---
