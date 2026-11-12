@@ -1,0 +1,6 @@
+--- batch_core_compiler_wasm test start ---
+wasm_type ok
+wasm_section ok
+wasm_op ok
+wasm_export ok
+--- batch_core_compiler_wasm test end ---

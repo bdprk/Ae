@@ -1,0 +1,52 @@
+// tests/run/batch_core_compiler_wasm.ae
+// Verification of WasmFuncType, WasmSection, WasmOp, and WasmExport primitives.
+
+use "../../std/core/ir_wasm_type.ae";
+use "../../std/core/ir_wasm_section.ae";
+use "../../std/core/ir_wasm_opcode.ae";
+use "../../std/core/ir_wasm_export.ae";
+
+fn main() {
+    print("--- batch_core_compiler_wasm test start ---");
+
+    // 1. Wasm Func Type
+    // 2 params of i64 (0x7E = 126), 1 return of i64
+    let ft = wasm_type_new(2, 1, 126, 126);
+    assert(wasm_type_has_params(ft));
+    let ft_b = wasm_type_new(2, 1, 126, 126);
+    assert(!wasm_type_is_void_return(ft_b));
+    assert(wasm_type_is_i64(126));
+    assert(!wasm_type_is_i64(127)); // 0x7F = i32
+    print("wasm_type ok");
+
+    // 2. Wasm Section
+    let sec_code = wasm_section_new(10, 1024);
+    assert(wasm_section_is_code(sec_code));
+    let sec_code_b = wasm_section_new(10, 1024);
+    assert(!wasm_section_is_type(sec_code_b));
+    let sec_code_c = wasm_section_new(10, 1024);
+    assert(wasm_section_payload_len(sec_code_c) == 1024);
+    print("wasm_section ok");
+
+    // 3. Wasm Op
+    // i64.add pops 2 values, pushes 1 value -> net growth = -1
+    let op_add = wasm_op_new(124, 2, 1);
+    assert(wasm_op_net_stack_growth(op_add) == -1);
+    let op_add_b = wasm_op_new(124, 2, 1);
+    assert(!wasm_op_is_terminator(op_add_b));
+
+    let op_ret = wasm_op_new(15, 1, 0); // return
+    assert(wasm_op_is_terminator(op_ret));
+    print("wasm_op ok");
+
+    // 4. Wasm Export
+    let exp_func = wasm_export_new(4, 0, 0); // "main" function index 0
+    assert(wasm_export_is_function(exp_func));
+    let exp_func_b = wasm_export_new(4, 0, 0);
+    assert(!wasm_export_is_memory(exp_func_b));
+    let exp_func_c = wasm_export_new(4, 0, 0);
+    assert(wasm_export_index(exp_func_c) == 0);
+    print("wasm_export ok");
+
+    print("--- batch_core_compiler_wasm test end ---");
+}
