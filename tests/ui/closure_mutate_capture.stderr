@@ -1,0 +1,1 @@
+ae: $DIR/closure_mutate_capture.ae:3:17: a closure cannot mutate captured variable 'items' in this version: captures are by value or read-only, so write the loop or the update in the enclosing scope

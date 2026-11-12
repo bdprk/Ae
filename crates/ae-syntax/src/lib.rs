@@ -4,7 +4,7 @@ use ae_span::{Diagnostic, SourceFile};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kind {
     Ident(String), Number(i64), Float(f64), Text(String), Fn, Let, Var, Mut, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
-    EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang,
+    EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang, Pipe,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, Struct,
     Enum, Match, ColonColon, FatArrow, Question, Trait, Impl, Eof,
 }
@@ -27,7 +27,7 @@ fn kind_name(kind: &Kind) -> &'static str {
         Kind::Struct => "Struct", Kind::Enum => "Enum", Kind::Match => "Match",
         Kind::EqEq => "EqEq", Kind::NotEq => "NotEq", Kind::Less => "Less", Kind::LessEq => "LessEq",
         Kind::Greater => "Greater", Kind::GreaterEq => "GreaterEq", Kind::And => "And", Kind::Or => "Or",
-        Kind::Bang => "Bang",
+        Kind::Bang => "Bang", Kind::Pipe => "Pipe",
         Kind::LParen => "LParen", Kind::RParen => "RParen", Kind::LBrace => "LBrace", Kind::RBrace => "RBrace",
         Kind::LBracket => "LBracket", Kind::RBracket => "RBracket", Kind::Comma => "Comma",
         Kind::Colon => "Colon", Kind::Arrow => "Arrow", Kind::Amp => "Amp", Kind::Semi => "Semi",
@@ -233,6 +233,7 @@ fn lex_inner(source: &str, mut recovered: Option<&mut Vec<Diagnostic>>) -> Resul
                 ';' => Kind::Semi, '=' => Kind::Equal, '+' => Kind::Plus, '-' => Kind::Minus,
                 '*' => Kind::Star, '/' => Kind::Slash, '%' => Kind::Percent, '<' => Kind::Less, '>' => Kind::Greater,
                 '!' => Kind::Bang, '.' => Kind::Dot, '?' => Kind::Question,
+                '|' => Kind::Pipe,
                 _ => {
                     let diagnostic = lex_error(source, start, "E0001", &format!("unexpected character {c:?}"));
                     match recovered.as_deref_mut() {

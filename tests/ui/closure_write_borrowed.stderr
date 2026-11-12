@@ -1,0 +1,1 @@
+ae: $DIR/closure_write_borrowed.ae:4:14: cannot assign to 'greeting' while it is borrowed

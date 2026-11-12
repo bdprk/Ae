@@ -1,0 +1,6 @@
+fn main() {
+    let note = "memo";
+    let taken = note;
+    let read = || -> i64 { return len(note); };
+    print(read());
+}

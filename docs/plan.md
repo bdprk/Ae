@@ -245,6 +245,7 @@ A custom native machine code backend/linker will only be considered as a separat
 ### 5.1 Existing Features (To be preserved and migrated)
 
 - Inherent methods with `&self` auto-borrow over read-only struct borrows (ADR-0184) and `&mut self` receivers over exclusive mutable borrows with pointer field writes (ADR-0185); enum methods and `Self` (ADR-0186); generic impl blocks with per-instantiation methods (ADR-0187); by-value receivers and associated functions (ADR-0182/0183).
+- **Closures** (M1.8, partial): ADR-0188 landed closure literals with Fn/FnOnce capture inference over hidden leading parameters, borrow-capture loans, and mutation rejection; no `fn(T) -> R` parameter types yet, so adapters wait.
 - Frontend in Rust, split across three workspace crates — `ae-span`, `ae-syntax`, and `ae-compiler` (11 frontend modules, ~340 KB total) — plus a strict C11 backend; runtime trimmed by reachability, `<windows.h>` included on-demand.
 - Primitive types, structs, enums, `match`, generic functions/structs/enums, trait v1 static dispatch, modules and `pub`, `?` propagation.
 - Built-ins for file/path/directory/process/env/time/JSON query; `check --json`, `fmt`, `test`, `cache`, `deps`.
@@ -258,7 +259,7 @@ A custom native machine code backend/linker will only be considered as a separat
 |---|---|---|
 | Containers are hand-written families per element type (`vec`/`vec[string]`/`vec[f64]`/two types of map) | Linear bloat, impossible to cover arbitrary types | M1 |
 | 9 built-in result enums, dozens of global built-in functions | Verbose code, namespace pollution | M1 |
-| No closures or iterators. Inherent methods and associated functions exist (ADR-0182/0183), but only on structs, only by value, and trait methods still dispatch only through generic bounds | Expressiveness below Go/Rust | M1 |
+| No iterators. Closures with Fn/FnOnce capture inference landed (ADR-0188); inherent methods and associated functions exist on structs and enums (ADR-0182/0183/0186), and trait methods still dispatch only through generic bounds | Expressiveness below Go/Rust | M1 (closures done; iterators next) |
 | No IR, AST emits C directly | Blocks borrow checking, optimization, backend swapping. `std/core` models IR structures, but no MIR pass exists | M2 |
 | Build shells out to gcc for compile and link | M5.4's 100 ms budget is unreachable: an empty program costs 96.5 ms to compile and 112.9 ms to link on the measured machine | M2/M5 |
 | Borrow checking is limited rules + runtime fallback | Does not meet static safety guarantees | M2 |

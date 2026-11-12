@@ -1,0 +1,6 @@
+fn main() {
+    var greeting = "x";
+    let read = || -> i64 { return len(greeting); };
+    greeting = "y";
+    print(read());
+}

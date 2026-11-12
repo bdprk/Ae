@@ -667,6 +667,9 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             if t.owned { drop_owned_temp(out, &t); }
             Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
         }
+        // A closure literal emits nothing: the binding names the generated
+        // function and the declaration statement skips its store (ADR-0188).
+        Expr::ClosureLit => Emitted { text: String::new(), ty: Type::Closure(0), owned: false, moves: Vec::new(), materialized: false },
         Expr::Field(base, fname, fty) => {
             let b = emit_expr(base, out, next, false);
             if fty.owned() {
@@ -898,9 +901,14 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                 out.push_str(&format!("    return {};\n", t.text));
             }
             Statement::Declare(id, e) => {
-                let t = emit_expr(e, out, next, true);
-                out.push_str(&format!("    {}v{id} = {};\n", t.ty.c_temp(), t.text));
-                null_moves(out, &t.moves);
+                // A closure binding names its generated function and stores
+                // nothing, so the declaration emits no C at all (ADR-0188).
+                if matches!(e, Expr::ClosureLit) { }
+                else {
+                    let t = emit_expr(e, out, next, true);
+                    out.push_str(&format!("    {}v{id} = {};\n", t.ty.c_temp(), t.text));
+                    null_moves(out, &t.moves);
+                }
             }
             Statement::Array(id, values) => {
                 let items: Vec<_> = values.iter().map(|e| emit_expr(e, out, next, false).text).collect();

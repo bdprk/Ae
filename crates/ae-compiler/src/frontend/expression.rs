@@ -95,6 +95,11 @@ impl Parser<'_> {
                 self.pos += 1;
                 (Expr::StrLit(text, line, column), Type::String)
             }
+            // A closure starts with a pipe — or with `||`, which the lexer
+            // keeps as Or: an or-expression is never followed by an arrow, so
+            // Or + '->' can only be an empty parameter list (ADR-0188).
+            Kind::Pipe => self.closure_literal()?,
+            Kind::Or if self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::Arrow) => self.closure_literal()?,
             Kind::Minus => {
                 let (line, column) = self.position();
                 self.pos += 1;
@@ -812,6 +817,11 @@ impl Parser<'_> {
                     let (id, types, ret) = self.instantiate_fn(gid, type_args, name_offset)?;
                     let args = self.call_arguments(&name, &types)?;
                     (Expr::Call(id, args, ret), ret)
+                } else if matches!(self.names.get(&name), Some((_, _, Type::Closure(_)))) && *self.current() == Kind::LParen {
+                    // A closure value is a name for its generated function:
+                    // the call reads the captures at the call site (ADR-0188).
+                    let (expr, ty) = self.closure_call(&name, name_offset)?;
+                    (expr, ty)
                 } else if *self.current() == Kind::LParen {
                     let signature = match self.functions.get(&name).cloned() {
                         Some(signature) => signature,

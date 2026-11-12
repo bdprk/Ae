@@ -24,6 +24,8 @@ pub(super) fn c_type_field(ty: Type) -> String {
         Type::Array(n) => format!("int64_t [{n}]"),
         // Unreachable: there is no syntax for a cursor-typed field.
         Type::Tokens => "ae_tokens".to_owned(),
+        // Unreachable: no syntax for a closure-typed field.
+        Type::Closure(_) => "void".to_owned(),
     }
 }
 pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
@@ -52,6 +54,8 @@ pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::VecFRef => "const ae_f64vec *".to_owned(),
         Type::Tokens if declaration => format!("ae_tokens v{id}"),
         Type::Tokens => "ae_tokens".to_owned(),
+        // Never declared: a closure has no storage.
+        Type::Closure(_) => "void".to_owned(),
         Type::Array(_) if declaration => format!("const int64_t *v{id}"),
         Type::Array(_) => "const int64_t *".to_owned(),
     }

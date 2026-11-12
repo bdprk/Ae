@@ -158,13 +158,22 @@ Rejected at declaration: a method named `main`; a built-in name (`len`, `push`, 
 
 **Generic impl blocks (ADR-0187)**: `impl Pair[K, V] { fn new(k: K, v: V) -> Self { ... } }` declares a method template for a generic struct. Each (method, argument list) pair instantiates its own function — signatures included, so `V` may appear anywhere a type can (`Option[V]` nests). `Self` is the instantiation; associated functions (`Pair[string, i64]::new(...)`) work and chain into method calls. One impl per generic struct, in the declaring file; no constraints on the parameters yet (a constrained generic function is the workaround for \-shaped needs). Receiver rules are the concrete ones per instantiation.
 
-Known gaps: associated functions on generic structs via trait impls (`impl Show for Pair[K, V]`), bounds on impl parameters, borrowed enum receivers, and method calls on a struct-typed field of a variable (`plot.origin.distance()` is rejected — auto-borrow does not have a place-form for fields yet; compute from the field's scalar members instead). See `examples/methods.ae`, `examples/struct_borrow.ae`, `examples/enum_methods.ae`, and `examples/generic_impl.ae`.
+Known gaps: associated functions on generic structs via trait impls (`impl Show for Pair[K, V]`), bounds on impl parameters, borrowed enum receivers, and method calls on a struct-typed field of a variable (`plot.origin.distance()` is rejected — auto-borrow does not have a place-form for fields yet; compute from the field's scalar members instead). See `examples/methods.ae`, `examples/struct_borrow.ae`, `examples/enum_methods.ae`, `examples/generic_impl.ae`, and `examples/closures.ae`.
 
 ## Mutable Struct Borrows (`&mut Type`) (ADR-0185)
 
 The exclusive mutable borrow: a parameter `fn bump(c: &mut Counter) -> i64` or the receiver `&mut self`. The callee **writes fields through the pointer** (`c.n = c.n + 1;`) for the duration of the call; the caller keeps ownership and regains every right when the call returns.
 
 **Rules**: the lender must be a `var`-declared bare struct variable; the call site spells `bump(&mut c)`; while the call runs, no other borrow (shared or mutable) of that struct may be taken in the same statement; a borrow cannot be upgraded from `&Type` to `&mut Type` (a `&self` method cannot call a `&mut self` method), but a `&mut` borrow freely forwards as a pointer for `&Type` parameters and receivers. A `&mut` slot is writable without `var` — writing is its purpose. Whole-struct assignment through a borrow (`c = Counter { ... }`) and map-field writes through one are rejected with named workarounds. Like every borrow, it cannot be stored or returned.
+
+## Closures (ADR-0188)
+
+A closure literal is `|a: i64, b: i64| -> R { body }` (`||` for no parameters); parameter and return annotations are required, and the body must return on every path. A closure compiles to an ordinary function whose leading parameters are its captures, so calling one is a plain call:
+
+- **Read-only captures borrow**: a body that only reads a `string`, `vec`, or `struct` captures it as a view/`&T` — the closure is callable any number of times, and the outer variable cannot move or be written while the closure name is live.
+- **Consumed captures travel by value**: a body that needs ownership (`return note + "!"`) makes every capture a value capture — each call moves the outer variable, so a second call is a use-after-move error.
+- **Scalars always copy.** Maps travel by value (they cannot be borrowed).
+- Mutating a captured container or field is rejected: writes would hit a copy. A closure has no storage, so it cannot be returned or stored, and closures nest.
 
 ## Struct Borrows (`&Type`) (ADR-0184)
 

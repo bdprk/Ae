@@ -509,7 +509,7 @@ impl Parser<'_> {
             methods.push(GenericImplMethod { name: method, receiver, body_start, tokens: Rc::clone(&self.tokens), source: Rc::clone(&self.shared_source) });
         }
         self.take(Kind::RBrace)?;
-        self.generics.generic_impls.insert(type_name, GenericImplDef { name: self.generics.struct_defs[gid].name.clone(), params, methods, file: self.file.clone(), public: self.generics.struct_defs[gid].public });
+        self.generics.generic_impls.insert(type_name, GenericImplDef { params, methods, file: self.file.clone() });
         Ok(())
     }
 
@@ -854,7 +854,7 @@ impl Parser<'_> {
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
-            borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst, trait_bounds, receiver: None, impl_self: None, pending: Vec::new(),
+            borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst, trait_bounds, receiver: None, impl_self: None, shadow_ok: false, pending: Vec::new(),
         };
         let parsed = sub.function_rest(false, id);
         let mut nested = std::mem::take(&mut sub.pending);
@@ -908,7 +908,7 @@ impl Parser<'_> {
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
             borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(),
-            subst, trait_bounds: HashMap::new(), receiver: receiver_ty, impl_self: Some(Type::Struct(sid)), pending: Vec::new(),
+            subst, trait_bounds: HashMap::new(), receiver: receiver_ty, impl_self: Some(Type::Struct(sid)), shadow_ok: false, pending: Vec::new(),
         };
         let parsed = sub.function_rest(false, id);
         let mut nested = std::mem::take(&mut sub.pending);

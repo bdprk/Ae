@@ -35,7 +35,7 @@ enum Class {
     Ident, Number, Float, Text, Comment,
     Fn, Let, Var, Mut, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use, Struct, Enum, Match,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang,
-    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, ColonColon, FatArrow, Question,
+    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, ColonColon, FatArrow, Question, Pipe,
     Trait, Impl, Eof,
 }
 
@@ -58,7 +58,7 @@ impl Class {
             Class::Bang => "Bang",
             Class::LParen => "LParen", Class::RParen => "RParen", Class::LBrace => "LBrace", Class::RBrace => "RBrace",
             Class::LBracket => "LBracket", Class::RBracket => "RBracket", Class::Comma => "Comma",
-            Class::Colon => "Colon", Class::Arrow => "Arrow", Class::Amp => "Amp", Class::Semi => "Semi",
+            Class::Colon => "Colon", Class::Arrow => "Arrow", Class::Amp => "Amp", Class::Semi => "Semi", Class::Pipe => "Pipe",
             Class::Equal => "Equal", Class::Plus => "Plus", Class::Minus => "Minus", Class::Star => "Star",
             Class::Slash => "Slash", Class::Percent => "Percent", Class::Dot => "Dot", Class::DotDot => "DotDot",
             Class::ColonColon => "ColonColon", Class::FatArrow => "FatArrow", Class::Question => "Question",
@@ -197,6 +197,7 @@ fn lex_fmt(source: &str) -> Result<Vec<FmtToken>, String> {
                 '-' => Class::Minus, '*' => Class::Star, '/' => Class::Slash, '%' => Class::Percent,
                 '<' => Class::Less, '>' => Class::Greater, '!' => Class::Bang, '.' => Class::Dot,
                 '?' => Class::Question,
+                '|' => Class::Pipe,
                 _ => return Err(lex_error(start_line, &format!("unexpected character {c:?}"))),
             };
         }

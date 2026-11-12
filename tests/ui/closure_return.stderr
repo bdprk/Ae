@@ -1,0 +1,1 @@
+ae: $DIR/closure_return.ae:3:1: a closure cannot be returned: it has no storage, and its captures live in this frame

@@ -1,0 +1,361 @@
+//! Closure literals: capture inference and the generated call shape (ADR-0188).
+//!
+//! A closure literal compiles to an ordinary function whose parameter list is
+//! the captured variables (hidden, leading) followed by the visible ones. The
+//! classification is Rust's Fn/FnOnce split, inferred from one throwaway body
+//! parse: a capture the body *moves* is a value capture — every call moves the
+//! outer variable into the callee — and a capture the body only *reads* is a
+//! borrow capture, forwarded as the read-only borrow form of its type. A
+//! closure value itself has no storage, so it cannot be stored, returned, or
+//! assigned; the enclosing scope keeps every variable the body borrowed.
+use super::*;
+use super::parser::moved_value_hint;
+
+impl Parser<'_> {
+    // `|a: i64, b: i64| -> R { body }` — pos sits on the opening pipe.
+    pub(super) fn closure_literal(&mut self) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        let lit_offset = self.tokens[self.pos].offset;
+        // Pass 1 binds every name of the enclosing scope so the body parses
+        // once; the walk afterwards says which of them the body actually
+        // used, and the moved set says which of those it consumed.
+        let outer: Vec<(String, usize, bool, Type)> = self.names.iter()
+            .map(|(name, &(id, mutable, ty))| (name.clone(), id, mutable, ty))
+            .collect();
+        // Both forms start their body range ON the opening token: the pipe
+        // form's parameter section consumes the pipe, the Or form's skips
+        // Or and the arrow beside it.
+        let body_start = self.pos;
+        // Two probes decide the capture modes. The first binds every
+        // borrowable capture in its read-only form, so a body that only reads
+        // gets borrow captures and the closure stays callable any number of
+        // times; if that body fails — because some capture is used where an
+        // owned value is required, like a returned string — the second probe
+        // binds everything owned and every capture becomes a value capture
+        // that its call moves (FnOnce, which is sound for the same reason a
+        // plain call is).
+        let borrow_probe: Vec<(String, Type)> = outer.iter()
+            .map(|(name, _, _, ty)| (name.clone(), borrow_capture_form(ty).unwrap_or(*ty)))
+            .collect();
+        let id1 = self.generics.next_fn_id;
+        self.generics.next_fn_id += 1;
+        let probe = self.parse_closure_body(id1, body_start, &[], borrow_probe.clone());
+        let (probe, value_mode) = match probe {
+            Ok((function, _moved, _)) => (function, false),
+            Err(_) => {
+                let id1b = self.generics.next_fn_id;
+                self.generics.next_fn_id += 1;
+                let owned_probe: Vec<(String, Type)> = outer.iter()
+                    .map(|(name, _, _, ty)| (name.clone(), *ty))
+                    .collect();
+                let (function, _moved, _) = self.parse_closure_body(id1b, body_start, &[], owned_probe)?;
+                (function, true)
+            }
+        };
+        let (used, mutated) = collect_capture_uses(&probe);
+        // The probe bound its captures in order as its leading parameters, so
+        // a used parameter slot names exactly one candidate capture.
+        let capture_names: Vec<&String> = probe.params.iter().take(borrow_probe.len())
+            .zip(borrow_probe.iter())
+            .filter(|((var_id, _), _)| used.contains(var_id))
+            .map(|(_, (name, _))| name)
+            .collect();
+        let mutated_names: Vec<&String> = probe.params.iter().take(borrow_probe.len())
+            .zip(borrow_probe.iter())
+            .filter(|((var_id, _), _)| mutated.contains(var_id))
+            .map(|(_, (name, _))| name)
+            .collect();
+        let mut value_captures: Vec<(usize, Type)> = Vec::new();
+        let mut borrow_captures: Vec<(usize, Type)> = Vec::new();
+        let mut bindings: Vec<(String, Type)> = Vec::new();
+        for (name, outer_id, _, ty) in &outer {
+            if !capture_names.contains(&name) { continue; }
+            if mutated_names.contains(&name) {
+                return Err(self.error_at(lit_offset, &format!(
+                    "a closure cannot mutate captured variable '{name}' in this version: captures are by value or read-only, so write the loop or the update in the enclosing scope")));
+            }
+            if self.moved.contains(outer_id) {
+                return Err(moved_value_hint(self.binding_label(self.error_at(lit_offset, &format!("cannot capture '{name}' because it was moved")).with_code("E0102"), *outer_id)));
+            }
+            match (value_mode, borrow_capture_form(ty)) {
+                (false, Some(hidden_ty)) => borrow_captures.push((*outer_id, hidden_ty)),
+                _ => value_captures.push((*outer_id, *ty)),
+            }
+        }
+        // The generated function's parameter list is the capture list in
+        // call order — values first, then borrows — and the call site builds
+        // its arguments in exactly that order.
+        let names_by_id: std::collections::HashMap<usize, String> = outer.iter()
+            .map(|(name, id, _, _)| (*id, name.clone()))
+            .collect();
+        for (outer_id, ty) in &value_captures {
+            bindings.push((names_by_id[outer_id].clone(), *ty));
+        }
+        for (outer_id, ty) in &borrow_captures {
+            bindings.push((names_by_id[outer_id].clone(), *ty));
+        }
+        // Pass 2 parses the same tokens with the classified capture types, so
+        // the emitted body reads borrows as borrows and values as owned slots.
+        let id2 = self.generics.next_fn_id;
+        self.generics.next_fn_id += 1;
+        let (function, _, end_pos) = self.parse_closure_body(id2, body_start, &[], bindings)?;
+        // The enclosing parser continues after the literal's closing brace.
+        self.pos = end_pos;
+        // Only the visible parameters are call-checkable; the leading capture
+        // slots are the call site's business, not the caller's argument list.
+        let capture_count = value_captures.len() + borrow_captures.len();
+        let visible: Vec<Type> = function.params[capture_count..].iter().map(|&(_, ty)| ty).collect();
+        let ret = function.returns;
+        self.pending.push(function);
+        // The enclosing scope lends every borrow capture for as long as the
+        // closure name is live: the outer variable may not move or be written
+        // behind the closure's back (the same rule a string view gets).
+        for (outer_id, _) in &borrow_captures {
+            if !self.is_borrowed(*outer_id) {
+                self.borrows.push((*outer_id, self.scopes.len()));
+            }
+        }
+        let cid = self.generics.closures.len();
+        self.generics.closures.push(ClosureDef { fn_id: id2, params: visible, ret, value_captures, borrow_captures });
+        Ok((Expr::ClosureLit, Type::Closure(cid)))
+    }
+
+    // One body parse. `outer` pre-binds the enclosing scope under its own
+    // names (probe pass, shadowing allowed); `captures` binds exactly the
+    // classified captures under fresh ids, which become the hidden leading
+    // parameters of the generated function (emit pass).
+    fn parse_closure_body(&mut self, id: usize, body_start: usize, outer: &[(String, usize, bool, Type)], captures: Vec<(String, Type)>) -> Result<(Function, std::collections::HashSet<usize>, usize), ae_span::Diagnostic> {
+        let mut sub = Parser {
+            file: self.file.clone(), source: self.source, tokens: Rc::clone(&self.tokens), shared_source: Rc::clone(&self.shared_source), pos: body_start,
+            names: HashMap::new(), binding_ranges: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0,
+            loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0,
+            functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
+            enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
+            id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
+            borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(),
+            subst: HashMap::new(), trait_bounds: HashMap::new(), receiver: None, impl_self: None,
+            // Shadowing stays allowed in both passes: a body-local may reuse
+            // an outer name, and the AST walk (not the name map) decides what
+            // was captured.
+            shadow_ok: true, pending: Vec::new(),
+        };
+        // The probe pass binds every outer name under its ORIGINAL id, so
+        // the AST walk's id set can be compared with the enclosing scope's
+        // ids directly; fresh ids in this sub-parser start above them.
+        sub.next_var = outer.iter().map(|(_, id, _, _)| *id).max().unwrap_or(0) + 1;
+        for (name, outer_id, mutable, ty) in outer {
+            sub.names.insert(name.clone(), (*outer_id, *mutable, *ty));
+            sub.binding_ranges.insert(*outer_id, 0..0);
+        }
+        let parsed = sub.closure_body(id, &captures);
+        let end_pos = sub.pos;
+        let sub_moved = std::mem::take(&mut sub.moved);
+        let mut nested = std::mem::take(&mut sub.pending);
+        drop(sub);
+        let function = parsed?;
+        let moved = sub_moved;
+        self.pending.append(&mut nested);
+        Ok((function, moved, end_pos))
+    }
+
+    // `(a: i64, b: i64) -> R { body }` for one closure, starting after the
+    // opening pipe. Parameter types are required — the language has no
+    // inference for parameter annotations, and the return type is what makes
+    // the call site checkable.
+    // Called on a fresh sub-parser whose names already hold the pre-bound
+    // captures (and, in the probe pass, the whole enclosing scope); nothing
+    // here may clear that state. The captures are the hidden leading
+    // parameters in exactly the order the call site will pass them, so they
+    // are added to the signature before the visible ones are parsed.
+    fn closure_body(&mut self, id: usize, captures: &[(String, Type)]) -> Result<Function, ae_span::Diagnostic> {
+        let mut params: Vec<(usize, Type)> = Vec::new();
+        for (name, ty) in captures {
+            let var_id = self.next_var; self.next_var += 1;
+            // Capture slots parse as mutable so the probe reaches every
+            // mutation site and the walker can reject it by name; the
+            // classification runs before the emit pass, so the emitted body
+            // can never actually write one.
+            self.names.insert(name.clone(), (var_id, true, *ty));
+            params.push((var_id, *ty));
+        }
+        // The 8-parameter limit counts the visible parameters only: the
+        // capture slots are hidden plumbing, not part of the call signature.
+        if *self.current() == Kind::Or {
+            // `||`: the empty parameter list. The arrow sits beside it.
+            self.pos += 2;
+        } else if *self.current() == Kind::Pipe {
+            self.pos += 1;
+            loop {
+                if params.len() >= 16 { return Err(self.fail("closure parameter limit exceeded (16)")); }
+                let binding_range = self.tokens[self.pos].offset..self.tokens[self.pos].end;
+                let param = self.identifier()?;
+                if self.names.contains_key(&param) {
+                    if self.shadow_ok {
+                        self.names.remove(&param);
+                    } else {
+                        return Err(self.duplicate_binding_error(&param));
+                    }
+                }
+                if RESERVED.contains(&param.as_str()) { return Err(self.fail(&format!("'{param}' is a built-in name and cannot be a closure parameter"))); }
+                self.take(Kind::Colon)?;
+                let ty = self.named_type()?;
+                let var_id = self.next_var; self.next_var += 1;
+                self.names.insert(param, (var_id, false, ty));
+                self.binding_ranges.insert(var_id, binding_range);
+                params.push((var_id, ty));
+                if *self.current() != Kind::Comma { break; }
+                self.pos += 1;
+            }
+            self.take(Kind::Pipe)?;
+            self.take(Kind::Arrow)?;
+        }
+        let ret = self.return_annotation()?;
+        // A closure may not return a borrow: the hidden capture parameters
+        // live in the enclosing frame, and the borrow would outlive them the
+        // moment the call returns.
+        if matches!(ret, Type::StructRef(_) | Type::StructMut(_)) {
+            return Err(self.fail("a closure cannot return a borrow; return an owned value instead"));
+        }
+        self.return_type = ret;
+        self.in_main = false;
+        self.scopes.push(params.iter().map(|&(var_id, ty)| (var_id, ty)).collect());
+        let body = self.block();
+        let scope = self.scopes.pop().unwrap();
+        let mut body = body?;
+        let owned: Vec<(usize, Type)> = scope.iter().filter(|(_, ty)| ty.owned()).copied().collect();
+        if !owned.is_empty() { body.push(Statement::Frees(owned)); }
+        if !returns(&body) { return Err(self.fail("a closure body must return a value on every path")); }
+        Ok(Function { id, params, body, is_main: false, returns: ret })
+    }
+
+    // `name(args)` on a variable of closure type: the captures are read at
+    // the call site — value captures move their outer variables (so a second
+    // call is a use-after-move, which is what makes the FnOnce shape safe),
+    // borrow captures forward the enclosing scope's own borrow.
+    pub(super) fn closure_call(&mut self, name: &str, call_offset: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        let Some(&(var_id, _, Type::Closure(cid))) = self.names.get(name) else {
+            return Err(self.fail(&format!("internal: '{name}' is not a closure")));
+        };
+        let _ = var_id;
+        let def = self.generics.closures[cid].clone();
+        let mut args: Vec<Argument> = Vec::new();
+        for (outer_id, ty) in &def.value_captures {
+            if self.moved.contains(outer_id) {
+                return Err(moved_value_hint(self.binding_label(self.error_at(call_offset, &format!("cannot call '{name}' again because a value capture was already moved by the first call")).with_code("E0102"), *outer_id)));
+            }
+            if self.is_borrowed(*outer_id) {
+                return Err(self.fail(&format!("cannot call '{name}' while one of its captured variables is borrowed")));
+            }
+            if ty.owned() {
+                self.moved.insert(*outer_id);
+            }
+            args.push(Argument::Value(Expr::Variable(*outer_id, *ty, 0, 0)));
+        }
+        for (outer_id, hidden) in &def.borrow_captures {
+            match hidden {
+                Type::StrView => {
+                    // The outer variable is the string the view reads.
+                    args.push(Argument::View(Expr::Variable(*outer_id, Type::String, 0, 0)));
+                }
+                _ => args.push(Argument::Borrow(*outer_id, true)),
+            }
+        }
+        let visible = self.call_arguments(&format!("closure {name}"), &def.params)?;
+        args.extend(visible);
+        Ok((Expr::Call(def.fn_id, args, def.ret), def.ret))
+    }
+}
+
+// The read-only form of a capture: the borrow types a body can read through.
+// Scalars have no borrow form, and maps cannot be borrowed, so they always
+// travel by value.
+fn borrow_capture_form(ty: &Type) -> Option<Type> {
+    match ty {
+        Type::String => Some(Type::StrView),
+        Type::Vec => Some(Type::VecRef),
+        Type::StrVec => Some(Type::StrVecRef),
+        Type::VecF => Some(Type::VecFRef),
+        Type::Struct(sid) => Some(Type::StructRef(*sid)),
+        _ => None,
+    }
+}
+
+// Which variables a parsed body actually touches, and which of them it
+// mutates. A capture is a variable the body reads; a mutation through a
+// capture would silently write a copy, so it is rejected instead.
+fn collect_capture_uses(function: &Function) -> (std::collections::HashSet<usize>, std::collections::HashSet<usize>) {
+    let mut used = std::collections::HashSet::new();
+    let mut mutated = std::collections::HashSet::new();
+    walk_statements(&function.body, &mut used, &mut mutated);
+    (used, mutated)
+}
+
+// Depth-first over the statement list. Every expression walks; every slot a
+// statement writes — assignments, element stores, container updates — is a
+// mutation of that slot, which is what the capture check rejects.
+fn walk_statements(statements: &[Statement], used: &mut std::collections::HashSet<usize>, mutated: &mut std::collections::HashSet<usize>) {
+    for statement in statements {
+        match statement {
+            Statement::Return(expr, _) | Statement::Declare(_, expr) => walk_expr(expr, used, mutated),
+            Statement::Array(_, values) => for v in values { walk_expr(v, used, mutated); },
+            Statement::Assign(id, expr, _) => { mutated.insert(*id); walk_expr(expr, used, mutated); }
+            Statement::Store(id, _, index, value, _, _) => { mutated.insert(*id); walk_expr(index, used, mutated); walk_expr(value, used, mutated); }
+            Statement::VecPush(id, value, _, _) | Statement::StrVecPush(id, value, _, _, _) | Statement::VecFPush(id, value, _, _) => { mutated.insert(*id); walk_expr(value, used, mutated); }
+            Statement::Sort(id, ..) | Statement::Reverse(id, ..) | Statement::VecPop(id, ..) | Statement::StrVecPop(id, ..) | Statement::VecFPop(id, ..) => { mutated.insert(*id); }
+            Statement::VecStore(id, index, value, _, _) | Statement::StrVecStore(id, index, value, _, _, _) | Statement::VecFStore(id, index, value, _, _) => { mutated.insert(*id); walk_expr(index, used, mutated); walk_expr(value, used, mutated); }
+            Statement::FieldStore(id, _, _, value, _) => { mutated.insert(*id); walk_expr(value, used, mutated); }
+            Statement::Print(printed) => if let Printed::Expr(expr) = printed { walk_expr(expr, used, mutated); },
+            Statement::Assert(expr, _, _) => walk_expr(expr, used, mutated),
+            Statement::If(cond, yes, no) => { walk_expr(cond, used, mutated); walk_statements(yes, used, mutated); walk_statements(no, used, mutated); }
+            Statement::While(cond, body) => { walk_expr(cond, used, mutated); walk_statements(body, used, mutated); }
+            Statement::For(_, container, body, ..) => { used.insert(*container); walk_statements(body, used, mutated); }
+            Statement::ForTokens(_, base, body, ..) => { used.insert(*base); walk_statements(body, used, mutated); }
+            Statement::Match(subject, _, arms) => {
+                used.insert(*subject);
+                for arm in arms { walk_statements(&arm.body, used, mutated); }
+            }
+            Statement::MapPut(place, key, value, _, _) => { record_place(place, used, mutated); walk_expr(key, used, mutated); walk_expr(value, used, mutated); }
+            Statement::Propagate(expr, _, _, _, _) => walk_expr(expr, used, mutated),
+            Statement::Exit(code, _) => walk_expr(code, used, mutated),
+            Statement::Break | Statement::Continue(_) | Statement::Frees(_) => {}
+        }
+    }
+}
+
+fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: &mut std::collections::HashSet<usize>) {
+    match expr {
+        Expr::Variable(id, ..) => { used.insert(*id); }
+        Expr::Index(id, _, _, _, _) | Expr::VecIndex(id, ..) | Expr::StrVecIndex(id, ..) => { used.insert(*id); }
+        Expr::Tokens(id, ..) => { used.insert(*id); }
+        Expr::Join(id, sep, ..) => { used.insert(*id); walk_expr(sep, used, mutated); }
+        // The call's program name is an expression like any other; the
+        // borrowed argument vector is a bare variable slot.
+        Expr::RunCommand(prog, id, ..) => { walk_expr(prog, used, mutated); used.insert(*id); }
+        Expr::Field(base, _, _) => walk_expr(base, used, mutated),
+        Expr::Call(_, args, _) => {
+            for arg in args {
+                match arg {
+                    Argument::Value(e) | Argument::View(e) => walk_expr(e, used, mutated),
+                    Argument::Borrow(id, _) => { used.insert(*id); }
+                }
+            }
+        }
+        Expr::MapGet(place, key, ..) | Expr::MapHas(place, key, ..) | Expr::MapRemove(place, key, ..) => { record_place(place, used, mutated); walk_expr(key, used, mutated); }
+        Expr::MapInc(place, key, delta, ..) => { record_place(place, used, mutated); walk_expr(key, used, mutated); walk_expr(delta, used, mutated); }
+        Expr::MapKeys(place, ..) => record_place(place, used, mutated),
+        Expr::Binary(a, _, b, ..) | Expr::StrEq(a, b, _) | Expr::Contains(a, b, ..) | Expr::Split(a, b, ..) | Expr::WriteFile(a, b, ..) | Expr::Slice(a, b, ..) | Expr::TryWriteFile(a, b, ..) | Expr::TryCopyFile(a, b, ..) | Expr::TryRenamePath(a, b, ..) | Expr::PathJoin(a, b, ..) | Expr::StartsWith(a, b) | Expr::EndsWith(a, b) | Expr::CountLinesWith(a, b, ..) | Expr::Utf8Prefix(a, b, ..) | Expr::Find(a, b, ..) | Expr::JsonGet(a, b, ..) | Expr::JsonInt(a, b, ..) | Expr::JsonBool(a, b, ..) | Expr::JsonLen(a, b, ..) | Expr::JsonHas(a, b, ..) => { walk_expr(a, used, mutated); walk_expr(b, used, mutated); }
+        Expr::Neg(a, ..) | Expr::Not(a) | Expr::Len(a, ..) | Expr::ReadFile(a, ..) | Expr::Bytes(a, ..) | Expr::Trim(a, ..) | Expr::Lines(a, ..) | Expr::Utf8Len(a, ..) | Expr::ToString(a, ..) | Expr::FloatToString(a, ..) | Expr::ToF64(a, ..) => walk_expr(a, used, mutated),
+        Expr::SliceView(_, _, a, b, ..) => { walk_expr(a, used, mutated); walk_expr(b, used, mutated); }
+
+        Expr::StructLit(_, values) | Expr::EnumLit(_, _, _, values) | Expr::VecLit(values, ..) => { for v in values { walk_expr(v, used, mutated); } }
+        Expr::MathCall(_, args, ..) => { for v in args { walk_expr(v, used, mutated); } }
+        Expr::TryReadFile(a, ..) | Expr::TryListDir(a, ..) | Expr::PathExists(a, ..) | Expr::PathIsDir(a, ..) | Expr::ParseInt(a, ..) | Expr::PathName(a, ..) | Expr::PathParent(a, ..) | Expr::TryFileInfo(a, ..) | Expr::TryRemoveFile(a, ..) | Expr::TryRemoveDir(a, ..) | Expr::TryCreateDir(a, ..) | Expr::SetCwd(a, ..) | Expr::Env(a, ..) | Expr::ToI64(a, ..) => walk_expr(a, used, mutated),
+        Expr::TryAppendFile(a, b, ..) => { walk_expr(a, used, mutated); walk_expr(b, used, mutated); }
+        Expr::Number(_) | Expr::FloatLit(_) | Expr::BoolLit(_) | Expr::StrLit(..) | Expr::Args(..) | Expr::ReadStdin(..) | Expr::Cwd(..) | Expr::StrVecNew(..) | Expr::F64VecNew(..) | Expr::NowMs | Expr::NowS | Expr::ClosureLit | Expr::MapNew(..) => {}
+    }
+}
+
+fn record_place(place: &MapPlace, used: &mut std::collections::HashSet<usize>, mutated: &mut std::collections::HashSet<usize>) {
+    let id = place.slot();
+    used.insert(id);
+    mutated.insert(id);
+}

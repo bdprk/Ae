@@ -1,0 +1,37 @@
+// ADR-0188: closure literals with capture inference.
+// A closure compiles to an ordinary function whose leading parameters are the
+// captures: read-only captures borrow (the closure is callable any number of
+// times), captures the body consumes travel by value (the first call moves
+// them). The enclosing scope keeps every variable the body borrowed.
+struct Task { title: string, weight: i64 }
+
+fn main() {
+    // Visible parameters, no captures.
+    let add = | a: i64, b: i64 | -> i64 { return a + b; };
+    print(add(3, 4));
+    // A scalar capture copies on each call.
+    let base = 10;
+    let offset = | x: i64 | -> i64 { return x + base; };
+    print(offset(5));
+    print(offset(6));
+    // A read-only string capture borrows: two calls, no move.
+    let name = "world";
+    let greet = || -> string { return "hi " + name; };
+    print(greet());
+    print(greet());
+    // A struct capture reads through its fields under a borrow.
+    let task = Task { title: "ship", weight: 3 };
+    let describe = || -> string { return task.title + "/" + to_string(task.weight); };
+    print(describe());
+    print(task.weight);
+    // A body that needs ownership makes the capture a value: the first call
+    // moves the outer variable, so a second call would be a use-after-move
+    // and is rejected. Order this before any further use of `note`.
+    let note = "memo";
+    let shout = || -> string { return note + "!"; };
+    print(shout());
+    // Nested closures capture like any other body.
+    let step = 2;
+    let twice = | x: i64 | -> i64 { let bump = | y: i64 | -> i64 { return y + step; }; return bump(x) * 2; };
+    print(twice(5));
+}

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 mod parser;
+mod closures;
 mod expression;
 mod types;
 mod declarations;
@@ -21,7 +22,7 @@ use c_output::*;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), StructRef(usize), StructMut(usize), Enum(&'static str, usize), Tokens }
+enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), StructRef(usize), StructMut(usize), Enum(&'static str, usize), Tokens, Closure(usize) }
 impl Type {
     fn name(self) -> String {
         match self {
@@ -51,6 +52,9 @@ impl Type {
             // A single-pass cursor over a string; it owns no memory and only
             // `for` consumes it (ADR-53).
             Type::Tokens => "token cursor".to_owned(),
+            // A closure value names its generated function; the captures are
+            // hidden parameters, so the value itself has no storage.
+            Type::Closure(_) => "closure".to_owned(),
         }
     }
     fn c_temp(self) -> String {
@@ -72,6 +76,9 @@ impl Type {
             Type::StructMut(k) => format!("ae_t{k}* "),
             Type::Enum(_, k) => format!("ae_e{k} "),
             Type::Tokens => "ae_tokens ".to_owned(),
+            // Never declared: a closure has no storage, and this arm exists
+            // so a stray use fails the build instead of printing a bad type.
+            Type::Closure(_) => "void ".to_owned(),
             _ => "int64_t ".to_owned(),
         }
     }
@@ -167,7 +174,11 @@ enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Bo
     Tokens(usize, Option<String>, Box<Expr>, usize, usize), Lines(Box<Expr>, usize, usize), CountLinesWith(Box<Expr>, Box<Expr>, usize, usize), StructLit(usize, Vec<Expr>), EnumLit(&'static str, usize, usize, Vec<Expr>), TryReadFile(Box<Expr>, Type, usize, usize), TryListDir(Box<Expr>, Type, usize, usize), PathExists(Box<Expr>, usize, usize), PathIsDir(Box<Expr>, usize, usize), TryWriteFile(Box<Expr>, Box<Expr>, Type, usize, usize), ParseInt(Box<Expr>, Type, usize, usize), ToString(Box<Expr>, usize, usize), PathJoin(Box<Expr>, Box<Expr>, usize, usize), PathName(Box<Expr>, usize, usize), PathParent(Box<Expr>, usize, usize), TryFileInfo(Box<Expr>, Type, usize, usize), TryCopyFile(Box<Expr>, Box<Expr>, Type, usize, usize), TryRenamePath(Box<Expr>, Box<Expr>, Type, usize, usize), TryRemoveFile(Box<Expr>, Type, usize, usize), TryRemoveDir(Box<Expr>, Type, usize, usize), TryCreateDir(Box<Expr>, Type, usize, usize), SetCwd(Box<Expr>, Type, usize, usize), MapNew(usize, usize, MapKind), MapGet(MapPlace, Box<Expr>, Type, usize, usize), MapHas(MapPlace, Box<Expr>, usize, usize), MapRemove(MapPlace, Box<Expr>, usize, usize), MapInc(MapPlace, Box<Expr>, Box<Expr>, usize, usize), MapKeys(MapPlace, usize, usize), Utf8Len(Box<Expr>, usize, usize), Utf8Prefix(Box<Expr>, Box<Expr>, usize, usize), Trim(Box<Expr>, usize, usize), StartsWith(Box<Expr>, Box<Expr>), EndsWith(Box<Expr>, Box<Expr>),
     TryAppendFile(Box<Expr>, Box<Expr>, Type, usize, usize), Env(Box<Expr>, Type, usize, usize), JsonGet(Box<Expr>, Box<Expr>, Type, usize, usize), JsonInt(Box<Expr>, Box<Expr>, Type, usize, usize), JsonBool(Box<Expr>, Box<Expr>, Type, usize, usize), JsonLen(Box<Expr>, Box<Expr>, Type, usize, usize), JsonHas(Box<Expr>, Box<Expr>, usize, usize), Find(Box<Expr>, Box<Expr>, Type, usize, usize), ReadStdin(Type, usize, usize), Cwd(Type, usize, usize), StrVecNew(usize, usize), F64VecNew(usize, usize), RunCommand(Box<Expr>, usize, Type, usize, usize), NowMs, NowS, Field(Box<Expr>, String, Type), StrEq(Box<Expr>, Box<Expr>, bool), Neg(Box<Expr>, usize, usize), Not(Box<Expr>),
     // Math builtin (ADR-60): index into MATH_FNS, arguments, source position.
-    MathCall(u8, Vec<Box<Expr>>, usize, usize), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type) }
+    MathCall(u8, Vec<Box<Expr>>, usize, usize), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type),
+    // A closure literal names its generated function and stores nothing
+    // (ADR-0188): the declaration emits no C, and the call site reads the
+    // captures at the moment of the call.
+    ClosureLit }
 // Which value type a map holds: the builtins dispatch on it (ADR-65).
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum MapKind { Int, Float }
@@ -228,7 +239,7 @@ struct EnumDef { name: &'static str, variants: Vec<(String, Vec<Type>)>, file: S
 // declaration's type parameters. Substitution replaces every Param with a
 // concrete argument, so Param never reaches code generation.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Payload { Concrete(Type), Param(usize), SelfType }
+enum Payload { Concrete(Type), Param(usize) }
 // `enum Option[T] { Some(T), None }` before it is instantiated. Kept apart from
 // EnumDef because a declaration has no layout: only instantiations do.
 #[derive(Debug, Clone)]
@@ -341,7 +352,7 @@ type Instance = (usize, Vec<Type>, Type);
 // arguments (ADR-21, ADR-30, ADR-31). `next_fn_id` is the one id space shared
 // by ordinary and instantiated functions, so C names never collide.
 #[derive(Default, Clone)]
-struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, struct_origin: HashMap<usize, (usize, Vec<Type>)>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef>, generic_impls: HashMap<String, GenericImplDef>, generic_impl_done: HashMap<String, Instance>, impl_in_progress: std::collections::HashSet<String> }
+struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, struct_origin: HashMap<usize, (usize, Vec<Type>)>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef>, generic_impls: HashMap<String, GenericImplDef>, generic_impl_done: HashMap<String, Instance>, impl_in_progress: std::collections::HashSet<String>, closures: Vec<ClosureDef> }
 #[derive(Debug)]
 struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 
@@ -374,7 +385,16 @@ enum ReceiverKind { ByValue, Shared, Mutable }
 // One generic impl block: `impl Pair[K, V] { ... }`. Coherence keeps it in
 // the file that declares the struct, one per generic struct.
 #[derive(Debug, Clone)]
-struct GenericImplDef { name: String, params: Vec<String>, methods: Vec<GenericImplMethod>, file: String, public: bool }
+struct GenericImplDef { params: Vec<String>, methods: Vec<GenericImplMethod>, file: String }
+
+// A closure literal's contract (ADR-0188). The generated function takes the
+// captured variables as hidden leading parameters, then the visible ones:
+// a value capture moves its outer variable at each call (the callee owns the
+// copy), a borrow capture forwards a read-only borrow of storage that stays
+// with the enclosing scope. A closure value itself has no storage — it is a
+// name for the function id — so it cannot be stored, returned, or moved.
+#[derive(Debug, Clone)]
+struct ClosureDef { fn_id: usize, params: Vec<Type>, ret: Type, value_captures: Vec<(usize, Type)>, borrow_captures: Vec<(usize, Type)> }
 
 // One entry of an inherent `impl` block. `receiver` records the type the first
 // parameter was bound to — the struct by value for `self`, a read-only borrow
@@ -386,12 +406,12 @@ struct MethodDef { signature: Signature, receiver: Option<Type> }
 
 type SharedFunctions = HashMap<String, Signature>;
 
-struct Parser<'a> { file: String, source: &'a str, tokens: Rc<Vec<Token>>, shared_source: Rc<str>, pos: usize, names: HashMap<String, (usize, bool, Type)>, binding_ranges: HashMap<usize, std::ops::Range<usize>>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, call_borrows: Vec<(usize, usize)>, mut_borrows: Vec<(usize, usize)>, plus_operand_depth: usize, scopes: Vec<Vec<(usize, Type)>>, subst: HashMap<String, Type>, trait_bounds: HashMap<String, Vec<usize>>, receiver: Option<Type>, impl_self: Option<Type>, pending: Vec<Function> }
+struct Parser<'a> { file: String, source: &'a str, tokens: Rc<Vec<Token>>, shared_source: Rc<str>, pos: usize, names: HashMap<String, (usize, bool, Type)>, binding_ranges: HashMap<usize, std::ops::Range<usize>>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, call_borrows: Vec<(usize, usize)>, mut_borrows: Vec<(usize, usize)>, plus_operand_depth: usize, scopes: Vec<Vec<(usize, Type)>>, subst: HashMap<String, Type>, trait_bounds: HashMap<String, Vec<usize>>, receiver: Option<Type>, impl_self: Option<Type>, shadow_ok: bool, pending: Vec<Function> }
 #[derive(Debug, Default)]
 struct Program { files: Vec<Vec<Function>>, structs: Vec<StructDef>, enums: Vec<EnumDef> }
 
 fn make_parser<'a>(file: &str, source: &'a str, tokens: Rc<Vec<Token>>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics) -> Parser<'a> {
-    Parser { file: file.to_owned(), source, tokens, shared_source: Rc::from(source), pos: 0, names: HashMap::new(), binding_ranges: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst: HashMap::new(), trait_bounds: HashMap::new(), receiver: None, impl_self: None, pending: Vec::new() }
+    Parser { file: file.to_owned(), source, tokens, shared_source: Rc::from(source), pos: 0, names: HashMap::new(), binding_ranges: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst: HashMap::new(), trait_bounds: HashMap::new(), receiver: None, impl_self: None, shadow_ok: false, pending: Vec::new() }
 }
 
 #[allow(dead_code)] // exercised by in-memory unit tests

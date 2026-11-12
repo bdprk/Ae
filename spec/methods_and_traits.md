@@ -1,6 +1,6 @@
 ﻿# Methods, Impl Blocks, and Traits Specification (M1.2)
 
-> **Status (ADR-0182 – 0187)**: this document describes the
+> **Status (ADR-0182 – 0188)**: this document describes the
 > M1 target, not the current language. Implemented today: inherent
 > `impl Type { fn m(self, ...) -> R }` with the call form `value.m(...)`
 > (structs and enums), associated functions `impl Type { fn f(...) -> R }` with

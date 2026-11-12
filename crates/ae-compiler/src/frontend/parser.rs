@@ -39,7 +39,7 @@ impl<'a> Parser<'a> {
             diagnostic.with_suggestion("If mutation is intended, declare the binding with `var`.")
         }
     }
-    fn duplicate_binding_error(&self, name: &str) -> ae_span::Diagnostic {
+    pub(super) fn duplicate_binding_error(&self, name: &str) -> ae_span::Diagnostic {
         let diagnostic = self.fail(&format!("duplicate variable '{name}'")).with_code("E0104");
         match self.names.get(name) {
             Some(&(id, _, _)) => self.binding_label(diagnostic, id),
@@ -484,6 +484,7 @@ impl<'a> Parser<'a> {
                     if self.in_main { return Err(self.fail("return is not supported in main")); }
                     self.pos += 1;
                     let (value, ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
+                    if matches!(ty, Type::Closure(_)) { return Err(self.fail("a closure cannot be returned: it has no storage, and its captures live in this frame")); }
                     if ty != self.return_type { return Err(self.fail(&format!("return type must be {}", self.return_type.name()))); }
                     // Every live owned value that is not returned is released.
                     result.push(Statement::Return(value, self.live_owned()));

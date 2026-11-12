@@ -1,0 +1,62 @@
+// Closure literals with capture inference (ADR-0188).
+//
+// A closure compiles to an ordinary function whose leading parameters are its
+// captures. The two probes decide each capture's mode: a body that only
+// reads borrows (the closure is callable any number of times), a body that
+// consumes moves (the first call moves the outer variable — FnOnce). The
+// closure value itself stores nothing: it is a name for the generated
+// function, so it cannot be returned or stored.
+
+struct Task {
+    title: string,
+    weight: i64,
+}
+
+fn main() {
+    // Visible parameters only: the call is a plain call with fresh values.
+    let add = | a: i64, b: i64 | -> i64 {
+        return a + b;
+    };
+    print(add(20, 22));
+
+    // A scalar capture copies on every call, so the closure is reusable.
+    let base = 100;
+    let offset = | x: i64 | -> i64 {
+        return x + base;
+    };
+    print(offset(1));
+    print(offset(2));
+
+    // A read-only string capture borrows the caller's buffer.
+    let name = "closures";
+    let greet = || -> string {
+        return "hello " + name;
+    };
+    print(greet());
+
+    // A struct capture reads through its fields under the same borrow.
+    let task = Task { title: "ship", weight: 42 };
+    let describe = || -> string {
+        return task.title + " w=" + to_string(task.weight);
+    };
+    print(describe());
+    // The borrow ended with the calls above; the struct is writable again.
+    let heavier = Task { title: task.title + "", weight: task.weight + 1 };
+    print(heavier.weight);
+
+    // A body that consumes a string capture turns it into a value capture:
+    // the call below moves `note`, and a second call would be rejected.
+    let note = "memo";
+    let shout = || -> string {
+        return note + "!";
+    };
+    print(shout());
+
+    // Closures nest: the inner body captures `step` from the middle scope.
+    let step = 3;
+    let scaled = | x: i64 | -> i64 {
+        let shifted = | y: i64 | -> i64 { return y + step; };
+        return shifted(x) * 2;
+    };
+    print(scaled(10));
+}

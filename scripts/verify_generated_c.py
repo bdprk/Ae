@@ -34,6 +34,7 @@ def run():
         ("struct_mut_borrow.ae", b"1\n6\n6\n3\n12", True),
         ("enum_methods.ae", b"12\ncircle r=2\n20\nrect 4x5\n1\n3", True),
         ("generic_impl.ae", b"30\n(30)\n2.5\n(2.5)", True),
+        ("closures.ae", b"42\n101\n102\nhello closures\nship w=42\n43\nmemo!\n26", True),
         ("control-flow.ae", b"45", True),
         ("strings.ae", b"hello\nhello!\nhi there\n8\n\xe4\xb8\xad\xe6\x96\x87 \xf0\x9f\x98\x80", True),
         ("enums.ae", b"27\n20\n0\ncircle r=3\nrect 4x5\nempty\ntext:hi\nnumber:7\nflag:true\n12\nnumber:9", True),
