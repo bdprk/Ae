@@ -1,0 +1,32 @@
+// Owned types through generics (M1.10): strings move into generic
+// constructors and come back out; nested instantiations of the same
+// declaration carry inner owned values; the release machinery handles every
+// instantiation's fields through the layout it registered.
+struct Wrapper[T] {
+    value: T,
+    label: string,
+}
+
+impl Wrapper[T] {
+    fn new(value: T, label: string) -> Self {
+        return Wrapper[T] { value: value, label: label };
+    }
+}
+
+// A generic function returning an instantiation of a generic type: the
+// struct literal inside the body uses the substituted parameter.
+fn lift[T](v: T) -> Wrapper[T] {
+    return Wrapper[T] { value: v, label: "lifted" };
+}
+
+fn main() {
+    let w = Wrapper[i64]::new(9, "nine");
+    print(w.value);
+    print(w.label);
+    let s = Wrapper[string]::new("hey", "greeting");
+    print(s.value + "/" + s.label);
+    let lifted = lift[string]("boxed");
+    print(len(lifted.value));
+    let nested = lift[Wrapper[i64]](Wrapper[i64] { value: 11, label: "inner" });
+    print(nested.value.value);
+}
