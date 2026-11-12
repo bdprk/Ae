@@ -1,0 +1,12 @@
+struct Point { x: i64 }
+
+impl Point {
+    fn magnitude(self) -> i64 {
+        return self.x;
+    }
+}
+
+fn main() {
+    let p = Point { x: 3 };
+    print(p.magnitue());
+}

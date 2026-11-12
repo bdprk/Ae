@@ -1,0 +1,72 @@
+// Inherent methods (ADR-0182): `value.method(args)` is a call to the function
+// declared in `impl Type`, with `value` as its first argument. The receiver is
+// a by-value parameter, so calling a method on an owned value moves it exactly
+// like passing that value to a plain function — each use below builds a fresh
+// value, which is also what the move checker would force.
+
+struct Counter {
+    n: i64,
+    step: i64,
+}
+
+impl Counter {
+    fn value(self) -> i64 {
+        return self.n;
+    }
+    // A method may build a new receiver: the chain `advanced(2).advanced(3)`
+    // reads as the two calls it compiles to.
+    fn advanced(self, by: i64) -> Counter {
+        return Counter { n: self.n + by * self.step, step: self.step };
+    }
+    fn slash(self, sep: string) -> string {
+        return to_string(self.n) + sep + to_string(self.step);
+    }
+}
+
+struct Pair {
+    a: i64,
+    b: i64,
+}
+
+impl Pair {
+    fn total(self) -> i64 {
+        return self.a + self.b;
+    }
+    // Same name as Counter::value and unrelated to it: methods live on the
+    // (type, name) pair.
+    fn value(self) -> i64 {
+        return self.a - self.b;
+    }
+}
+
+fn plain_value(n: i64) -> i64 {
+    return n;
+}
+
+fn main() {
+    let c = Counter { n: 1, step: 2 };
+    assert(c.value() == 1);
+    // The same number through the plain function it desugars to.
+    let c2 = Counter { n: 1, step: 2 };
+    assert(c2.value() == plain_value(1));
+    let c3 = Counter { n: 2, step: 2 };
+    assert(c3.value() == 2);
+
+    // Chained calls: 1 + 2*2 = 5, then 5 + 3*2 = 11.
+    let c4 = Counter { n: 1, step: 2 };
+    assert(c4.advanced(2).advanced(3).value() == 11);
+    let c5 = Counter { n: 1, step: 2 };
+    assert(c5.advanced(0).value() == 1);
+
+    // Non-integer arguments and results travel like any other parameter.
+    let c6 = Counter { n: 7, step: 3 };
+    let text = c6.slash("/");
+    assert(text == "7/3");
+
+    let p = Pair { a: 9, b: 4 };
+    assert(p.total() == 13);
+    let p2 = Pair { a: 9, b: 4 };
+    assert(p2.value() == 5);
+
+    print("methods_all_passed");
+}

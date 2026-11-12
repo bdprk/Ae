@@ -29,6 +29,7 @@ def run():
         ("arrays.ae", b"60", True),
         ("borrow.ae", b"60", True),
         ("functions.ae", b"720", True),
+        ("methods.ae", b"(4, 0)\n3\n8", True),
         ("control-flow.ae", b"45", True),
         ("strings.ae", b"hello\nhello!\nhi there\n8\n\xe4\xb8\xad\xe6\x96\x87 \xf0\x9f\x98\x80", True),
         ("enums.ae", b"27\n20\n0\ncircle r=3\nrect 4x5\nempty\ntext:hi\nnumber:7\nflag:true\n12\nnumber:9", True),

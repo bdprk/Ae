@@ -3,6 +3,21 @@ use super::*;
 use super::parser::moved_value_hint;
 
 impl Parser<'_> {
+    // `value.method(...)` with no such method. Naming what the type does have
+    // turns a typo into a one-line fix; a type with no impl at all gets the
+    // declaration form instead, since there is nothing to list.
+    fn no_such_method(&self, type_name: &str, method: &str) -> ae_span::Diagnostic {
+        let prefix = format!("{type_name}#");
+        let mut names: Vec<String> = self.generics.inherent.keys()
+            .filter_map(|key| key.strip_prefix(&prefix).map(str::to_owned))
+            .collect();
+        if names.is_empty() {
+            return self.fail(&format!("type '{type_name}' has no methods; declare one in 'impl {type_name} {{ ... }}', with 'self' as its first parameter"));
+        }
+        names.sort();
+        self.fail(&format!("type '{type_name}' has no method '{method}'; it has {}", names.join(", ")))
+    }
+
     pub(super) fn expression(&mut self, min: u8, moving: bool) -> Result<(Expr, Type), ae_span::Diagnostic> {
         if self.expression_depth == 0 { self.expression_nodes = 0; }
         if self.expression_depth >= 128 { return Err(self.fail("expression nesting limit exceeded (128)")); }
@@ -729,6 +744,39 @@ impl Parser<'_> {
             let fname = self.identifier()?;
             let (base, base_ty) = lhs;
             let sid = match base_ty { Type::Struct(sid) => sid, other => return Err(self.fail(&format!("type {} has no fields", other.name()))) };
+            // `value.method(args)` resolves to the method's ordinary function,
+            // with the receiver as argument 0 (M1.2). Nothing is added to the
+            // backend: the call it builds is the one a hand-written call builds.
+            if *self.current() == Kind::LParen {
+                let struct_name = self.structs[sid].name.clone();
+                let key = format!("{struct_name}#{fname}");
+                let Some(signature) = self.generics.inherent.get(&key).cloned() else {
+                    return Err(self.no_such_method(&struct_name, &fname));
+                };
+                // The receiver is a by-value parameter, so an owned receiver
+                // moves here exactly as it would in a plain call.
+                match &base {
+                    Expr::Variable(id, ty, _, _) if ty.owned() => {
+                        let id = *id;
+                        if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                            return Err(self.fail(&format!("cannot move the receiver of '{fname}' while it is borrowed")));
+                        }
+                        if self.moved.contains(&id) {
+                            return Err(moved_value_hint(self.binding_label(self.fail(&format!("cannot use a moved value as the receiver of '{fname}'")).with_code("E0102"), id)));
+                        }
+                        self.moved.insert(id);
+                    }
+                    Expr::Field(_, _, fty) if fty.owned() => {
+                        return Err(self.fail(&format!("cannot move a field out of a struct to call '{fname}'; bind it first or pass it where a borrow works")));
+                    }
+                    _ => {}
+                }
+                let params = signature.params[1..].to_vec();
+                let mut args = self.call_arguments(&format!("{struct_name}.{fname}"), &params)?;
+                args.insert(0, Argument::Value(base));
+                lhs = (Expr::Call(signature.id, args, signature.ret), signature.ret);
+                continue;
+            }
             let fty = {
                 let def = &self.structs[sid];
                 let fidx = def.fields.iter().position(|(n, _)| *n == fname)

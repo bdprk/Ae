@@ -1,0 +1,1 @@
+ae: $DIR/method_unknown_name.ae:11:21: type 'Point' has no method 'magnitue'; it has magnitude

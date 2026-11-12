@@ -132,11 +132,25 @@ This determination is based on **capabilities used by the program** rather than 
 
 After introducing a trait bound on a generic function via `[T: Name]`, the function body can directly invoke methods belonging to that trait—**dispatch is resolved at instantiation time**: concrete argument types for T determine a unique `impl` method, and the invocation emits that exact function call (static dispatch, equivalent to a hand-written function call, with no method tables or function pointers). Bounds can be mixed with built-in bounds (`T: Add + Area`); trait methods with identical names can only be declared by **a single** constrained parameter, otherwise the call reports `method 'x' is ambiguous`. If a given argument type lacks an `impl` during instantiation, it reports `no impl of trait 'X' for 'Y'; required by 'Z'`.
 
-**There is only one calling form**: when writing the trait into a generic body with constraints, call it as a standard function `method(value, ...)` (without the trait name or dot notation). Trait methods cannot be called outside of generic bodies; the method body of an `impl` is a standard function body containing no constrained parameters, so `impl` methods **cannot call each other**—please implement shared logic as standard functions. Since `impl` function bodies are not registered by method name, they cannot be called directly, nor will they conflict with standard functions.
+**There is only one calling form**: when writing the trait into a generic body with constraints, call it as a standard function `method(value, ...)` (without the trait name or dot notation). Trait methods cannot be called outside of generic bodies; the method body of an `impl` is a standard function body containing no constrained parameters, so `impl` methods **cannot call each other**—please implement shared logic as standard functions. (Inherent methods, in the next section, are a different mechanism: registered per `(type, name)` and called as `value.name(...)`; nothing here applies to them.) Since `impl` function bodies are not registered by method name, they cannot be called directly, nor will they conflict with standard functions.
 
 Consistency rules: `impl` blocks can only be written in the file where the trait or the type is declared (third-party files are rejected); each (trait, type) pair is unique per program; a maximum of 256 `impl` blocks are allowed per program. `pub trait` can be referenced by other files; an `impl` is registered as soon as its containing file is loaded via `use` (registration occurs upon loading, without needing to call any items from it).
 
 v1 boundaries: Trait signatures do not support `&T` (the landing shape for borrows requires independent design); generic `impl` blocks (`impl Area for Pair[K, V]`), default method bodies, dynamic dispatch/trait objects, associated types, and `where` clauses are not supported. Missing `impl` blocks trigger errors at the instantiation site, not via pre-checks at the declaration site. See `examples/traits.ae`.
+
+## Inherent Methods (`impl Type`) (ADR-0182)
+
+`impl Type { fn name(self, ...) -> R { body } }` attaches methods to a concrete struct declared in the same file, and `value.name(args)` calls one. Scope: structs only, `impl` must follow the struct's declaration, the receiver is by value, at most 8 parameters per method, at most 256 methods per program, and generic types are excluded (`impl Pair[K, V]` is rejected).
+
+**Internal shape**: a method is an ordinary function whose parameter 0 is the receiver, and `value.name(args)` is that function called with `value` first. The runtime and the backend are unchanged — no method table, no function pointer, no indirection; dispatch follows the receiver's static type and is resolved at compile time.
+
+**Receiver semantics**: `self` is a by-value parameter, so calling a method on an owned value **moves** it; `c.value(); c.value();` fails for the same reason `f(c); f(c);` does. `&self` and `&mut self` are rejected because read-only borrows exist only for `string`, `vec`, `vec[string]`, `vec[f64]`, and maps — a struct cannot be borrowed, so a method cannot take one by reference. Passing a struct field as a receiver is rejected too, matching the rule that a field cannot be moved out of its owner.
+
+`self` is a parameter name rather than a keyword: it is recognized only as the first parameter inside an inherent `impl` block, and anywhere else reports that it is only available there. `pub` is accepted before a method and changes nothing — a method is exactly as visible as the type it belongs to. Trait methods (previous section) remain a separate mechanism: they dispatch through generic bounds and are called with plain function syntax.
+
+Rejected at declaration: a method named `main`; a built-in name (`len`, `push`, ...); a name that repeats a field of the type, because `value.name` would then have to mean two things; a duplicate method on the same type; an `impl` naming something that is not a struct, or a struct declared in another file.
+
+Known gaps: methods on enums, associated functions without a receiver (`Point::new()`), generic impl blocks, and one method calling another on the same receiver — `self.other()` moves `self`, so shared logic goes in a free function. See `examples/methods.ae`.
 
 ## String Vectors
 

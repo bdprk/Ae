@@ -1,0 +1,1 @@
+ae: $DIR/method_borrow_receiver.ae:4:12: '&self' is not supported: borrows exist only for string, vec, and map, so a method takes its receiver by value as 'self'

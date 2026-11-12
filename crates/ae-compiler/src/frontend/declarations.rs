@@ -300,9 +300,95 @@ impl Parser<'_> {
     // Pass one for `impl Trait for Type { fn ... }`: register each method's
     // mangled signature and assign its id, so pass two (program) can parse
     // the bodies in file order against `id_order`.
+    // Inherent `impl Type { fn m(self) ... }` (M1.2, v1). A method is an
+    // ordinary function whose parameter 0 is the receiver, so nothing new is
+    // needed downstream: the backend already emits calls and moves. What is new
+    // is the (type, method) name space that `value.m(...)` resolves through, and
+    // the receiver spelling that lets a body read `self.field`.
+    fn collect_inherent_impl(&mut self, type_name: String, next_id: &mut usize) -> Result<(), ae_span::Diagnostic> {
+        if self.generics.struct_names.contains_key(&type_name) {
+            return Err(self.fail(&format!("'{type_name}' is a generic struct; inherent impls on generic types are not supported yet — write a plain function")));
+        }
+        let sid = *self.struct_names.get(&type_name).ok_or_else(|| {
+            self.fail(&format!("impl names unknown type '{type_name}'; declare it with 'struct {type_name} {{ ... }}'"))
+        })?;
+        // Coherence, same shape as traits: the impl lives with the type, so two
+        // files can never give one type two different methods of the same name.
+        let owner = self.structs[sid].file.clone();
+        if owner != self.file {
+            return Err(self.fail(&format!("an inherent impl for '{type_name}' must be in the file that declares it ({owner})")));
+        }
+        self.take(Kind::LBrace)?;
+        while *self.current() != Kind::RBrace {
+            if *self.current() == Kind::Eof { return Err(self.fail("expected '}' before end of file")); }
+            // `pub` is accepted and means nothing here: a method is exactly as
+            // visible as the type it belongs to, so the marker would promise
+            // something the type itself does not grant.
+            self.take_pub();
+            self.take(Kind::Fn)?;
+            let method = self.identifier()?;
+            if method == "main" { return Err(self.fail("a method cannot be named main")); }
+            if RESERVED.contains(&method.as_str()) {
+                return Err(self.fail(&format!("'{method}' is a built-in name and cannot be a method")));
+            }
+            if self.structs[sid].fields.iter().any(|(name, _)| *name == method) {
+                return Err(self.fail(&format!("method '{method}' collides with the field of the same name on '{type_name}'; 'value.{method}' has to mean one thing, so rename one")));
+            }
+            let key = format!("{type_name}#{method}");
+            if self.generics.inherent.contains_key(&key) {
+                return Err(self.fail(&format!("duplicate method '{method}' for '{type_name}'")));
+            }
+            if self.generics.inherent.len() >= 256 { return Err(self.fail("method limit exceeded (256 per program)")); }
+            self.take(Kind::LParen)?;
+            let mut types = vec![Type::Struct(sid)];
+            self.take_receiver(&type_name)?;
+            while *self.current() == Kind::Comma {
+                self.pos += 1;
+                if types.len() >= 8 { return Err(self.fail("method parameter limit exceeded (8)")); }
+                let _param = self.identifier()?;
+                self.take(Kind::Colon)?;
+                types.push(self.parameter_type()?);
+            }
+            self.take(Kind::RParen)?;
+            self.take(Kind::Arrow)?;
+            let ret = self.parameter_type()?;
+            self.generics.next_fn_id = self.generics.next_fn_id.max(*next_id);
+            let id = self.generics.next_fn_id;
+            self.generics.next_fn_id += 1;
+            *next_id = self.generics.next_fn_id;
+            self.id_order.push(id);
+            self.generics.inherent.insert(key, Signature { id, params: types, ret, file: self.file.clone(), public: true });
+            self.skip_balanced_braces()?;
+        }
+        self.take(Kind::RBrace)
+    }
+
+    // The receiver is spelled `self` and nothing else. A type annotation is
+    // rejected rather than accepted-and-ignored, because the impl already fixed
+    // the type: writing it twice invites the two to disagree.
+    fn take_receiver(&mut self, type_name: &str) -> Result<(), ae_span::Diagnostic> {
+        if *self.current() == Kind::Amp {
+            return Err(self.fail("'&self' is not supported: borrows exist only for string, vec, and map, so a method takes its receiver by value as 'self'"));
+        }
+        if *self.current() == Kind::RParen {
+            return Err(self.fail("an inherent method must take 'self' as its first parameter"));
+        }
+        let param = self.identifier()?;
+        if param != "self" {
+            return Err(self.fail(&format!("the first parameter of an inherent method must be 'self', found '{param}'")));
+        }
+        if *self.current() == Kind::Colon {
+            return Err(self.fail(&format!("write the receiver as 'self'; it already has type '{type_name}'")));
+        }
+        Ok(())
+    }
+
     pub(super) fn collect_impl(&mut self, next_id: &mut usize) -> Result<(), ae_span::Diagnostic> {
         self.pos += 1; // impl
-        let trait_name = self.identifier()?;
+        let first = self.identifier()?;
+        // `impl Type { ... }` carries no `for`, so that name is the type itself.
+        if *self.current() != Kind::For { return self.collect_inherent_impl(first, next_id); }
+        let trait_name = first;
         let tid = *self.generics.trait_names.get(&trait_name)
             .ok_or_else(|| self.fail(&format!("impl names unknown trait '{trait_name}'")))?;
         self.take(Kind::For)?;
@@ -332,6 +418,7 @@ impl Parser<'_> {
         self.take(Kind::LBrace)?;
         while *self.current() != Kind::RBrace {
             if *self.current() == Kind::Eof { return Err(self.fail("expected '}' before end of file")); }
+            self.take_pub();
             self.take(Kind::Fn)?;
             let method = self.identifier()?;
             if method == "main" { return Err(self.fail("an impl method cannot be named main")); }
@@ -390,16 +477,30 @@ impl Parser<'_> {
     // the file's own functions.
     pub(super) fn parse_impl_bodies(&mut self, result: &mut Vec<Function>) -> Result<(), ae_span::Diagnostic> {
         self.pos += 1; // impl
-        self.identifier()?;
-        self.take(Kind::For)?;
-        self.parameter_type()?;
+        let first = self.identifier()?;
+        // The same shape decision the signature pass made, asked again from the
+        // tokens: `for` means a trait impl, its absence an inherent one.
+        let receiver = if *self.current() == Kind::For {
+            self.take(Kind::For)?;
+            self.parameter_type()?;
+            None
+        } else {
+            let sid = *self.struct_names.get(&first).ok_or_else(|| self.fail(&format!("unknown struct '{first}'")))?;
+            Some(Type::Struct(sid))
+        };
         self.take(Kind::LBrace)?;
         while *self.current() != Kind::RBrace {
             if *self.current() == Kind::Eof { return Err(self.fail("expected '}' before end of file")); }
+            self.take_pub();
             self.take(Kind::Fn)?;
             let _method = self.identifier()?;
             let id = self.id_order[result.len()];
-            result.push(self.function_rest(false, id)?);
+            // The body pass knows the receiver's type; the parameter list does
+            // not repeat it, so it is carried in the parser state instead.
+            self.receiver = receiver;
+            let parsed = self.function_rest(false, id);
+            self.receiver = None;
+            result.push(parsed?);
         }
         self.take(Kind::RBrace)
     }
@@ -476,6 +577,23 @@ impl Parser<'_> {
                 if mutable { self.pos += 1; }
                 let binding_range = self.tokens[self.pos].offset..self.tokens[self.pos].end;
                 let param = self.identifier()?;
+                // A receiver carries its type from the impl, so the parameter
+                // list never writes it (M1.2). Everywhere else `self` is just
+                // an unknown name, which keeps the spelling from leaking out of
+                // method bodies.
+                if param == "self" {
+                    let Some(receiver) = self.receiver else {
+                        return Err(self.fail("'self' is only available as the first parameter of an inherent impl method"));
+                    };
+                    if !params.is_empty() { return Err(self.fail("'self' must be the first parameter")); }
+                    let var_id = self.next_var; self.next_var += 1;
+                    self.names.insert(param, (var_id, mutable, receiver));
+                    self.binding_ranges.insert(var_id, binding_range);
+                    params.push((var_id, receiver));
+                    if *self.current() != Kind::Comma { break; }
+                    self.pos += 1;
+                    continue;
+                }
                 if RESERVED.contains(&param.as_str()) { return Err(self.fail(&format!("'{param}' is a built-in name and cannot be a parameter"))); }
                 if self.names.contains_key(&param) { return Err(self.fail(&format!("duplicate parameter '{param}'"))); }
                 self.take(Kind::Colon)?;
@@ -559,7 +677,7 @@ impl Parser<'_> {
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
-            borrows: Vec::new(), scopes: Vec::new(), subst, trait_bounds, pending: Vec::new(),
+            borrows: Vec::new(), scopes: Vec::new(), subst, trait_bounds, receiver: None, pending: Vec::new(),
         };
         let parsed = sub.function_rest(false, id);
         let mut nested = std::mem::take(&mut sub.pending);

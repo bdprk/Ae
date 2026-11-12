@@ -1,0 +1,1 @@
+ae: $DIR/method_field_collision.ae:4:9: method 'x' collides with the field of the same name on 'Point'; 'value.x' has to mean one thing, so rename one

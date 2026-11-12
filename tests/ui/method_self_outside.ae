@@ -1,0 +1,7 @@
+fn get(self: i64) -> i64 {
+    return self;
+}
+
+fn main() {
+    print(get(1));
+}

@@ -257,7 +257,7 @@ A custom native machine code backend/linker will only be considered as a separat
 |---|---|---|
 | Containers are hand-written families per element type (`vec`/`vec[string]`/`vec[f64]`/two types of map) | Linear bloat, impossible to cover arbitrary types | M1 |
 | 9 built-in result enums, dozens of global built-in functions | Verbose code, namespace pollution | M1 |
-| No method syntax, closures, or iterators | Expressiveness far below Go/Rust | M1 |
+| No closures or iterators. Inherent method syntax exists (ADR-0182), but trait methods still dispatch only through generic bounds | Expressiveness below Go/Rust | M1 |
 | No IR, AST emits C directly | Blocks borrow checking, optimization, backend swapping. `std/core` models IR structures, but no MIR pass exists | M2 |
 | Build shells out to gcc for compile and link | M5.4's 100 ms budget is unreachable: an empty program costs 96.5 ms to compile and 112.9 ms to link on the measured machine | M2/M5 |
 | Borrow checking is limited rules + runtime fallback | Does not meet static safety guarantees | M2 |
@@ -274,7 +274,7 @@ A custom native machine code backend/linker will only be considered as a separat
 
 ### 5.4 Verified Progress Since Version 0.3 (2026-11-12)
 
-These numbers are read from the working tree, not from memory: `cargo test --workspace --locked` reports 255 passing tests; `tests/run` holds 80 cases, `tests/ui` 4, `tests/ui-json` 38; `examples/` holds 41 programs; `std/core/` holds 256 modules; `docs/adr/` is numbered to 0180. CI runs the suite on `ubuntu-latest` and `windows-latest`.
+These numbers are read from the working tree, not from memory: `cargo test --workspace --locked` reports 255 passing tests; `tests/run` holds 81 cases, `tests/ui` 9, `tests/ui-json` 38; `examples/` holds 42 programs; `std/core/` holds 256 modules; `docs/adr/` is numbered to 0182. CI runs the suite on `ubuntu-latest` and `windows-latest`.
 
 Landed since the 0.3 revision:
 
@@ -499,5 +499,6 @@ Legend: ☑ done, ◐ partial (see note), ☐ not started.
 5. ☑ UI/execution snapshot testing framework and migration of legacy tests (M0.6–0.7) — `scripts/snapshots.py`, `tests/ui`, `tests/run`.
 6. ◐ Repository cleanup, dual-platform CI, baseline reports (M0.8–0.9) — CI matrix and script unit tests exist; no dependency caching, and only one baseline report.
 7. ◐ Begin M1.1: Type system specification — `spec/types.md`, `spec/methods_and_traits.md`, `spec/modules.md`, and `spec/diagnostics.md` exist; they describe the current language, not the M1 target.
+8. ◐ M1.2 first slice: inherent `impl` blocks and `value.method(...)` are implemented (ADR-0182, `tests/run/methods.ae`, `examples/methods.ae`). Receiver by value only; implicit `&self`, auto-borrow, receiver resolution order, associated functions, and methods on enums from `spec/methods_and_traits.md` are still unimplemented.
 
 Note: This document serves as a design and implementation plan and does not imply that the listed capabilities are already implemented. Actual progress is governed by the §9 status table and individual reports; the roadmap may be adjusted based on evidence, but modifications to §1.1 priorities and §2.2 hard rules must be approved via ADR.

@@ -1,0 +1,53 @@
+// Inherent methods: `impl Type { fn name(self, ...) }` and the call form
+// `value.name(...)` (ADR-0182). A method is an ordinary function whose first
+// parameter is the receiver, so it costs exactly what a plain call costs —
+// static resolution at compile time, no method table, no indirection.
+//
+// The receiver is taken by value. Borrows in this language exist only for
+// string, vec, and map, so there is no `&self`: calling a method on an owned
+// value moves it, exactly as passing that value to a function would.
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+impl Point {
+    // Builds a new point: the receiver is consumed, so the caller keeps its
+    // original only by building a fresh one.
+    fn shifted(self, dx: i64, dy: i64) -> Point {
+        return Point { x: self.x + dx, y: self.y + dy };
+    }
+    // Manhattan distance from the origin.
+    fn distance(self) -> i64 {
+        return abs_i64(self.x) + abs_i64(self.y);
+    }
+    fn describe(self) -> string {
+        return "(" + to_string(self.x) + ", " + to_string(self.y) + ")";
+    }
+}
+
+// A method body is a normal function body: this helper is where shared logic
+// goes, and the method above calls it.
+fn abs_i64(value: i64) -> i64 {
+    if value < 0 {
+        return -value;
+    }
+    return value;
+}
+
+fn main() {
+    // Chained calls: each `shifted` returns a new point, which the next call
+    // consumes. (3, 4) -> (4, 6) -> (4, 0).
+    let start = Point { x: 3, y: 4 };
+    let moved = start.shifted(1, 2).shifted(0, -6);
+    print(moved.describe());
+
+    // Distance from the origin after shifting: (1, 2) is 3.
+    let from_origin = Point { x: 1, y: 2 };
+    print(from_origin.distance());
+
+    // The receiver moved, so build another one rather than reuse it.
+    let negative = Point { x: -7, y: -1 };
+    print(negative.distance());
+}

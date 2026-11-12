@@ -1,0 +1,1 @@
+ae: $DIR/method_self_outside.ae:1:12: 'self' is only available as the first parameter of an inherent impl method
