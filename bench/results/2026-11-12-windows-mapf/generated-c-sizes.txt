@@ -1,0 +1,2 @@
+print(1) C bytes: 14820
+sensor_stats C bytes: 41742

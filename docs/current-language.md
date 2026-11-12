@@ -32,7 +32,7 @@
 
 **跨平台文本**：精确值（`sqrt(4.0)`→`2.0`、`floor`/`ceil`/`round` 的整值、`exp(0.0)`、`log(1.0)`、`sin(0.0)`、`cos(0.0)`、`pow(2.0,10.0)`、`min`/`max` 的全部输出含 `min(-0.0, 0.0)`）与 `nan` 拼写在两平台一致（文本由运行时自产，见上）；超越函数（`sin(1.0)` 等）不同 libm 可能差 1 ulp，**跨平台比较用容差**（`abs(value - expected) < 1e-15`），不逐字节比打印文本。示例见 `examples/math_basics.ae`。
 
-`f64` 可作参数、返回值、结构体字段、枚举负载和泛型实参（`Option[f64]`），也是 `vec[f64]` 的元素（ADR-61，见下文向量章节）；`map` 的值仍只有 `i64`，`&f64` 不可借用（只读借用是 `string`、`vec`、`vec[string]`、`vec[f64]` 四种）。数学内建之外尚无 `f32`、十进制小数、`min`/`max`、`map[string, f64]`。
+`f64` 可作参数、返回值、结构体字段、枚举负载和泛型实参（`Option[f64]`），也是 `vec[f64]` 的元素（ADR-61，见下文向量章节）；`map[string, f64]` 已可用（ADR-65，见下文 map 章节）；`&f64` 不可借用（只读借用是 `string`、`vec`、`vec[string]`、`vec[f64]` 四种，map 不可借用）。数学内建之外尚无 `f32`、十进制小数。
 
 ## 拥有型字符串与移动语义
 
@@ -188,9 +188,9 @@ v1 边界：trait 签名不支持 `&T`（借用的落地形状需要独立设计
 
 ## 可恢复错误与数字转换
 
-程序预置八个结果枚举（无需导入，变体顺序固定，编号 0–7）：`ReadResult{Ok(string), Err(string)}`、`WriteResult{Ok(i64), Err(string)}`、`IntResult{Ok(i64), Err(string)}`、`DirResult{Ok(vec[string]), Err(string)}`、`FileResult{Ok(i64, i64, bool), Err(string)}`、`StatusResult{Ok, Err(string)}`、`BoolResult{Ok(bool), Err(string)}`、`CommandResult{Ok(i64, string), Err(string)}`。可失败内建：`try_read_file(path) -> ReadResult`、`try_write_file(path, content) -> WriteResult`（成功返回写入字节数）、`parse_int(text) -> IntResult`。失败返回 `Err` 负载的错误描述，**不终止进程**；`read_file`/`write_file` 仍是失败即终止的不可恢复版本。`parse_int` 严格按十进制：可选 `+`/`-`、只允许 ASCII 数字、整串必须消费完、正负分别以 `9223372036854775807`/`-9223372036854775808` 为界，其余情况均为 `Err`。`to_string(i64) -> string` 是十进制格式化，与 `parse_int` 构成往返。
+程序预置九个结果枚举（无需导入，变体顺序固定，编号 0–8）：`ReadResult{Ok(string), Err(string)}`、`WriteResult{Ok(i64), Err(string)}`、`IntResult{Ok(i64), Err(string)}`、`DirResult{Ok(vec[string]), Err(string)}`、`FileResult{Ok(i64, i64, bool), Err(string)}`、`StatusResult{Ok, Err(string)}`、`BoolResult{Ok(bool), Err(string)}`、`CommandResult{Ok(i64, string), Err(string)}`、`FloatResult{Ok(f64), Err(string)}`（第 9 个，ADR-65，追加在末尾以保持既有编号）。可失败内建：`try_read_file(path) -> ReadResult`、`try_write_file(path, content) -> WriteResult`（成功返回写入字节数）、`parse_int(text) -> IntResult`。失败返回 `Err` 负载的错误描述，**不终止进程**；`read_file`/`write_file` 仍是失败即终止的不可恢复版本。`parse_int` 严格按十进制：可选 `+`/`-`、只允许 ASCII 数字、整串必须消费完、正负分别以 `9223372036854775807`/`-9223372036854775808` 为界，其余情况均为 `Err`。`to_string(i64) -> string` 是十进制格式化，与 `parse_int` 构成往返。
 
-结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string`/`map_new`/`map_get`/`map_has`/`map_remove`/`keys`/`utf8_len`/`utf8_prefix`/`strvec_new`/`f64vec_new`/`run_command`、数学内建 `sqrt`/`abs`/`floor`/`ceil`/`round`/`exp`/`log`/`sin`/`cos`/`pow`/`atan2`（ADR-60）与八个结果类型名均为保留名。
+结果值是普通枚举值：必须先用 `let` 绑定，再用 `match` 取出负载（`match` 不接受表达式主题）。错误文本随平台 `strerror` 语言变化，程序不应依赖精确内容。`try_read_file`/`try_write_file`/`try_list_dir`/`path_exists`/`path_is_dir`/`path_join`/`path_name`/`path_parent`/`try_file_info`/`try_copy_file`/`try_rename_path`/`try_remove_file`/`try_create_dir`/`try_remove_dir`/`parse_int`/`to_string`/`map_new`/`f64map_new`/`map_get`/`map_has`/`map_remove`/`keys`/`utf8_len`/`utf8_prefix`/`strvec_new`/`f64vec_new`/`run_command`、数学内建 `sqrt`/`abs`/`floor`/`ceil`/`round`/`exp`/`log`/`sin`/`cos`/`pow`/`atan2`（ADR-60）与八个结果类型名均为保留名。
 
 ## 错误与「可能没有」传播 `?`
 
@@ -312,11 +312,13 @@ fn port(config: &string) -> i64 {
 
 ## 哈希表
 
-`var counts = map_new();` 建立一个空的 `map[string, i64]`——当前唯一的映射实例化：键必须是 `string`，值必须是 `i64`，类型书写为 `map[string, i64]`（可用于变量标注、参数、返回类型与结构体字段）。
+`var counts = map_new();` 建立一个空的 `map[string, i64]`；`f64map_new()` 建立空的 `map[string, f64]`（ADR-65）。键必须是 `string`，值类型由构造函数决定并写在类型里（`map[string, i64]` / `map[string, f64]`，可用于变量标注、参数、返回类型与结构体字段）。
 
 - `counts[key] = n;` 插入或覆盖。键由运行时代为**复制**，因此视图（`&string` 参数、`vec[string]` 元素）与临时值都能直接作键；值是 `i64`，不涉及所有权。目标必须是可变映射（`var` 变量，或可变结构体变量的映射字段 `s.counts[key] = n;`），且在借用期间不可写。
 - `map_get(m, key) -> IntResult`：命中返回 `Ok(n)`，缺失返回 `Err("key not found")`——「不存在」与「值为 0」因此可以区分，不会像 C 风格 API 那样用 0 冒充缺失。这条理由文本是**共享的只读常量**（ADR-58）：未命中不分配内存，程序仍可把它当普通拥有型字符串读取、比较、拼接或拷进容器，释放时运行时按地址识别并跳过它；内容、`len` 与比较结果都没有特殊之处。
 - `map_has(m, key) -> bool`、`map_remove(m, key) -> bool`（返回是否真的删掉了）、`keys(m) -> vec[string]`（**复制**并按字节序排序，因此遍历顺序在两平台一致）、`len(m)` 返回条目数。
+
+**`map[string, f64]`（ADR-65）**：以上全部内建对两种 map 通用，按值的类型分派——`map_get` 返回 `FloatResult`（第 9 个预置枚举；缺失分支是同一只读常量，未命中零分配），`map_inc` 的增量与返回值是 `f64`，`keys`/`map_has`/`map_remove`/`len`/`m[key] = v` 形状不变、值类型在编译期检查。构造：`f64map_new()`；类型书写 `map[string, f64]`。运行时 `ae_mapf_*` 与 `ae_map_*` 同构（24 字节槽、并行状态字节、半装载扩容、FNV-1a 哈希复用键侧实现）。示例见 `examples/sensor_stats.ae`。
 
 映射是拥有型值：赋值、按值传参、`return` 都移动整个表，作用域退出与跳转路径按类型生成的释放例程回收所有键与槽位数组，不会泄漏或双重释放。`map_get`/`map_has`/`map_remove`/`keys` 只在调用期间借用映射，接收者必须是**裸映射变量或它的结构体字段**（`map_get(t.counts, k)`），不能是更复杂的表达式；对已移动的映射调用会被编译期拒绝，运行时还有 `slots` 空指针哨兵兜底。
 

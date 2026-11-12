@@ -1,0 +1,56 @@
+ADR-65 `map[string, f64]`（f64 值哈希表）· Windows 归档（2026-11-12）
+
+## 平台
+Windows x86-64，8 核 / 16 线程，MinGW-W64 GCC 16.2.0（UCRT）。AE 0.1.1。
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak（用例表新增 sensor_stats.ae）
+- python scripts/fmt_acceptance.py --json fmt-acceptance.json
+- for f in $(find examples -name "*.ae" ! -name "report.ae" ! -name "words.ae"); do ae check "$f"; done
+- cargo run -- run examples/sensor_stats.ae
+
+## 交付内容
+- 类型 `map[string, f64]`（Type::MapF）与语法：类型标注 `map[string, f64]`、
+  空表 `f64map_new()`（对齐 map_new/strvec_new/f64vec_new 先例）、
+  `m[key] = v;` 索引写、结构体字段。
+- **预置枚举 `FloatResult{Ok(f64), Err(string)}`**（第 9 个 prelude 枚举，ae_e8）：
+  `map_get` 在 f64 map 上返回它。追加在 prelude 末尾，既有 8 个枚举的 id 全部
+  不变；Err 分支复用 ADR-58 的只读 `"key not found"` 常量，未命中零分配。
+- 内建按值的类型分派（MapPlace 携带 MapKind）：`map_get`/`map_has`/
+  `map_remove`/`map_inc`（f64 增量）/`keys`/`len`/`m[key] = v` 两种 map 通用，
+  值类型不匹配在编译期拒绝。
+- 运行时 `ae_mapf_*` 家族：与 `ae_map_*` 同构（24 字节槽 = 键字符串
+  16 + double 8、并行状态字节、半装载扩容、FNV-1a 与槽位计算复用 i64 版）。
+
+## 结果
+- cargo test：36 单元 + 179 集成全通过。新增 3 个测试：存取/keys 排序/
+  map_inc/has/remove/len、6 类拒绝（值类型错、delta 类型错、枚举模式错、
+  use-after-move、类型语法）、结构体字段释放。
+- --leak：34 个用例 PASS（原 33 + sensor_stats），UCRT 基线 2 块不变——
+  表扩容、tombstone、字段释放路径恰好一次。
+- fmt 验收：44 文件幂等；42 程序 `check`。
+- sensor_stats.ae 输出：sensors 3 / temp 21.5 / mean 21.3 / min 20.0 /
+  max 22.5 / false / 22.0 / first humidity / count 3（IEEE 除法正确舍入 +
+  运行时文本，跨平台确定）。
+
+## 资源成本
+- **生成 C：`print(1)` 13,909 → 14,820（+911）**——第 9 个 prelude 枚举的
+  布局与 release/forfeit 函数进入所有程序的常驻前缀（prelude 布局按设计
+  无条件发出）；mapf 函数本身按可达闭包裁剪（print(1) 中 0 个保留）。
+  二进制无影响（未引用的枚举不产生代码）；这是「新增 prelude 枚举」的固定
+  代价，按需布局（只发被引用的 prelude 布局）记为未来优化候选，不在本轮。
+- sensor_stats.ae 生成 C 41,742 字节。
+
+## 说明
+- 过程发现：
+  1. **map 的索引读不存在是有意设计**：`m[key]` 作表达式不编译（读取必须走
+     `map_get` 的 Result 形状，区分「缺失」与值）——示例初版踩到，改为
+     map_get + match。这条已有规则写进了示例注释。
+  2. **字段 map 赋值的外层条件漏改**：`m[key] = v` 的变量分支改了两处，字段
+     分支的外层 `fty == Type::Map` 检查漏掉 MapF，`p.table["tea"] = 2.5` 被
+     「expected Equal」拒绝——同 ADR-61 的 by_ref 教训：每个布尔/类型比较都
+     要问「谁共享这条路径」。
+  3. heredoc→python 转义第三次出问题后，本轮全部改用 Write 落盘脚本 +
+     原始字符串，未再发生。
+- Linux 回填待做：归档 `2026-11-12-linux-mapf/`，状态才升级为双平台验证。

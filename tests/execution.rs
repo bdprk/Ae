@@ -2320,6 +2320,37 @@ fn invalid_error_propagation_is_rejected() {
     }
 }
 #[test]
+fn float_maps_store_get_and_report_keys_like_int_maps() {
+    // ADR-65: map[string, f64] mirrors map[string, i64] — put/index-write,
+    // map_get into FloatResult (missing is the shared "key not found" text),
+    // has/remove/keys/len and map_inc with a float delta.
+    let source = "fn main() { var m = f64map_new(); m[\"pi\"] = 3.5; print(len(m)); let got = map_get(m, \"pi\"); match got { FloatResult::Ok(v) => { print(v); } FloatResult::Err(reason) => { print(reason); } } print(map_has(m, \"pi\")); print(map_has(m, \"nope\")); print(map_inc(m, \"pi\", 0.5)); print(map_inc(m, \"fresh\", 1.0)); m[\"zed\"] = 2.0; let ks = keys(m); for k in ks { print(k); } let removed = map_remove(m, \"fresh\"); print(removed); print(len(m)); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "1\n3.5\ntrue\nfalse\n4.0\n1.0\nfresh\npi\nzed\ntrue\n2\n");
+}
+#[test]
+fn float_maps_reject_wrong_value_types_and_move_like_int_maps() {
+    for (source, expected) in [
+        ("fn main() { var m = f64map_new(); m[\"a\"] = 1; }", "map values must be f64"),
+        ("fn main() { var m = map_new(); m[\"a\"] = 1.0; }", "map values must be i64"),
+        ("fn main() { var m = f64map_new(); print(map_inc(m, \"a\", 1)); }", "map_inc expects a f64 delta"),
+        ("fn main() { var m = f64map_new(); let g = map_get(m, \"a\"); match g { IntResult::Ok(v) => { print(v); } IntResult::Err(r) => { print(r); } } }", "pattern must name the matched enum"),
+        ("fn main() { var m = f64map_new(); let w = m; print(map_has(m, \"a\")); }", "moved"),
+        ("fn main() { var m = map[string, f64]; }", "unknown variable"),
+    ] {
+        let message = check_rejects(source);
+        assert!(message.contains(expected), "{source}: {message}");
+    }
+}
+#[test]
+fn float_maps_live_in_structs_and_release_exactly_once() {
+    let source = "struct Prices { table: map[string, f64], name: string } fn main() { var p = Prices { table: f64map_new(), name: \"menu\" }; p.table[\"tea\"] = 2.5; p.table[\"cake\"] = 7.0; print(p.name); print(len(p.table)); let t = map_get(p.table, \"tea\"); match t { FloatResult::Ok(v) => { print(v); } FloatResult::Err(r) => { print(r); } } print(\"done\"); }";
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "menu\n2\n2.5\ndone\n");
+}
+#[test]
 fn maps_store_count_replace_and_report_keys_in_order() {
     let output = execute(r#"fn main() {
     var counts = map_new();

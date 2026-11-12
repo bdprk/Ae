@@ -72,6 +72,8 @@ cargo run -- version
 
 `ae test 文件.ae [过滤]`（ADR-62）支持测试名子串过滤，空匹配报错而非静默通过。
 
+`map[string, f64]`（ADR-65）：`f64map_new()` 建空表，`m[k] = v` 写入，`map_get` 返回 `FloatResult`（缺失是共享只读常量，未命中零分配），`map_inc`/`keys`/`map_has`/`map_remove`/`len` 与 i64 map 同形状。示例 `cargo run -- run examples/sensor_stats.ae`。
+
 `vec[f64]`（ADR-61）：`f64` 元素的拥有型向量——字面量按元素推断（`vec[1.0, 2.0]`），受检下标读写、`push`/`pop`、按值 for-in、`&vec[f64]` 只读借用；空向量用 `f64vec_new()`。`sort`/`reverse` 对它显式拒绝（NaN 无全序）。示例 `cargo run -- run examples/float_stats.ae`（统计 + sqrt 联动）。
 
 生成的 C 只包含程序真正用到的运行时函数**及其注释**（ADR-50）：函数上方的 `//` 说明随函数一起被裁剪，`print(1)` 的生成 C 因此从 25,134 降到 11,105 字节，端到端冷构建实测 390.66 → 346.12 ms；`/* */` 分节注释与 `win32-header` 标记不受影响。Windows 上 `ae build` 也能处理绝对路径含非 ASCII 的输出（ADR-51）：C 编译器在临时目录内以相对文件名运行，绕开 MinGW 命令行按 ANSI 代码页转换导致的 `cannot open output file`。

@@ -142,6 +142,20 @@ def run():
             "doubled last 18.0\n"
             "total 40.0"
         ).encode("utf-8"), True),
+        # map[string, f64] (ADR-65): latest-value table + history vector +
+        # math builtins in one program. Map reads go through map_get's
+        # FloatResult; keys() output is sorted, so the report order is stable.
+        ("sensor_stats.ae", (
+            "sensors 3\n"
+            "temp 21.5\n"
+            "mean 21.3\n"
+            "min 20.0\n"
+            "max 22.5\n"
+            "false\n"
+            "22.0\n"
+            "first humidity\n"
+            "count 3"
+        ).encode("utf-8"), True),
         ("json_report.ae", (
             "ready\n"
             "wrote 175 bytes\n"

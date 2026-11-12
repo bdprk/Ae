@@ -1,0 +1,42 @@
+// Sensor board (ADR-65): map[string, f64] holds each sensor's latest reading,
+// vec[f64] holds one sensor's history, and the math builtins (ADR-60/64) turn
+// the history into summary statistics. Map reads go through `map_get` — the
+// Result shape is the only way to tell "missing" from a value. IEEE division
+// is correctly rounded and every printed value goes through the runtime
+// formatter, so the output is byte-identical on Windows and Linux.
+fn mean(values: &vec[f64]) -> f64 {
+    var total = 0.0;
+    for x in values { total = total + x; }
+    return total / to_f64(len(values));
+}
+
+fn main() {
+    var latest = f64map_new();
+    latest["temp"] = 21.5;
+    latest["humidity"] = 40.0;
+    latest["pressure"] = 1013.0;
+
+    print("sensors " + to_string(len(latest)));
+
+    var temp = 0.0;
+    let t = map_get(latest, "temp");
+    match t {
+        FloatResult::Ok(v) => { temp = v; }
+        FloatResult::Err(reason) => { print("temp missing: " + reason); }
+    }
+    print("temp " + to_string(temp));
+
+    var history = vec[20.0, 21.5, 21.0];
+    push(history, temp);
+    push(history, 22.5);
+    print("mean " + to_string(mean(&history)));
+    print("min " + to_string(min(history[0], history[4])));
+    print("max " + to_string(max(history[0], history[4])));
+
+    print(map_has(latest, "wind"));
+    print(map_inc(latest, "temp", 0.5));
+
+    let ks = keys(latest);
+    print("first " + ks[0]);
+    print("count " + to_string(len(ks)));
+}

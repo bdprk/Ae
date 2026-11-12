@@ -45,6 +45,9 @@ static double ae_f64_max(double a, double b) {
 #define AE_WRITE_RESULT ae_e1
 #define AE_WRITE_OK AE_E1_0
 #define AE_WRITE_ERR AE_E1_1
+#define AE_FLOAT_RESULT ae_e8
+#define AE_FLOAT_OK AE_E8_0
+#define AE_FLOAT_ERR AE_E8_1
 #define AE_INT_RESULT ae_e2
 #define AE_INT_OK AE_E2_0
 #define AE_INT_ERR AE_E2_1
@@ -946,6 +949,146 @@ static AE_INT_RESULT ae_map_get(const ae_map *m, ae_strview key, size_t line, si
 // Keys are copied and sorted by bytes, so iteration is reproducible and the
 // caller owns a plain string vector.
 static ae_strvec ae_map_keys(const ae_map *m, size_t line, size_t column) {
+    ae_strvec keys = ae_strvec_new(line, column);
+    for (int64_t i = 0; i < m->cap; i++) {
+        if (m->states[i] != AE_MAP_FULL) continue;
+        ae_strvec_push(&keys, ae_str_copy_view(AE_VIEW(m->slots[i].key), line, column), line, column);
+    }
+    if (keys.len > 1) qsort(keys.data, (size_t)keys.len, sizeof(ae_string), ae_name_compare);
+    return keys;
+}
+
+// ---- Hash map: string keys -> f64 values (ADR-65) ---------------------------
+// Same open-addressing design as the i64 map: 24-byte slots (key string plus
+// one double), parallel state bytes, half-load rehash. Hashing and slot
+// math are shared with the i64 map; only the value type differs.
+typedef struct { ae_string key; double value; } ae_mapf_slot;
+typedef struct { ae_mapf_slot *slots; unsigned char *states; int64_t cap; int64_t len; int64_t used; } ae_mapf;
+
+static ae_mapf ae_mapf_new(size_t line, size_t column) {
+    (void)line; (void)column;
+    ae_mapf m;
+    m.slots = NULL;
+    m.states = NULL;
+    m.cap = 0;
+    m.len = 0;
+    m.used = 0;
+    return m;
+}
+static int64_t ae_mapf_find(const ae_mapf *m, ae_strview key) {
+    if (m->cap == 0) return -1;
+    int64_t at = ae_map_slot_of(key, m->cap);
+    for (int64_t probes = 0; probes < m->cap; probes++) {
+        const unsigned char state = m->states[at];
+        if (state == AE_MAP_EMPTY) return -1;
+        if (state == AE_MAP_FULL && ae_str_eq(AE_VIEW(m->slots[at].key), key)) return at;
+        at = (at + 1) & (m->cap - 1);
+    }
+    return -1;
+}
+static void ae_mapf_grow(ae_mapf *m, size_t line, size_t column) {
+    int64_t cap = m->cap == 0 ? 8 : m->cap;
+    while ((m->len + 1) * 2 >= cap) {
+        if (cap > INT64_MAX / 4) ae_fail("map too large", line, column);
+        cap = cap * 2;
+    }
+    if (cap == m->cap && m->used == m->len) return;
+    ae_mapf_slot *slots = ae_alloc((size_t)cap * sizeof(ae_mapf_slot), line, column);
+    unsigned char *states = ae_alloc((size_t)cap, line, column);
+    memset(states, AE_MAP_EMPTY, (size_t)cap);
+    for (int64_t i = 0; i < m->cap; i++) {
+        if (m->states[i] != AE_MAP_FULL) continue;
+        int64_t at = ae_map_slot_of(AE_VIEW(m->slots[i].key), cap);
+        while (states[at] == AE_MAP_FULL) at = (at + 1) & (cap - 1);
+        slots[at] = m->slots[i];
+        states[at] = AE_MAP_FULL;
+    }
+    ae_free(m->slots);
+    ae_free(m->states);
+    m->slots = slots;
+    m->states = states;
+    m->cap = cap;
+    m->used = m->len;
+}
+static void ae_mapf_put(ae_mapf *m, ae_strview key, double value, size_t line, size_t column) {
+    ae_mapf_grow(m, line, column);
+    int64_t at = ae_map_slot_of(key, m->cap);
+    int64_t reuse = -1;
+    for (;;) {
+        const unsigned char state = m->states[at];
+        if (state == AE_MAP_EMPTY) break;
+        if (state == AE_MAP_DELETED) {
+            if (reuse < 0) reuse = at;
+        } else if (ae_str_eq(AE_VIEW(m->slots[at].key), key)) {
+            m->slots[at].value = value;
+            return;
+        }
+        at = (at + 1) & (m->cap - 1);
+    }
+    if (reuse >= 0) at = reuse; else m->used = m->used + 1;
+    m->slots[at].key = ae_str_from_len(key.ptr, key.len, line, column);
+    m->slots[at].value = value;
+    m->states[at] = AE_MAP_FULL;
+    m->len = m->len + 1;
+}
+static AE_FLOAT_RESULT ae_mapf_get(const ae_mapf *m, ae_strview key, size_t line, size_t column) {
+    (void)line; (void)column;
+    int64_t at = ae_mapf_find(m, key);
+    if (at < 0) {
+        AE_FLOAT_RESULT missing = { AE_FLOAT_ERR, { .v1 = { { (char *)ae_missing_key_text, (int64_t)(sizeof ae_missing_key_text - 1) } } } };
+        return missing;
+    }
+    AE_FLOAT_RESULT out = { AE_FLOAT_OK, { .v0 = { m->slots[at].value } } };
+    return out;
+}
+static bool ae_mapf_has(const ae_mapf *m, ae_strview key, size_t line, size_t column) {
+    (void)line; (void)column;
+    return ae_mapf_find(m, key) >= 0;
+}
+static bool ae_mapf_remove(ae_mapf *m, ae_strview key, size_t line, size_t column) {
+    (void)line; (void)column;
+    int64_t at = ae_mapf_find(m, key);
+    if (at < 0) return false;
+    ae_str_release(&m->slots[at].key);
+    m->states[at] = AE_MAP_DELETED;
+    m->len = m->len - 1;
+    return true;
+}
+static double ae_mapf_inc(ae_mapf *m, ae_strview key, double delta, size_t line, size_t column) {
+    int64_t at = ae_mapf_find(m, key);
+    if (at >= 0) {
+        m->slots[at].value = m->slots[at].value + delta;
+        return m->slots[at].value;
+    }
+    ae_mapf_put(m, key, delta, line, column);
+    return delta;
+}
+static int64_t ae_mapf_len(const ae_mapf *m, size_t line, size_t column) {
+    (void)line; (void)column;
+    return m->len;
+}
+static void ae_mapf_release(ae_mapf *m) {
+    if (m->slots) {
+        for (int64_t i = 0; i < m->cap; i++) {
+            if (m->states[i] == AE_MAP_FULL) ae_str_release(&m->slots[i].key);
+        }
+    }
+    ae_free(m->slots);
+    ae_free(m->states);
+    m->slots = NULL;
+    m->states = NULL;
+    m->cap = 0;
+    m->len = 0;
+    m->used = 0;
+}
+static void ae_mapf_forfeit(ae_mapf *m) {
+    m->slots = NULL;
+    m->states = NULL;
+    m->cap = 0;
+    m->len = 0;
+    m->used = 0;
+}
+static ae_strvec ae_mapf_keys(const ae_mapf *m, size_t line, size_t column) {
     ae_strvec keys = ae_strvec_new(line, column);
     for (int64_t i = 0; i < m->cap; i++) {
         if (m->states[i] != AE_MAP_FULL) continue;
