@@ -68,7 +68,34 @@ class Gen:
         """One statement, possibly introducing new variables. Returns lines."""
         if depth >= 3:
             return [f"print({self.int_expr(vars)});"]
-        kind = self.rnd() % 6
+        kind = self.rnd() % 9
+        if kind == 6:
+            # A string built from two literals; reads are borrows.
+            name = f"str{self.rnd() % 1000}"
+            a = '"t' + str(self.rnd() % 1000) + '"'
+            b = '"u' + str(self.rnd() % 1000) + '"'
+            return [
+                f"var {name} = {a} + {b};",
+                f"print(len({name}));",
+                *self.statement(vars, depth + 1),
+            ]
+        if kind == 7:
+            # A vector with pushes and a length read.
+            name = f"vec{self.rnd() % 1000}"
+            return [
+                f"var {name} = vec[{self.int_expr(vars)}, {self.int_expr(vars)}];",
+                f"push({name}, {self.int_expr(vars)});",
+                f"print(len({name}));",
+                *self.statement(vars, depth + 1),
+            ]
+        if kind == 8:
+            # A struct with two scalar fields, read field-wise.
+            name = f"pt{self.rnd() % 1000}"
+            return [
+                f"var {name} = Pt {{ a: {self.int_expr(vars)}, b: {self.int_expr(vars)} }};",
+                f"print({name}.a + {name}.b);",
+                *self.statement(vars, depth + 1),
+            ]
         if kind == 0:
             name = f"x{self.rnd() % 100}"
             return [f"var {name} = {self.int_expr(vars)};"] + self.statement(vars + [name], depth + 1)
@@ -105,7 +132,9 @@ class Gen:
         ]
 
     def program(self) -> str:
-        lines = ["fn main() {"]
+        # `main` cannot `return` in this language; its exit is implicit. The
+        # struct Pt and its two scalar fields are fixed: field reads borrow.
+        lines = ["struct Pt { a: i64, b: i64 }", "fn main() {"]
         vars = ["seed0"]
         lines.append("    var seed0 = 7;")
         body = self.statement(vars, 0)
