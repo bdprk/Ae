@@ -1,0 +1,76 @@
+// std/core/pool_alloc.ae
+// Zero-allocation fixed-size chunk object pool manager.
+
+pub struct PoolAlloc {
+    chunk_size: i64,
+    total_chunks: i64,
+    used_chunks: i64,
+    free_head: i64,
+}
+
+pub fn pool_alloc_new(chunk_size: i64, total_chunks: i64) -> PoolAlloc {
+    return PoolAlloc {
+        chunk_size: chunk_size,
+        total_chunks: total_chunks,
+        used_chunks: 0,
+        free_head: 0,
+    };
+}
+
+pub fn pool_alloc_chunk_size(p: PoolAlloc) -> i64 {
+    return p.chunk_size;
+}
+
+pub fn pool_alloc_total(p: PoolAlloc) -> i64 {
+    return p.total_chunks;
+}
+
+pub fn pool_alloc_used(p: PoolAlloc) -> i64 {
+    return p.used_chunks;
+}
+
+pub fn pool_alloc_available(p: PoolAlloc) -> i64 {
+    return p.total_chunks - p.used_chunks;
+}
+
+pub fn pool_alloc_acquire(p: PoolAlloc) -> PoolAlloc {
+    let c_size = p.chunk_size;
+    let tot = p.total_chunks;
+    let used = p.used_chunks;
+    let head = p.free_head;
+    if used >= tot {
+        return PoolAlloc {
+            chunk_size: c_size,
+            total_chunks: tot,
+            used_chunks: used,
+            free_head: head,
+        };
+    }
+    return PoolAlloc {
+        chunk_size: c_size,
+        total_chunks: tot,
+        used_chunks: used + 1,
+        free_head: head + 1,
+    };
+}
+
+pub fn pool_alloc_release(p: PoolAlloc) -> PoolAlloc {
+    let c_size = p.chunk_size;
+    let tot = p.total_chunks;
+    let used = p.used_chunks;
+    let head = p.free_head;
+    if used <= 0 {
+        return PoolAlloc {
+            chunk_size: c_size,
+            total_chunks: tot,
+            used_chunks: 0,
+            free_head: head,
+        };
+    }
+    return PoolAlloc {
+        chunk_size: c_size,
+        total_chunks: tot,
+        used_chunks: used - 1,
+        free_head: head - 1,
+    };
+}

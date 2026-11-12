@@ -1,0 +1,79 @@
+// tests/run/batch_core_alloc_and_arith.ae
+// Verification of BumpAlloc, PoolAlloc, BitReader, and Fixed16 primitives.
+
+use "../../std/core/bump_alloc.ae";
+use "../../std/core/pool_alloc.ae";
+use "../../std/core/bit_reader.ae";
+use "../../std/core/fixed_point.ae";
+
+fn main() {
+    print("--- batch_core_alloc_and_arith test start ---");
+
+    // 1. BumpAlloc
+    let b0 = bump_alloc_new(1024);
+    assert(bump_alloc_capacity(b0) == 1024);
+    let b0_rem = bump_alloc_new(1024);
+    assert(bump_alloc_remaining(b0_rem) == 1024);
+
+    // Allocate 12 bytes with 8-byte alignment -> offset becomes 12
+    let b1 = bump_alloc_allocate(bump_alloc_new(1024), 12, 8);
+    let off1 = bump_alloc_offset(b1);
+    assert(off1 == 12);
+
+    // Reconstruct bump alloc at offset 12 and allocate 10 bytes with 8-byte alignment -> 12 rounds to 16, 16 + 10 = 26
+    let b1_re = BumpAlloc { offset: 12, capacity: 1024, high_watermark: 12 };
+    let b2 = bump_alloc_allocate(b1_re, 10, 8);
+    assert(bump_alloc_offset(b2) == 26);
+
+    let b2_re = BumpAlloc { offset: 26, capacity: 1024, high_watermark: 26 };
+    let b_reset = bump_alloc_reset(b2_re);
+    assert(bump_alloc_offset(b_reset) == 0);
+    print("bump_alloc ok");
+
+    // 2. PoolAlloc
+    let p0 = pool_alloc_new(64, 10);
+    assert(pool_alloc_chunk_size(p0) == 64);
+    let p0_tot = pool_alloc_new(64, 10);
+    assert(pool_alloc_total(p0_tot) == 10);
+    let p0_avail = pool_alloc_new(64, 10);
+    assert(pool_alloc_available(p0_avail) == 10);
+
+    let p1 = pool_alloc_acquire(pool_alloc_new(64, 10));
+    assert(pool_alloc_used(p1) == 1);
+    let p1_avail = pool_alloc_acquire(pool_alloc_new(64, 10));
+    assert(pool_alloc_available(p1_avail) == 9);
+
+    let p1_re = PoolAlloc { chunk_size: 64, total_chunks: 10, used_chunks: 1, free_head: 1 };
+    let p_rel = pool_alloc_release(p1_re);
+    assert(pool_alloc_used(p_rel) == 0);
+    print("pool_alloc ok");
+
+    // 3. BitReader
+    let r0 = bit_reader_new(4); // 4 bytes = 32 bits
+    assert(bit_reader_remaining_bits(r0) == 32);
+
+    let r1 = bit_reader_advance(bit_reader_new(4), 11);
+    assert(bit_reader_consumed_bits(r1) == 11);
+    let r1_rem = bit_reader_advance(bit_reader_new(4), 11);
+    assert(bit_reader_remaining_bits(r1_rem) == 21);
+    print("bit_reader ok");
+
+    // 4. Fixed16
+    let f3 = fixed16_from_int(3);
+    let f4 = fixed16_from_int(4);
+    let sum = fixed16_add(f3, f4);
+    assert(fixed16_to_int(sum) == 7);
+
+    let f3_b = fixed16_from_int(3);
+    let f4_b = fixed16_from_int(4);
+    let diff = fixed16_sub(f4_b, f3_b);
+    assert(fixed16_to_int(diff) == 1);
+
+    let f3_c = fixed16_from_int(3);
+    let f4_c = fixed16_from_int(4);
+    let prod = fixed16_mul(f3_c, f4_c);
+    assert(fixed16_to_int(prod) == 12);
+    print("fixed16 ok");
+
+    print("--- batch_core_alloc_and_arith test end ---");
+}

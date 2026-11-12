@@ -1,0 +1,36 @@
+// std/core/fixed_point.ae
+// Q16.16 fixed-point arithmetic primitives for deterministic computation.
+
+pub struct Fixed16 {
+    raw: i64,
+}
+
+pub fn fixed16_from_int(val: i64) -> Fixed16 {
+    return Fixed16 {
+        raw: val * 65536,
+    };
+}
+
+pub fn fixed16_to_int(f: Fixed16) -> i64 {
+    return f.raw / 65536;
+}
+
+pub fn fixed16_add(a: Fixed16, b: Fixed16) -> Fixed16 {
+    return Fixed16 {
+        raw: a.raw + b.raw,
+    };
+}
+
+pub fn fixed16_sub(a: Fixed16, b: Fixed16) -> Fixed16 {
+    return Fixed16 {
+        raw: a.raw - b.raw,
+    };
+}
+
+pub fn fixed16_mul(a: Fixed16, b: Fixed16) -> Fixed16 {
+    // raw = (a.raw * b.raw) / 65536
+    let product = a.raw * b.raw;
+    return Fixed16 {
+        raw: product / 65536,
+    };
+}

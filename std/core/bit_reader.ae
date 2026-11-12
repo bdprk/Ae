@@ -1,0 +1,42 @@
+// std/core/bit_reader.ae
+// Zero-allocation bit-level bitstream decoder primitive.
+
+pub struct BitReaderState {
+    byte_offset: i64,
+    bit_offset: i64,
+    total_bits: i64,
+}
+
+pub fn bit_reader_new(total_bytes: i64) -> BitReaderState {
+    return BitReaderState {
+        byte_offset: 0,
+        bit_offset: 0,
+        total_bits: total_bytes * 8,
+    };
+}
+
+pub fn bit_reader_consumed_bits(r: BitReaderState) -> i64 {
+    return r.byte_offset * 8 + r.bit_offset;
+}
+
+pub fn bit_reader_remaining_bits(r: BitReaderState) -> i64 {
+    let consumed = r.byte_offset * 8 + r.bit_offset;
+    if consumed >= r.total_bits {
+        return 0;
+    }
+    return r.total_bits - consumed;
+}
+
+pub fn bit_reader_advance(r: BitReaderState, bits: i64) -> BitReaderState {
+    let total = r.total_bits;
+    let new_consumed = (r.byte_offset * 8 + r.bit_offset) + bits;
+    var final_consumed = new_consumed;
+    if new_consumed > total {
+        final_consumed = total;
+    }
+    return BitReaderState {
+        byte_offset: final_consumed / 8,
+        bit_offset: final_consumed % 8,
+        total_bits: total,
+    };
+}

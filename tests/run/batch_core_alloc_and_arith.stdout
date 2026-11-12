@@ -1,0 +1,6 @@
+--- batch_core_alloc_and_arith test start ---
+bump_alloc ok
+pool_alloc ok
+bit_reader ok
+fixed16 ok
+--- batch_core_alloc_and_arith test end ---
