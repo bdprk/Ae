@@ -1,0 +1,31 @@
+use "../../std/core/buffer.ae";
+use "../../std/core/math.ae";
+use "../../std/core/log.ae";
+use "../../std/core/list.ae";
+
+fn main() {
+    let buf1 = buffer_create(1024);
+    assert(buffer_remaining(buf1) == 1024);
+
+    let buf2 = buffer_create(512);
+    assert(!buffer_is_full(buf2));
+
+    assert(math_max(10, 20) == 20);
+    assert(math_min(10, 20) == 10);
+    assert(math_clamp(5, 10, 30) == 10);
+    assert(math_clamp(25, 10, 30) == 25);
+    assert(math_clamp(40, 10, 30) == 30);
+
+    assert(log_level_code(LogLevel::Debug) == 10);
+    assert(log_level_code(LogLevel::Error) == 40);
+    assert(log_is_enabled(LogLevel::Info, LogLevel::Warn));
+    assert(!log_is_enabled(LogLevel::Error, LogLevel::Debug));
+
+    let n1 = make_node[i64](99);
+    assert(node_value[i64](n1) == 99);
+
+    let n2 = make_node[i64](100);
+    assert(!node_has_next[i64](n2));
+
+    print("BATCH CORE MODULES OPERATIONAL\n");
+}

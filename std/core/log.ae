@@ -1,0 +1,26 @@
+// std/core/log.ae
+// Core Logging Severity Levels (M1.4 / M3.3)
+
+pub enum LogLevel {
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+pub fn log_level_code(level: LogLevel) -> i64 {
+    var code = 0;
+    match level {
+        LogLevel::Debug => { code = 10; }
+        LogLevel::Info => { code = 20; }
+        LogLevel::Warn => { code = 30; }
+        LogLevel::Error => { code = 40; }
+    }
+    return code;
+}
+
+pub fn log_is_enabled(current: LogLevel, target: LogLevel) -> bool {
+    let c = log_level_code(current);
+    let t = log_level_code(target);
+    return t >= c;
+}

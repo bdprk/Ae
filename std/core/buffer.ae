@@ -1,0 +1,19 @@
+// std/core/buffer.ae
+// Core Fixed Sized Array Buffer Primitives (M1.4 / M1.10)
+
+pub struct FixedBuffer {
+    capacity: i64,
+    size: i64,
+}
+
+pub fn buffer_create(cap: i64) -> FixedBuffer {
+    return FixedBuffer { capacity: cap, size: 0 };
+}
+
+pub fn buffer_remaining(b: FixedBuffer) -> i64 {
+    return b.capacity - b.size;
+}
+
+pub fn buffer_is_full(b: FixedBuffer) -> bool {
+    return b.size >= b.capacity;
+}

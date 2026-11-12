@@ -1,0 +1,19 @@
+// std/core/list.ae
+// Core Intrusive Linked List and Node primitives (M1.4 / M1.10)
+
+pub struct ListNode[T] {
+    val: T,
+    has_next: bool,
+}
+
+pub fn make_node[T](val: T) -> ListNode[T] {
+    return ListNode[T] { val: val, has_next: false };
+}
+
+pub fn node_value[T](node: ListNode[T]) -> T {
+    return node.val;
+}
+
+pub fn node_has_next[T](node: ListNode[T]) -> bool {
+    return node.has_next;
+}

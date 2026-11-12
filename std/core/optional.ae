@@ -1,0 +1,18 @@
+// std/core/optional.ae
+// Core Option Combinators & Functional Adapters (M1.8 / M1.10)
+
+use "option.ae";
+
+pub fn option_map_or(opt: Option[i64], default_val: i64) -> i64 {
+    match opt {
+        Option::Some(v) => return v,
+        Option::None => return default_val,
+    }
+}
+
+pub fn option_is_some(opt: &Option[i64]) -> bool {
+    match opt {
+        Option::Some(_) => return true,
+        Option::None => return false,
+    }
+}
