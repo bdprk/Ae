@@ -1,0 +1,52 @@
+// std/core/bloom.ae
+// Conceptual fixed-filter bloom filter state primitives for AE core.
+
+pub struct BloomFilter64 {
+    bits: i64,
+}
+
+pub fn bloom_filter64_new() -> BloomFilter64 {
+    return BloomFilter64 { bits: 0 };
+}
+
+pub fn bloom_filter64_bits(bf: BloomFilter64) -> i64 {
+    return bf.bits;
+}
+
+pub fn bloom_filter64_is_empty(bf: BloomFilter64) -> bool {
+    return bf.bits == 0;
+}
+
+pub fn bloom_filter64_set_bit(bf: BloomFilter64, bit_idx: i64) -> BloomFilter64 {
+    let current_bits = bf.bits;
+    if bit_idx < 0 || bit_idx >= 62 {
+        return BloomFilter64 { bits: current_bits };
+    }
+    // Calculate 2^bit_idx
+    var mask = 1;
+    var i = 0;
+    while i < bit_idx {
+        mask = mask * 2;
+        i = i + 1;
+    }
+    // Check if bit is already set
+    let existing = (current_bits / mask) % 2;
+    if existing == 0 {
+        return BloomFilter64 { bits: current_bits + mask };
+    }
+    return BloomFilter64 { bits: current_bits };
+}
+
+pub fn bloom_filter64_check_bit(bf: BloomFilter64, bit_idx: i64) -> bool {
+    if bit_idx < 0 || bit_idx >= 62 {
+        return false;
+    }
+    var mask = 1;
+    var i = 0;
+    while i < bit_idx {
+        mask = mask * 2;
+        i = i + 1;
+    }
+    let bit = (bf.bits / mask) % 2;
+    return bit == 1;
+}

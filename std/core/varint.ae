@@ -1,0 +1,26 @@
+// std/core/varint.ae
+// LEB128 variable-length integer encoding primitives for AE core.
+
+pub fn varint_encoded_len_u64(val: i64) -> i64 {
+    if val < 0 {
+        return 10;
+    }
+    var v = val;
+    var count = 0;
+    while v > 0 {
+        count = count + 1;
+        v = v / 128;
+    }
+    if count == 0 {
+        return 1;
+    }
+    return count;
+}
+
+pub fn varint_tag_byte(val: i64, has_more: bool) -> i64 {
+    let lower7 = val % 128;
+    if has_more {
+        return lower7 + 128;
+    }
+    return lower7;
+}

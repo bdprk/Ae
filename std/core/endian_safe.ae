@@ -1,0 +1,35 @@
+// std/core/endian_safe.ae
+// Endian-safe integer load and store byte calculation primitives.
+
+pub struct U16Bytes {
+    b0: i64,
+    b1: i64,
+}
+
+pub fn u16_to_le_bytes(val: i64) -> U16Bytes {
+    let b0 = val % 256;
+    let b1 = (val / 256) % 256;
+    return U16Bytes { b0: b0, b1: b1 };
+}
+
+pub fn u16_from_le_bytes(b0: i64, b1: i64) -> i64 {
+    return (b0 % 256) + (b1 % 256) * 256;
+}
+
+pub fn u16_to_be_bytes(val: i64) -> U16Bytes {
+    let b0 = (val / 256) % 256;
+    let b1 = val % 256;
+    return U16Bytes { b0: b0, b1: b1 };
+}
+
+pub fn u16_from_be_bytes(b0: i64, b1: i64) -> i64 {
+    return (b0 % 256) * 256 + (b1 % 256);
+}
+
+pub fn u16_bytes_b0(data: U16Bytes) -> i64 {
+    return data.b0;
+}
+
+pub fn u16_bytes_b1(data: U16Bytes) -> i64 {
+    return data.b1;
+}

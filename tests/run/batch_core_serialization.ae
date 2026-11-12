@@ -1,0 +1,41 @@
+use "../../std/core/varint.ae";
+use "../../std/core/bloom.ae";
+use "../../std/core/endian_safe.ae";
+use "../../std/core/saturating.ae";
+
+fn main() {
+    assert(varint_encoded_len_u64(0) == 1);
+    assert(varint_encoded_len_u64(127) == 1);
+    assert(varint_encoded_len_u64(128) == 2);
+    assert(varint_encoded_len_u64(16384) == 3);
+    assert(varint_tag_byte(5, false) == 5);
+    assert(varint_tag_byte(5, true) == 133);
+
+    let bf0 = bloom_filter64_new();
+    assert(bloom_filter64_is_empty(bf0));
+    let bf1 = bloom_filter64_set_bit(bloom_filter64_new(), 3);
+    assert(!bloom_filter64_is_empty(bf1));
+    let bf1_check = bloom_filter64_set_bit(bloom_filter64_new(), 3);
+    assert(bloom_filter64_check_bit(bf1_check, 3));
+    let bf1_check_other = bloom_filter64_set_bit(bloom_filter64_new(), 3);
+    assert(!bloom_filter64_check_bit(bf1_check_other, 4));
+
+    let le = u16_to_le_bytes(4660); // 0x1234
+    assert(u16_bytes_b0(le) == 52); // 0x34
+    let le2 = u16_to_le_bytes(4660);
+    assert(u16_bytes_b1(le2) == 18); // 0x12
+    assert(u16_from_le_bytes(52, 18) == 4660);
+
+    let be = u16_to_be_bytes(4660);
+    assert(u16_bytes_b0(be) == 18);
+    let be2 = u16_to_be_bytes(4660);
+    assert(u16_bytes_b1(be2) == 52);
+    assert(u16_from_be_bytes(18, 52) == 4660);
+
+    assert(saturating_add_i64(100, 50, 120) == 120);
+    assert(saturating_add_i64(50, 50, 120) == 100);
+    assert(saturating_sub_i64(10, 20, 0) == 0);
+    assert(saturating_sub_i64(30, 10, 0) == 20);
+
+    print("VARINT BLOOM ENDIAN SATURATING OPERATIONAL");
+}

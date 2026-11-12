@@ -1,0 +1,18 @@
+// std/core/saturating.ae
+// Saturating arithmetic primitives preventing overflow wrap-around.
+
+pub fn saturating_add_i64(a: i64, b: i64, max_limit: i64) -> i64 {
+    let sum = a + b;
+    if sum > max_limit {
+        return max_limit;
+    }
+    return sum;
+}
+
+pub fn saturating_sub_i64(a: i64, b: i64, min_limit: i64) -> i64 {
+    let diff = a - b;
+    if diff < min_limit {
+        return min_limit;
+    }
+    return diff;
+}
