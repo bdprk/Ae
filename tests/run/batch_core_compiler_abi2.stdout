@@ -1,0 +1,6 @@
+--- batch_core_compiler_abi2 test start ---
+abi_param ok
+abi_ret ok
+abi_varargs ok
+abi_alloca ok
+--- batch_core_compiler_abi2 test end ---

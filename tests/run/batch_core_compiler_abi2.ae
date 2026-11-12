@@ -1,0 +1,53 @@
+// tests/run/batch_core_compiler_abi2.ae
+// Verification of AbiParamSlot, AbiReturnSlot (sret), AbiVarargsArea, and AbiAlloca.
+
+use "../../std/core/ir_abi_param.ae";
+use "../../std/core/ir_abi_ret.ae";
+use "../../std/core/ir_abi_varargs.ae";
+use "../../std/core/ir_abi_alloca.ae";
+
+fn main() {
+    print("--- batch_core_compiler_abi2 test start ---");
+
+    // 1. ABI Param
+    let p_reg = abi_param_new(true, 0, 0, 8); // RDI
+    assert(abi_param_is_reg(p_reg));
+    let p_reg_b = abi_param_new(true, 0, 0, 8);
+    assert(abi_param_reg_idx(p_reg_b) == 0);
+
+    let p_stack = abi_param_new(false, -1, 16, 8); // Spilled to stack offset +16
+    assert(!abi_param_is_reg(p_stack));
+    let p_stack_b = abi_param_new(false, -1, 16, 8);
+    assert(abi_param_stack_offset(p_stack_b) == 16);
+    print("abi_param ok");
+
+    // 2. ABI Return
+    assert(abi_should_use_sret(32));
+    assert(!abi_should_use_sret(16));
+
+    let ret_sret = abi_ret_new(true, 0, -1, 32);
+    assert(abi_ret_is_sret(ret_sret));
+
+    let ret_pair = abi_ret_new(false, 0, 1, 16); // RAX + RDX
+    assert(!abi_ret_is_sret(ret_pair));
+    let ret_pair_b = abi_ret_new(false, 0, 1, 16);
+    assert(abi_ret_uses_two_regs(ret_pair_b));
+    print("abi_ret ok");
+
+    // 3. ABI Varargs
+    let va0 = abi_varargs_new(0, 48, 176);
+    assert(abi_varargs_has_more_gp(va0));
+
+    let va1 = abi_varargs_advance_gp(abi_varargs_new(40, 48, 176)); // 40 + 8 = 48 -> full
+    assert(!abi_varargs_has_more_gp(va1));
+    print("abi_varargs ok");
+
+    // 4. ABI Alloca
+    let al = abi_alloca_new(18, 8); // 18 aligned to 8 -> 24; rounded to 16 -> 32
+    assert(abi_alloca_aligned_size(al) == 24);
+    let al_b = abi_alloca_new(18, 8);
+    assert(abi_alloca_sp_adjustment(al_b) == 32);
+    print("abi_alloca ok");
+
+    print("--- batch_core_compiler_abi2 test end ---");
+}
