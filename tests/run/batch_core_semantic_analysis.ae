@@ -1,0 +1,42 @@
+use "../../std/core/ast_node_kind.ae";
+use "../../std/core/scope_tree.ae";
+use "../../std/core/symbol_table.ae";
+use "../../std/core/type_unify.ae";
+
+fn main() {
+    assert(ast_node_kind_id(AstNodeKind::NodeFunction) == 1);
+    assert(ast_node_kind_id(AstNodeKind::NodeReturn) == 10);
+    assert(ast_node_is_declaration(AstNodeKind::NodeFunction));
+    assert(ast_node_is_declaration(AstNodeKind::NodeStruct));
+    assert(!ast_node_is_declaration(AstNodeKind::NodeLet));
+    assert(ast_node_is_statement(AstNodeKind::NodeLet));
+    assert(ast_node_is_statement(AstNodeKind::NodeReturn));
+    assert(!ast_node_is_statement(AstNodeKind::NodeFunction));
+
+    let root = lexical_scope_root();
+    assert(lexical_scope_is_root(root));
+    let root_b = lexical_scope_root();
+    assert(lexical_scope_depth(root_b) == 0);
+
+    let child = lexical_scope_new_child(lexical_scope_root(), 1);
+    assert(lexical_scope_id(child) == 1);
+    let child_b = lexical_scope_new_child(lexical_scope_root(), 1);
+    assert(lexical_scope_depth(child_b) == 1);
+    let child_c = lexical_scope_new_child(lexical_scope_root(), 1);
+    assert(!lexical_scope_is_root(child_c));
+
+    assert(!symbol_binding_can_reassign(SymbolBindingKind::BindingImmutableLet));
+    assert(symbol_binding_can_reassign(SymbolBindingKind::BindingMutableVar));
+    assert(!symbol_binding_can_reassign(SymbolBindingKind::BindingFunctionParam));
+    assert(symbol_binding_id(SymbolBindingKind::BindingMutableVar) == 2);
+
+    assert(builtin_type_code(BuiltinTypeId::TypeI64) == 1);
+    assert(builtin_type_code(BuiltinTypeId::TypeString) == 4);
+    assert(builtin_type_is_numeric(BuiltinTypeId::TypeI64));
+    assert(builtin_type_is_numeric(BuiltinTypeId::TypeF64));
+    assert(!builtin_type_is_numeric(BuiltinTypeId::TypeBool));
+    assert(builtin_type_can_unify(BuiltinTypeId::TypeI64, BuiltinTypeId::TypeI64));
+    assert(!builtin_type_can_unify(BuiltinTypeId::TypeI64, BuiltinTypeId::TypeF64));
+
+    print("AST SCOPE SYMBOL UNIFY OPERATIONAL");
+}
