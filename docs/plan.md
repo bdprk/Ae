@@ -1,8 +1,8 @@
 # AE Programming Language: Design Charter and Maturity Implementation Plan
 
-Version: 0.3 (Refactored, replaces 0.2)
+Version: 0.4 (Refactored, replaces 0.3; charter, priorities, and roadmap unchanged — §5 status and §10 checklist refreshed against the working tree)
 Date: 2026-11-12
-Status: Prototyping (M0 in progress). The full text of the legacy version 0.2 is backed up in `Autonomous-Programming-Language-Full-Plan.v0.2-backup.md`.
+Status: Prototyping (M0 partially complete; the self-hosting IR/data layer of ADR-0150–0179 is in place, the M0 crates are not). The full text of the legacy version 0.2 is backed up in `Autonomous-Programming-Language-Full-Plan.v0.2-backup.md`.
 
 > This document covers only **goals, design rules, roadmap, and thresholds**. Granular benchmark figures, ADR details, and evidence logs are excluded from this document and are instead maintained in `ae/bench/reports/`, `ae/docs/adr/`, and `ae/CHANGELOG.md` respectively. This document is kept to a length suitable for a single reading session.
 
@@ -244,10 +244,12 @@ A custom native machine code backend/linker will only be considered as a separat
 
 ### 5.1 Existing Features (To be preserved and migrated)
 
-- Monolithic frontend written in Rust + strict C11 backend; runtime trimmed by reachability, `<windows.h>` included on-demand.
+- Frontend in Rust, split across three workspace crates — `ae-span`, `ae-syntax`, and `ae-compiler` (11 frontend modules, ~340 KB total) — plus a strict C11 backend; runtime trimmed by reachability, `<windows.h>` included on-demand.
 - Primitive types, structs, enums, `match`, generic functions/structs/enums, trait v1 static dispatch, modules and `pub`, `?` propagation.
 - Built-ins for file/path/directory/process/env/time/JSON query; `check --json`, `fmt`, `test`, `cache`, `deps`.
 - Dual-platform testing, C generation verification (`--leak`, Linux ASan/UBSan), ADR and benchmark archiving discipline.
+- Frontend reuse cache for `build`/`run`: the generated C is stored per source-unit set with SHA-256 digests, and a build whose units are unchanged skips lexing, parsing, type checking, and code generation entirely (ADR-0177). Single-platform measurement in `bench/reports/2026-11-12-windows-frontend-cache.md`.
+- A self-hosting IR and data layer under `std/core/` (252 modules, ADR-0150–0179): CFG/SSA form, register allocation, optimization passes, ELF64/Mach-O/PE-COFF/Wasm containers, DWARF, assembly text, linker scripts and archives, unwind tables, incremental query primitives, and dependency resolution. These are structures and pure helpers; the compiler still emits C from the AST.
 
 ### 5.2 Structural Gaps (Must be resolved in M0–M2)
 
@@ -256,9 +258,10 @@ A custom native machine code backend/linker will only be considered as a separat
 | Containers are hand-written families per element type (`vec`/`vec[string]`/`vec[f64]`/two types of map) | Linear bloat, impossible to cover arbitrary types | M1 |
 | 9 built-in result enums, dozens of global built-in functions | Verbose code, namespace pollution | M1 |
 | No method syntax, closures, or iterators | Expressiveness far below Go/Rust | M1 |
-| No IR, AST emits C directly | Blocks borrow checking, optimization, incremental compilation, backend swapping | M2 |
+| No IR, AST emits C directly | Blocks borrow checking, optimization, backend swapping. `std/core` models IR structures, but no MIR pass exists | M2 |
 | Borrow checking is limited rules + runtime fallback | Does not meet static safety guarantees | M2 |
-| Frontend is ~330 KB single-file, fail-fast diagnostics | Difficult to collaborate, cannot support LSP | M0 |
+| Frontend is split by module but not query-based; no LSP; multi-error recovery covers one body at a time | Blocks M5.4 and M6.1; editing feedback stays coarse | M0, M5, M6 |
+| Incremental compilation exists only as value types and predicates (ADR-0176, ADR-0177); no query cache, no per-item or per-crate granularity | M5.4's four build cases cannot be verified beyond no-modification | M5 |
 | Compilation speed limited by GCC | Go-level compilation speed unreachable | M5 |
 | No concurrency, no networking, no package management | Missing core Go advantages | M3, M4 |
 
@@ -267,6 +270,21 @@ A custom native machine code backend/linker will only be considered as a separat
 1. **Immediately freeze** new built-in functions, hand-written container families, pre-defined result enums, and runtime micro-optimizations (load factors, buffer tuning, etc.) until M1 acceptance.
 2. Existing built-ins will be re-implemented as standard library methods during M1; old names will be kept as deprecated aliases for one version, then removed.
 3. Existing C backend will be moved into `ae-codegen-c` and switched to generate from MIR in M2.
+
+### 5.4 Verified Progress Since Version 0.3 (2026-11-12)
+
+These numbers are read from the working tree, not from memory: `cargo test --workspace --locked` reports 255 passing tests; `tests/run` holds 79 cases, `tests/ui` 4, `tests/ui-json` 36; `examples/` holds 41 programs; `std/core/` holds 252 modules; `docs/adr/` is numbered to 0179. CI runs the suite on `ubuntu-latest` and `windows-latest`.
+
+Landed since the 0.3 revision:
+
+- **Workspace split** (M0.3, partial): `ae-span`, `ae-syntax`, and `ae-compiler` exist; `ae-hir`, `ae-ty`, `ae-mir`, the three backend crates, `ae-driver`, and `ae-lsp` do not.
+- **Diagnostics** (M0.4–0.5, partial): structured spans, error codes, primary/secondary labels, and `check --json`; parser recovery collects several errors within one body.
+- **Test frameworks** (M0.6–0.7): `tests/ui` with `.stderr` snapshots, `tests/run` with `.stdout` snapshots, driven by `scripts/snapshots.py`.
+- **CI** (M0.8, partial): dual-platform matrix and script unit tests; no dependency caching.
+- **Frontend reuse cache** (new beyond 0.3): ADR-0177, with a single-platform measurement.
+- **Self-hosting IR and data layer** (new beyond 0.3): ADR-0150–0179 cover CFG/SSA, register allocation, optimization passes, five object containers, DWARF, assembly text, linker scripts and archives, unwind tables, incremental query primitives, and dependency resolution.
+
+What has *not* moved, and is still blocked: no MIR, no borrow checker beyond limited move rules, no method syntax, closures, or iterators, no concurrency, no networking, no package management, and no LSP. §9 keeps those levels unchanged; the IR layer above does not imply them.
 
 ---
 
@@ -470,12 +488,14 @@ Any public claim must simultaneously satisfy: dual-platform verification + repro
 
 ## 10. Immediate Action Checklist (M0 Kickoff)
 
-1. ☐ Merge design charter ADR and freeze list (M0.1).
-2. ☐ Split ADR documentation, migrate benchmarks to the reports directory (M0.2).
-3. ☐ Set up workspace, mechanically split frontend, byte-by-byte comparison of all examples via `emit-c` (M0.3).
-4. ☐ Diagnostic infrastructure and multi-error recovery (M0.4–0.5).
-5. ☐ UI/execution snapshot testing framework and migration of legacy tests (M0.6–0.7).
-6. ☐ Repository cleanup, dual-platform CI, baseline reports (M0.8–0.9).
-7. ☐ Begin M1.1: Type system specification.
+Legend: ☑ done, ◐ partial (see note), ☐ not started.
+
+1. ☑ Merge design charter ADR and freeze list (M0.1) — ADR-67, ADR-68.
+2. ◐ Split ADR documentation, migrate benchmarks to the reports directory (M0.2) — `docs/adr/` is split and `bench/reports/` exists with a template and two reports; historical measurements still live in `bench/results/`.
+3. ◐ Set up workspace, mechanically split frontend, byte-by-byte comparison of all examples via `emit-c` (M0.3) — three of the nine planned crates exist; `scripts/compare_emit_c.py` provides the comparison.
+4. ◐ Diagnostic infrastructure and multi-error recovery (M0.4–0.5) — structured diagnostics and JSON output are in place; recovery collects several errors within one body, not across declarations.
+5. ☑ UI/execution snapshot testing framework and migration of legacy tests (M0.6–0.7) — `scripts/snapshots.py`, `tests/ui`, `tests/run`.
+6. ◐ Repository cleanup, dual-platform CI, baseline reports (M0.8–0.9) — CI matrix and script unit tests exist; no dependency caching, and only one baseline report.
+7. ◐ Begin M1.1: Type system specification — `spec/types.md`, `spec/methods_and_traits.md`, `spec/modules.md`, and `spec/diagnostics.md` exist; they describe the current language, not the M1 target.
 
 Note: This document serves as a design and implementation plan and does not imply that the listed capabilities are already implemented. Actual progress is governed by the §9 status table and individual reports; the roadmap may be adjusted based on evidence, but modifications to §1.1 priorities and §2.2 hard rules must be approved via ADR.
