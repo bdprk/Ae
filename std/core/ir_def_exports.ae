@@ -4,37 +4,37 @@
 // CONSTANT/DATA flag, and forwarded export target strings.
 
 pub struct DefExportEntry {
-    pub symbol_id: int,
-    pub ordinal: int,
-    pub is_noname: bool,
-    pub is_data: bool,
-    pub forward_id: int, // 0 if not forwarded, else string id of forwarded target
+    symbol_id: i64,
+    ordinal: i64,
+    is_noname: bool,
+    is_data: bool,
+    forward_id: i64, // 0 if not forwarded, else string id of forwarded target
 }
 
-pub fn make_def_export(sym_id: int, ordinal: int) -> DefExportEntry {
-    DefExportEntry {
+pub fn make_def_export(sym_id: i64, ordinal: i64) -> DefExportEntry {
+    return DefExportEntry {
         symbol_id: sym_id,
         ordinal: ordinal,
         is_noname: false,
         is_data: false,
         forward_id: 0,
-    }
+    };
 }
 
-pub fn def_export_with_flags(sym_id: int, ordinal: int, noname: bool, data: bool) -> DefExportEntry {
-    DefExportEntry {
+pub fn def_export_with_flags(sym_id: i64, ordinal: i64, noname: bool, data: bool) -> DefExportEntry {
+    return DefExportEntry {
         symbol_id: sym_id,
         ordinal: ordinal,
         is_noname: noname,
         is_data: data,
         forward_id: 0,
-    }
+    };
 }
 
 pub fn def_is_forwarded(entry: DefExportEntry) -> bool {
-    entry.forward_id != 0
+    return entry.forward_id != 0;
 }
 
 pub fn def_has_explicit_ordinal(entry: DefExportEntry) -> bool {
-    entry.ordinal > 0
+    return entry.ordinal > 0;
 }

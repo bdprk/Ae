@@ -28,4 +28,4 @@ Following binary object container formats (ELF64, Mach-O, PE/COFF, Wasm) and ass
    - Heuristics for cross-module import decisions (`lto_should_import`).
 
 ## Consequences
-- The linker subsystem now has complete abstractions for processing archive libraries, placing sections into memory layouts, configuring dynamic exports, and summarizing call graphs for whole-program optimizations.
+- These are preliminary data structures and helpers. They do not parse archives or linker scripts, link binaries, configure exports, or perform LTO. Further implementation and validation are required.
