@@ -1,0 +1,36 @@
+use "../../std/core/simd_dot.ae";
+use "../../std/core/clz_ctz.ae";
+use "../../std/core/wrapping_math.ae";
+use "../../std/core/percentile.ae";
+
+fn main() {
+    let a = lane4_vec_new(1, 2, 3, 4);
+    assert(lane4_vec_v0(a) == 1);
+    let b = lane4_vec_new(2, 2, 2, 2);
+    assert(lane4_vec_v3(b) == 2);
+
+    // 1*2 + 2*2 + 3*2 + 4*2 = 2 + 4 + 6 + 8 = 20
+    assert(lane4_vec_dot(lane4_vec_new(1, 2, 3, 4), lane4_vec_new(2, 2, 2, 2)) == 20);
+
+    let fma = lane4_vec_fma(lane4_vec_new(2, 3, 4, 5), lane4_vec_new(2, 2, 2, 2), lane4_vec_new(1, 1, 1, 1));
+    assert(lane4_vec_v0(fma) == 5); // 2*2 + 1 = 5
+    let fma_b = lane4_vec_fma(lane4_vec_new(2, 3, 4, 5), lane4_vec_new(2, 2, 2, 2), lane4_vec_new(1, 1, 1, 1));
+    assert(lane4_vec_v3(fma_b) == 11); // 5*2 + 1 = 11
+
+    assert(count_trailing_zeros_i64(8) == 3); // 8 = 2^3
+    assert(count_trailing_zeros_i64(16) == 4);
+    assert(count_trailing_zeros_i64(1) == 0);
+    assert(count_leading_zeros_i64(0) == 64);
+    assert(count_leading_zeros_i64(1) > 0);
+
+    assert(wrapping_add_bound(15, 2, 16) == 1);
+    assert(wrapping_sub_bound(0, 1, 16) == 15);
+    assert(wrapping_mul_bound(5, 4, 16) == 4); // 20 % 16 = 4
+
+    assert(calculate_p50_i64(10, 110) == 60);
+    assert(calculate_p99_i64(0, 1000) == 990);
+    assert(latency_is_sla_breached(250, 200));
+    assert(!latency_is_sla_breached(150, 200));
+
+    print("SIMDDOT CLZCTZ WRAPPING PERCENTILE OPERATIONAL");
+}

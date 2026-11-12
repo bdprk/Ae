@@ -1,0 +1,15 @@
+// std/core/percentile.ae
+// Integer percentile and rank estimation primitives for telemetry latency.
+
+pub fn calculate_p50_i64(p0: i64, p100: i64) -> i64 {
+    return p0 + (p100 - p0) / 2;
+}
+
+pub fn calculate_p99_i64(p0: i64, p100: i64) -> i64 {
+    // 99% of range
+    return p0 + ((p100 - p0) * 99) / 100;
+}
+
+pub fn latency_is_sla_breached(latency_ms: i64, sla_limit_ms: i64) -> bool {
+    return latency_ms > sla_limit_ms;
+}

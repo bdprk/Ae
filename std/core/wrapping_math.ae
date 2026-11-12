@@ -1,0 +1,28 @@
+// std/core/wrapping_math.ae
+// Explicit wrapping arithmetic primitives with positive upper bound modulo.
+
+pub fn wrapping_add_bound(a: i64, b: i64, bound: i64) -> i64 {
+    if bound <= 0 {
+        return 0;
+    }
+    return (a + b) % bound;
+}
+
+pub fn wrapping_sub_bound(a: i64, b: i64, bound: i64) -> i64 {
+    if bound <= 0 {
+        return 0;
+    }
+    let diff = (a - b) % bound;
+    if diff < 0 {
+        return diff + bound;
+    }
+    return diff;
+}
+
+pub fn wrapping_mul_bound(a: i64, b: i64, bound: i64) -> i64 {
+    if bound <= 0 {
+        return 0;
+    }
+    // Modulo arithmetic
+    return (a % bound * (b % bound)) % bound;
+}

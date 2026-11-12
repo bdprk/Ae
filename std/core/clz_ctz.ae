@@ -1,0 +1,33 @@
+// std/core/clz_ctz.ae
+// Fast bitwise leading and trailing zeros count for positive i64 integers.
+
+pub fn count_leading_zeros_i64(val: i64) -> i64 {
+    if val <= 0 {
+        return 64;
+    }
+    var v = val;
+    var count = 0;
+    // Positive i64 has up to 62 bits
+    var mask = 2305843009213693952; // 2^61
+    while mask > 0 {
+        if v >= mask {
+            return count;
+        }
+        count = count + 1;
+        mask = mask / 2;
+    }
+    return count;
+}
+
+pub fn count_trailing_zeros_i64(val: i64) -> i64 {
+    if val <= 0 {
+        return 64;
+    }
+    var v = val;
+    var count = 0;
+    while v % 2 == 0 {
+        count = count + 1;
+        v = v / 2;
+    }
+    return count;
+}
