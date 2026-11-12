@@ -4175,3 +4175,23 @@ fn numeric_lexical_errors_recover_in_json_without_accepting_program() {
     assert!(generated.stdout.is_empty());
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn invalid_escapes_in_closed_strings_allow_json_lexical_recovery() {
+    let dir = unique_temp_dir("json-string-recovery");
+    let path = dir.join("bad.ae");
+    fs::write(&path, "fn main() { print(\"bad\\q and \\z\"); @ }\n").unwrap();
+    let json = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    assert!(!json.status.success());
+    assert!(json.stderr.is_empty());
+    let text = String::from_utf8(json.stdout).unwrap();
+    assert_eq!(text.matches("\"code\":\"E0002\"").count(), 2, "{text}");
+    assert_eq!(text.matches("\"code\":\"E0001\"").count(), 1, "{text}");
+    let plain = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+    assert!(!plain.status.success());
+    assert!(String::from_utf8_lossy(&plain.stderr).contains("unsupported string escape"));
+    let generated = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-c").arg(&path).output().unwrap();
+    assert!(!generated.status.success());
+    assert!(generated.stdout.is_empty());
+    fs::remove_dir_all(dir).unwrap();
+}

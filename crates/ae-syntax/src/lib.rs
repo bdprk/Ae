@@ -69,7 +69,8 @@ impl From<Diagnostic> for LexFailure {
 
 const MAX_LEX_DIAGNOSTICS: usize = 32;
 
-/// Recover from unexpected characters and complete invalid numeric literals,
+/// Recover from unexpected characters, closed strings with unsupported escapes,
+/// and complete invalid numeric literals,
 /// never returning tokens for an invalid source. All positions are calculated against the original input.
 pub fn lex_with_diagnostics(source: &str) -> Result<Vec<Token>, Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
@@ -92,6 +93,26 @@ pub fn lex_diagnostic(source: &str) -> Result<Vec<Token>, Diagnostic> {
         LexFailure::Unexpected(diagnostic) | LexFailure::Fatal(diagnostic) => diagnostic,
     })
 }
+// Determine whether the rest of a malformed string has an unambiguous end.
+// A backslash consumes the next Unicode scalar even when that escape is invalid.
+fn has_closing_quote(source: &str, mut offset: usize) -> bool {
+    while offset < source.len() {
+        let ch = source[offset..].chars().next().unwrap();
+        match ch {
+            '"' => return true,
+            '\n' | '\0' => return false,
+            '\\' => {
+                offset += 1;
+                let Some(next) = source[offset..].chars().next() else { return false };
+                if next == '\n' || next == '\0' { return false; }
+                offset += next.len_utf8();
+            }
+            _ => offset += ch.len_utf8(),
+        }
+    }
+    false
+}
+
 fn lex_inner(source: &str, mut recovered: Option<&mut Vec<Diagnostic>>) -> Result<Vec<Token>, LexFailure> {
     let bytes = source.as_bytes();
     let mut i = 0;
@@ -128,8 +149,17 @@ fn lex_inner(source: &str, mut recovered: Option<&mut Vec<Diagnostic>>) -> Resul
                     b'\\' => {
                         let escaped = bytes.get(i + 1).copied();
                         if !matches!(escaped, Some(b'n' | b't' | b'r' | b'\\' | b'"')) {
-                            return Err(lex_error(source, i, "E0002", "unsupported string escape; allowed: \\n \\t \\r \\\\ \\\""
-                            ).with_suggestion("Use a supported escape, or escape a literal backslash as \\\\.").into());
+                            let diagnostic = lex_error(source, i, "E0002", "unsupported string escape; allowed: \\n \\t \\r \\\\ \\\""
+                            ).with_suggestion("Use a supported escape, or escape a literal backslash as \\\\.");
+                            if recovered.is_none() || !has_closing_quote(source, i) {
+                                return Err(diagnostic.into());
+                            }
+                            let diagnostics = recovered.as_deref_mut().unwrap();
+                            diagnostics.push(diagnostic);
+                            if diagnostics.len() >= MAX_LEX_DIAGNOSTICS { return Ok(result); }
+                            i += 1;
+                            i += source[i..].chars().next().unwrap().len_utf8();
+                            continue;
                         }
                         i += 2;
                     }
@@ -291,18 +321,35 @@ mod diagnostic_tests {
         assert_eq!(lex_diagnostic(source).unwrap_err(), errors[0]);
         let many = std::iter::repeat_n("9223372036854775808", 40).collect::<Vec<_>>().join(" ");
         assert_eq!(lex_with_diagnostics(&many).unwrap_err().len(), 32);
-        assert!(lex_with_diagnostics("9223372036854775808 \"bad\\q\" @").unwrap_err().len() == 2);
+        assert!(lex_with_diagnostics("9223372036854775808 \"bad\\q\" @").unwrap_err().len() == 3);
+    }
+
+    #[test]
+    fn recovery_handles_closed_strings_with_bad_escapes() {
+        let source = r#""bad\q \中 \" @ still string \z" @"#;
+        let errors = lex_with_diagnostics(source).unwrap_err();
+        let codes: Vec<_> = errors.iter().map(|d| d.code.as_deref().unwrap()).collect();
+        assert_eq!(codes, ["E0002", "E0002", "E0002", "E0001"]);
+        assert_eq!(lex_diagnostic(source).unwrap_err(), errors[0]);
+        assert_eq!(errors[3].primary.as_ref().unwrap().span.range.start, source.rfind('@').unwrap());
+        let many = format!("\"{}\" @", "\\q".repeat(40));
+        assert_eq!(lex_with_diagnostics(&many).unwrap_err().len(), 32);
+        for source in ["\"bad\\q", "\"bad\\q\n@", "\"bad\\q\0@"] {
+            let errors = lex_with_diagnostics(source).unwrap_err();
+            assert_eq!(errors.len(), 1, "{source:?}");
+            assert_eq!(errors[0].code.as_deref(), Some("E0002"));
+        }
     }
 
     #[test]
     fn recovery_keeps_original_positions_and_stops_at_ambiguous_errors() {
         let errors = lex_with_diagnostics("中 @\n\"bad\\q\" #").unwrap_err();
-        assert_eq!(errors.len(), 3);
+        assert_eq!(errors.len(), 4);
         let positions: Vec<_> = errors.iter().map(|d| {
             let span = &d.primary.as_ref().unwrap().span;
             (span.range.clone(), span.line, span.column)
         }).collect();
-        assert_eq!(positions, vec![(0..3, 1, 1), (4..5, 1, 3), (10..11, 2, 5)]);
+        assert_eq!(positions, vec![(0..3, 1, 1), (4..5, 1, 3), (10..11, 2, 5), (14..15, 2, 9)]);
         assert!(errors[2].message.contains("unsupported string escape"));
         assert!(lex_with_diagnostics("fn main() {} // @").is_ok());
         assert_eq!(lex_with_diagnostics(&"@".repeat(40)).unwrap_err().len(), 32);
