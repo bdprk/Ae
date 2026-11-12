@@ -1,0 +1,13 @@
+use "../../std/core/time.ae";
+
+fn main() {
+    let d1 = duration_from_secs(42);
+    assert(d1.secs == 42);
+    assert(d1.nanos == 0);
+
+    let d2 = duration_from_millis(1500);
+    assert(d2.secs == 1);
+    assert(d2.nanos == 500000000);
+
+    print("DURATION PRIMITIVES OPERATIONAL\n");
+}

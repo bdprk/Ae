@@ -1,0 +1,25 @@
+// std/core/time.ae
+// Core Duration & Instant primitives (M1.4 / M3.3)
+
+pub struct Duration {
+    secs: i64,
+    nanos: i64,
+}
+
+pub fn duration_from_secs(secs: i64) -> Duration {
+    return Duration { secs: secs, nanos: 0 };
+}
+
+pub fn duration_from_millis(millis: i64) -> Duration {
+    let secs = millis / 1000;
+    let nanos = (millis % 1000) * 1000000;
+    return Duration { secs: secs, nanos: nanos };
+}
+
+pub fn duration_as_secs(d: Duration) -> i64 {
+    return d.secs;
+}
+
+pub fn duration_subsec_nanos(d: Duration) -> i64 {
+    return d.nanos;
+}
