@@ -46,13 +46,15 @@ impl BorrowRegions {
         let mut in_queue = vec![false; function.blocks.len()];
         queue.push_back(0);
         in_queue[0] = true;
+        let mut exit_states: Vec<std::collections::HashSet<usize>> = vec![std::collections::HashSet::new(); function.blocks.len()];
         while let Some(block_id) = queue.pop_front() {
             in_queue[block_id] = false;
             let mut state = live_in[block_id].clone();
             let exit_state = BorrowRegions::walk_block(function, block_id, &mut state);
             if exit_state != live_in[block_id] {
                 // Store the exit state so successors meet over it.
-                live_in[block_id] = exit_state;
+                live_in[block_id] = exit_state.clone();
+                exit_states[block_id] = exit_state;
                 for succ in successors(function, block_id) {
                     if !in_queue[succ] {
                         queue.push_back(succ);
@@ -61,6 +63,27 @@ impl BorrowRegions {
                 }
             }
         }
+        // Write-through-borrow verification: a statement that writes a slot
+        // must not run in a block whose live region covers that slot. The
+        // parser enforces this with its registers; the regions must agree.
+        for block in &function.blocks {
+            let mut live = live_in[block.id].clone();
+            for statement in &block.statements {
+                if let Some(written) = writes_slot(statement) {
+                    if live.contains(&written) {
+                        return Err(format!(
+                            "internal: fn #{} block {} writes v{} while its borrow region is live; the parser's borrow registers and the CFG regions disagree",
+                            function.id, block.id, written
+                        ));
+                    }
+                }
+                introduce_borrows(statement, &mut live);
+                // A write also kills a live borrow only if the tree says the
+                // scope ended — which it does not mid-block, so no kill here.
+                let _ = &mut live;
+            }
+        }
+        let _ = exit_states;
         Ok(())
     }
 
@@ -78,6 +101,22 @@ impl BorrowRegions {
         // Loop back-edges keep their regions live (the loop's own borrow
         // covers the body; the fixed point handles the edge).
         live.clone()
+    }
+}
+
+// The slot a statement writes, when it writes one directly: assignments,
+// field stores through the owner, container pushes/stores/pops, and sorts —
+// the same set the parser's registers protect.
+fn writes_slot(statement: &Statement) -> Option<usize> {
+    match statement {
+        Statement::Assign(id, ..) => Some(*id),
+        Statement::FieldStore(id, ..) => Some(*id),
+        Statement::VecPush(id, ..) | Statement::StrVecPush(id, ..) | Statement::VecFPush(id, ..) => Some(*id),
+        Statement::VecPop(id, ..) | Statement::StrVecPop(id, ..) | Statement::VecFPop(id, ..) => Some(*id),
+        Statement::VecStore(id, ..) | Statement::StrVecStore(id, ..) | Statement::VecFStore(id, ..) => Some(*id),
+        Statement::Sort(id, ..) | Statement::Reverse(id, ..) => Some(*id),
+        Statement::MapPut(place, ..) => Some(place.slot()),
+        _ => None,
     }
 }
 
