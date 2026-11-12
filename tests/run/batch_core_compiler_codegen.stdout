@@ -1,0 +1,6 @@
+--- batch_core_compiler_codegen test start ---
+reg_allocation ok
+stack_frame_layout ok
+call_conv ok
+spill_cost ok
+--- batch_core_compiler_codegen test end ---

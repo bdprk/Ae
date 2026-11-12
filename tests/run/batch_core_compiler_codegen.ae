@@ -1,0 +1,53 @@
+// tests/run/batch_core_compiler_codegen.ae
+// Verification of IR register allocation, stack frame layout, calling convention, and spill weight.
+
+use "../../std/core/ir_reg_alloc.ae";
+use "../../std/core/ir_stack_frame.ae";
+use "../../std/core/ir_call_conv.ae";
+use "../../std/core/ir_spill.ae";
+
+fn main() {
+    print("--- batch_core_compiler_codegen test start ---");
+
+    // 1. RegAlloc
+    let ra1 = reg_allocation_new(101, 3);
+    assert(reg_allocation_vreg(ra1) == 101);
+    let ra1_phys = reg_allocation_new(101, 3);
+    assert(reg_allocation_phys(ra1_phys) == 3);
+    let ra1_spilled = reg_allocation_new(101, 3);
+    assert(!reg_allocation_is_spilled(ra1_spilled));
+
+    let ra_spill = reg_allocation_new(102, -1);
+    assert(reg_allocation_is_spilled(ra_spill));
+    print("reg_allocation ok");
+
+    // 2. StackFrameLayout
+    // 3 slots (24 bytes) + 10 bytes locals = 34 bytes -> aligned to 48 bytes (multiple of 16)
+    let frame = stack_frame_layout_new(3, 10);
+    assert(stack_frame_total_size(frame) == 48);
+    let frame2 = stack_frame_layout_new(3, 10);
+    assert(stack_frame_slot_offset(frame2, 2) == 16);
+    print("stack_frame_layout ok");
+
+    // 3. Calling Convention
+    assert(arg_register_index(0) == 0);
+    assert(arg_register_index(5) == 5);
+    assert(arg_register_index(6) == -1);
+    assert(!arg_is_passed_on_stack(4));
+    assert(arg_is_passed_on_stack(6));
+    assert(arg_stack_offset(6) == 16);
+    assert(arg_stack_offset(7) == 24);
+    print("call_conv ok");
+
+    // 4. Spill Cost
+    let cost1 = spill_cost_new(1, 4, 0); // 4 * (1 + 0) = 4
+    let cost2 = spill_cost_new(2, 2, 1); // 2 * (1 + 8) = 18
+    let w1 = spill_cost_weight(cost1);
+    let w2 = spill_cost_weight(cost2);
+    assert(w1 == 4);
+    assert(w2 == 18);
+    assert(spill_cost_should_spill(w1, w2));
+    print("spill_cost ok");
+
+    print("--- batch_core_compiler_codegen test end ---");
+}
