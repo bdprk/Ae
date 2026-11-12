@@ -1,0 +1,24 @@
+use "../../std/core/clone.ae";
+
+pub struct Config {
+    port: i64,
+}
+
+impl Clone for Config {
+    fn clone(c: Config) -> Config {
+        return Config { port: c.port };
+    }
+}
+
+fn duplicate[T: Clone](item: T) -> T {
+    return clone(item);
+}
+
+fn main() {
+    let cfg1 = Config { port: 8080 };
+    let cfg2 = duplicate[Config](cfg1);
+    assert(cfg2.port == 8080);
+    assert(duplicate[i64](123) == 123);
+    assert(duplicate[bool](false) == false);
+    print("CLONE TRAIT WORKING\n");
+}

@@ -1,0 +1,18 @@
+// std/core/clone.ae
+// Core Clone & Copy Trait Specification (M1.7)
+
+pub trait Clone {
+    fn clone(x: T) -> T;
+}
+
+impl Clone for i64 {
+    fn clone(x: i64) -> i64 {
+        return x;
+    }
+}
+
+impl Clone for bool {
+    fn clone(x: bool) -> bool {
+        return x;
+    }
+}
