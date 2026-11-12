@@ -1,0 +1,6 @@
+--- batch_core_compiler_asm2 test start ---
+gas_syntax ok
+opcode_map ok
+addr_mode ok
+cond_code ok
+--- batch_core_compiler_asm2 test end ---

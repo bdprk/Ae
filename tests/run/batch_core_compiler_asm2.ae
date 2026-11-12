@@ -1,0 +1,55 @@
+// tests/run/batch_core_compiler_asm2.ae
+// Verification of GasSyntaxConfig, AsmOpcodeMap, AsmAddrMode, and AsmCondCode primitives.
+
+use "../../std/core/ir_gas_syntax.ae";
+use "../../std/core/ir_asm_opcode_map.ae";
+use "../../std/core/ir_asm_addr_mode.ae";
+use "../../std/core/ir_asm_cond_code.ae";
+
+fn main() {
+    print("--- batch_core_compiler_asm2 test start ---");
+
+    // 1. GAS Syntax Config
+    let att = gas_syntax_new(true, true, true);
+    assert(gas_syntax_is_att(att));
+    let att_b = gas_syntax_new(true, true, true);
+    assert(!gas_syntax_is_intel(att_b));
+
+    let intel = gas_syntax_new(false, false, false);
+    assert(gas_syntax_is_intel(intel));
+    print("gas_syntax ok");
+
+    // 2. Opcode Map & Size Suffix
+    let op_q = asm_opcode_map_new(1, 8); // MOVQ
+    assert(asm_opcode_is_64bit(op_q));
+    let op_q_b = asm_opcode_map_new(1, 8);
+    assert(asm_opcode_size_suffix_ascii(op_q_b) == 113); // 'q'
+
+    let op_l = asm_opcode_map_new(2, 4); // ADDL
+    assert(asm_opcode_size_suffix_ascii(op_l) == 108); // 'l'
+    print("opcode_map ok");
+
+    // 3. Addressing Mode
+    // [RBP - 16] (base=5, index=-1, scale=1, disp=-16)
+    let addr_frame = asm_addr_new(5, -1, 1, -16);
+    assert(!asm_addr_has_index(addr_frame));
+    let addr_frame_b = asm_addr_new(5, -1, 1, -16);
+    assert(asm_addr_displacement(addr_frame_b) == -16);
+
+    // RIP + 128 (base=-2, index=-1)
+    let addr_rip = asm_addr_new(-2, -1, 1, 128);
+    assert(asm_addr_is_rip_relative(addr_rip));
+    print("addr_mode ok");
+
+    // 4. Condition Code & Inversion
+    let cond_eq = asm_cond_new(1, true); // Equal (E)
+    assert(asm_cond_is_equality(cond_eq));
+    let cond_eq_b = asm_cond_new(1, true);
+    assert(asm_cond_invert_kind(cond_eq_b) == 2); // Invert to Not Equal (NE)
+
+    let cond_lt = asm_cond_new(3, true); // Less (L)
+    assert(asm_cond_invert_kind(cond_lt) == 6); // Invert to Greater/Equal (GE)
+    print("cond_code ok");
+
+    print("--- batch_core_compiler_asm2 test end ---");
+}
