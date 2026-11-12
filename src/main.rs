@@ -4,7 +4,7 @@ use ae_compiler::{fmt, frontend, harness, sha256};
 use frontend::compile_path;
 mod frontend_cache;
 
-const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg> <source.ae>\n       ae check --json <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae> [filter]\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> <source.ae>\n       ae check --json <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae> [filter]\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -445,14 +445,19 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         _ => level.unwrap_or(false),
     };
     let output = match cmd.as_str() {
-        "check" | "emit-c" | "emit-tree" | "emit-cfg" | "run" if args.len() == 2 => None,
+        "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" | "run" if args.len() == 2 => None,
         "run" if level.is_some() => None,
         "build" if (args.len() == 4 || level.is_some()) && args[2] == "-o" => Some(PathBuf::from(&args[3])),
-        "check" | "emit-c" | "emit-tree" | "emit-cfg" | "run" | "build" => return Err(USAGE.into()),
+        "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" | "run" | "build" => return Err(USAGE.into()),
         _ => return Err(format!("unknown command: {cmd}\n{USAGE}")),
     };
     let input = Path::new(&args[1]);
     let started = Instant::now();
+    if cmd == "emit-mir" {
+        let mir = frontend::mir_path(input)?;
+        print!("{mir}");
+        return Ok(0);
+    }
     if cmd == "emit-cfg" {
         let graph = frontend::cfg_path(input)?;
         print!("{graph}");

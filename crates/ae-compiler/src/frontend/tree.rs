@@ -403,7 +403,7 @@ impl<'a> TreePrinter<'a> {
     }
 }
 
-fn operator_text(op: &Kind) -> &'static str {
+pub(super) fn operator_text(op: &Kind) -> &'static str {
     match op {
         Kind::Plus => "+", Kind::Minus => "-", Kind::Star => "*", Kind::Slash => "/", Kind::Percent => "%",
         Kind::EqEq => "==", Kind::NotEq => "!=", Kind::Less => "<", Kind::LessEq => "<=",

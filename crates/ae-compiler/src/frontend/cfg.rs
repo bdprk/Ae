@@ -50,7 +50,7 @@ pub(super) struct CfgBlock {
     pub(super) terminator: CfgTerminator,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) enum CfgTerminator {
     // Unconditional edge to another block.
     Goto(usize),

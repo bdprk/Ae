@@ -7,6 +7,7 @@ mod tree;
 mod cfg;
 mod movewalk;
 mod borrowscope;
+mod mir;
 mod expression;
 mod types;
 mod declarations;
@@ -479,6 +480,12 @@ pub fn tree_path(path: &Path) -> Result<String, String> {
 /// statement tree's own statements, printed as text (`ae emit-cfg`).
 pub fn cfg_path(path: &Path) -> Result<String, String> {
     cfg::cfg_path(path)
+}
+
+/// The MIR: places, rvalues, and explicit temporaries over the CFG, printed
+/// as text (`ae emit-mir`).
+pub fn mir_path(path: &Path) -> Result<String, String> {
+    mir::mir_path(path)
 }
 
 /// Compile a file and report what the output depends on, in one pass. This is
