@@ -1,0 +1,20 @@
+// std/core/stream.ae
+// Core Stream State & Flow Control Flags (M1.4 / M3.2)
+
+pub enum StreamState {
+    Open,
+    Eof,
+    Closed,
+    Faulted,
+}
+
+pub fn stream_is_readable(s: StreamState) -> bool {
+    var r = false;
+    match s {
+        StreamState::Open => { r = true; }
+        StreamState::Eof => {}
+        StreamState::Closed => {}
+        StreamState::Faulted => {}
+    }
+    return r;
+}

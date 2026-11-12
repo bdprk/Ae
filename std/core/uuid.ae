@@ -1,0 +1,15 @@
+// std/core/uuid.ae
+// Core 128-bit Identifier Layout (M1.4 / M3.3)
+
+pub struct Uuid {
+    high: i64,
+    low: i64,
+}
+
+pub fn uuid_from_raw(high: i64, low: i64) -> Uuid {
+    return Uuid { high: high, low: low };
+}
+
+pub fn uuid_is_nil(u: Uuid) -> bool {
+    return u.high == 0 && u.low == 0;
+}

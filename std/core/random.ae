@@ -1,0 +1,23 @@
+// std/core/random.ae
+// Core LCG Pseudo-Random Number Generator (M1.4 / M3.3)
+
+pub struct LcgRng {
+    state: i64,
+}
+
+pub fn lcg_new(seed: i64) -> LcgRng {
+    return LcgRng { state: seed };
+}
+
+pub fn lcg_next(rng: LcgRng) -> LcgRng {
+    // Bounded multiplier step avoiding 64-bit integer overflow
+    let next_state = (rng.state * 1103515245 + 12345) % 2147483647;
+    return LcgRng { state: next_state };
+}
+
+pub fn lcg_val(rng: LcgRng) -> i64 {
+    if rng.state < 0 {
+        return -rng.state;
+    }
+    return rng.state;
+}

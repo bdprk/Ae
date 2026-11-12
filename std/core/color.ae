@@ -1,0 +1,17 @@
+// std/core/color.ae
+// Core RGBA Color & ANSI Terminal Formatting (M1.4 / M4.1)
+
+pub struct ColorRgba {
+    r: i64,
+    g: i64,
+    b: i64,
+    a: i64,
+}
+
+pub fn color_rgb(r: i64, g: i64, b: i64) -> ColorRgba {
+    return ColorRgba { r: r, g: g, b: b, a: 255 };
+}
+
+pub fn color_is_opaque(c: ColorRgba) -> bool {
+    return c.a == 255;
+}

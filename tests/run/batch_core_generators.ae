@@ -1,0 +1,32 @@
+use "../../std/core/random.ae";
+use "../../std/core/uuid.ae";
+use "../../std/core/color.ae";
+use "../../std/core/stream.ae";
+
+fn main() {
+    let rng0 = lcg_new(12345);
+    assert(lcg_val(rng0) == 12345);
+
+    let rng_init = lcg_new(12345);
+    let rng1 = lcg_next(rng_init);
+    assert(lcg_val(rng1) != 12345);
+
+    let u_nil = uuid_from_raw(0, 0);
+    assert(uuid_is_nil(u_nil));
+
+    let u_valid = uuid_from_raw(100, 200);
+    assert(!uuid_is_nil(u_valid));
+
+    let c = color_rgb(255, 128, 0);
+    assert(c.r == 255);
+    assert(c.g == 128);
+    assert(c.b == 0);
+    assert(color_is_opaque(c));
+
+    assert(stream_is_readable(StreamState::Open));
+    assert(!stream_is_readable(StreamState::Eof));
+    assert(!stream_is_readable(StreamState::Closed));
+    assert(!stream_is_readable(StreamState::Faulted));
+
+    print("GENERATORS AND STREAMS OPERATIONAL\n");
+}
