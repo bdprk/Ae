@@ -138,6 +138,9 @@ impl Parser<'_> {
     // in any order but each exactly once; owned fields are moved in.
     pub(super) fn struct_literal(&mut self, sid: usize, offset: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
         let name = self.structs[sid].name.clone();
+        if std::env::var_os("AE_DEBUG_MIR").is_some() {
+            eprintln!("struct literal debug: sid {} name '{}' at token {}", sid, name, self.pos);
+        }
         self.take(Kind::LBrace)?;
         let def_fields = self.structs[sid].fields.clone();
         let mut slots: Vec<Option<Expr>> = (0..def_fields.len()).map(|_| None).collect();
@@ -206,7 +209,7 @@ impl Parser<'_> {
             self.enum_names.insert(name.clone(), id);
             let concrete = variants.into_iter().map(|(vname, fields)| (vname, fields.into_iter().map(|p| match p {
                 Payload::Concrete(ty) => ty,
-                Payload::Param(_) => unreachable!("a non-generic enum has no type parameters"),
+                Payload::Param(_) | Payload::Nested(_) => unreachable!("a non-generic enum has no type parameters"),
             }).collect())).collect();
             self.enums.push(EnumDef { name: interned, variants: concrete, file: self.file.clone(), public, pattern: name });
         } else {
@@ -308,13 +311,14 @@ impl Parser<'_> {
         if self.enums.len() >= MAX_ENUM_TYPES {
             return Err(self.error_at(offset, &format!("generic instantiation budget exceeded ({MAX_ENUM_TYPES} enum types) at '{}'", def.name)));
         }
-        let variants: Vec<(String, Vec<Type>)> = def.variants.iter().map(|(vname, fields)| {
-            let types = fields.iter().map(|p| match p {
-                Payload::Concrete(ty) => *ty,
-                Payload::Param(index) => args[*index],
-            }).collect();
-            (vname.clone(), types)
-        }).collect();
+        let mut variants: Vec<(String, Vec<Type>)> = Vec::new();
+        for (vname, fields) in def.variants.iter() {
+            let mut types = Vec::new();
+            for p in fields.iter() {
+                types.push(self.resolve_payload(p, &args, offset)?);
+            }
+            variants.push((vname.clone(), types));
+        }
         let display = format!("{}[{}]", def.name, args.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "));
         let interned: &'static str = Box::leak(display.into_boxed_str());
         let eid = self.enums.len();
@@ -331,16 +335,79 @@ impl Parser<'_> {
         }
         Ok(ty)
     }
-    // A field type in a generic declaration: a type parameter, or any named
-    // type (which may itself be an instantiation such as `Option[string]`).
+    // A field type in a generic declaration: a type parameter, a concrete
+    // named type, or a *nested instantiation* whose arguments may themselves
+    // be the declaration's parameters — `inner: Pair[string, V]` inside
+    // `struct Boxed[V]` stays a shape until the outer declaration is
+    // instantiated (M1.10).
     pub(super) fn field_type(&mut self, params: &[String]) -> Result<Payload, ae_span::Diagnostic> {
         if let Kind::Ident(name) = self.current() {
             if let Some(index) = params.iter().position(|p| p == name) {
                 self.pos += 1;
                 return Ok(Payload::Param(index));
             }
+            let is_generic_struct = self.generics.struct_names.contains_key(name.as_str());
+            let is_generic_enum = self.generics.names.contains_key(name.as_str());
+            if (is_generic_struct || is_generic_enum)
+                && self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&Kind::LBracket) {
+                let gid = if is_generic_struct { self.generics.struct_names[name.as_str()] } else { self.generics.names[name.as_str()] };
+                self.pos += 1; // the name
+                self.pos += 1; // '['
+                let mut args = Vec::new();
+                loop {
+                    args.push(self.payload_argument(params)?);
+                    if *self.current() != Kind::Comma { break; }
+                    self.pos += 1;
+                }
+                self.take(Kind::RBracket)?;
+                let index = self.generics.nested_shapes.len();
+                self.generics.nested_shapes.push(NestedShape { gid, is_struct: is_generic_struct, args });
+                return Ok(Payload::Nested(index));
+            }
         }
         Ok(Payload::Concrete(self.named_type()?))
+    }
+
+    // One argument inside a nested instantiation: the enclosing declaration's
+    // parameter, another nested instantiation, or a concrete named type.
+    fn payload_argument(&mut self, params: &[String]) -> Result<Payload, ae_span::Diagnostic> {
+        if let Kind::Ident(name) = self.current() {
+            if let Some(index) = params.iter().position(|p| p == name) {
+                self.pos += 1;
+                return Ok(Payload::Param(index));
+            }
+            let is_generic_struct = self.generics.struct_names.contains_key(name.as_str());
+            let is_generic_enum = self.generics.names.contains_key(name.as_str());
+            if (is_generic_struct || is_generic_enum)
+                && self.tokens.get(self.pos + 1).map(|t| &t.kind) == Some(&Kind::LBracket) {
+                return self.field_type(params);
+            }
+        }
+        Ok(Payload::Concrete(self.named_type()?))
+    }
+
+    // Resolve one payload against an argument list, instantiating nested
+    // shapes recursively. Shared by struct fields, enum payloads, and the
+    // nested-shape resolver itself.
+    fn resolve_payload(&mut self, payload: &Payload, args: &[Type], offset: usize) -> Result<Type, ae_span::Diagnostic> {
+        match payload {
+            Payload::Concrete(ty) => Ok(*ty),
+            Payload::Param(index) => Ok(args[*index]),
+            Payload::Nested(index) => {
+                let shape = self.generics.nested_shapes[*index].clone();
+                let mut resolved = Vec::new();
+                for arg in &shape.args {
+                    resolved.push(self.resolve_payload(arg, args, offset)?);
+                }
+                if shape.is_struct {
+                    let sid = self.instantiate_struct(shape.gid, resolved, offset)?;
+                    Ok(Type::Struct(sid))
+                } else {
+                    let eid = self.instantiate_enum(shape.gid, resolved, offset)?;
+                    Ok(Type::Enum(self.enums[eid].name, eid))
+                }
+            }
+        }
     }
     // One C layout per (declaration, argument) pair, generated on first use.
     pub(super) fn instantiate_struct(&mut self, gid: usize, args: Vec<Type>, offset: usize) -> Result<usize, ae_span::Diagnostic> {
@@ -353,13 +420,11 @@ impl Parser<'_> {
         if self.structs.len() >= MAX_STRUCT_TYPES {
             return Err(self.error_at(offset, &format!("generic instantiation budget exceeded ({MAX_STRUCT_TYPES} struct types) at '{}'", def.name)));
         }
-        let fields: Vec<(String, Type)> = def.fields.iter().map(|(fname, payload)| {
-            let ty = match payload {
-                Payload::Concrete(ty) => *ty,
-                Payload::Param(index) => args[*index],
-            };
-            (fname.clone(), ty)
-        }).collect();
+        let mut fields: Vec<(String, Type)> = Vec::new();
+        for (fname, payload) in def.fields.iter() {
+            let ty = self.resolve_payload(payload, &args, offset)?;
+            fields.push((fname.clone(), ty));
+        }
         let display = format!("{}[{}]", def.name, args.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "));
         let sid = self.structs.len();
         self.structs.push(StructDef { name: display, fields, file: def.file, public: def.public });
@@ -372,6 +437,7 @@ impl Parser<'_> {
     }
     pub(super) fn parse_struct_def(&mut self, public: bool) -> Result<(), ae_span::Diagnostic> {
         self.pos += 1;
+        let name_offset = self.tokens[self.pos].offset;
         let name = self.identifier()?;
         if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{}' is a built-in name and cannot be a struct", name))); }
         if self.struct_names.contains_key(&name) || self.generics.struct_names.contains_key(&name) { return Err(self.fail(&format!("duplicate struct '{}'", name))); }
@@ -390,12 +456,23 @@ impl Parser<'_> {
         }
         self.take(Kind::RBrace)?;
         if params.is_empty() {
+            // A non-generic struct may still carry nested instantiations
+            // (`entries: Pair[i64, Pair[string, f64]]`); their arguments are
+            // all concrete, so they resolve immediately with no parameters.
+            // Resolution happens BEFORE the struct's own id is reserved: a
+            // nested instantiation registers its own layout, and taking the
+            // id first would hand Ledger's slot to the inner type.
+            let mut concrete = Vec::new();
+            for (fname, payload) in fields {
+                let ty = match payload {
+                    Payload::Concrete(ty) => ty,
+                    Payload::Nested(_) => self.resolve_payload(&payload, &[], name_offset)?,
+                    Payload::Param(_) => unreachable!("a non-generic struct has no type parameters"),
+                };
+                concrete.push((fname, ty));
+            }
             let id = self.structs.len();
             self.struct_names.insert(name.clone(), id);
-            let concrete = fields.into_iter().map(|(fname, payload)| (fname, match payload {
-                Payload::Concrete(ty) => ty,
-                Payload::Param(_) => unreachable!("a non-generic struct has no type parameters"),
-            })).collect();
             self.structs.push(StructDef { name, fields: concrete, file: self.file.clone(), public });
         } else {
             let gid = self.generics.struct_defs.len();

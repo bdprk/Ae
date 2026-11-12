@@ -253,7 +253,13 @@ struct EnumDef { name: &'static str, variants: Vec<(String, Vec<Type>)>, file: S
 // declaration's type parameters. Substitution replaces every Param with a
 // concrete argument, so Param never reaches code generation.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Payload { Concrete(Type), Param(usize) }
+enum Payload { Concrete(Type), Param(usize), Nested(usize) }
+// The shape behind `Payload::Nested`: a generic declaration (struct or enum)
+// and the argument payloads it was spelled with, at least one of which is
+// itself a type parameter of the enclosing declaration. Recorded at
+// declaration-parse time; instantiated recursively per argument list.
+#[derive(Debug, Clone)]
+struct NestedShape { gid: usize, is_struct: bool, args: Vec<Payload> }
 // `enum Option[T] { Some(T), None }` before it is instantiated. Kept apart from
 // EnumDef because a declaration has no layout: only instantiations do.
 #[derive(Debug, Clone)]
@@ -366,7 +372,7 @@ type Instance = (usize, Vec<Type>, Type);
 // arguments (ADR-21, ADR-30, ADR-31). `next_fn_id` is the one id space shared
 // by ordinary and instantiated functions, so C names never collide.
 #[derive(Default, Clone)]
-struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, struct_origin: HashMap<usize, (usize, Vec<Type>)>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef>, generic_impls: HashMap<String, GenericImplDef>, generic_impl_done: HashMap<String, Instance>, impl_in_progress: std::collections::HashSet<String>, closures: Vec<ClosureDef>, fn_sigs: Vec<(Vec<Type>, Type)> }
+struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, struct_origin: HashMap<usize, (usize, Vec<Type>)>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef>, generic_impls: HashMap<String, GenericImplDef>, generic_impl_done: HashMap<String, Instance>, impl_in_progress: std::collections::HashSet<String>, closures: Vec<ClosureDef>, fn_sigs: Vec<(Vec<Type>, Type)>, nested_shapes: Vec<NestedShape> }
 #[derive(Debug, Clone)]
 struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 

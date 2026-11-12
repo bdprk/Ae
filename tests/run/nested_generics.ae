@@ -1,0 +1,28 @@
+// Nested instantiations in generic declarations (M1.10).
+// A generic struct's fields may name another instantiation of a generic type
+// whose arguments are the declaration's own parameters: the shape stays
+// deferred until the outer declaration is instantiated.
+struct Pair[K, V] {
+    left: K,
+    right: V,
+}
+
+struct Boxed[V] {
+    inner: Pair[string, V],
+    tag: string,
+}
+
+struct Ledger {
+    entries: Pair[i64, Pair[string, f64]],
+}
+
+fn main() {
+    let b = Boxed[i64] { inner: Pair[string, i64] { left: "count", right: 42 }, tag: "main" };
+    print(b.inner.right);
+    print(b.tag);
+    let l = Ledger { entries: Pair[i64, Pair[string, f64]] { left: 1, right: Pair[string, f64] { left: "pi", right: 3.5 } } };
+    print(l.entries.left);
+    print(l.entries.right.right);
+    let renamed = Boxed[string] { inner: Pair[string, string] { left: "k", right: "v" }, tag: "alt" };
+    print(renamed.inner.right);
+}
