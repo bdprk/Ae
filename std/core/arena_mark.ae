@@ -1,0 +1,18 @@
+// std/core/arena_mark.ae
+// Arena allocation watermark rewind checkpoint primitive for AE core.
+
+pub struct ArenaWatermark {
+    offset: i64,
+}
+
+pub fn arena_watermark_new(offset: i64) -> ArenaWatermark {
+    return ArenaWatermark { offset: offset };
+}
+
+pub fn arena_watermark_offset(mark: ArenaWatermark) -> i64 {
+    return mark.offset;
+}
+
+pub fn arena_watermark_can_rewind(mark: ArenaWatermark, current_offset: i64) -> bool {
+    return mark.offset <= current_offset;
+}

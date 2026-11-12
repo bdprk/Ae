@@ -1,0 +1,52 @@
+use "../../std/core/murmur3.ae";
+use "../../std/core/char_predicate.ae";
+use "../../std/core/arena_mark.ae";
+use "../../std/core/simd_compare.ae";
+
+fn main() {
+    let s = murmur3_scramble_u32(12345);
+    assert(s > 0);
+    let m = murmur3_mix_step(100, 12345);
+    assert(m > 0);
+
+    assert(is_ident_start(65)); // 'A'
+    assert(is_ident_start(97)); // 'a'
+    assert(is_ident_start(95)); // '_'
+    assert(!is_ident_start(48)); // '0'
+    assert(!is_ident_start(33)); // '!'
+
+    assert(is_ident_continue(65)); // 'A'
+    assert(is_ident_continue(48)); // '0'
+    assert(is_ident_continue(95)); // '_'
+    assert(!is_ident_continue(32)); // ' '
+
+    assert(is_hex_prefix(48, 120)); // "0x"
+    assert(is_hex_prefix(48, 88)); // "0X"
+    assert(!is_hex_prefix(48, 48)); // "00"
+
+    let mark = arena_watermark_new(1024);
+    assert(arena_watermark_offset(mark) == 1024);
+    let mark_b = arena_watermark_new(1024);
+    assert(arena_watermark_can_rewind(mark_b, 2048));
+    let mark_c = arena_watermark_new(1024);
+    assert(!arena_watermark_can_rewind(mark_c, 512));
+
+    let mask_all = lane_mask4_new(true, true, true, true);
+    assert(lane_mask4_all_true(mask_all));
+    let mask_all_b = lane_mask4_new(true, true, true, true);
+    assert(lane_mask4_count_true(mask_all_b) == 4);
+
+    let mask_some = lane_mask4_new(false, true, false, true);
+    assert(!lane_mask4_all_true(mask_some));
+    let mask_some_b = lane_mask4_new(false, true, false, true);
+    assert(lane_mask4_any_true(mask_some_b));
+    let mask_some_c = lane_mask4_new(false, true, false, true);
+    assert(lane_mask4_count_true(mask_some_c) == 2);
+
+    let mask_none = lane_mask4_new(false, false, false, false);
+    assert(!lane_mask4_any_true(mask_none));
+    let mask_none_b = lane_mask4_new(false, false, false, false);
+    assert(lane_mask4_count_true(mask_none_b) == 0);
+
+    print("MURMUR3 PREDICATE WATERMARK SIMDMASK OPERATIONAL");
+}

@@ -1,0 +1,24 @@
+// std/core/murmur3.ae
+// 32-bit MurmurHash3 integer scramble mixing primitive for AE core.
+
+pub fn murmur3_scramble_u32(k: i64) -> i64 {
+    // k *= 0xcc9e2d51
+    // k = ROTL32(k, 15)
+    // k *= 0x1b873593
+    // Under AE modulo 2147483647
+    let k1 = (k * 3432918353) % 2147483647;
+    let k2 = (k1 * 461845907) % 2147483647;
+    if k2 < 0 {
+        return 0 - k2;
+    }
+    return k2;
+}
+
+pub fn murmur3_mix_step(h: i64, k: i64) -> i64 {
+    let scrambled = murmur3_scramble_u32(k);
+    let next_h = ((h + scrambled) * 5 + 3864292196) % 2147483647;
+    if next_h < 0 {
+        return 0 - next_h;
+    }
+    return next_h;
+}

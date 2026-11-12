@@ -1,0 +1,35 @@
+// std/core/simd_compare.ae
+// Conceptual 4-lane SIMD equality and comparison mask primitive for AE core.
+
+pub struct LaneMask4 {
+    m0: bool,
+    m1: bool,
+    m2: bool,
+    m3: bool,
+}
+
+pub fn lane_mask4_new(a: bool, b: bool, c: bool, d: bool) -> LaneMask4 {
+    return LaneMask4 {
+        m0: a,
+        m1: b,
+        m2: c,
+        m3: d,
+    };
+}
+
+pub fn lane_mask4_all_true(m: LaneMask4) -> bool {
+    return m.m0 && m.m1 && m.m2 && m.m3;
+}
+
+pub fn lane_mask4_any_true(m: LaneMask4) -> bool {
+    return m.m0 || m.m1 || m.m2 || m.m3;
+}
+
+pub fn lane_mask4_count_true(m: LaneMask4) -> i64 {
+    var count = 0;
+    if m.m0 { count = count + 1; }
+    if m.m1 { count = count + 1; }
+    if m.m2 { count = count + 1; }
+    if m.m3 { count = count + 1; }
+    return count;
+}
