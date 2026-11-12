@@ -1,1 +1,1 @@
-[{"file":"$DIR/bad_conversions.ae","line":1,"column":40,"message":"to_i64 expects an f64"},{"file":"$DIR/bad_conversions.ae","line":2,"column":42,"message":"to_f64 expects an i64"}]
+[{"file":"$DIR/bad_conversions.ae","line":1,"column":40,"message":"to_i64 expects an f64","byte_start":39,"byte_end":40,"code":null,"suggestions":[],"secondary":[]},{"file":"$DIR/bad_conversions.ae","line":2,"column":42,"message":"to_f64 expects an i64","byte_start":95,"byte_end":96,"code":null,"suggestions":[],"secondary":[]}]

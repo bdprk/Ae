@@ -1,21 +1,20 @@
-# AE 设计与路线
+# AE Design and Roadmap
 
-## 自主研发与参考
+## Independent Development and References
 
-语言规范、前端、类型与安全检查、IR、运行时和标准库由本项目自主设计编写。可研究公开设计，但不复制 Gojo 的实现。Gojo 是实验性系统语言，当前仓库描述其使用所有权、生成 C，且尚不支持 Windows；它是参考和 Linux 上的对比基线，不是 AE 的功能规格。Rust、C 编译器、链接器与系统 API 属于允许使用的基础设施。参考：https://github.com/egoist/gojo
+The language specification, front-end, type and safety checker, IR, runtime, and standard library are independently designed and written by this project. Public designs may be studied, but Gojo's implementation is not copied. Gojo is an experimental system language; the current repository describes it as using ownership, generating C, and not yet supporting Windows. It serves as a reference and a comparison baseline on Linux, rather than a functional specification for AE. Rust, C compilers, linkers, and system APIs are permitted infrastructure. Reference: https://github.com/egoist/gojo
 
-## 安全目标
+## Safety Goals
 
-安全代码预期防止越界、悬空引用、释放后使用、重复释放与数据竞争。当前原型实现了拥有型字符串的移动语义与确定性释放（编译期拒绝移动后使用，运行时空检查兜底，释放幂等）、受检整数算术和数组边界检查；这些是通往完整保证的第一步，尚不能据此宣称整个语言内存安全。未来需先定义结构体/容器的所有权、借用、整数与错误语义，再实现检查、对抗性测试及跨平台验证。unsafe 与 FFI 另设明确边界。
+Safe code is expected to prevent out-of-bounds accesses, dangling references, use-after-free, double-free, and data races. The current prototype implements move semantics and deterministic deallocation for owned strings (compile-time rejection of use-after-free, runtime null-check fallback, idempotent deallocation), checked integer arithmetic, and array bounds checking. These are the first steps toward full guarantees; the entire language cannot yet be claimed to be memory-safe based on this. Future steps require defining ownership, borrowing, integer, and error semantics for structs and containers before implementing checks, adversarial testing, and cross-platform verification. Clear boundaries are established separately for `unsafe` and FFI.
 
-## 顺序
+## Sequence
 
-1. 固定两平台工具链和基准方法，收集 Go、Rust 和 Linux 上 Gojo 的基线。（已完成：双平台原生测试与净化器验证通过，探索性基准已归档 `bench/results/`；Gojo 比较仍待固定版本实测。）
-2. 完善词法、源位置、语法树、变量、类型和明确的整数行为。（已有：i64/bool/f64/string、受检算术、控制流；`f64` 按 ADR-37 先定规范再实现：无隐式转换、除法检查零、溢出与 NaN 行为写明、文本形式由运行时统一，不依赖 CRT 的 `printf` 差异。）
-3. 建立中间表示、控制流、所有权与受限借用检查，以及资源释放规则。（字符串/向量/映射/结构体/枚举的移动语义与确定性释放已覆盖；受限只读借用支持数组、字符串视图（含结构体字符串字段的视图，借用整个变量，ADR-52）、`&vec`、`&vec[string]` 与泛型 `&T`；流式 token 游标 `tokenize` 用同一套借用规则把「一次一个 token」的迭代变成零分配（ADR-53），但它不是通用迭代器协议；类型参数约束已有调用点形状检查与声明处能力覆盖预检查（ADR-33/40），trait/impl 静态分派已实现（ADR-47：实例化时把 trait 方法解析成一次直接调用，无方法表、无函数指针），但分派形状是 v1——无方法调用语法、无 `&T` trait 参数、无泛型 impl、无默认方法、无动态分派；通用借用检查器、生命周期规则、未替换泛型 AST 上的能力证明与形式化审查待做。）
-4. 实现文件、字符串、数组及两个平台的适配，完成文件搜索工具。
-5. 建立阶段计时、增量构建和缓存限额，按实测分析 C 后端瓶颈。（内容寻址可执行缓存、LRU 上限、阶段计时、运行时按需裁剪、系统头按可达性引入与 `deps` 接口摘要/依赖图已完成；泛型声明按源文件共享 token 流、消除前端 O(N²) 复制也已完成（ADR-41）；用户模块级分离编译、接口驱动的失效判定与并行调度待做，见总体方案 §21 W3、W6 与 ADR-38/39/41。手写最小 Win32 声明因 ABI 风险仍未实现，其收益已由零风险的按需引入部分取得。）
-6. 扩充安全和模糊测试，发布可复现的 CPU、内存、磁盘与构建报告，再决定后端升级。
+1. Fix the toolchain and benchmarking methodology for both platforms to collect baselines from Go, Rust, and Gojo on Linux. (Completed: Dual-platform native testing and sanitizer verification passed, exploratory benchmarks archived under `bench/results/`; Gojo comparison still awaits fixed-version actual measurements.)
+2. Refine lexing, source locations, AST, variables, types, and explicit integer behavior. (Existing: `i64`/`bool`/`f64`/`string`, checked arithmetic, control flow; `f64` implemented per ADR-37 after specification: no implicit conversions, division-by-zero checks, documented overflow and NaN behavior, and string representations unified by the runtime, avoiding reliance on CRT `printf` discrepancies.)
+3. Establish intermediate representation, control flow, ownership and restricted borrow checking, as well as resource deallocation rules. (Move semantics and deterministic deallocation for strings, vectors, maps, structs, and enums are covered; restricted read-only borrowing supports arrays, string views (including string fields in structs, borrowing the entire variable, ADR-52), `&vec`, `&vec[string]`, and generic `&T`; the streaming token cursor `tokenize` uses the same borrowing rules to turn "one token at a time" iteration into zero-allocation (ADR-53), though it is not a general iterator protocol; type parameter constraints already have call-site shape checks and declaration-site capability coverage pre-checks (ADR-33/40); trait/impl static dispatch is implemented (ADR-47: resolving trait methods into direct calls upon instantiation, with no method tables and no function pointers), but the dispatch shape is v1—no method call syntax, no `&T` trait parameters, no generic impls, no default methods, and no dynamic dispatch; the general borrow checker, lifetime rules, capability proofs on uninstantiated generic ASTs, and formal reviews remain to be done.)
+4. Implement adapters for files, strings, arrays, and both platforms, completing the file search utility.
+5. Establish phase timing, incremental builds, and cache limits, and analyze C backend bottlenecks based on empirical measurements. (Content-addressable executable caching, LRU limits, phase timing, on-demand runtime pruning, system header inclusion by reachability along with `deps` interface summaries/dependency graphs are completed; generic declarations sharing token streams per source file to eliminate front-end $O(N^2)$ cloning are also completed (ADR-41); user module-level separate compilation, interface-driven invalidation determination, and parallel scheduling remain to be done, see Overall Plan §21 W3, W6 and ADR-38/39/41. Hand-written minimal Win32 declarations remain unimplemented due to ABI risks; their benefits have been partially achieved through zero-risk on-demand inclusion.)
+6. Expand safety and fuzz testing, publish reproducible CPU, memory, disk, and build reports, and only then decide on backend upgrades.
 
-每个阶段须同时验证 Windows 和 Linux；Gojo 尚不支持 Windows，Windows 对比标记为不可用。对比需等功能、固定版本和相同输入，记录安全检查、构建配置和原始数据。长期定位（通用能力与生态，按 L0–L4 分级交付）见总体方案第 14、19 节；设计决策见 [adr/](adr/README.md)。
-
+Each phase must simultaneously verify Windows and Linux; Gojo does not yet support Windows, so Windows comparisons are marked as N/A. Comparisons must wait for feature parity, fixed versions, and identical inputs, recording safety checks, build configurations, and raw data. For long-term positioning (general capabilities and ecosystem, delivered in L0–L4 tiers), see Sections 14 and 19 of the Overall Plan; design decisions can be found in [adr/](adr/README.md).

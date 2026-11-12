@@ -1,83 +1,84 @@
-# 设计决策记录（ADR）索引
+# Architecture Decision Records (ADR) Index
 
-每条记录：背景 → 决策 → 理由 → 后果与 revisit 条件。新决策追加在末尾。
+Each record follows: Context → Decision → Rationale → Consequences and Revisit Criteria. New decisions are appended to the end.
 
-每个决策一个文件，编号四位。新 ADR 使用 `docs/adr/TEMPLATE.md`。旧的合并文件 `docs/decisions.md` 已拆分至此。
+One file per decision, four-digit numbering. Use `docs/adr/TEMPLATE.md` for new ADRs. The legacy consolidated file `docs/decisions.md` has been split into this format.
 
-| 编号 | 标题 |
+| ID | Title |
 |---|---|
-| [ADR-1](0001.md) | C 后端作为可替换的启动方案 |
-| [ADR-2](0002.md) | 整数默认受检，无静默环绕 |
-| [ADR-3](0003.md) | string 是第一个拥有型类型；移动语义先行 |
-| [ADR-4](0004.md) | 构建缓存键建立在生成的 C 之上 |
-| [ADR-5](0005.md) | for 范围循环的界只求值一次，计数器不可变 |
-| [ADR-6](0006.md) | 内置函数占据保留名 |
-| [ADR-7](0007.md) | 编译器工作线程使用大栈 |
-| [ADR-8](0008.md) | 字符串现为 NUL 结尾的 C 串；长度携带型表示是既定演进方向 |
-| [ADR-9](0009.md) | C 后端端到端代价的实测小结与后端评估触发条件（不构成后端决策） |
-| [ADR-10](0010.md) | 枚举用「标签 + 每变体独立负载结构体」的联合，match 强制穷尽 |
-| [ADR-11](0011.md) | 可恢复错误用预置结果枚举表达；`+` 对借用字符串做复制 |
-| [ADR-12](0012.md) | 只读借用参数（`&string`、`&vec[string]`）与目录遍历 |
-| [ADR-13](0013.md) | 路径代数与文件元数据/整理操作内建 |
-| [ADR-14](0014.md) | 用 `?` 传播可恢复错误 |
-| [ADR-15](0015.md) | `map[string, i64]` 哈希表 |
-| [ADR-16](0016.md) | 分配器接口与分配失败语义 |
-| [ADR-17](0017.md) | UTF-8 字符边界与按字符截断 |
-| [ADR-18](0018.md) | 跨文件可见性用 `pub` 显式导出 |
-| [ADR-19](0019.md) | 资源模型作为规范文档而非实现副产品 |
-| [ADR-20](0020.md) | 循环体禁止移出外层拥有值（代替循环固定点） |
-| [ADR-21](0021.md) | 泛型枚举按实参单态化 |
-| [ADR-22](0022.md) | 排序、时钟、环境变量与追加写入 |
-| [ADR-23](0023.md) | `exit(状态码)` 终止语句 |
-| [ADR-24](0024.md) | 标准输入与工作目录 |
-| [ADR-25](0025.md) | Linux 全量验证与严格 ISO C 修正 |
-| [ADR-26](0026.md) | JSON 路径查询（只读） |
-| [ADR-27](0027.md) | 缓存条目带校验，无法识别编译器时不用缓存 |
-| [ADR-28](0028.md) | 缓存大小上限与按最近使用清理 |
-| [ADR-29](0029.md) | `vec[string]` 构造与子进程执行 |
-| [ADR-30](0030.md) | 泛型结构体用与泛型枚举相同的单态化 |
-| [ADR-31](0031.md) | 泛型函数在调用点解析自己的源码 |
-| [ADR-32](0032.md) | `set_cwd` 是显式的进程级副作用，`set_env` 不做 |
-| [ADR-33](0033.md) | 约束是调用点的实参形状检查，不是泛型体的证明 |
-| [ADR-34](0034.md) | `?` 按「两变体形状」传播，Option 与结果枚举同规则 |
-| [ADR-35](0035.md) | `&T` 在实例化时落到既有借用，借用参数可以直接转发 |
-| [ADR-36](0036.md) | `find` 用结果值返回字节下标，不引入哨兵 |
-| [ADR-37](0037.md) | `f64` 先定语义再落实现，文本形式由运行时统一 |
-| [ADR-38](0038.md) | 编译速度先减输入，不靠更大的缓存或更多翻译单元 |
-| [ADR-39](0039.md) | 系统头也按可达性裁剪，不手写 Win32 声明 |
-| [ADR-40](0040.md) | 约束在声明处接受能力覆盖检查，但仍不是 trait |
-| [ADR-41](0041.md) | 泛型声明按源文件共享词法结果，消除前端 O(N²) 复制 |
-| [ADR-42](0042.md) | fmt 只重排空白，幂等由构造保证，不要求完整检查 |
-| [ADR-43](0043.md) | 测试走文本合成的 main，前端零语义改动 |
-| [ADR-44](0044.md) | 字面量拼接融合——程序文本不进分配器 |
-| [ADR-45](0045.md) | `to_string` 的数字进栈缓冲，与字面量拼接时零堆分配 |
-| [ADR-46](0046.md) | `map_inc` 把计数收敛为一次查找，缺键从零开始 |
-| [ADR-47](0047.md) | trait/impl 静态分派——实例化时解析，无方法表 |
-| [ADR-48](0048.md) | 编辑器诊断——`check --json` 的结构化输出 |
-| [ADR-49](0049.md) | `split`/`lines` 单块 arena——按 token 数的分配降为常数次 |
-| [ADR-50](0050.md) | 运行时注释随函数裁剪，注释里的名字不再当作依赖根 |
-| [ADR-51](0051.md) | C 编译器在临时目录内以相对文件名调用 |
-| [ADR-52](0052.md) | 只读视图可以跟随结构体的字符串字段（借用整个变量） |
-| [ADR-53](0053.md) | 流式 token 游标 `tokenize`——按 token 零分配的惰性切分 |
-| [ADR-54](0054.md) | `args()` 在 Windows 上把命令行转成 UTF-8 |
-| [ADR-55](0055.md) | `print` 在 Windows 控制台上按 UTF-16 写出 |
-| [ADR-56](0056.md) | map 的装载因子从 0.75 降到 0.5 |
-| [ADR-57](0057.md) | map 的状态位搬出槽，槽从 32 字节压到 24 字节 |
-| [ADR-58](0058.md) | map 未命中的理由文本改为只读常量，未命中不再分配 |
-| [ADR-59](0059.md) | `build` 默认优化构建，`--debug` 退回快速构建，优化标志移到 `--` 分隔之前 |
-| [ADR-60](0060.md) | 数学内建 v1——11 个薄封装，IEEE 语义，Linux 链接行加 `-lm` |
-| [ADR-61](0061.md) | `vec[f64]`——f64 元素的拥有型向量容器 |
-| [ADR-62](0062.md) | `ae test` 增加名字过滤（`test <file.ae> [filter]`） |
-| [ADR-63](0063.md) | 通用借用检查器设计稿（阶段 C 核心，状态：已设计，未实现） |
-| [ADR-64](0064.md) | `min`/`max` 数学内建——运行时实现，NaN 忽略 + ±0 全序平局 |
-| [ADR-65](0065.md) | `map[string, f64]`——第二 map 形状与预置枚举 `FloatResult` |
-| [ADR-66](0066.md) | prelude 枚举布局按需发出——小程序不再背负用不到的结果类型 |
-| [ADR-67](0067.md) | 语言设计宪章——Rust 的安全模型 + Go 的简洁与并发 |
-| [ADR-68](0068.md) | M1 验收前的冻结清单 |
-| [ADR-69](0069.md) | 前端按职责拆分为子模块（零行为变化） |
-| [ADR-70](0070.md) | 以过渡编译器库建立 workspace 边界 |
-| [ADR-71](0071.md) | 抽出词法 crate |
-| [ADR-72](0072.md) | 源位置与结构化诊断的渐进迁移 |
-| [ADR-73](0073.md) | 区分循环导入与已完成的重复导入 |
+| [ADR-1](0001.md) | C backend as a swappable bootstrap solution |
+| [ADR-2](0002.md) | Integers checked by default, no silent wrapping |
+| [ADR-3](0003.md) | `string` as the first owned type; move semantics first |
+| [ADR-4](0004.md) | Build cache keys based on generated C code |
+| [ADR-5](0005.md) | `for` range loop bounds evaluated once, counter is immutable |
+| [ADR-6](0006.md) | Built-in functions occupy reserved names |
+| [ADR-7](0007.md) | Compiler worker threads use large stacks |
+| [ADR-8](0008.md) | Strings are now NUL-terminated C-strings; length-carrying representation is the established evolution path |
+| [ADR-9](0009.md) | Summary of empirical end-to-end costs for C backend and backend evaluation triggers (does not constitute a backend decision) |
+| [ADR-10](0010.md) | Enums use unions of "tag + variant-specific payload struct", `match` is exhaustively enforced |
+| [ADR-11](0011.md) | Recoverable errors expressed via pre-defined result enums; `+` performs copies for borrowed strings |
+| [ADR-12](0012.md) | Read-only borrowed parameters (`&string`, `&vec[string]`) and directory traversal |
+| [ADR-13](0013.md) | Path algebra and file metadata/organization operations built-in |
+| [ADR-14](0014.md) | Use `?` to propagate recoverable errors |
+| [ADR-15](0015.md) | `map[string, i64]` hash map |
+| [ADR-16](0016.md) | Allocator interface and allocation failure semantics |
+| [ADR-17](0017.md) | UTF-8 character boundaries and character-based truncation |
+| [ADR-18](0018.md) | Cross-file visibility explicitly exported via `pub` |
+| [ADR-19](0019.md) | Resource model as a specification document rather than an implementation byproduct |
+| [ADR-20](0020.md) | Loop bodies prohibited from moving out owned values from the outer scope (replaces loop fixed-point) |
+| [ADR-21](0021.md) | Generic enums monomorphized by argument |
+| [ADR-22](0022.md) | Sorting, clocks, environment variables, and append-writes |
+| [ADR-23](0023.md) | `exit(status_code)` termination statement |
+| [ADR-24](0024.md) | Standard input and working directory |
+| [ADR-25](0025.md) | Full Linux validation and strict ISO C corrections |
+| [ADR-26](0026.md) | JSON path queries (read-only) |
+| [ADR-27](0027.md) | Cache entries include validation; bypass cache if compiler is unrecognized |
+| [ADR-28](0028.md) | Cache size limits and LRU (Least Recently Used) eviction |
+| [ADR-29](0029.md) | `vec[string]` construction and subprocess execution |
+| [ADR-30](0030.md) | Generic structs use the same monomorphization as generic enums |
+| [ADR-31](0031.md) | Generic functions resolve their own source code at the call site |
+| [ADR-32](0032.md) | `set_cwd` is an explicit process-level side effect; `set_env` is not |
+| [ADR-33](0033.md) | Constraints are shape checks of arguments at the call site, not proofs for generic bodies |
+| [ADR-34](0034.md) | `?` propagates based on "two-variant shape"; `Option` and result enums follow the same rule |
+| [ADR-35](0035.md) | `&T` resolves to existing borrows during instantiation; borrowed parameters can be forwarded directly |
+| [ADR-36](0036.md) | `find` returns byte indices via result values; no sentinels introduced |
+| [ADR-37](0037.md) | `f64` semantics defined before implementation; textual representation unified by runtime |
+| [ADR-38](0038.md) | Reduce input to improve compilation speed; avoid relying on larger caches or more translation units |
+| [ADR-39](0039.md) | System headers trimmed by reachability; no manual Win32 declarations |
+| [ADR-40](0040.md) | Constraints undergo capability coverage checks at declaration, but are still not traits |
+| [ADR-41](0041.md) | Generic declarations share lexical results by source file to eliminate O(N²) frontend duplication |
+| [ADR-42](0042.md) | `fmt` only rearranges whitespace; idempotency guaranteed by construction, no full check required |
+| [ADR-43](0043.md) | Tests run via text-synthesized `main`; zero semantic changes to frontend |
+| [ADR-44](0044.md) | Literal concatenation fusion—program text does not enter the allocator |
+| [ADR-45](0045.md) | `to_string` numbers use stack buffers; zero heap allocation when concatenated with literals |
+| [ADR-46](0046.md) | `map_inc` converges counting into a single lookup; starts from zero if key is missing |
+| [ADR-47](0047.md) | Trait/impl static dispatch—resolved at instantiation, no method tables |
+| [ADR-48](0048.md) | Editor diagnostics—structured output via `check --json` |
+| [ADR-49](0049.md) | `split`/`lines` single-block arena—allocations reduced to constant count based on token count |
+| [ADR-50](0050.md) | Runtime annotations stripped with function pruning; names in annotations no longer treated as dependency roots |
+| [ADR-51](0051.md) | C compiler invoked with relative filenames within a temporary directory |
+| [ADR-52](0052.md) | Read-only views can follow string fields of structs (borrowing the entire variable) |
+| [ADR-53](0053.md) | Streaming token cursor `tokenize`—lazy splitting with zero allocations per token |
+| [ADR-54](0054.md) | `args()` converts command line to UTF-8 on Windows |
+| [ADR-55](0055.md) | `print` writes out as UTF-16 on Windows consoles |
+| [ADR-56](0056.md) | Map load factor reduced from 0.75 to 0.5 |
+| [ADR-57](0057.md) | Map status bits moved out of slots; slots compressed from 32 bytes to 24 bytes |
+| [ADR-58](0058.md) | Map miss reason text changed to read-only constants; no allocations on misses |
+| [ADR-59](0059.md) | `build` defaults to optimized builds; `--debug` reverts to fast builds; optimization flags moved before the `--` separator |
+| [ADR-60](0060.md) | Math built-ins v1—11 thin wrappers, IEEE semantics, `-lm` added to Linux link line |
+| [ADR-61](0061.md) | `vec[f64]`—owned vector container for `f64` elements |
+| [ADR-62](0062.md) | `ae test` adds name filtering (`test <file.ae> [filter]`) |
+| [ADR-63](0063.md) | General borrow checker design draft (Phase C core, Status: Designed, Not Implemented) |
+| [ADR-64](0064.md) | `min`/`max` math built-ins—runtime implementation, NaN ignored + ±0 total order tie-breaking |
+| [ADR-65](0065.md) | `map[string, f64]`—second map shape and pre-defined `FloatResult` enum |
+| [ADR-66](0066.md) | Prelude enum layouts emitted on-demand—small programs no longer carry unused result types |
+| [ADR-67](0067.md) | Language design charter—Rust's safety model + Go's simplicity and concurrency |
+| [ADR-68](0068.md) | Freeze list before M1 acceptance |
+| [ADR-69](0069.md) | Frontend split into submodules by responsibility (zero behavioral changes) |
+| [ADR-70](0070.md) | Establish workspace boundaries using transitional compiler libraries |
+| [ADR-71](0071.md) | Extract lexer crate |
+| [ADR-72](0072.md) | Progressive migration of source locations and structured diagnostics |
+| [ADR-73](0073.md) | Distinguish between circular imports and completed duplicate imports |
 | [ADR-74](0074.md) | Move the formatter into the syntax crate |
 | [ADR-75](0075.md) | Load import graphs without recursive host calls |
+

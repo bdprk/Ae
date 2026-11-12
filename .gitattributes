@@ -1,0 +1,2 @@
+# Preserve byte offsets in cross-platform JSON diagnostic fixtures.
+tests/ui-json/*.ae text eol=lf

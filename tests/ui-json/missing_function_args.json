@@ -1,1 +1,1 @@
-[{"file":"$DIR/missing_function_args.ae","line":1,"column":31,"message":"expected expression"},{"file":"$DIR/missing_function_args.ae","line":2,"column":33,"message":"expected RParen, found Comma"}]
+[{"file":"$DIR/missing_function_args.ae","line":1,"column":31,"message":"expected expression","byte_start":30,"byte_end":31,"code":null,"suggestions":[],"secondary":[]},{"file":"$DIR/missing_function_args.ae","line":2,"column":33,"message":"expected RParen, found Comma","byte_start":78,"byte_end":79,"code":null,"suggestions":[],"secondary":[]}]

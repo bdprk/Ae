@@ -152,7 +152,7 @@ fn json_escape(text: &str) -> String {
 fn diagnostic_json(message: &str) -> String {
     let (at, rest) = match message.split_once(": ") {
         Some((at, rest)) => (at, rest),
-        None => return format!("{{\"file\":null,\"line\":null,\"column\":null,\"message\":\"{}\"}}", json_escape(message)),
+        None => return format!("{{\"file\":null,\"line\":null,\"column\":null,\"message\":\"{}\",\"byte_start\":null,\"byte_end\":null,\"code\":null,\"suggestions\":[],\"secondary\":[]}}", json_escape(message)),
     };
     let parts: Vec<&str> = at.split(':').collect();
     let (file, line, column): (Option<String>, Option<usize>, Option<usize>) = match parts.as_slice() {
@@ -167,9 +167,9 @@ fn diagnostic_json(message: &str) -> String {
     // A location that does not parse is a formatting bug or a foreign
     // message; reporting the whole text beats reporting a mangled position.
     let (Some(line), Some(column)) = (line, column) else {
-        return format!("{{\"file\":null,\"line\":null,\"column\":null,\"message\":\"{}\"}}", json_escape(message));
+        return format!("{{\"file\":null,\"line\":null,\"column\":null,\"message\":\"{}\",\"byte_start\":null,\"byte_end\":null,\"code\":null,\"suggestions\":[],\"secondary\":[]}}", json_escape(message));
     };
-    format!("{{\"file\":{},\"line\":{line},\"column\":{column},\"message\":\"{}\"}}",
+    format!("{{\"file\":{},\"line\":{line},\"column\":{column},\"message\":\"{}\",\"byte_start\":null,\"byte_end\":null,\"code\":null,\"suggestions\":[],\"secondary\":[]}}",
         file.as_ref().map_or("null".to_owned(), |f| format!("\"{}\"", json_escape(f))),
         json_escape(rest))
 }
@@ -180,7 +180,17 @@ fn structured_diagnostic_json(diagnostic: &ae_compiler::frontend::FrontendDiagno
         .map_or("null".to_owned(), |file| format!("\"{}\"", json_escape(file)));
     let line = location.map_or("null".to_owned(), |span| span.line.to_string());
     let column = location.map_or("null".to_owned(), |span| span.column.to_string());
-    format!("{{\"file\":{file},\"line\":{line},\"column\":{column},\"message\":\"{}\"}}", json_escape(&diagnostic.message))
+    let byte_start = location.map_or("null".to_owned(), |span| span.range.start.to_string());
+    let byte_end = location.map_or("null".to_owned(), |span| span.range.end.to_string());
+    let code = diagnostic.code.as_ref().map_or("null".to_owned(), |code| format!("\"{}\"", json_escape(code)));
+    let suggestions = diagnostic.suggestions.iter().map(|s| format!("\"{}\"", json_escape(s))).collect::<Vec<_>>().join(",");
+    let secondary = diagnostic.secondary.iter().map(|label| {
+        let span = &label.span;
+        let file = span.file.as_ref().map_or("null".to_owned(), |file| format!("\"{}\"", json_escape(file)));
+        let message = label.message.as_ref().map_or("null".to_owned(), |message| format!("\"{}\"", json_escape(message)));
+        format!("{{\"file\":{file},\"line\":{},\"column\":{},\"byte_start\":{},\"byte_end\":{},\"message\":{message}}}", span.line, span.column, span.range.start, span.range.end)
+    }).collect::<Vec<_>>().join(",");
+    format!("{{\"file\":{file},\"line\":{line},\"column\":{column},\"message\":\"{}\",\"byte_start\":{byte_start},\"byte_end\":{byte_end},\"code\":{code},\"suggestions\":[{suggestions}],\"secondary\":[{secondary}]}}", json_escape(&diagnostic.message))
 }
 
 /// Build the generated C. Results are cached under a key covering every
@@ -485,10 +495,10 @@ mod tests {
     #[test]
     fn diagnostics_split_into_structured_parts() {
         let json = diagnostic_json("src/main.ae:3:14: unknown variable 'x'");
-        assert_eq!(json, "{\"file\":\"src/main.ae\",\"line\":3,\"column\":14,\"message\":\"unknown variable 'x'\"}");
+        assert_eq!(json, "{\"file\":\"src/main.ae\",\"line\":3,\"column\":14,\"message\":\"unknown variable 'x'\",\"byte_start\":null,\"byte_end\":null,\"code\":null,\"suggestions\":[],\"secondary\":[]}");
         // No file name (in-memory sources).
         let json = diagnostic_json("2:5: assertion failed");
-        assert_eq!(json, "{\"file\":null,\"line\":2,\"column\":5,\"message\":\"assertion failed\"}");
+        assert_eq!(json, "{\"file\":null,\"line\":2,\"column\":5,\"message\":\"assertion failed\",\"byte_start\":null,\"byte_end\":null,\"code\":null,\"suggestions\":[],\"secondary\":[]}");
     }
 
     #[test]
@@ -508,6 +518,6 @@ mod tests {
         // through the escaper unchanged in meaning.
         let json = diagnostic_json("D:\\用户\\trevv\\main.ae:1:1: cannot read \"input\": missing");
         assert_eq!(json,
-            "{\"file\":\"D:\\\\用户\\\\trevv\\\\main.ae\",\"line\":1,\"column\":1,\"message\":\"cannot read \\\"input\\\": missing\"}");
+            "{\"file\":\"D:\\\\用户\\\\trevv\\\\main.ae\",\"line\":1,\"column\":1,\"message\":\"cannot read \\\"input\\\": missing\",\"byte_start\":null,\"byte_end\":null,\"code\":null,\"suggestions\":[],\"secondary\":[]}");
     }
 }

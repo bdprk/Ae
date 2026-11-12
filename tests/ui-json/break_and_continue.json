@@ -1,1 +1,1 @@
-[{"file":"$DIR/break_and_continue.ae","line":1,"column":21,"message":"'break' outside of a loop"},{"file":"$DIR/break_and_continue.ae","line":2,"column":22,"message":"'continue' outside of a loop"}]
+[{"file":"$DIR/break_and_continue.ae","line":1,"column":21,"message":"'break' outside of a loop","byte_start":20,"byte_end":25,"code":null,"suggestions":[],"secondary":[]},{"file":"$DIR/break_and_continue.ae","line":2,"column":22,"message":"'continue' outside of a loop","byte_start":60,"byte_end":68,"code":null,"suggestions":[],"secondary":[]}]

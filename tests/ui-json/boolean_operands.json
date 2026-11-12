@@ -1,1 +1,1 @@
-[{"file":"$DIR/boolean_operands.ae","line":1,"column":38,"message":"'&&' requires boolean operands"},{"file":"$DIR/boolean_operands.ae","line":2,"column":40,"message":"'||' requires boolean operands"}]
+[{"file":"$DIR/boolean_operands.ae","line":1,"column":38,"message":"'&&' requires boolean operands","byte_start":37,"byte_end":38,"code":null,"suggestions":[],"secondary":[]},{"file":"$DIR/boolean_operands.ae","line":2,"column":40,"message":"'||' requires boolean operands","byte_start":90,"byte_end":91,"code":null,"suggestions":[],"secondary":[]}]

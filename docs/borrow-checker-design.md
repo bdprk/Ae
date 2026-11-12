@@ -1,114 +1,114 @@
-# 通用借用检查器设计（阶段 C 核心 · 设计稿）
+# General Borrow Checker Design (Stage C Core Design Draft)
 
-状态：**已设计**（2026-11-12）；本文是设计，不是实现承诺。实现与验收按 §6 的阶段推进，每一步都要按 resource-model.md §9 的清单扩展测试后再宣称。证据规则沿用方案文档 §22。
+Status: **Designed** (2026-11-12); this document is a design, not an implementation commitment. Implementation and acceptance proceed according to the phases in §6, and every step must expand tests according to the checklist in `resource-model.md §9` before making any claims. The rules of evidence follow §22 of the proposal document.
 
-## 0. 本文回答什么问题
+## 0. What Questions This Document Answers
 
-resource-model.md 第 4 节记录的是**当前实现**：借用是块作用域的只读别名，按变量 id 记录，不得逃逸，字段粒度不存在。这套规则安全但表达力受限——容器参数化（`fn first(v: &vec[T])`）、把借用存进结构体、返回借用、可变借用都做不到。
+Section 4 of `resource-model.md` records the **current implementation**: borrows are block-scoped read-only aliases, tracked by variable ID, prohibited from escaping, and lacking field granularity. While safe, this set of rules has limited expressiveness—parameterized containers (`fn first(v: &vec[T])`), storing borrows inside structs, returning borrows, and mutable borrows are all unsupported.
 
-阶段 C 的目标是把受限规则升级为**通用借用检查器**，同时保持三条不可交换的底线：
+The goal of Stage C is to upgrade the restricted rules into a **general borrow checker**, while maintaining three non-negotiable bottom lines:
 
-1. **安全代码中的每一条拒绝都可解释、每一条放行都可靠**（漏报不允许，误报可以逐步收紧后放宽）；
-2. **不需要用户标注生命周期**是目标，但不是预先保证——若某类程序必须标注才能可靠检查，设计宁可加标注也不放松检查；
-3. 每次放宽都先有对抗性用例与拒绝测试，再动实现（§20.4 第 1 条）。
+1. **Every rejection in safe code must be explainable, and every allowance must be reliable** (false negatives are strictly disallowed, while false positives may be tightened first and relaxed later);
+2. **Requiring no lifetime annotations from the user** is a goal, but not a pre-guarantee—if a class of programs requires annotations to be checked reliably, the design prefers adding annotations over relaxing checks;
+3. Every relaxation must be preceded by adversarial test cases and rejection tests before touching the implementation (§20.4 Rule 1).
 
-## 1. 现状盘点（2026-11-12，ADR-35/52/61 之后）
+## 1. Current State Assessment (2026-11-12, Post-ADR-35/52/61)
 
-| 能力 | 现状 | 证据 |
+| Capability | Current Status | Evidence |
 |---|---|---|
-| 只读借用形参 | `&string`、`&vec`、`&vec[string]`、`&vec[f64]`、`&[i64; N]` | 全套测试 |
-| 泛型借用 | `&T` 按实例化解析为上述四种之一（ADR-35/36、ADR-61） | `generic_borrow.ae` |
-| 字段借用 | 整个变量粒度：`slice_view(p.name, …)` 借用 `p` 整体，写任何字段都被拒（ADR-52） | `field_view.ae` |
-| 借用逃逸 | 禁止：不能 return、不能 `let` 存储、不能进容器 | `resource-model.md` §4 |
-| 可变借用 | 不存在（容器修改通过拥有型值自身的 `push`/索引写完成） | — |
-| 借用记录 | `(变量 id, 作用域深度)`，块结束回收 | `frontend.rs` 的 `borrows` |
-| 生命周期标注 | 无（借不上逃逸是唯一原因） | — |
+| Read-only borrow parameters | `&string`, `&vec`, `&vec[string]`, `&vec[f64]`, `&[i64; N]` | Full test suite |
+| Generic borrows | `&T` resolved via instantiation to one of the above four (ADR-35/36, ADR-61) | `generic_borrow.ae` |
+| Field borrows | Variable granularity only: `slice_view(p.name, …)` borrows `p` as a whole, writing to any field is rejected (ADR-52) | `field_view.ae` |
+| Borrow escape | Prohibited: cannot return, cannot store via `let`, cannot enter containers | `resource-model.md` §4 |
+| Mutable borrows | Non-existent (container modifications are done via `push`/index assignment on owned values themselves) | — |
+| Borrow tracking | `(variable id, scope depth)`, reclaimed at block end | `borrows` in `frontend.rs` |
+| Lifetime annotations | None (un-borrowable escapes are the sole reason) | — |
 
-**已知保守点**（行为安全但拒绝过多）：字段写入被「结构体上存在借用」整体拦截；借用粒度不含字段与元素；`slice_view` 链上无法区分「借 `p.name`」与「借 `p`」。
+**Known Conservative Points** (behaviorally safe but overly restrictive): Field writes are intercepted as a whole by the "presence of a borrow on the struct"; borrow granularity does not include fields and elements; the `slice_view` chain cannot distinguish between "borrowing `p.name`" and "borrowing `p`".
 
-## 2. 目标模型
+## 2. Target Model
 
-### 2.1 借用的形状
+### 2.1 Shape of a Borrow
 
 ```text
 Loan  = { place: Place, mode: {Shared, Mut}, origin: Origin }
-Place = Var(id) | Place.field(name) | Place.index(约束受限，见 2.4)
-Origin= StaticBlock(scope) | Outlives(参数编号)   // 只有逃逸借用才引入后者
+Place = Var(id) | Place.field(name) | Place.index(constrained, see 2.4)
+Origin= StaticBlock(scope) | Outlives(parameter index)   // the latter is introduced only for escaping borrows
 ```
 
-- **Shared**：可并存多个；期间禁止 Mut 建立与任何写。
-- **Mut**：独占；期间禁止任何其它 Loan（读也不行）与基变量的移动。
-- 第一版**只引入 Shared**；Mut 是独立阶段（2.5），因为独占性检查要动内建修改路径（`push`/索引写将改走 Mut loan），影响面大。
+- **Shared**: Multiple can coexist; prohibits the establishment of Mut borrows and any writes during their lifetime.
+- **Mut**: Exclusive; prohibits any other Loans (even reads) and movement of the base variable during its lifetime.
+- The first version **only introduces Shared**; Mut is an independent phase (2.5) because exclusivity checks require modifying built-in modification paths (`push`/index assignment will shift to using Mut loans), which has a wide impact radius.
 
-### 2.2 约束（替代生命周期标注的核心）
+### 2.2 Constraints (The Core Alternative to Lifetime Annotations)
 
-逃逸借用引入**有序约束**而不是命名生存期：
+Escaping borrows introduce **ordered constraints** rather than named lifetimes:
 
-- `Return(Borrowed(param p))` 要求 `origin(返回的借用) ⊇ origin(p)`——借用只能从「活得和某个参数一样久」的东西里返回；
-- 借用进结构体字段 → 该结构体实例携带 origin，构造、移动、释放全部沿用所有权机制，释放时先证明无共享借用（编译期 + 释放路径断言）；
-- **用户永远不写标注**：约束由「从哪里借的」唯一决定，没有多个输入可选的情形。若未来出现两个参数都可能作为来源的情形（如 `fn longer(a: &string, b: &string) -> &string`），**拒绝**该函数——它需要选择标注或返回拥有值，两可情形宁可拒绝（Rust 用 `'a` 选择，我们用拒绝 + 拥有值替代，这是可用性/可靠性的取舍，写明）。
+- `Return(Borrowed(param p))` requires `origin(returned borrow) ⊇ origin(p)`—borrows can only be returned from entities that "live at least as long as a certain parameter";
+- Borrowing into a struct field → that struct instance carries an origin, with construction, movement, and dropping all following the ownership mechanism, and dropping requires proving the absence of shared borrows beforehand (compile-time + drop-path assertions);
+- **Users never write annotations**: Constraints are uniquely determined by "where the borrow came from", with no cases involving multiple selectable inputs. If a case arises in the future where two parameters could potentially serve as the source (e.g., `fn longer(a: &string, b: &string) -> &string`), **reject** the function—it requires explicit annotation choices or returning owned values. In ambiguous cases, we prefer rejection (Rust uses `'a` to make a choice, whereas we substitute rejection + owned values; this is a trade-off between usability and reliability, explicitly stated).
 
-### 2.3 流程敏感与合并
+### 2.3 Flow Sensitivity and Merging
 
-- 借用在**最后一次使用**后死亡（NLL 语义），不是块结束——这是放宽的第一步，也让「循环里借用、循环体末尾用完」不再占满循环；
-- 控制流合并点取各分支活跃 loan 的**并集**；循环回边用不动点迭代，迭代上限 + 不收敛即拒绝（保守终止，拒绝信息指明哪条借用不收敛）；
-- 部分移动与字段粒度用同一套 Place 树：移动 `s` 的字段 `a` 只冻结 `s.a` 的 place，不影响兄弟字段——**前提**是 place 树上的每个中间节点都不可被别名逃逸（容器元素在第一版仍不可借用，见 2.4）。
+- Borrows die after their **last use** (NLL semantics), rather than at block end—this is the first step of relaxation, preventing "borrows inside loops that are used by the end of the loop body" from occupying the entire loop;
+- Control flow join points take the **union** of active loans across branches; loop back-edges use fixed-point iteration, with an iteration upper bound plus non-convergence leading to rejection (conservative termination, with rejection messages specifying which loan failed to converge);
+- Partial moves and field granularity share the same Place tree: moving field `a` of `s` only freezes the place `s.a` without affecting sibling fields—**provided** that every intermediate node on the place tree cannot have escaping aliases (container elements remain un-borrowable in the first version, see 2.4).
 
-### 2.4 表达力阶梯（每级独立验收）
+### 2.4 Expressiveness Ladder (Independently Accepted per Level)
 
-| 级别 | 新能力 | 前置证据 |
+| Level | New Capability | Prerequisite Evidence |
 |---|---|---|
-| L0（现状） | 块作用域只读借用 | 已有 |
-| L1 | NLL：借用最后一次使用后死亡 | 差分测试：L0 拒绝的合法程序集合 L1 放行，输出不变 |
-| L2 | 字段粒度 loan：借 `s.a` 不冻结 `s.b` | 对抗用例 + ASan/UBSan |
-| L3 | 逃逸借用：返回借用（约束见 2.2）、借用进结构体 | 生命周期正确性套件 + 释放路径泄漏/双重释放测试 |
-| L4 | 元素借用（容器元素只读借用，`v[i]` 视图借 `v`） | 容器释放路径对抗 |
-| L5 | Mut 借用与独占性 | 独占性对抗矩阵 + 数据竞争前提审查（无并发前只是别名正确性） |
+| L0 (Current) | Block-scoped read-only borrows | Existing |
+| L1 | NLL: Borrows die after their last use | Differential testing: L1 allows the set of valid programs rejected by L0, output remains unchanged |
+| L2 | Field-granularity loans: Borrowing `s.a` does not freeze `s.b` | Adversarial test cases + ASan/UBSan |
+| L3 | Escaping borrows: Returning borrows (see constraints in 2.2), borrowing into structs | Lifetime correctness suite + drop-path leak/double-free tests |
+| L4 | Element borrows (read-only borrows of container elements, `v[i]` views borrowing `v`) | Container drop-path adversity tests |
+| L5 | Mut borrows and exclusivity | Exclusivity adversity matrix + data race precondition review (alias correctness only prior to concurrency) |
 
-**每一级都必须**：先写正例/反例/对抗用例清单 → 差分测试证明「收紧集不变」→ 双平台 → resource-model.md 同步改写 → ADR。
+**Every level must**: First write positive/negative/adversarial test case lists → Use differential testing to prove the "tightened set remains invariant" → Dual-platform verification → Synchronously rewrite `resource-model.md` → ADR.
 
-### 2.5 与释放的交互
+### 2.5 Interaction with Drops
 
-- 释放点不变（作用域结束、提前返回、`?`、覆盖赋值、移动后原槽 forfeit）；借用活跃时到达释放点的值**不释放**（引用计数不在设计中——共享借用是临时别名，不是所有权），借用死亡后由其所在作用域的既有机制处理；
-- 逃逸借用的宿主值（L3）释放时若仍有活跃 loan：编译期必须证明不可能（loan 的 origin 比宿主 origin 短）；证明不了的路径拒绝。运行时不加哨兵——这是与当前「moved 哨兵」不同的地方：**借用安全完全前移到编译期**，运行时只保留 moved 哨兵。
+- Drop points remain unchanged (end of scope, early return, `?`, overwrite assignment, slot forfeiture after move); values reaching a drop point while a borrow is active are **not dropped** (reference counting is not part of the design—shared borrows are temporary aliases, not ownership); once a borrow dies, it is handled by the existing mechanisms of its enclosing scope;
+- If a host value of an escaping borrow (L3) still has active loans when dropped: compile-time proof that this is impossible is required (the loan's origin must be shorter than the host's origin); paths where this cannot be proven are rejected. No runtime sentinels are added—this differs from the current "moved sentinel": **borrow safety is entirely shifted to compile time**, retaining only moved sentinels at runtime.
 
-### 2.6 并发前置
+### 2.6 Concurrency Prerequisites
 
-resource-model.md §7 不变：并发引入前，Mut loan 的独占性只是单线程别名正确性。线程化时 Mut/Shared 直接映射为 `Send`/`Sync` 约束的设计留到阶段 C 并发节，本文不预先承诺。
+`resource-model.md §7` remains unchanged: prior to the introduction of concurrency, the exclusivity of Mut loans is merely single-threaded alias correctness. The design mapping Mut/Shared directly to `Send`/`Sync` constraints when threading is introduced is deferred to the Stage C concurrency section and is not pre-committed here.
 
-## 3. 对抗性用例矩阵（实现前先写测试）
+## 3. Adversarial Test Case Matrix (Write Tests Before Implementation)
 
-每级至少覆盖：
+Each level must cover at least:
 
-1. **别名对**：同一基的两个 Shared loan 并存读 → 放行；其中一个改写路径（L5 前）→ 拒绝；
-2. **借后写**：`let v = slice_view(s, …); s = other;` → 拒绝（L1 起在最后使用之后放行）；
-3. **借后移**：借用活跃时移动基 → 拒绝；最后一次使用后移动 → 放行（L1）；
-4. **逃逸到返回**：返回形参借用 → 放行（约束成立）；返回局部借用 → 拒绝（origin 不足）；两可来源 → 拒绝（2.2）；
-5. **逃逸到容器**：借用存入 struct 字段 → 宿主移动后旧实例不可用、释放顺序正确 → 放行集合 + 拒绝集合；
-6. **循环固定点**：借用跨回边存活（如累加器视图）→ 放行；借用每轮重建立但被上轮引用 → 拒绝并指出不收敛；
-7. **部分移动**：移动 `s.a` 后借 `s.b` → 放行（L2）；借 `s.a` → 拒绝；
-8. **容器元素**（L4 前）：一切把元素借出去的写法 → 拒绝，错误信息说明当前级别；
-9. **泛型交叉**：`&T` 实例化为四种容器 + 未来 L3 的行为在泛型体内一致（逐实例化检查仍兜底）；
-10. **差分基线**：L0 现有全部拒绝用例在 L1/L2 之后**逐条复跑**——放宽只能减少拒绝，已有拒绝中属于「误报」的要在 ADR 里逐条点名并给出放行理由。
+1. **Alias pairs**: Two shared loans of the same base coexisting for reads → Allowed; one of them introducing a write path (prior to L5) → Rejected;
+2. **Write after borrow**: `let v = slice_view(s, …); s = other;` → Rejected (Allowed after last use starting from L1);
+3. **Move after borrow**: Moving the base while a borrow is active → Rejected; moving after the last use → Allowed (L1);
+4. **Escape to return**: Returning a parameter borrow → Allowed (constraint holds); returning a local borrow → Rejected (insufficient origin); ambiguous source → Rejected (2.2);
+5. **Escape to container**: Storing a borrow in a struct field → Old instance unusable after host is moved, drop order correct → Allowance set + Rejection set;
+6. **Loop fixed point**: A borrow surviving across a back-edge (e.g., an accumulator view) → Allowed; a borrow re-established every iteration but referenced by the previous iteration → Rejected, indicating non-convergence;
+7. **Partial moves**: Moving `s.a` then borrowing `s.b` → Allowed (L2); borrowing `s.a` → Rejected;
+8. **Container elements** (prior to L4): Any pattern lending out elements → Rejected, with error messages explaining the current level;
+9. **Generic cross-product**: `&T` instantiated as the four container types + future L3 behavior consistent within generic bodies (instantiation-by-instantiation checking still acts as a fallback);
+10. **Differential baseline**: All existing L0 rejection cases **re-run** after L1/L2—relaxation may only reduce rejections, and any existing rejections classified as "false positives" must be individually named in the ADR with reasons provided for their allowance.
 
-## 4. 实现承载
+## 4. Implementation Hosting
 
-- 前端已有 CFG 雏形（分支合并/循环固定点在移动集合上跑过）；借用检查器复用同一骨架，把 `borrows: Vec<(id, depth)>` 换成 `Map<Place, Loan>` + 活跃集；
-- 诊断格式沿用 `file/line/column` 契约（ADR-48），错误信息必须指明：谁被借、借到哪、冲突的是哪条使用；
-- 检查成本预算：`constraint_audit_timings.py` 的教训（O(N²) 复制差点盖过审计成本）——借用分析按函数做，泛型声明不重复分析（逐实例化只差分 diff 借用面），计时上界用同款对照脚本。
+- The frontend already has a prototype CFG (branch merging/loop fixed-points have been run on the move set); the borrow checker reuses the same skeleton, replacing `borrows: Vec<(id, depth)>` with `Map<Place, Loan>` + live sets.
+- Diagnostic formatting follows the `file/line/column` contract (ADR-48); error messages must specify: what is borrowed, where it is borrowed to, and which usage causes the conflict.
+- Check cost budget: Lessons learned from `constraint_audit_timings.py` (O(N²) copying nearly overshadowed the audit cost)—borrow analysis is performed per function; generic declarations are not re-analyzed (only the borrow surface diff is analyzed per instantiation). Use the same benchmark script for timing upper bounds.
 
-## 5. 明确不做（本文范围外）
+## 5. Explicitly Out of Scope
 
-- 生命周期**标注语法**（若 L3 证明需要，另立 ADR 讨论，不悄悄加）；
-- 内部可变性（`RefCell` 类）、共享所有权（`Rc`）——确定性释放模型不支持，引入即推翻 §4.5；
-- 并发下的借用（`Send`/`Sync`）——阶段 C 并发节；
-- 与 `unsafe` 的交互（裸指针借出）——FFI 阶段。
+- Lifetime **annotation syntax** (if L3 proves it necessary, discuss in a separate ADR; do not add it silently).
+- Interior mutability (e.g., `RefCell`) and shared ownership (`Rc`)—the deterministic release model does not support these; introducing them would invalidate §4.5.
+- Borrowing under concurrency (`Send`/`Sync`)—see the concurrency section in Phase C.
+- Interaction with `unsafe` (raw pointer borrows)—see the FFI phase.
 
-## 6. 推进顺序与验收门槛
+## 6. Progression Order and Acceptance Criteria
 
-1. **L1（NLL）**：最小的放宽，先拿「循环里借用不再占满循环」的体验收益；差分测试套件入库；
-2. **L2（字段粒度）**：直接回应 ADR-52 的「写其它字段也拒绝」边界；
-3. **L3（逃逸）**：本设计的核心风险所在——先做「返回借用」子集（约束最简单），容器携带 loan 的完整 origin 跟踪单独立项；
-4. L4/L5 按依赖推进，各自 ADR。
+1. **L1 (NLL)**: Minimal relaxation; prioritize the user experience gain where "borrows in loops no longer occupy the entire loop"; commit the differential test suite.
+2. **L2 (Field Granularity)**: Directly address the "rejecting writes to other fields" boundary defined in ADR-52.
+3. **L3 (Escape)**: The core risk of this design—start with the "returning borrows" subset (simplest constraints); tracking the full origin of loans carried by containers will be a separate project.
+4. L4/L5 will proceed according to dependencies, each with its own ADR.
 
-每级验收 = §3 矩阵该级全部用例 + 既有拒绝差分 + 双平台全套 + resource-model.md 改写 + ADR。**没有差分基线的放宽不接受**——「少拒绝了」必须以「这些程序确实安全」的逐条论证为前提，而不是实现变宽松了就算数。
+Acceptance for each level = All test cases for that level in the §3 matrix + existing rejection diffs + full suite on both platforms + rewrite of `resource-model.md` + ADR. **Relaxations without a differential baseline are not accepted**—"fewer rejections" must be predicated on a case-by-case demonstration that "these programs are indeed safe," rather than simply counting a looser implementation as a success.

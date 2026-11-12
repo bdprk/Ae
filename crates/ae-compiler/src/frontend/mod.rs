@@ -435,7 +435,9 @@ fn audit_generic_fn(
         if bad.is_empty() { continue; }
         let constraint_text = declared.iter().map(|b| b.name()).collect::<Vec<_>>().join(" + ");
         let effective_text = effective.iter().map(|t| t.name()).collect::<Vec<_>>().join(", ");
-        return Err(ae_syntax::diagnostic(file, source, declared_at, &format!(
+        let end = tokens.binary_search_by_key(&declared_at, |token| token.offset)
+            .ok().map_or(declared_at, |index| tokens[index].end);
+        return Err(ae_syntax::diagnostic_range(file, source, declared_at..end, &format!(
             "generic function '{name}' declares {}: {} but its body applies {} to {}; the constraint still admits {}, which does not support it ({} allows {}; current effective set is {})",
             params[index], constraint_text, cap.symbol(), params[index], bad.join(", "),
             cap.symbol(), cap.supported_types(), effective_text)));
@@ -467,12 +469,12 @@ struct Signature { id: usize, params: Vec<Type>, ret: Type, file: String, public
 
 type SharedFunctions = HashMap<String, Signature>;
 
-struct Parser<'a> { file: String, source: &'a str, tokens: Rc<Vec<Token>>, shared_source: Rc<str>, pos: usize, names: HashMap<String, (usize, bool, Type)>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>>, subst: HashMap<String, Type>, trait_bounds: HashMap<String, Vec<usize>>, pending: Vec<Function> }
+struct Parser<'a> { file: String, source: &'a str, tokens: Rc<Vec<Token>>, shared_source: Rc<str>, pos: usize, names: HashMap<String, (usize, bool, Type)>, binding_ranges: HashMap<usize, std::ops::Range<usize>>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>>, subst: HashMap<String, Type>, trait_bounds: HashMap<String, Vec<usize>>, pending: Vec<Function> }
 #[derive(Debug, Default)]
 struct Program { files: Vec<Vec<Function>>, structs: Vec<StructDef>, enums: Vec<EnumDef> }
 
 fn make_parser<'a>(file: &str, source: &'a str, tokens: Rc<Vec<Token>>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics) -> Parser<'a> {
-    Parser { file: file.to_owned(), source, tokens, shared_source: Rc::from(source), pos: 0, names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new(), subst: HashMap::new(), trait_bounds: HashMap::new(), pending: Vec::new() }
+    Parser { file: file.to_owned(), source, tokens, shared_source: Rc::from(source), pos: 0, names: HashMap::new(), binding_ranges: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new(), subst: HashMap::new(), trait_bounds: HashMap::new(), pending: Vec::new() }
 }
 
 // Leading `use "path";` headers. Parsed from tokens before the Parser owns
@@ -485,15 +487,15 @@ fn scan_uses(file: &str, source: &str, tokens: &[Token]) -> Result<Vec<String>, 
         match tokens.get(pos).map(|t| t.kind.clone()) {
             Some(Kind::Text(text)) => { uses.push(text); pos += 1; }
             _ => {
-                let offset = tokens.get(pos).map(|t| t.offset).unwrap_or(0);
-                return Err(ae_syntax::diagnostic(file, source, offset, "expected a string path after 'use'"));
+                let range = tokens.get(pos).map(|t| t.offset..t.end).unwrap_or(0..0);
+                return Err(ae_syntax::diagnostic_range(file, source, range, "expected a string path after 'use'"));
             }
         }
         match tokens.get(pos).map(|t| &t.kind) {
             Some(Kind::Semi) => pos += 1,
             _ => {
-                let offset = tokens.get(pos).map(|t| t.offset).unwrap_or(0);
-                return Err(ae_syntax::diagnostic(file, source, offset, "expected ';' after 'use' path"));
+                let range = tokens.get(pos).map(|t| t.offset..t.end).unwrap_or(0..0);
+                return Err(ae_syntax::diagnostic_range(file, source, range, "expected ';' after 'use' path"));
             }
         }
     }

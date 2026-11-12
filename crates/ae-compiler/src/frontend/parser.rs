@@ -2,7 +2,36 @@
 use super::*;
 impl<'a> Parser<'a> {
     pub(super) fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
-    pub(super) fn fail(&self, message: &str) -> ae_span::Diagnostic { ae_syntax::diagnostic(&self.file, self.source, self.tokens[self.pos].offset, message) }
+    pub(super) fn fail(&self, message: &str) -> ae_span::Diagnostic {
+        let token = &self.tokens[self.pos];
+        ae_syntax::diagnostic_range(&self.file, self.source, token.offset..token.end, message)
+    }
+    fn error_at(&self, offset: usize, message: &str) -> ae_span::Diagnostic {
+        let end = self.tokens.binary_search_by_key(&offset, |token| token.offset)
+            .ok().map_or(offset, |index| self.tokens[index].end);
+        ae_syntax::diagnostic_range(&self.file, self.source, offset..end, message)
+    }
+    fn binding_label(&self, diagnostic: ae_span::Diagnostic, id: usize) -> ae_span::Diagnostic {
+        let Some(range) = self.binding_ranges.get(&id) else { return diagnostic };
+        let source = ae_span::SourceFile { name: Some(&self.file), text: self.source };
+        match source.span(range.clone()) {
+            Some(span) => diagnostic.with_secondary(span, "binding declared here"),
+            None => diagnostic,
+        }
+    }
+    fn immutable_binding_error(&self, diagnostic: ae_span::Diagnostic, id: usize) -> ae_span::Diagnostic {
+        let diagnostic = self.binding_label(diagnostic, id);
+        if diagnostic.secondary.is_empty() { diagnostic } else {
+            diagnostic.with_suggestion("If mutation is intended, declare the binding with `var`.")
+        }
+    }
+    fn duplicate_binding_error(&self, name: &str) -> ae_span::Diagnostic {
+        let diagnostic = self.fail(&format!("duplicate variable '{name}'")).with_code("E0104");
+        match self.names.get(name) {
+            Some(&(id, _, _)) => self.binding_label(diagnostic, id),
+            None => diagnostic,
+        }
+    }
     pub(super) fn take(&mut self, expected: Kind) -> Result<(), ae_span::Diagnostic> {
         if *self.current() != expected { return Err(self.fail(&format!("expected {expected:?}, found {:?}", self.current()))); }
         self.pos += 1; Ok(())
@@ -98,7 +127,7 @@ impl<'a> Parser<'a> {
                 } else if *self.current() == Kind::ColonColon {
                     // Enum::Variant or Enum::Variant(payload, ...)
                     let eid = *self.enum_names.get(&name)
-                        .ok_or_else(|| ae_syntax::diagnostic(&self.file, self.source, name_offset, &format!("'{name}' is not an enum; variants are written Enum::Variant")))?;
+                        .ok_or_else(|| self.error_at(name_offset, &format!("'{name}' is not an enum; variants are written Enum::Variant")))?;
                     self.enum_literal(eid, name_offset)?
                 } else if self.generics.names.contains_key(&name) && *self.current() == Kind::LBracket {
                     // Generic enum literal: the arguments pick the layout, so
@@ -130,7 +159,7 @@ impl<'a> Parser<'a> {
                     let sid = self.instantiate_struct(gid, args, name_offset)?;
                     self.require_public("struct", &self.structs[sid].name.clone(), &self.structs[sid].file.clone(), self.structs[sid].public)?;
                     if *self.current() != Kind::LBrace {
-                        return Err(ae_syntax::diagnostic(&self.file, self.source, name_offset, &format!("'{}' is a struct; construct it with '{}{{ ... }}'", self.structs[sid].name.clone(), self.structs[sid].name.clone())));
+                        return Err(self.error_at(name_offset, &format!("'{}' is a struct; construct it with '{}{{ ... }}'", self.structs[sid].name.clone(), self.structs[sid].name.clone())));
                     }
                     return self.struct_literal(sid, name_offset);
                 } else if let Some(&sid) = self.struct_names.get(&name) {
@@ -154,7 +183,7 @@ impl<'a> Parser<'a> {
                         let after = self.tokens.get(self.pos + 1).map(|t| t.kind.clone());
                         if after == Some(Kind::RParen) {
                             if let Some(&(id, _, ty)) = self.names.get(&arg_name) {
-                                if self.moved.contains(&id) { return Err(ae_syntax::diagnostic(&self.file, self.source, name_offset, &format!("cannot use '{arg_name}' because it was moved"))); }
+                                if self.moved.contains(&id) { return Err(self.binding_label(self.error_at(name_offset, &format!("cannot use '{arg_name}' because it was moved")).with_code("E0102"), id)); }
                                 match ty {
                                     Type::Array(n) => { self.pos += 2; fast = Some((Expr::Number(n as i64), Type::Int)); }
                                     Type::Vec | Type::StrVec | Type::VecRef | Type::StrVecRef | Type::Map => {
@@ -196,7 +225,7 @@ impl<'a> Parser<'a> {
                         },
                         _ => return Err(self.fail("slice_view expects a string variable or a string field of a struct variable (views borrow their base)")),
                     };
-                    if self.moved.contains(&vid) { return Err(self.fail("cannot use a moved string in slice_view")); }
+                    if self.moved.contains(&vid) { return Err(self.binding_label(self.fail("cannot use a moved string in slice_view").with_code("E0102"), vid)); }
                     self.take(Kind::Comma)?;
                     let (start, start_ty) = self.expression(0, false)?;
                     if start_ty != Type::Int { return Err(self.fail("slice_view start must be i64")); }
@@ -228,7 +257,7 @@ impl<'a> Parser<'a> {
                         },
                         _ => return Err(self.fail("tokenize expects a string variable or a string field of a struct variable (the cursor borrows its base)")),
                     };
-                    if self.moved.contains(&vid) { return Err(self.fail("cannot tokenize a moved string")); }
+                    if self.moved.contains(&vid) { return Err(self.binding_label(self.fail("cannot tokenize a moved string").with_code("E0102"), vid)); }
                     self.take(Kind::Comma)?;
                     let (sep, sep_ty) = self.expression(0, false)?;
                     if !matches!(sep_ty, Type::String | Type::StrView) { return Err(self.fail("tokenize expects a string or string view separator")); }
@@ -266,7 +295,7 @@ impl<'a> Parser<'a> {
                         (Expr::Variable(id, Type::StrVec, _, _), Type::StrVec) => *id,
                         _ => return Err(self.fail("join expects a bare vec[string] variable")),
                     };
-                    if self.moved.contains(&vid) { return Err(self.fail("cannot use a moved vector in join")); }
+                    if self.moved.contains(&vid) { return Err(self.binding_label(self.fail("cannot use a moved vector in join").with_code("E0102"), vid)); }
                     self.take(Kind::Comma)?;
                     let (sep, sep_ty) = self.expression(0, false)?;
                     if !matches!(sep_ty, Type::String | Type::StrView) { return Err(self.fail("join expects a string or string view separator")); }
@@ -345,7 +374,7 @@ impl<'a> Parser<'a> {
                         (Expr::Variable(id, Type::StrVec, _, _), Type::StrVec) => *id,
                         _ => return Err(self.fail("run_command expects a bare vec[string] variable for its arguments")),
                     };
-                    if self.moved.contains(&vid) { return Err(self.fail("cannot use a moved vector in run_command")); }
+                    if self.moved.contains(&vid) { return Err(self.binding_label(self.fail("cannot use a moved vector in run_command").with_code("E0102"), vid)); }
                     self.take(Kind::RParen)?;
                     (Expr::RunCommand(Box::new(program), vid, ty, line, col), ty)
                 } else if name == "find" && *self.current() == Kind::LParen {
@@ -440,7 +469,7 @@ impl<'a> Parser<'a> {
                             },
                             _ => return Err(self.fail("map_inc expects a map variable or a field of one")),
                         };
-                        if self.moved.contains(&place.slot()) { return Err(self.fail("cannot use 'map_inc' on a moved map")); }
+                        if self.moved.contains(&place.slot()) { return Err(self.binding_label(self.fail("cannot use 'map_inc' on a moved map").with_code("E0102"), place.slot())); }
                         self.take(Kind::Comma)?;
                         let (key, key_ty) = self.expression(0, false)?;
                         if !matches!(key_ty, Type::String | Type::StrView) { return Err(self.fail("map_inc expects a string key")); }
@@ -469,7 +498,7 @@ impl<'a> Parser<'a> {
                         },
                         _ => return Err(self.fail(&format!("{name} expects a map variable or a field of one"))),
                     };
-                    if self.moved.contains(&place.slot()) { return Err(self.fail(&format!("cannot use '{name}' on a moved map"))); }
+                    if self.moved.contains(&place.slot()) { return Err(self.binding_label(self.fail(&format!("cannot use '{name}' on a moved map")).with_code("E0102"), place.slot())); }
                     if name == "keys" {
                         self.take(Kind::RParen)?;
                         (Expr::MapKeys(place, line, col), ty)
@@ -671,7 +700,7 @@ impl<'a> Parser<'a> {
                     // are mandatory — the language has no type inference.
                     let gid = self.generics.fn_names[&name];
                     if *self.current() != Kind::LBracket {
-                        return Err(ae_syntax::diagnostic(&self.file, self.source, name_offset, &format!("'{name}' is a generic function; write its type arguments, e.g. {name}[i64](...)")));
+                        return Err(self.error_at(name_offset, &format!("'{name}' is a generic function; write its type arguments, e.g. {name}[i64](...)")));
                     }
                     self.pos += 1;
                     let mut type_args = Vec::new();
@@ -694,7 +723,7 @@ impl<'a> Parser<'a> {
                         None => self.resolve_trait_call(&name, name_offset)?,
                     };
                     if !signature.public && signature.file != PRELUDE && signature.file != self.file {
-                        return Err(ae_syntax::diagnostic(&self.file, self.source, name_offset, &format!("function '{name}' is private to {} (mark it 'pub' to export it)", signature.file)));
+                        return Err(self.error_at(name_offset, &format!("function '{name}' is private to {} (mark it 'pub' to export it)", signature.file)));
                     }
                     let (id, types, ret) = (signature.id, signature.params.clone(), signature.ret);
                     let args = self.call_arguments(&name, &types)?;
@@ -704,11 +733,11 @@ impl<'a> Parser<'a> {
                         // A generic enum used as a value: the arguments are
                         // mandatory, so say that instead of "unknown variable".
                         if self.generics.names.contains_key(&name) {
-                            return ae_syntax::diagnostic(&self.file, self.source, name_offset, &format!("'{name}' is a generic enum; write '{name}[string]::Variant'"));
+                            return self.error_at(name_offset, &format!("'{name}' is a generic enum; write '{name}[string]::Variant'"));
                         }
-                        ae_syntax::diagnostic(&self.file, self.source, name_offset, &format!("unknown variable '{name}'"))
+                        self.error_at(name_offset, &format!("unknown variable '{name}'")).with_code("E0101")
                     })?;
-                    if self.moved.contains(&id) { return Err(ae_syntax::diagnostic(&self.file, self.source, name_offset, &format!("cannot use '{name}' because it was moved"))); }
+                    if self.moved.contains(&id) { return Err(self.binding_label(self.error_at(name_offset, &format!("cannot use '{name}' because it was moved")).with_code("E0102"), id)); }
                     if let Type::Array(len) = ty {
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
                         let (index, index_ty) = self.expression(0, false)?;
@@ -955,7 +984,7 @@ impl<'a> Parser<'a> {
         let def = self.enums[eid].clone();
         self.require_public("enum", def.name, &def.file, def.public)?;
         let vidx = def.variants.iter().position(|(n, _)| *n == vname)
-            .ok_or_else(|| ae_syntax::diagnostic(&self.file, self.source, offset, &format!("enum '{}' has no variant '{}'", def.name, vname)))?;
+            .ok_or_else(|| self.error_at(offset, &format!("enum '{}' has no variant '{}'", def.name, vname)))?;
         let fields = def.variants[vidx].1.clone();
         let mut values = Vec::new();
         if *self.current() == Kind::LParen {
@@ -1002,7 +1031,7 @@ impl<'a> Parser<'a> {
         for (i, slot) in slots.into_iter().enumerate() {
             match slot {
                 Some(v) => values.push(v),
-                None => return Err(ae_syntax::diagnostic(&self.file, self.source, offset, &format!("missing field '{}' in '{}' construction", def_fields[i].0, name))),
+                None => return Err(self.error_at(offset, &format!("missing field '{}' in '{}' construction", def_fields[i].0, name))),
             }
         }
         Ok((Expr::StructLit(sid, values), Type::Struct(sid)))
@@ -1097,11 +1126,11 @@ impl<'a> Parser<'a> {
                             // nowhere; a private one from another file is
                             // rejected like a private function would be.
                             let tid = *self.generics.trait_names.get(&label).ok_or_else(|| {
-                                ae_syntax::diagnostic(&self.file, self.source, at, "unknown constraint; allowed: Add, Eq, Ord, Copy, or a trait declared in this program")
+                                self.error_at(at, "unknown constraint; allowed: Add, Eq, Ord, Copy, or a trait declared in this program")
                             })?;
                             let trait_file = self.generics.traits[tid].file.clone();
                             if trait_file != self.file {
-                                self.require_public("trait", &label, &trait_file, self.generics.traits[tid].public).map_err(|e| ae_syntax::diagnostic(&self.file, self.source, at, &e.to_string()))?;
+                                self.require_public("trait", &label, &trait_file, self.generics.traits[tid].public).map_err(|e| self.error_at(at, &e.to_string()))?;
                             }
                             if traits.contains(&tid) { return Err(self.fail(&format!("duplicate constraint '{label}'"))); }
                             traits.push(tid);
@@ -1145,12 +1174,12 @@ impl<'a> Parser<'a> {
     pub(super) fn instantiate_enum(&mut self, gid: usize, args: Vec<Type>, offset: usize) -> Result<usize, ae_span::Diagnostic> {
         let def = self.generics.defs[gid].clone();
         if args.len() != def.params.len() {
-            return Err(ae_syntax::diagnostic(&self.file, self.source, offset, &format!("'{}' takes {} type argument(s), found {}", def.name, def.params.len(), args.len())));
+            return Err(self.error_at(offset, &format!("'{}' takes {} type argument(s), found {}", def.name, def.params.len(), args.len())));
         }
         let key = format!("{gid}:{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
         if let Some(&eid) = self.generics.done.get(&key) { return Ok(eid); }
         if self.enums.len() >= MAX_ENUM_TYPES {
-            return Err(ae_syntax::diagnostic(&self.file, self.source, offset, &format!("generic instantiation budget exceeded ({MAX_ENUM_TYPES} enum types) at '{}'", def.name)));
+            return Err(self.error_at(offset, &format!("generic instantiation budget exceeded ({MAX_ENUM_TYPES} enum types) at '{}'", def.name)));
         }
         let variants: Vec<(String, Vec<Type>)> = def.variants.iter().map(|(vname, fields)| {
             let types = fields.iter().map(|p| match p {
@@ -1190,12 +1219,12 @@ impl<'a> Parser<'a> {
     pub(super) fn instantiate_struct(&mut self, gid: usize, args: Vec<Type>, offset: usize) -> Result<usize, ae_span::Diagnostic> {
         let def = self.generics.struct_defs[gid].clone();
         if args.len() != def.params.len() {
-            return Err(ae_syntax::diagnostic(&self.file, self.source, offset, &format!("'{}' takes {} type argument(s), found {}", def.name, def.params.len(), args.len())));
+            return Err(self.error_at(offset, &format!("'{}' takes {} type argument(s), found {}", def.name, def.params.len(), args.len())));
         }
         let key = format!("{gid}:{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
         if let Some(&sid) = self.generics.struct_done.get(&key) { return Ok(sid); }
         if self.structs.len() >= MAX_STRUCT_TYPES {
-            return Err(ae_syntax::diagnostic(&self.file, self.source, offset, &format!("generic instantiation budget exceeded ({MAX_STRUCT_TYPES} struct types) at '{}'", def.name)));
+            return Err(self.error_at(offset, &format!("generic instantiation budget exceeded ({MAX_STRUCT_TYPES} struct types) at '{}'", def.name)));
         }
         let fields: Vec<(String, Type)> = def.fields.iter().map(|(fname, payload)| {
             let ty = match payload {
@@ -1264,7 +1293,7 @@ impl<'a> Parser<'a> {
                     Type::Vec => Ok(Type::VecRef),
                     Type::StrVec => Ok(Type::StrVecRef),
                     Type::VecF => Ok(Type::VecFRef),
-                    _ => Err(ae_syntax::diagnostic(&self.file, self.source, amp_offset, &format!(
+                    _ => Err(self.error_at(amp_offset, &format!(
                         "'&{name}' is '{}' here, which has no read-only borrow; only string, vec, vec[string] and vec[f64] can be borrowed",
                         concrete.name()))),
                 };
@@ -1292,7 +1321,7 @@ impl<'a> Parser<'a> {
                 return Ok(Type::VecRef);
             }
             if matches!(self.current(), Kind::Ident(_)) {
-                return Err(ae_syntax::diagnostic(&self.file, self.source, amp_offset,
+                return Err(self.error_at(amp_offset,
                     "unsupported borrow type; write &string, &vec, &vec[string], &vec[f64], &[i64; N], or &T inside a generic function"));
             }
             self.take(Kind::LBracket)?;
@@ -1728,17 +1757,17 @@ impl<'a> Parser<'a> {
             }
         }
         if found.is_empty() {
-            return Err(ae_syntax::diagnostic(&self.file, self.source, offset, &format!("unknown function '{method}'")));
+            return Err(self.error_at(offset, &format!("unknown function '{method}'")));
         }
         if found.len() > 1 {
-            return Err(ae_syntax::diagnostic(&self.file, self.source, offset, &format!("method '{method}' is ambiguous; several constrained parameters of this generic declare it")));
+            return Err(self.error_at(offset, &format!("method '{method}' is ambiguous; several constrained parameters of this generic declare it")));
         }
         let (param, tid, mid) = found.remove(0);
         let ty = self.subst.get(&param).cloned()
-            .ok_or_else(|| ae_syntax::diagnostic(&self.file, self.source, offset, &format!("'{method}' dispatches on '{param}', which has no type argument here")))?;
+            .ok_or_else(|| self.error_at(offset, &format!("'{method}' dispatches on '{param}', which has no type argument here")))?;
         let key = format!("{}#{}#{}", self.generics.traits[tid].name, self.generics.traits[tid].methods[mid].name, ty.name());
         self.functions.get(&key).cloned().ok_or_else(|| {
-            ae_syntax::diagnostic(&self.file, self.source, offset, &format!("no impl of trait '{}' for '{}'", self.generics.traits[tid].name, ty.name()))
+            self.error_at(offset, &format!("no impl of trait '{}' for '{}'", self.generics.traits[tid].name, ty.name()))
         })
     }
 
@@ -1774,7 +1803,7 @@ impl<'a> Parser<'a> {
     pub(super) fn function_rest(&mut self, is_main: bool, id: usize) -> Result<Function, ae_span::Diagnostic> {
         self.take(Kind::LParen)?;
         // Variable ids restart per function, so move tracking must too.
-        self.names.clear(); self.next_var = 0; self.moved.clear(); self.scopes.clear(); self.borrows.clear();
+        self.names.clear(); self.binding_ranges.clear(); self.next_var = 0; self.moved.clear(); self.scopes.clear(); self.borrows.clear();
         let mut params = Vec::new();
         if *self.current() != Kind::RParen {
             loop {
@@ -1784,13 +1813,16 @@ impl<'a> Parser<'a> {
                 // the caller; that difference is what keeps it safe.
                 let mutable = *self.current() == Kind::Var;
                 if mutable { self.pos += 1; }
+                let binding_range = self.tokens[self.pos].offset..self.tokens[self.pos].end;
                 let param = self.identifier()?;
                 if RESERVED.contains(&param.as_str()) { return Err(self.fail(&format!("'{param}' is a built-in name and cannot be a parameter"))); }
                 if self.names.contains_key(&param) { return Err(self.fail(&format!("duplicate parameter '{param}'"))); }
                 self.take(Kind::Colon)?;
                 let ty = self.parameter_type()?;
                 let var_id = self.next_var; self.next_var += 1;
-                self.names.insert(param, (var_id, mutable, ty)); params.push((var_id, ty));
+                self.names.insert(param, (var_id, mutable, ty));
+                self.binding_ranges.insert(var_id, binding_range);
+                params.push((var_id, ty));
                 if *self.current() != Kind::Comma { break; }
                 self.pos += 1;
             }
@@ -1823,13 +1855,13 @@ impl<'a> Parser<'a> {
     pub(super) fn instantiate_fn(&mut self, gid: usize, args: Vec<Type>, offset: usize) -> Result<Instance, ae_span::Diagnostic> {
         let def = self.generics.fn_defs[gid].clone();
         if args.len() != def.params.len() {
-            return Err(ae_syntax::diagnostic(&self.file, self.source, offset, &format!("'{}' takes {} type argument(s), found {}", def.name, def.params.len(), args.len())));
+            return Err(self.error_at(offset, &format!("'{}' takes {} type argument(s), found {}", def.name, def.params.len(), args.len())));
         }
         self.require_public("function", &def.name, &def.file, def.public)?;
         for (index, bounds) in def.bounds.iter().enumerate() {
             for &bound in bounds {
                 if !bound.allows(args[index]) {
-                    return Err(ae_syntax::diagnostic(&self.file, self.source, offset, &format!(
+                    return Err(self.error_at(offset, &format!(
                         "type argument '{}' for '{}' does not satisfy '{}'; that constraint allows {}",
                         args[index].name(), def.name, bound.name(), bound.allowed_types())));
                 }
@@ -1839,7 +1871,7 @@ impl<'a> Parser<'a> {
             for &tid in traits {
                 let trait_name = self.generics.traits[tid].name.clone();
                 if !self.generics.impls.contains(&(tid, args[index].name())) {
-                    return Err(ae_syntax::diagnostic(&self.file, self.source, offset, &format!(
+                    return Err(self.error_at(offset, &format!(
                         "no impl of trait '{}' for '{}'; required by '{}'",
                         trait_name, args[index].name(), def.name)));
                 }
@@ -1848,7 +1880,7 @@ impl<'a> Parser<'a> {
         let key = format!("{gid}:{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
         if let Some(instance) = self.generics.fn_done.get(&key) { return Ok(instance.clone()); }
         if self.generics.fn_in_progress.contains(&key) {
-            return Err(ae_syntax::diagnostic(&self.file, self.source, offset, &format!("'{}' is already being instantiated with these type arguments; the expansion would never finish", def.name)));
+            return Err(self.error_at(offset, &format!("'{}' is already being instantiated with these type arguments; the expansion would never finish", def.name)));
         }
         self.generics.fn_in_progress.insert(key.clone());
         let id = self.generics.next_fn_id;
@@ -1861,7 +1893,7 @@ impl<'a> Parser<'a> {
         }
         let mut sub = Parser {
             file: def.file.clone(), source: &*def.source, tokens: Rc::clone(&def.tokens), shared_source: Rc::clone(&def.source), pos: def.start,
-            names: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0,
+            names: HashMap::new(), binding_ranges: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0,
             loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0,
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
@@ -1897,7 +1929,7 @@ impl<'a> Parser<'a> {
                 } else if expected == Type::VecRef || expected == Type::StrVecRef || expected == Type::VecFRef {
                     self.take(Kind::Amp)?;
                     let arg = self.identifier()?;
-                    let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown variable '{arg}'")))?;
+                    let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown variable '{arg}'")).with_code("E0101"))?;
                     let owned_shape = match expected {
                         Type::VecRef => Type::Vec,
                         Type::StrVecRef => Type::StrVec,
@@ -1911,7 +1943,7 @@ impl<'a> Parser<'a> {
                     if actual != owned_shape && actual != borrowed_shape {
                         return Err(self.fail(&format!("argument must be {}, found {}", owned_shape.name(), actual.name())));
                     }
-                    if self.moved.contains(&var) { return Err(self.fail(&format!("cannot borrow '{arg}' because it was moved"))); }
+                    if self.moved.contains(&var) { return Err(self.binding_label(self.fail(&format!("cannot borrow '{arg}' because it was moved")).with_code("E0102"), var)); }
                     // An owned vector needs its address taken; a parameter that
                     // is already `const ae_vec *` is forwarded unchanged.
                     // The flag means "take the address", not "is a vector".
@@ -2009,7 +2041,7 @@ impl<'a> Parser<'a> {
             // Values already moved before the loop are not this body's doing.
             if before.contains(id) || !outer.contains(id) { continue; }
             let name = self.names.iter().find(|(_, (vid, _, _))| vid == id).map(|(n, _)| n.clone()).unwrap_or_else(|| "?".to_owned());
-            return Err(ae_syntax::diagnostic(&self.file, self.source, offset, &format!("cannot move '{name}' inside a loop body: the next iteration would read it after the move (re-initialize it before the body ends)")));
+            return Err(self.error_at(offset, &format!("cannot move '{name}' inside a loop body: the next iteration would read it after the move (re-initialize it before the body ends)")));
         }
         // Moves of loop-local values die with the body; nothing to merge.
         Ok(())
@@ -2027,11 +2059,12 @@ impl<'a> Parser<'a> {
             match self.current().clone() {
                 Kind::Let | Kind::Var => {
                     let mutable = *self.current() == Kind::Var; self.pos += 1;
+                    let binding_range = self.tokens[self.pos].offset..self.tokens[self.pos].end;
                     let name = self.identifier()?;
                     if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{name}' is a built-in name and cannot be a variable"))); }
                     if self.struct_names.contains_key(&name) { return Err(self.fail(&format!("'{name}' names a struct and cannot be a variable"))); }
                     if self.enum_names.contains_key(&name) { return Err(self.fail(&format!("'{name}' names an enum and cannot be a variable"))); }
-                    if self.names.contains_key(&name) { return Err(self.fail(&format!("duplicate variable '{name}'"))); }
+                    if self.names.contains_key(&name) { return Err(self.duplicate_binding_error(&name)); }
                     self.take(Kind::Equal)?;
                     let id = self.next_var; self.next_var += 1;
                     let (stmt, ty) = if *self.current() == Kind::LBracket {
@@ -2059,6 +2092,7 @@ impl<'a> Parser<'a> {
                             self.take(Kind::Semi)?;
                             let bound_ty = bound_ty.expect("a binding propagation always produces a payload type");
                             self.names.insert(name.clone(), (id, mutable, bound_ty));
+                            self.binding_ranges.insert(id, binding_range);
                             self.scopes.last_mut().unwrap().push((id, bound_ty));
                             declared.push(name);
                             result.push(statement);
@@ -2073,6 +2107,7 @@ impl<'a> Parser<'a> {
                         (Statement::Declare(id, value), ty)
                     };
                     self.names.insert(name.clone(), (id, mutable, ty));
+                    self.binding_ranges.insert(id, binding_range);
                     self.scopes.last_mut().unwrap().push((id, ty));
                     declared.push(name);
                     if let Statement::Declare(_, init) = &stmt { self.record_borrow_bases(init); }
@@ -2096,10 +2131,10 @@ impl<'a> Parser<'a> {
                         let (line, col) = self.position();
                         self.pos += 2;
                         let target = self.identifier()?;
-                        let (id, mutable, ty) = *self.names.get(&target).ok_or_else(|| self.fail(&format!("unknown variable '{target}'")))?;
-                        if self.moved.contains(&id) { return Err(self.fail(&format!("cannot use '{target}' because it was moved"))); }
+                        let (id, mutable, ty) = *self.names.get(&target).ok_or_else(|| self.fail(&format!("unknown variable '{target}'")).with_code("E0101"))?;
+                        if self.moved.contains(&id) { return Err(self.binding_label(self.fail(&format!("cannot use '{target}' because it was moved")).with_code("E0102"), id)); }
                         if !matches!(ty, Type::Vec | Type::StrVec | Type::VecF) { return Err(self.fail(&format!("{name} expects a vec, found {}", ty.name()))); }
-                        if !mutable { return Err(self.fail(&format!("cannot modify immutable variable '{target}'"))); }
+                        if !mutable { return Err(self.immutable_binding_error(self.fail(&format!("cannot modify immutable variable '{target}'")).with_code("E0103"), id)); }
                         if self.borrows.iter().any(|&(bid, _)| bid == id) { return Err(self.fail(&format!("cannot modify '{target}' while it is borrowed"))); }
                         // Ordering in place: qsort for i64, byte order for
                         // strings, so sorted output is identical on both
@@ -2155,8 +2190,8 @@ impl<'a> Parser<'a> {
                         result.push(statement);
                         continue;
                     }
-                    let (id, mutable, ty) = *self.names.get(&name).ok_or_else(|| self.fail(&format!("unknown variable '{name}'")))?;
-                    if !mutable { return Err(self.fail(&format!("cannot assign to immutable variable '{name}'"))); }
+                    let (id, mutable, ty) = *self.names.get(&name).ok_or_else(|| self.fail(&format!("unknown variable '{name}'")).with_code("E0101"))?;
+                    if !mutable { return Err(self.immutable_binding_error(self.fail(&format!("cannot assign to immutable variable '{name}'")).with_code("E0103"), id)); }
                     self.pos += 1;
                     if (ty == Type::Map || ty == Type::MapF) && *self.current() == Kind::LBracket {
                         // `m[key] = value;` inserts or overwrites. The key is
@@ -2328,7 +2363,7 @@ impl<'a> Parser<'a> {
                     self.pos += 1;
                     let var_name = self.identifier()?;
                     if RESERVED.contains(&var_name.as_str()) { return Err(self.fail(&format!("'{var_name}' is a built-in name and cannot be a loop variable"))); }
-                    if self.names.contains_key(&var_name) { return Err(self.fail(&format!("duplicate variable '{var_name}'"))); }
+                    if self.names.contains_key(&var_name) { return Err(self.duplicate_binding_error(&var_name)); }
                     self.take(Kind::In)?;
                     let (first, first_ty) = self.expression(0, false)?;
                     if first_ty == Type::Tokens {
@@ -2579,7 +2614,7 @@ impl<'a> Parser<'a> {
                 for (index, field) in fields.iter().copied().enumerate() {
                     let bname = self.identifier()?;
                     if RESERVED.contains(&bname.as_str()) { return Err(self.fail(&format!("'{bname}' is a built-in name and cannot be a pattern binding"))); }
-                    if self.names.contains_key(&bname) { return Err(self.fail(&format!("duplicate variable '{bname}'"))); }
+                    if self.names.contains_key(&bname) { return Err(self.duplicate_binding_error(&bname)); }
                     let id = self.next_var; self.next_var += 1;
                     // String payloads bind as read-only views and vec payloads
                     // as read-only borrows: nothing can be moved out of the

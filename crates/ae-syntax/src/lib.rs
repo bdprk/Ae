@@ -9,7 +9,7 @@ pub enum Kind {
     Enum, Match, ColonColon, FatArrow, Question, Trait, Impl, Eof,
 }
 #[derive(Debug, Clone)]
-pub struct Token { pub kind: Kind, pub offset: usize, pub line: usize, pub column: usize }
+pub struct Token { pub kind: Kind, pub offset: usize, pub end: usize, pub line: usize, pub column: usize }
 
 // Test-only view for the formatter's lexer-drift defense: the same token
 // boundaries, as comparable names. Values are dropped on purpose.
@@ -39,17 +39,22 @@ fn kind_name(kind: &Kind) -> &'static str {
 }
 
 // Lexer diagnostics carry no file name; load_file adds the file prefix.
-fn lex_error(source: &str, offset: usize, message: &str) -> Diagnostic {
+fn lex_error(source: &str, offset: usize, code: &str, message: &str) -> Diagnostic {
     let end = offset + source[offset..].chars().next().map_or(0, char::len_utf8);
     let span = SourceFile { name: None, text: source }.span(offset..end)
         .expect("lexer offset must be a UTF-8 boundary in the source");
-    Diagnostic::at(span, message)
+    let mut diagnostic = Diagnostic::at(span, message);
+    diagnostic.code = Some(code.to_owned());
+    diagnostic
 }
 pub fn error(file: &str, source: &str, offset: usize, message: &str) -> String {
     diagnostic(file, source, offset, message).to_string()
 }
 pub fn diagnostic(file: &str, source: &str, offset: usize, message: &str) -> Diagnostic {
-    let span = SourceFile { name: Some(file), text: source }.span(offset..offset)
+    diagnostic_range(file, source, offset..offset, message)
+}
+pub fn diagnostic_range(file: &str, source: &str, range: std::ops::Range<usize>, message: &str) -> Diagnostic {
+    let span = SourceFile { name: Some(file), text: source }.span(range)
         .expect("parser offset must be a UTF-8 boundary in the source");
     Diagnostic::at(span, message)
 }
@@ -106,18 +111,19 @@ fn lex_inner(source: &str, mut recovered: Option<&mut Vec<Diagnostic>>) -> Resul
             while i < bytes.len() {
                 match bytes[i] {
                     b'"' => break,
-                    b'\n' | b'\0' => return Err(lex_error(source, i, "string literals must not contain raw newlines or NUL; use escapes").into()),
+                    b'\n' | b'\0' => return Err(lex_error(source, i, "E0004", "string literals must not contain raw newlines or NUL; use escapes").into()),
                     b'\\' => {
                         let escaped = bytes.get(i + 1).copied();
                         if !matches!(escaped, Some(b'n' | b't' | b'r' | b'\\' | b'"')) {
-                            return Err(lex_error(source, i, "unsupported string escape; allowed: \\n \\t \\r \\\\ \\\"").into());
+                            return Err(lex_error(source, i, "E0002", "unsupported string escape; allowed: \\n \\t \\r \\\\ \\\""
+                            ).with_suggestion("Use a supported escape, or escape a literal backslash as \\\\.").into());
                         }
                         i += 2;
                     }
                     _ => i += 1,
                 }
             }
-            if i >= bytes.len() { return Err(lex_error(source, start, "unterminated string literal").into()); }
+            if i >= bytes.len() { return Err(lex_error(source, start, "E0003", "unterminated string literal").into()); }
             i += 1;
             Kind::Text(source[start + 1..i - 1].to_owned())
         } else if c.is_ascii_alphabetic() || c == '_' {
@@ -155,17 +161,17 @@ fn lex_inner(source: &str, mut recovered: Option<&mut Vec<Diagnostic>>) -> Resul
             }
             let text = &source[start..i];
             if floating {
-                let value: f64 = text.parse().map_err(|_| lex_error(source, start, "invalid float literal"))?;
-                if !value.is_finite() { return Err(lex_error(source, start, "float literal is not finite").into()); }
+                let value: f64 = text.parse().map_err(|_| lex_error(source, start, "E0006", "invalid float literal"))?;
+                if !value.is_finite() { return Err(lex_error(source, start, "E0007", "float literal is not finite").into()); }
                 // Rounding a nonzero literal down to zero would silently replace
                 // the value the user wrote, so it is rejected instead of stored.
                 let mantissa = text.split(['e', 'E']).next().unwrap_or(text);
                 if value == 0.0 && mantissa.bytes().any(|b| b.is_ascii_digit() && b != b'0') {
-                    return Err(lex_error(source, start, "float literal underflows to zero").into());
+                    return Err(lex_error(source, start, "E0008", "float literal underflows to zero").into());
                 }
                 Kind::Float(value)
             } else {
-                Kind::Number(text.parse().map_err(|_| lex_error(source, start, "integer literal exceeds i64 maximum"))?)
+                Kind::Number(text.parse().map_err(|_| lex_error(source, start, "E0005", "integer literal exceeds i64 maximum"))?)
             }
         } else if ["==", "!=", "<=", ">=", "->", "&&", "||", "..", "=>", "::"].iter().any(|op| source[i..].starts_with(op)) {
             i += 2;
@@ -179,7 +185,7 @@ fn lex_inner(source: &str, mut recovered: Option<&mut Vec<Diagnostic>>) -> Resul
                 '*' => Kind::Star, '/' => Kind::Slash, '%' => Kind::Percent, '<' => Kind::Less, '>' => Kind::Greater,
                 '!' => Kind::Bang, '.' => Kind::Dot, '?' => Kind::Question,
                 _ => {
-                    let diagnostic = lex_error(source, start, &format!("unexpected character {c:?}"));
+                    let diagnostic = lex_error(source, start, "E0001", &format!("unexpected character {c:?}"));
                     match recovered.as_deref_mut() {
                         Some(diagnostics) => {
                             diagnostics.push(diagnostic);
@@ -195,18 +201,44 @@ fn lex_inner(source: &str, mut recovered: Option<&mut Vec<Diagnostic>>) -> Resul
             if character == '\n' { line += 1; column = 1; } else { column += 1; }
         }
         location_offset = start;
-        result.push(Token { kind, offset: start, line, column });
+        result.push(Token { kind, offset: start, end: i, line, column });
     }
     for character in source[location_offset..].chars() {
         if character == '\n' { line += 1; column = 1; } else { column += 1; }
     }
-    result.push(Token { kind: Kind::Eof, offset: source.len(), line, column });
+    result.push(Token { kind: Kind::Eof, offset: source.len(), end: source.len(), line, column });
     Ok(result)
 }
 
 #[cfg(test)]
 mod diagnostic_tests {
     use super::*;
+
+    #[test]
+    fn lexical_error_codes_identify_distinct_failure_categories() {
+        for (source, code) in [
+            ("@", "E0001"),
+            ("\"bad\\q\"", "E0002"),
+            ("\"unterminated", "E0003"),
+            ("\"line\nbreak\"", "E0004"),
+            ("9223372036854775808", "E0005"),
+            ("1e999", "E0007"),
+            ("1e-999", "E0008"),
+        ] {
+            let diagnostic = lex_diagnostic(source).unwrap_err();
+            assert_eq!(diagnostic.code.as_deref(), Some(code), "{source:?}");
+        }
+    }
+
+    #[test]
+    fn token_ranges_cover_original_utf8_bytes_and_empty_eof() {
+        let source = "// 中文\nlet word = \"😀\";";
+        let tokens = lex(source).unwrap();
+        let spellings: Vec<_> = tokens.iter().map(|token| &source[token.offset..token.end]).collect();
+        assert_eq!(spellings, ["let", "word", "=", "\"😀\"", ";", ""]);
+        let eof = tokens.last().unwrap();
+        assert_eq!((eof.offset, eof.end), (source.len(), source.len()));
+    }
 
     #[test]
     fn lexical_errors_keep_byte_offset_and_unicode_column() {

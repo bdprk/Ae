@@ -1,1 +1,1 @@
-[{"file":"$DIR/return_and_missing.ae","line":1,"column":34,"message":"return type must be i64"},{"file":"$DIR/return_and_missing.ae","line":2,"column":29,"message":"unknown variable 'missing'"}]
+[{"file":"$DIR/return_and_missing.ae","line":1,"column":34,"message":"return type must be i64","byte_start":33,"byte_end":39,"code":null,"suggestions":[],"secondary":[]},{"file":"$DIR/return_and_missing.ae","line":2,"column":29,"message":"unknown variable 'missing'","byte_start":73,"byte_end":80,"code":"E0101","suggestions":[],"secondary":[]}]

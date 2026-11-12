@@ -49,6 +49,18 @@ impl Diagnostic {
     pub fn at(span: Span, message: impl Into<String>) -> Self {
         Self { code: None, message: message.into(), primary: Some(Label { span, message: None }), secondary: Vec::new(), suggestions: Vec::new() }
     }
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.code = Some(code.into());
+        self
+    }
+    pub fn with_suggestion(mut self, suggestion: impl Into<String>) -> Self {
+        self.suggestions.push(suggestion.into());
+        self
+    }
+    pub fn with_secondary(mut self, span: Span, message: impl Into<String>) -> Self {
+        self.secondary.push(Label { span, message: Some(message.into()) });
+        self
+    }
 }
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

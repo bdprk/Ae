@@ -1,1 +1,1 @@
-[{"file":"$DIR/unknown_functions.ae","line":1,"column":21,"message":"unknown function 'missing_first'"},{"file":"$DIR/unknown_functions.ae","line":2,"column":22,"message":"unknown function 'missing_second'"}]
+[{"file":"$DIR/unknown_functions.ae","line":1,"column":21,"message":"unknown function 'missing_first'","byte_start":20,"byte_end":33,"code":null,"suggestions":[],"secondary":[]},{"file":"$DIR/unknown_functions.ae","line":2,"column":22,"message":"unknown function 'missing_second'","byte_start":70,"byte_end":84,"code":null,"suggestions":[],"secondary":[]}]

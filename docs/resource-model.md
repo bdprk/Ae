@@ -1,101 +1,97 @@
-# 资源模型（正式说明）
+# Resource Model (Formal Specification)
 
-本文是所有权与释放的**规范**：描述当前实现实际保证什么、在哪里检查、哪些性质尚未保证。凡与本文不符的行为都是缺陷；凡本文标注「不保证」的性质，实现不得在文档或对外表述中暗示已具备。设计动机见 [ADR-5/6/8](decisions.md)。
+This document is the **specification** for ownership and deallocation: it describes what the current implementation actually guarantees, where checks are performed, and which properties are not yet guaranteed. Any behavior inconsistent with this document is a defect; for any property marked "not guaranteed," the implementation must not imply its existence in documentation or external communications. See [ADR-5/6/8](decisions.md) for design motivations.
 
-## 1. 值的分类
+## 1. Classification of Values
 
-| 分类 | 类型 | 存储 | 复制语义 |
+| Category | Type | Storage | Copy Semantics |
 | --- | --- | --- | --- |
-| 标量 | `i64`、`bool` | 栈 | 复制（Copy） |
-| 拥有型 | `string`、`vec`、`vec[string]`、`map[string, i64]`、结构体、枚举 | 栈上句柄 + 堆缓冲 | 移动（**不可隐式复制**） |
-| 只读借用 | `&string`（视图）、`&vec`、`&vec[string]`、`&[i64; N]` | 栈上指针 + 长度 | 只读别名，永不释放 |
-| 固定数组 | `[i64; N]` | 栈（内联） | 不可整体移动或复制 |
+| Scalar | `i64`, `bool` | Stack | Copy |
+| Owned | `string`, `vec`, `vec[string]`, `map[string, i64]`, struct, enum | Stack handle + Heap buffer | Move (**No implicit copy**) |
+| Read-only Borrow | `&string` (view), `&vec`, `&vec[string]`, `&[i64; N]` | Stack pointer + length | Read-only alias, never deallocated |
+| Fixed Array | `[i64; N]` | Stack (inline) | Cannot be moved or copied as a whole |
 
-「拥有型」的判据是 `Type::owned()`：它恰好决定三件事——赋值/传参是否移动、作用域退出是否插入释放、移动后使用是否被拒绝。新增类型必须同时给出这三项语义。
+The criterion for "Owned" is `Type::owned()`: it determines exactly three things—whether assignment/passing moves the value, whether deallocation is inserted upon scope exit, and whether use-after-move is rejected. New types must define these three semantics simultaneously.
 
-## 2. 所有权的转移
+## 2. Transfer of Ownership
 
-移动发生在这些语法位置，别处不发生：
+Moves occur at the following syntactic positions, and nowhere else:
 
-1. `let x = e;` / `x = e;` 中 `e` 求值为拥有的**裸变量**（`let b = a;`）。
-2. 按值实参（形参类型是拥有型）：`f(a)`、`f("literal")`、`f(a + b)`。
-3. `return e;`（`e` 是拥有的裸变量或字面量）。
-4. 结构体字面量中拥有型字段的初值表达式。
-5. 枚举构造中 `string`/`vec`/`vec[string]` 负载。
-6. `map` 的键在写入时由运行时代为**复制**（不是移动：调用方保留自己的字符串）。
+1. `let x = e;` / `x = e;` where `e` evaluates to an owned **bare variable** (e.g., `let b = a;`).
+2. Pass-by-value arguments (where the parameter type is owned): `f(a)`, `f("literal")`, `f(a + b)`.
+3. `return e;` (where `e` is an owned bare variable or literal).
+4. Initializer expressions for owned fields in struct literals.
+5. `string`/`vec`/`vec[string]` payloads in enum construction.
+6. `map` keys are **copied** by the runtime upon insertion (not moved: the caller retains their own string).
 
-字面量与 `+`/`slice`/`read_file` 等内建产生的**临时拥有值**在消费它的语句结束时释放（`drop_owned_temp`）；传给视图参数的临时值在调用返回后立即释放。
+**Temporary owned values** produced by literals and built-ins like `+`, `slice`, or `read_file` are deallocated at the end of the statement that consumes them (`drop_owned_temp`); temporary values passed to view parameters are deallocated immediately after the call returns.
 
-## 3. 移动后的状态
+## 3. State After Move
 
-- **编译期**：每个函数维护 `moved: HashSet<var_id>`。对已移动变量取用、读取、借用、字段/元素访问、作为接收者都会报错；重新赋值（`x = e;`）会清除该标记，因为拥有型目标在写入前先释放旧值，等价于重新初始化。移动集合按变量 id 记录，**不区分字段**：移动整个结构体后，任何字段都不可再用。
-- **运行时**：`string`/`vec`/`vec[string]`/`map` 的释放与「移交」都把句柄清零（`ptr`/`data`/`slots` 置 NULL 并把长度归零）。每次读取前插入空指针检查，命中即 `use of moved <类型>` 并终止。这条兜底覆盖编译期检查漏掉的路径（例如循环体内先移动后使用）。
-- **结构体与枚举没有运行时哨兵**：它们只有编译期检查。跨函数、跨循环的移动记账不完整时，结构体的错误使用不会在运行时被捕获——这是已知缺口，不是设计目标。
+- **Compile-time**: Each function maintains a `moved: HashSet<var_id>`. Accessing, reading, borrowing, accessing fields/elements of, or using as a receiver a variable that has been moved will trigger an error. Reassignment (`x = e;`) clears this flag because the owned target is deallocated before the write, which is equivalent to re-initialization. The move set is tracked by variable ID and **does not distinguish between fields**: once an entire struct is moved, none of its fields can be used.
+- **Runtime**: Deallocation and "hand-off" of `string`/`vec`/`vec[string]`/`map` clear the handle (setting `ptr`/`data`/`slots` to NULL and length to zero). A null-pointer check is inserted before every read; if triggered, it reports `use of moved <type>` and terminates. This fallback covers paths missed by compile-time checks (e.g., moving then using within a loop).
+- **Structs and enums have no runtime sentinels**: They rely solely on compile-time checks. If move tracking across functions or loops is incomplete, erroneous use of a struct will not be caught at runtime—this is a known gap, not a design goal.
 
-## 4. 借用
+## 4. Borrowing
 
-借用是**块作用域**的只读别名，没有独立存储：
+Borrowing is a **block-scoped** read-only alias with no independent storage:
 
-- 来源：`&string`/`&vec`/`&vec[string]`/`&[i64; N]` 形参（形参在函数体内即借用）、`slice_view` 视图、`match` 绑定、`for x in v` 的循环变量、内建对字符串/向量参数的读取。
-- 借用记录为 `(变量 id, 作用域深度)`；块结束时按深度回收该块内建立的借用。
-- 借用期间的禁止项：对基变量整体赋值、`push`/`pop`、索引写入、字段写入、按值传参、`return`、再次建立会移动的表达式，全部报 `cannot assign/modify/move ... while it is borrowed`。判定按**变量 id**，因此对结构体任一字段的写入都会被「结构体上存在借用」拦下（保守但安全）。
-- 借用不得逃逸：不能 `return` 借用，不能存入 `let`（`cannot store a borrowed vector in a variable`），因此借用值的寿命不可能超过建立它的块。这也是当前不需要生命周期参数的**唯一**原因。
-- 结构体字段与向量元素**永远不能被移出**（`cannot move a field out of a struct` / `cannot move an element out of a vector`）：只能整体借用或在原地读取。
+- Sources: `&string`/`&vec`/`&vec[string]`/`&[i64; N]` parameters (parameters are borrows within the function body), `slice_view` views, `match` bindings, loop variables in `for x in v`, and built-in reads of string/vector arguments.
+- Borrows are recorded as `(variable id, scope depth)`; at the end of a block, borrows established within that block are reclaimed based on depth.
+- Prohibitions during a borrow: Whole-variable assignment, `push`/`pop`, index writes, field writes, pass-by-value, `return`, or establishing expressions that would move the variable—all report `cannot assign/modify/move ... while it is borrowed`. Determinations are based on **variable ID**, so writing to any field of a struct is blocked by the "borrow exists on struct" check (conservative but safe).
+- Borrows must not escape: They cannot be returned, nor stored in a `let` (e.g., `cannot store a borrowed vector in a variable`); thus, the lifetime of a borrowed value cannot exceed the block in which it was created. This is the **sole** reason why lifetime parameters are currently unnecessary.
+- Struct fields and vector elements **can never be moved out** (`cannot move a field out of a struct` / `cannot move an element out of a vector`): they can only be borrowed as a whole or read in-place.
 
-## 5. 释放点
+## 5. Deallocation Points
 
-拥有型值的释放**确定且幂等**（释放后句柄清零，再次释放是空操作）：
+Deallocation of owned values is **deterministic and idempotent** (handles are cleared after deallocation, making subsequent deallocations no-ops):
 
-| 位置 | 释放内容 |
+| Location | Content Deallocated |
 | --- | --- |
-| 块结束 | 该块声明的拥有型变量（按声明顺序） |
-| 函数正常结束 | 形参作用域的拥有型参数 |
-| `return e;` | 除 `e` 移动出去的那个之外，函数内所有存活拥有型变量 |
-| `?` 的错误路径 | 同上：所有存活拥有型变量，然后原样返回结果枚举 |
-| `break`/`continue` | 循环体内部声明的拥有型变量（循环外的存活值不受影响） |
-| 每轮循环结束 | 循环体块内声明的拥有型变量（与普通块一致） |
-| 覆盖赋值 `x = e;` | `x` 的旧值（任何拥有型目标） |
-| 结构体字段赋值 / 向量元素覆盖 | 被覆盖的旧值 |
-| 枚举整体赋值、`match` 之后 | 旧负载 / 按当前变体释放负载 |
-| 程序退出（`main` 的块结束） | `main` 的局部拥有值 |
-| `exit(code);` | 全部存活拥有型变量（先刷新标准输出，再释放，再终止） |
+| End of block | Owned variables declared in that block (in order of declaration) |
+| Normal function exit | Owned parameters in the parameter scope |
+| `return e;` | All live owned variables in the function, except the one moved out via `e` |
+| Error path of `?` | Same as above: all live owned variables, then return the result enum as-is |
+| `break`/`continue` | Owned variables declared inside the loop body (live values outside the loop are unaffected) |
+| End of each loop iteration | Owned variables declared within the loop body block (same as a normal block) |
+| Overwrite assignment `x = e;` | The old value of `x` (any owned target) |
+| Struct field assignment / Vector element overwrite | The old value being overwritten |
+| Enum whole-assignment, after `match` | Old payload / payload deallocated according to the current variant |
+| Program exit (end of `main` block) | Local owned values in `main` |
+| `exit(code);` | All live owned variables (flush stdout, then deallocate, then terminate) |
 
-`forfeit` 是「移交后清空槽位但不释放」的配对操作，用于把值从一个槽位移到另一个槽位（结构体整体移动、`?` 取走 `Ok` 负载、枚举负载移出）。
+`forfeit` is a paired operation that "clears the slot without deallocating" after a hand-off, used when moving a value from one slot to another (e.g., moving a whole struct, taking an `Ok` payload via `?`, or moving out an enum payload).
 
-## 6. 终止语义
+## 6. Termination Semantics
 
-- 运行时错误（越界、溢出、除零、用后移动、分配失败、UTF-8 边界）统一走 `ae_fail`：打印 `ae:行:列: 消息`，以状态码 1 退出。
-- **终止不保证清理**：没有析构栈展开，进程退出时未释放的缓冲由操作系统回收。这与方案 §4.5「异常终止不保证清理」一致，也是「不引入 unwind」的代价。
-- 分配失败是终止性的，除了本来就返回值的内建（`try_*` 返回 `Err("out of memory")`）；见 [ADR-16](decisions.md)。
-- 没有 `panic`/`catch`/析构函数，也没有可恢复的运行时错误：可恢复错误必须由 `Result` 形状的枚举值表达（[ADR-11](decisions.md)）。
+- Runtime errors (out-of-bounds, overflow, division-by-zero, use-after-move, allocation failure, UTF-8 boundaries) uniformly trigger `ae_fail`: prints `ae:line:col: message` and exits with status code 1.
+- **Termination does not guarantee cleanup**: There is no destructor stack unwinding; buffers not deallocated upon process exit are reclaimed by the OS. This is consistent with §4.5 "Abnormal termination does not guarantee cleanup" and is the cost of "not introducing unwind."
+- Allocation failure is terminal, except for built-ins that return values (e.g., `try_*` returns `Err("out of memory")`); see [ADR-16](decisions.md).
+- There are no `panic`/`catch`/destructors, nor recoverable runtime errors: recoverable errors must be expressed via `Result`-shaped enum values ([ADR-11](decisions.md)).
 
-## 7. 并发与 `unsafe`
+## 7. Concurrency and `unsafe`
 
-当前语言**没有**并发、线程、共享可变状态与 `unsafe` 块，因此不需要「可转移/可共享」约束：任何拥有型值都只能在单线程内移动。引入并发时必须先扩展本文（哪些类型可 `Send`、哪些可 `Sync`、锁如何与借用交互），再实现。
+The current language has **no** concurrency, threads, shared mutable state, or `unsafe` blocks; therefore, "sendable/shareable" constraints are not required: any owned value can only be moved within a single thread. Introducing concurrency will require extending this document (defining which types are `Send`, which are `Sync`, and how locks interact with borrows) before implementation.
 
-## 8. 明确不保证的性质
+## 8. Explicitly Non-Guaranteed Properties
 
-- 没有跨函数的生命周期检查：`&string` 参数不能被存下来，所以逃逸在语法上不可能，但编译器并不「证明」这一点，而是靠「借用不能进变量/返回值」这条禁令。
-- 没有别名分析：同一个字符串可以有多个视图，全部只读；只要存在视图，基变量的写操作就被禁止，但视图之间不互斥。
-- 没有部分移动：不能只移出结构体的一个字段。
-- 没有循环固定点（迭代到不动点）：作为替代，**循环体不得移动循环外声明的拥有型值**，除非在循环体结束前重新初始化它。这条规则排除了「第二轮读到已移动值」的整类错误，代价是拒绝一些实际安全的写法（例如循环体末尾的移动）。诊断指向循环关键字，见 [ADR-20](decisions.md)。
-- 结构体/枚举无运行时哨兵；分支合并处的移动集合是保守并集（任一路径移动即视为移动）。
-- 释放顺序是声明顺序，不是逆序；因此**不要**依赖跨变量的释放顺序（当前所有释放互不依赖）。
-- 内存安全目前依赖：编译期移动/借用检查 + 运行时句柄哨兵 + 分配计数的泄漏测试。这三者都已被测试覆盖，但**不构成**形式证明。
+- No cross-function lifetime checking: `&string` parameters cannot be stored, so escaping is syntactically impossible, but the compiler does not "prove" this; it relies on the prohibition against storing borrows in variables or return values.
+- No alias analysis: A single string may have multiple views, all read-only; as long as a view exists, writes to the base variable are prohibited, but views are not mutually exclusive.
+- No partial moves: Cannot move out a single field of a struct.
+- No loop fixed-point iteration: As an alternative, **the loop body must not move owned values declared outside the loop**, unless they are re-initialized before the end of the loop body. This rule eliminates the entire class of "reading a moved value in the second iteration" errors, at the cost of rejecting some actually safe patterns (e.g., moves at the end of a loop body). Diagnostics point to the loop keyword; see [ADR-20](decisions.md).
+- No runtime sentinels for structs/enums; the move set at branch merges is a conservative union (a move on any path is treated as a move).
+- Deallocation order is the order of declaration, not reverse order; therefore, **do not** rely on deallocation order across variables (currently, all deallocations are independent).
+- Memory safety currently relies on: compile-time move/borrow checking + runtime handle sentinels + leak testing via allocation counts. These are all covered by tests but **do not constitute** a formal proof.
 
-## 9. 新增特性时的检查清单
+## 9. Checklist for Adding New Features
 
-给语言加任何涉及值的特性时，逐条回答：
+When adding any feature involving values to the language, answer each of the following items one by one:
 
-1. 新类型的 `owned()` 是什么？移动、释放、移动后检查三件事是否都实现？
-2. 新的移动位置是否需要更新 `live_owned()`（返回/`?` 的释放清单）？
-3. 新的语句形式是否在所有跳转路径（块结束、`return`、`?`、`break`/`continue`、`match` 分支）插入释放？
-4. 新的借用形式是否登记 `borrows`，并在块结束时回收？
-5. 新的内建是否在消费/借用临时拥有值时释放它们（`drop_owned_temp`）？
-6. 失败路径（含分配失败）是否与成功路径一样不留悬挂句柄？
-7. 泄漏校验（`scripts/verify_generated_c.py --leak`）的块数是否仍等于基线？
-8. 文档（本文与 `current-language.md`）是否更新了「保证 / 不保证」两栏？
-
-## 10. 从本文到通用借用检查器
-
-本文第 4 节描述的是**当前实现**的受限借用模型；它向通用借用检查器（NLL、字段粒度、逃逸借用、可变借用）的演进目标、约束系统、表达力阶梯（L0–L5）、对抗性用例矩阵与每级验收门槛，见 [borrow-checker-design.md](borrow-checker-design.md)（阶段 C 核心，状态：已设计）。两者不一致时以 ADR 与已验证实现为准；放宽必须带差分基线，见该文 §6。
+1. What is the `owned()` behavior for the new type? Have the three aspects—move, drop, and use-after-move check—all been implemented?
+2. Does the new move position need to update `live_owned()` (the drop manifest for returns/`?`)?
+3. Do new statement forms insert drops across all jump paths (block termination, `return`, `?`, `break`/`continue`, `match` arms)?
+4. Are new borrowing forms registered in `borrows` and reclaimed at the end of the block?
+5. Do new builtins drop temporary owned values when consuming or borrowing them (`drop_owned_temp`)?
+6. Do failure paths (including allocation failure) leave no dangling handles, just like success paths?
+7. Is the block count for leak verification (`scripts/verify_generated_c.py --leak`) still equal to the baseline?
+8. Have the documentation files (this document and `current-language.md`) been

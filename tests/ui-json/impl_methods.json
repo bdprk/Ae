@@ -1,1 +1,1 @@
-[{"file":"$DIR/impl_methods.ae","line":2,"column":53,"message":"unknown variable 'unknown_area'"},{"file":"$DIR/impl_methods.ae","line":3,"column":19,"message":"unknown variable 'unknown_main'"}]
+[{"file":"$DIR/impl_methods.ae","line":2,"column":53,"message":"unknown variable 'unknown_area'","byte_start":89,"byte_end":101,"code":"E0101","suggestions":[],"secondary":[]},{"file":"$DIR/impl_methods.ae","line":3,"column":19,"message":"unknown variable 'unknown_main'","byte_start":125,"byte_end":137,"code":"E0101","suggestions":[],"secondary":[]}]

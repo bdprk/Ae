@@ -1,1 +1,1 @@
-[{"file":"$DIR/array_index_types.ae","line":1,"column":49,"message":"array index must be an integer"},{"file":"$DIR/array_index_types.ae","line":2,"column":51,"message":"array index must be an integer"}]
+[{"file":"$DIR/array_index_types.ae","line":1,"column":49,"message":"array index must be an integer","byte_start":48,"byte_end":49,"code":null,"suggestions":[],"secondary":[]},{"file":"$DIR/array_index_types.ae","line":2,"column":51,"message":"array index must be an integer","byte_start":114,"byte_end":115,"code":null,"suggestions":[],"secondary":[]}]

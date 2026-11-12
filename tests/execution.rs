@@ -3883,6 +3883,169 @@ fn check_json_recovers_independent_function_body_errors() {
 }
 
 #[test]
+fn parser_diagnostic_retains_current_token_range() {
+    let dir = unique_temp_dir("diagnostic-range");
+    let path = dir.join("bad.ae");
+    let source = "// 中文\nfn main() { let value = ; }\n";
+    fs::write(&path, source).unwrap();
+    let error = ae_compiler::frontend::check_path_diagnostic(&path).unwrap_err();
+    let ae_compiler::frontend::FrontendError::Diagnostic(diagnostic) = error else { panic!("expected a parser diagnostic") };
+    let span = diagnostic.primary.unwrap().span;
+    let offset = source.find(';').unwrap();
+    assert_eq!(span.range, offset..offset + 1);
+    assert_eq!((span.line, span.column), (2, 25));
+    let source = "fn main() { print(unknown_name); }\n";
+    fs::write(&path, source).unwrap();
+    let error = ae_compiler::frontend::check_path_diagnostic(&path).unwrap_err();
+    let ae_compiler::frontend::FrontendError::Diagnostic(diagnostic) = error else { panic!("expected a parser diagnostic") };
+    let span = diagnostic.primary.unwrap().span;
+    let offset = source.find("unknown_name").unwrap();
+    assert_eq!(&source[span.range], "unknown_name");
+    assert_eq!((span.line, span.column), (1, offset + 1));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn duplicate_binding_errors_label_the_earlier_declaration() {
+    let dir = unique_temp_dir("duplicate-secondary");
+    let path = dir.join("case.ae");
+    for (source, marker) in [
+        ("// 中文\nfn main() { let value = 1; let value = 2; }", "value"),
+        ("fn f(value: i64) -> i64 { let value = 2; return value; } fn main() {}", "value"),
+    ] {
+        fs::write(&path, source).unwrap();
+        let error = ae_compiler::frontend::check_path_diagnostic(&path).unwrap_err();
+        let ae_compiler::frontend::FrontendError::Diagnostic(diagnostic) = error else { panic!("expected one diagnostic") };
+        assert_eq!(diagnostic.code.as_deref(), Some("E0104"));
+        assert_eq!(diagnostic.secondary.len(), 1);
+        let start = source.find(marker).unwrap();
+        assert_eq!(diagnostic.secondary[0].span.range, start..start + marker.len());
+        assert_eq!(diagnostic.secondary[0].message.as_deref(), Some("binding declared here"));
+    }
+    fs::write(&path, "fn main() { if true { let value = 1; } if true { let value = 2; } }").unwrap();
+    assert!(ae_compiler::frontend::check_path_diagnostic(&path).is_ok());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn move_errors_label_known_declarations_without_claiming_move_site() {
+    let dir = unique_temp_dir("move-secondary");
+    let path = dir.join("case.ae");
+    for (source, marker) in [
+        ("fn main() { let original = \"x\"; let other = original; print(original); }", "original"),
+        ("fn f(item: string) -> i64 { let other = item; print(item); return 0; } fn main() {}", "item"),
+        ("fn main() { let original = \"x\"; if true { let other = original; } print(original); }", "original"),
+        ("fn f[T](item: T) -> T { let other = item; return item; } fn main() { let result = f[string](\"x\"); print(result); }", "item"),
+    ] {
+        fs::write(&path, source).unwrap();
+        let error = ae_compiler::frontend::check_path_diagnostic(&path).unwrap_err();
+        let ae_compiler::frontend::FrontendError::Diagnostic(diagnostic) = error else { panic!("expected one diagnostic") };
+        assert_eq!(diagnostic.code.as_deref(), Some("E0102"));
+        assert_eq!(diagnostic.secondary.len(), 1);
+        let label = &diagnostic.secondary[0];
+        let start = source.find(marker).unwrap();
+        assert_eq!(label.span.range, start..start + marker.len());
+        assert_eq!(label.message.as_deref(), Some("binding declared here"));
+        assert!(diagnostic.suggestions.is_empty());
+    }
+    fs::write(&path, "fn main() { var original = \"x\"; let other = original; original = \"y\"; print(original); }").unwrap();
+    assert!(ae_compiler::frontend::check_path_diagnostic(&path).is_ok());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn immutable_binding_diagnostics_include_only_known_declarations() {
+    let dir = unique_temp_dir("diagnostic-secondary");
+    let path = dir.join("case.ae");
+    for (source, marker) in [
+        ("// 中文\nfn main() { let value = 1; value = 2; }", "value"),
+        ("fn f(parameter: i64) -> i64 { parameter = 2; return parameter; } fn main() {}", "parameter"),
+        ("fn f[T](item: T) -> T { item = item; return item; } fn main() { print(f[i64](1)); }", "item"),
+    ] {
+        fs::write(&path, source).unwrap();
+        let error = ae_compiler::frontend::check_path_diagnostic(&path).unwrap_err();
+        let ae_compiler::frontend::FrontendError::Diagnostic(diagnostic) = error else { panic!("expected one diagnostic") };
+        assert_eq!(diagnostic.code.as_deref(), Some("E0103"));
+        assert_eq!(diagnostic.secondary.len(), 1);
+        let label = &diagnostic.secondary[0];
+        let start = source.find(marker).unwrap();
+        assert_eq!(label.span.range, start..start + marker.len());
+        assert_eq!(label.message.as_deref(), Some("binding declared here"));
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+        assert!(!output.status.success());
+        let json = String::from_utf8(output.stdout).unwrap();
+        assert!(json.contains(&format!("\"byte_start\":{start},\"byte_end\":{},\"message\":\"binding declared here\"", start + marker.len())), "{json}");
+    }
+    fs::write(&path, "fn main() { for i in 0..2 { i = 1; } }").unwrap();
+    let error = ae_compiler::frontend::check_path_diagnostic(&path).unwrap_err();
+    let ae_compiler::frontend::FrontendError::Diagnostic(diagnostic) = error else { panic!("expected one diagnostic") };
+    assert_eq!(diagnostic.code.as_deref(), Some("E0103"));
+    assert!(diagnostic.secondary.is_empty());
+    assert!(diagnostic.suggestions.is_empty());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn check_json_reports_only_applicable_suggestions() {
+    let dir = unique_temp_dir("json-suggestions");
+    let path = dir.join("case.ae");
+    fs::write(&path, "fn main() { let n = 1; n = 2; }").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert!(json.contains("\"suggestions\":[\"If mutation is intended, declare the binding with `var`.\"]"), "{json}");
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("If mutation is intended"));
+    fs::write(&path, "fn main() { print(\"bad\\q\"); }").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert!(json.contains("\"code\":\"E0002\""), "{json}");
+    assert!(json.contains("\"suggestions\":[\"Use a supported escape, or escape a literal backslash as \\\\\\\\.\"]"), "{json}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn check_json_assigns_stable_codes_to_common_semantic_errors() {
+    let dir = unique_temp_dir("json-semantic-codes");
+    let path = dir.join("case.ae");
+    for (source, code) in [
+        ("fn main() { print(missing); }", "E0101"),
+        ("fn main() { let a = \"x\"; let b = a; print(a); }", "E0102"),
+        ("fn main() { let n = 1; n = 2; }", "E0103"),
+        ("fn main() { let n = 1; let n = 2; }", "E0104"),
+    ] {
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+        assert!(!output.status.success(), "{source}");
+        let json = String::from_utf8(output.stdout).unwrap();
+        assert!(json.contains(&format!("\"code\":\"{code}\"")), "{source}: {json}");
+    }
+    fs::write(&path, "fn main() { var n = 1; n = 2; print(n); }").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "[]");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn check_json_reports_eof_range_and_unknown_ranges_as_null() {
+    let dir = unique_temp_dir("json-range-boundaries");
+    let path = dir.join("eof.ae");
+    let source = "// 中文\nfn main() {";
+    fs::write(&path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert!(json.contains(&format!("\"byte_start\":{},\"byte_end\":{}", source.len(), source.len())), "{json}");
+    let missing = dir.join("missing.ae");
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&missing).output().unwrap();
+    assert!(!output.status.success());
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert!(json.contains("\"byte_start\":null,\"byte_end\":null"), "{json}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn check_json_collects_lexical_errors_across_sibling_imports() {
     let dir = unique_temp_dir("json-import-lex");
     fs::create_dir(dir.join("sub")).unwrap();
@@ -3954,21 +4117,27 @@ fn check_json_preserves_diagnostic_location_in_imported_file() {
     let name = "模块: part.ae";
     let imported = dir.join(name);
     let entry = dir.join("main.ae");
-    fs::write(&imported, "// 中文\n  @\n").unwrap();
+    let source = "// 中文\n  @\n";
+    fs::write(&imported, source).unwrap();
     fs::write(&entry, format!("use \"{name}\";\nfn main() {{}}\n")).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_ae"))
         .arg("check").arg("--json").arg(&entry).output().unwrap();
     assert!(!output.status.success());
     assert!(output.stderr.is_empty());
     let escaped = imported.display().to_string().replace('\\', "\\\\").replace('"', "\\\"");
-    let expected = format!("[{{\"file\":\"{escaped}\",\"line\":2,\"column\":3,\"message\":\"unexpected character '@'\"}}]");
+    let start = source.find('@').unwrap();
+    let end = start + 1;
+    let expected = format!("[{{\"file\":\"{escaped}\",\"line\":2,\"column\":3,\"message\":\"unexpected character '@'\",\"byte_start\":{start},\"byte_end\":{end},\"code\":\"E0001\",\"suggestions\":[],\"secondary\":[]}}]");
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
-    fs::write(&imported, "// 中文\nuse nope;\n").unwrap();
+    let source = "// 中文\nuse nope;\n";
+    fs::write(&imported, source).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_ae"))
         .arg("check").arg("--json").arg(&entry).output().unwrap();
     assert!(!output.status.success());
     assert!(output.stderr.is_empty());
-    let expected = format!("[{{\"file\":\"{escaped}\",\"line\":2,\"column\":5,\"message\":\"expected a string path after 'use'\"}}]");
+    let start = source.find("nope").unwrap();
+    let end = start + "nope".len();
+    let expected = format!("[{{\"file\":\"{escaped}\",\"line\":2,\"column\":5,\"message\":\"expected a string path after 'use'\",\"byte_start\":{start},\"byte_end\":{end},\"code\":null,\"suggestions\":[],\"secondary\":[]}}]");
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
     let source = "pub fn broken() -> i64 { return nope; }\n";
     fs::write(&imported, source).unwrap();
@@ -3977,7 +4146,9 @@ fn check_json_preserves_diagnostic_location_in_imported_file() {
     assert!(!output.status.success());
     assert!(output.stderr.is_empty());
     let column = source.find("nope").unwrap() + 1;
-    let expected = format!("[{{\"file\":\"{escaped}\",\"line\":1,\"column\":{column},\"message\":\"unknown variable 'nope'\"}}]");
+    let start = column - 1;
+    let end = start + "nope".len();
+    let expected = format!("[{{\"file\":\"{escaped}\",\"line\":1,\"column\":{column},\"message\":\"unknown variable 'nope'\",\"byte_start\":{start},\"byte_end\":{end},\"code\":\"E0101\",\"suggestions\":[],\"secondary\":[]}}]");
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
     fs::remove_dir_all(dir).unwrap();
 }

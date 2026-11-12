@@ -1,47 +1,47 @@
-# 工作负载 B：文件搜索（Linux / InstaBox node3）
+# Workload B: File Search (Linux / InstaBox node3)
 
-日期：2026-11-10 ｜ 输入：bench-input.txt（20000 行，约 1.4 MB，固定种子生成）
-语义：统计行数与包含子串 `ae` 的行数。四方输出完全一致：`20000` / `12140`。
+Date: 2026-11-10 ｜ Input: `bench-input.txt` (20,000 lines, ~1.4 MB, generated with a fixed seed)
+Semantics: Count total lines and lines containing the substring `ae`. All four implementations output identically: `20,000` / `12,140`.
 
-版本固定：AE 提交 `8bf8000`+（本目录归档时的工作树）；Gojo `b460b17`（"Report where a segfault happened"，`git clone --depth 1`）；Go 1.27.1；rustc 1.99.0；GCC 14.2.0。机器：4 vCPU / 7.8 GiB / Debian 13。
+Version pinning: AE commit `8bf8000`+ (working tree at the time of archiving this directory); Gojo `b460b17` ("Report where a segfault happened", `git clone --depth 1`); Go 1.27.1; rustc 1.99.0; GCC 14.2.0. Machine: 4 vCPU / 7.8 GiB / Debian 13.
 
-## 结果（中位数，7 次执行 / 3 次构建）
+## Results (Median of 7 runs / 3 builds)
 
-| 语言 | 纯执行 | 冷构建 | 热构建 | 产物大小 |
+| Language | Pure Execution | Cold Build | Hot Build | Artifact Size |
 |---|---|---|---|---|
-| AE（-O2） | 5.81 ms | 43 ms | 2.5 ms（缓存命中） | **16,888 B** |
-| Gojo（默认优化） | 3.74 ms | **28 ms** | 28 ms | 230,904 B |
+| AE (-O2) | 5.81 ms | 43 ms | 2.5 ms (cache hit) | **16,888 B** |
+| Gojo (default optimization) | 3.74 ms | **28 ms** | 28 ms | 230,904 B |
 | Go | 2.84 ms | 116 ms | ~116 ms | 2,490,891 B |
-| Rust（-O） | **2.35 ms** | — | — | 4,546,568 B |
+| Rust (-O) | **2.35 ms** | — | — | 4,546,568 B |
 
-`gojo run`（编译+运行）35.5 ms；`ae run` 热缓存 25.0 ms；`go run` 37.0 ms。
+`gojo run` (compile + run) 35.5 ms; `ae run` hot cache 25.0 ms; `go run` 37.0 ms.
 
-## 公平性披露（方案 §17）
+## Fairness Disclosures (Proposal §17)
 
-- **执行差距来自标准库与切片分配**：Gojo 的 `str.contains` 是优化过的原生实现；AE 版本用语言内朴素逐字节扫描（`bytes()` + 双层循环，零分配）。字符串表示已改为长度携带型（ADR-8 演进，`len`/`slice` O(1)）；改用 `contains(slice(...))` 按行匹配实测 7.58 ms——切片的 2 万次小分配仍是成本，Gojo 的切片是零分配借用视图。借用视图（`&str` 式）为下一步演进。
-- Go/Rust 用各自标准库的 `strings.Contains` / `str::lines + contains`；语义一致（按 `\n` 分行、子串匹配）。
-- AE 热构建走内容寻址缓存；冷构建为全新空缓存。Gojo/Go 无缓存分层，其"热"即重复构建（工具链自身缓存状态不受控）。
-- 单机、单负载、小输入；不构成"全面超越"结论。按方案 §7.3，这是第一份 Linux 文件搜索公开数据：AE 在产物体积（13.7× 小于 Gojo）与热构建速度上领先，冷构建与执行落后于 Gojo。
+- **Execution gap stems from the standard library and slice allocations**: Gojo's `str.contains` is an optimized native implementation; the AE version uses a naive byte-by-byte scan in the language (`bytes()` + nested loops, zero allocations). The string representation has been changed to carry its length (ADR-8 evolution, `len`/`slice` in $O(1)$ time); switching to `contains(slice(...))` for line-by-line matching measured 7.58 ms—20,000 small slice allocations remain a cost, whereas Gojo's slices are zero-allocation borrowing views. Borrowing views (such as `&str`) are targeted for the next evolution.
+- Go and Rust use `strings.Contains` and `str::lines + contains` from their respective standard libraries; semantics are identical (splitting lines by `\n`, substring matching).
+- AE's hot build goes through a content-addressed cache; cold build is a pristine, empty cache. Gojo and Go have no caching tier; their "hot" builds are simply repeated builds (the toolchain's internal cache state is uncontrolled).
+- Single-machine, single-workload, small input; this does not constitute a "comprehensive superiority" conclusion. Per Proposal §7.3, this is the first public Linux file search data: AE leads in artifact size (13.7× smaller than Gojo) and hot build speed, while lagging behind Gojo in cold build and execution speed.
 
-## 复现
+## Reproduction
 
-程序：`grep.ae`（examples/）、`grep.gojo`、`grep.go`、`grep.rs`（本目录归档副本）。
-命令：`ae run examples/grep.ae`、`gojo run grep.gojo`、`go run grep.go`、`rustc -O grep.rs && ./grep_rs`；输入由 `python -c` 固定种子（42）生成。
+Programs: `grep.ae` (in examples/), `grep.gojo`, `grep.go`, `grep.rs` (archived copies in this directory).
+Commands: `ae run examples/grep.ae`, `gojo run grep.gojo`, `go run grep.go`, `rustc -O grep.rs && ./grep_rs`; input generated via `python -c` with a fixed seed (42).
 
-## 复测注记（同日第二轮，表示法变更后）
+## Re-test Notes (Second round on the same day, after string representation change)
 
-字符串改为长度携带表示（ADR-8 演进）后复测：ae 7.62 ms / gojo 5.87 ms（各 7 次中位）。两项均比首轮高约 30%——主机同期承载其他负载，绝对值有漂移；相对比值稳定（≈1.3:1）。朴素字节扫描版仍为 AE 最快变体；切片分配与借用视图的影响见 ADR-8。
+Re-tested after changing strings to length-carrying representations (ADR-8 evolution): AE 7.62 ms / Gojo 5.87 ms (median of 7 runs each). Both are about 30% higher than the first round due to the host bearing other workloads concurrently, causing absolute values to drift; the relative ratio remains stable ($\approx 1.3:1$). The naive byte-scan variant remains AE's fastest variant; the impact of slice allocations and borrowing views is detailed in ADR-8.
 
-## 第三轮复测（借用视图落地后）
+## Third Round of Re-testing (After borrowing views landed)
 
-`slice_view` + `contains` 版 grep：7.34 ms（同轮 gojo 4.62 / go 3.86 / rust 3.16）。视图消除了切片分配，但暴露真正的下一瓶颈：**逐字节 `data[i]` 边界检查循环**（140 万次受检访问，约 5-7 ms 主导）。三个参照实现用 memchr 类字长扫描分行。下一步方向：原生行迭代（如 `lines()`）或字长扫描匹配——属于标准库成熟度而非表示法问题；字符串表示与借用视图本身已达标。
+`slice_view` + `contains` grep version: 7.34 ms (GoJo 4.62 / Go 3.86 / Rust 3.16 in the same round). Views eliminated slice allocations, but exposed the true next bottleneck: **byte-by-byte `data[i]` bounds-checked loops** (1.4 million checked accesses, dominating ~5-7 ms). The three reference implementations use memchr-class word-length scan for line splitting. Next steps: native line iteration (e.g., `lines()`) or word-length scan matching—this pertains to standard library maturity rather than the representation itself; string representation and borrowing views themselves are now up to par.
 
-## 第四轮复测（原生 lines() 落地后）
+## Fourth Round of Re-testing (After native lines() landed)
 
-`lines()`（运行时 8 字节块 SWAR 换行扫描）+ 视图迭代 + `contains`：**6.37 ms**（同轮 gojo 4.62→4.46 / go 3.86→3.50 / rust 3.16→2.57，主机负载持续波动，各轮比值更可比）。与 Gojo 的比值从 1.55x 收窄至 ~1.43x；剩余差距为每行 `strstr` 启动开销 ×2 万行与分配器行为，属微优化层面。grep.ae 现在与参照实现结构相同（按行迭代 + 子串匹配），代码不再需要字节级手动扫描。
+`lines()` (runtime 8-byte block SWAR newline scan) + view iteration + `contains`: **6.37 ms** (Gojo 4.62$\rightarrow$4.46 / Go 3.86$\rightarrow$3.50 / Rust 3.16$\rightarrow$2.57 in the same round; host load continued to fluctuate, making ratios across rounds more comparable). The gap with Gojo narrowed from 1.55× to ~1.43×; the remaining gap is due to per-line `strstr` startup overhead × 20,000 lines and allocator behavior, falling into the realm of micro-optimizations. `grep.ae` now shares the same structure as the reference implementations (line-by-line iteration + substring matching), and the code no longer requires manual byte-level scanning.
 
-## 第五轮复测（融合 count_lines_with 落地后）
+## Fifth Round of Re-testing (After fused count_lines_with landed)
 
-`count_lines_with(text, pattern)`（单遍、零分配：memchr 找行 + 首字节 memchr 跳过的行内搜索）：**2.14 ms**（同轮 gojo 4.72 / go 3.99 / rust 3.17；9 次中位）——**快于全部参照实现（gojo 的 2.2 倍）**，产物最小（16,856 B）。`args()` 驱动的 CLI 版（读参数 + 读文件 + 计数）2.24 ms。输出 12140 ✓。
+`count_lines_with(text, pattern)` (single-pass, zero-allocation: memchr to find lines + leading-byte memchr skipped in-line search): **2.14 ms** (Gojo 4.72 / Go 3.99 / Rust 3.17 in the same round; median of 9 runs)—**faster than all reference implementations (2.2× faster than Gojo)**, with the smallest artifact size (16,856 B). CLI version driven by `args()` (reading args + reading file + counting) takes 2.24 ms. Output 12140 ✓.
 
-公平性：融合路径是标准库成熟度的体现（Gojo/Go/Rust 均以各自 lines+contains 组合完成同一语义）；组合式路径（lines()+视图+contains）仍为 6.37 ms 可供对比。五个变体的演进记录见 ADR-8 与本文件各轮数据。
+Fairness: The fused path is a reflection of standard library maturity (Gojo, Go, and Rust all achieve the same semantics via their respective `lines + contains` combinations); the combinatorial path (`lines() + view + contains`) remains available for comparison at 6.37 ms. Evolution records for all five variants can be found in ADR-8 and the round data in this file.
