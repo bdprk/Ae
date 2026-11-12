@@ -248,18 +248,27 @@ fn collect_import_lex_errors(entry: &Path) -> Vec<ae_span::Diagnostic> {
         if let Some(import) = frame.uses.get(frame.next_import) {
             frame.next_import += 1;
             let child = frame.path.parent().unwrap_or(Path::new(".")).join(import);
+            let canonical = std::fs::canonicalize(&child).ok();
+            let was_visited = canonical.as_ref().is_some_and(|path| visited.contains_key(path));
             match begin_file(&child, &mut visited) {
                 Ok(Some(next)) => stack.push(next),
                 Ok(None) => {},
-                Err(FrontendError::LexDiagnostics(errors)) => {
+                Err(error) => {
+                    let errors = match error {
+                        FrontendError::LexDiagnostics(errors) | FrontendError::Diagnostics(errors) => errors,
+                        FrontendError::Diagnostic(error) => vec![error],
+                        FrontendError::Legacy(message) => vec![ae_span::Diagnostic {
+                            code: None, message, primary: None, secondary: Vec::new(), suggestions: Vec::new(),
+                        }],
+                    };
                     diagnostics.extend(errors.into_iter().take(LIMIT - diagnostics.len()));
                     if diagnostics.len() == LIMIT { break; }
-                    // Suppress repeat reports for aliases of the same failed file.
-                    if let Ok(canonical) = std::fs::canonicalize(&child) {
-                        visited.insert(canonical, ModuleState::Loaded);
-                    } else { break; }
+                    // Only mark a newly encountered failed file. A cycle points to
+                    // an active frame and must not change that frame's state.
+                    if !was_visited {
+                        if let Some(canonical) = canonical { visited.insert(canonical, ModuleState::Loaded); }
+                    }
                 }
-                Err(_) => break,
             }
         } else {
             let frame = stack.pop().expect("stack is nonempty");

@@ -4064,13 +4064,22 @@ fn check_json_collects_lexical_errors_across_sibling_imports() {
     let text = String::from_utf8_lossy(&output.stderr);
     assert!(!output.status.success());
     assert!(text.contains("shared.ae") && !text.contains("other.ae"), "{text}");
-    // A later unreadable import is a recovery boundary, not a fabricated
-    // lexical diagnostic or an invitation to inspect subsequent branches.
+    // An unreadable sibling is reported without suppressing later branches.
     fs::write(dir.join("right.ae"), "use \"missing.ae\";\nuse \"other.ae\";\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&entry).output().unwrap();
     let json = String::from_utf8(output.stdout).unwrap();
-    assert_eq!(json.matches("\"message\":").count(), 1, "{json}");
-    assert!(json.contains("shared.ae") && !json.contains("other.ae"), "{json}");
+    assert_eq!(json.matches("\"message\":").count(), 3, "{json}");
+    assert!(json.find("shared.ae").unwrap() < json.find("missing.ae").unwrap(), "{json}");
+    assert!(json.find("missing.ae").unwrap() < json.find("other.ae").unwrap(), "{json}");
+    assert!(json.contains("cannot open"), "{json}");
+    // A malformed import header and an import cycle are branch-local errors.
+    fs::write(dir.join("malformed.ae"), "use bad;\n").unwrap();
+    fs::write(dir.join("cycle.ae"), "use \"cycle.ae\";\n").unwrap();
+    fs::write(dir.join("right.ae"), "use \"malformed.ae\";\nuse \"cycle.ae\";\nuse \"other.ae\";\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&entry).output().unwrap();
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(json.matches("\"message\":").count(), 4, "{json}");
+    assert!(json.contains("expected a string path") && json.contains("circular import") && json.contains("other.ae"), "{json}");
     fs::write(dir.join("right.ae"), "use \"other.ae\";\n").unwrap();
     fs::write(dir.join("shared.ae"), "@\n".repeat(20)).unwrap();
     fs::write(dir.join("other.ae"), "#\n".repeat(20)).unwrap();
