@@ -1,0 +1,23 @@
+use "../../std/core/sync.ae";
+
+pub struct SafePacket {
+    payload: i64,
+}
+
+impl Send for SafePacket {
+    fn mark_send(s: SafePacket) -> bool {
+        return true;
+    }
+}
+
+fn transfer_payload[T: Send](item: T) -> bool {
+    return mark_send(item);
+}
+
+fn main() {
+    let p = SafePacket { payload: 1024 };
+    assert(transfer_payload[SafePacket](p));
+    assert(transfer_payload[i64](999));
+    assert(transfer_payload[bool](true));
+    print("SYNC MARKERS OPERATIONAL\n");
+}

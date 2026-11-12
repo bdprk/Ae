@@ -1,0 +1,34 @@
+// std/core/sync.ae
+// Core Concurrency Marker Traits (M1.4 / M4.1)
+
+pub trait Send {
+    fn mark_send(x: T) -> bool;
+}
+
+pub trait Sync {
+    fn mark_sync(x: T) -> bool;
+}
+
+impl Send for i64 {
+    fn mark_send(x: i64) -> bool {
+        return true;
+    }
+}
+
+impl Sync for i64 {
+    fn mark_sync(x: i64) -> bool {
+        return true;
+    }
+}
+
+impl Send for bool {
+    fn mark_send(x: bool) -> bool {
+        return true;
+    }
+}
+
+impl Sync for bool {
+    fn mark_sync(x: bool) -> bool {
+        return true;
+    }
+}
