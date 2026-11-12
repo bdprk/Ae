@@ -156,7 +156,9 @@ Rejected at declaration: a method named `main`; a built-in name (`len`, `push`, 
 
 **`Self` (ADR-0186)**: inside any impl block — inherent or trait — `Self` stands for the impl's own type. Three forms: `-> Self` in a signature (the constructor's return type), `Self { ... }` (a struct literal of the impl's type), and `Self::name(...)` (an associated function of the impl's type, which is how a method delegates to its constructor). Outside an impl block, `Self` is rejected in both type and expression position.
 
-Known gaps: generic impl blocks (`impl Pair[K, V]`), associated functions on generic structs, borrowed enum receivers, and method calls on a struct-typed field of a variable (`plot.origin.distance()` is rejected — auto-borrow does not have a place-form for fields yet; compute from the field's scalar members instead). See `examples/methods.ae`, `examples/struct_borrow.ae`, and `examples/enum_methods.ae`.
+**Generic impl blocks (ADR-0187)**: `impl Pair[K, V] { fn new(k: K, v: V) -> Self { ... } }` declares a method template for a generic struct. Each (method, argument list) pair instantiates its own function — signatures included, so `V` may appear anywhere a type can (`Option[V]` nests). `Self` is the instantiation; associated functions (`Pair[string, i64]::new(...)`) work and chain into method calls. One impl per generic struct, in the declaring file; no constraints on the parameters yet (a constrained generic function is the workaround for \-shaped needs). Receiver rules are the concrete ones per instantiation.
+
+Known gaps: associated functions on generic structs via trait impls (`impl Show for Pair[K, V]`), bounds on impl parameters, borrowed enum receivers, and method calls on a struct-typed field of a variable (`plot.origin.distance()` is rejected — auto-borrow does not have a place-form for fields yet; compute from the field's scalar members instead). See `examples/methods.ae`, `examples/struct_borrow.ae`, `examples/enum_methods.ae`, and `examples/generic_impl.ae`.
 
 ## Mutable Struct Borrows (`&mut Type`) (ADR-0185)
 

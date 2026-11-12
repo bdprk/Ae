@@ -1,0 +1,1 @@
+ae: $DIR/generic_impl_unknown_method.ae:11:17: the impl for 'Pair' has no method 'nope'; it has count

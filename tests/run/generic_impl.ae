@@ -1,0 +1,22 @@
+struct Pair[K, V] { left: K, right: V }
+
+impl Pair[K, V] {
+    fn new(left: K, right: V) -> Self {
+        return Pair[K, V] { left: left, right: right };
+    }
+    fn count(&self) -> V {
+        return self.right;
+    }
+    fn describe(&self) -> string {
+        return "(" + to_string(self.right) + ")";
+    }
+}
+
+fn main() {
+    let p = Pair[string, i64]::new("age", 30);
+    print(p.count());
+    print(p.describe());
+    let q = Pair[i64, f64] { left: 1, right: 2.5 };
+    print(q.count());
+    print(q.describe());
+}

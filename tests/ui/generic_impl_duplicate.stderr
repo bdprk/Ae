@@ -1,0 +1,1 @@
+ae: $DIR/generic_impl_duplicate.ae:9:10: duplicate generic impl for 'Pair'

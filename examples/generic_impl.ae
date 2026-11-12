@@ -1,0 +1,39 @@
+// Generic impl blocks: methods on generic structs (ADR-0187).
+//
+// `impl Pair[K, V]` declares a template: each (method, argument list) pair
+// instantiates its own function with the type parameters substituted, the
+// same way a generic function does. The call site cannot tell a generic
+// method from a concrete one — `value.count(...)` and
+// `Pair[string, i64]::new(...)` resolve like any other method.
+
+struct Pair[K, V] {
+    left: K,
+    right: V,
+}
+
+impl Pair[K, V] {
+    // An associated function whose return type is `Self`: the instantiation
+    // the type arguments picked.
+    fn new(left: K, right: V) -> Self {
+        return Pair[K, V] { left: left, right: right };
+    }
+    // `V` may be a Copy shape like i64 here; an owned `K` stays behind its
+    // field rule, so this method reads instead of moving.
+    fn count(&self) -> V {
+        return self.right;
+    }
+    fn describe(&self) -> string {
+        return "(" + to_string(self.right) + ")";
+    }
+}
+
+fn main() {
+    let p = Pair[string, i64]::new("age", 30);
+    print(p.count());
+    print(p.describe());
+    // A second argument list instantiates its own method bodies; the two
+    // layouts share nothing at runtime.
+    let q = Pair[i64, f64] { left: 1, right: 2.5 };
+    print(q.count());
+    print(q.describe());
+}

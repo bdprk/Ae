@@ -1,0 +1,17 @@
+struct Pair[K, V] { left: K, right: V }
+
+impl Pair[K, V] {
+    fn count(&self) -> V {
+        return self.right;
+    }
+}
+
+impl Pair[K, V] {
+    fn other(&self) -> V {
+        return self.right;
+    }
+}
+
+fn main() {
+    print(1);
+}

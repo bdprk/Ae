@@ -206,7 +206,7 @@ impl Parser<'_> {
             self.enum_names.insert(name.clone(), id);
             let concrete = variants.into_iter().map(|(vname, fields)| (vname, fields.into_iter().map(|p| match p {
                 Payload::Concrete(ty) => ty,
-                Payload::Param(_) => unreachable!("a non-generic enum has no type parameters"),
+                Payload::Param(_) | Payload::SelfType => unreachable!("a non-generic enum has no type parameters"),
             }).collect())).collect();
             self.enums.push(EnumDef { name: interned, variants: concrete, file: self.file.clone(), public, pattern: name });
         } else {
@@ -312,6 +312,7 @@ impl Parser<'_> {
             let types = fields.iter().map(|p| match p {
                 Payload::Concrete(ty) => *ty,
                 Payload::Param(index) => args[*index],
+                Payload::SelfType => unreachable!("Self does not appear in enum payloads"),
             }).collect();
             (vname.clone(), types)
         }).collect();
@@ -357,6 +358,7 @@ impl Parser<'_> {
             let ty = match payload {
                 Payload::Concrete(ty) => *ty,
                 Payload::Param(index) => args[*index],
+                Payload::SelfType => unreachable!("Self does not appear in struct fields"),
             };
             (fname.clone(), ty)
         }).collect();
@@ -364,6 +366,10 @@ impl Parser<'_> {
         let sid = self.structs.len();
         self.structs.push(StructDef { name: display, fields, file: def.file, public: def.public });
         self.generics.struct_done.insert(key, sid);
+        // Remember which declaration and arguments produced this layout, so
+        // method calls on the instantiation can resolve through its generic
+        // impl block (ADR-0187).
+        self.generics.struct_origin.insert(sid, (gid, args));
         Ok(sid)
     }
     pub(super) fn parse_struct_def(&mut self, public: bool) -> Result<(), ae_span::Diagnostic> {
@@ -390,7 +396,7 @@ impl Parser<'_> {
             self.struct_names.insert(name.clone(), id);
             let concrete = fields.into_iter().map(|(fname, payload)| (fname, match payload {
                 Payload::Concrete(ty) => ty,
-                Payload::Param(_) => unreachable!("a non-generic struct has no type parameters"),
+                Payload::Param(_) | Payload::SelfType => unreachable!("a non-generic struct has no type parameters"),
             })).collect();
             self.structs.push(StructDef { name, fields: concrete, file: self.file.clone(), public });
         } else {

@@ -437,10 +437,91 @@ impl Parser<'_> {
         Ok(())
     }
 
+    // Signature pass for `impl Pair[K, V] { fn m(self, ...) ... }` (ADR-0187).
+    // Nothing here parses bodies or assigns ids: methods are templates, and
+    // each (method, argument list) pair gets its function id and body parse
+    // at the call site that first needs it, exactly like a generic function.
+    fn collect_generic_impl(&mut self, type_name: String) -> Result<(), ae_span::Diagnostic> {
+        let gid = self.generics.struct_names[&type_name];
+        let def_file = self.generics.struct_defs[gid].file.clone();
+        // Coherence: the impl lives with the declaration, one per type.
+        if def_file != self.file {
+            return Err(self.fail(&format!("a generic impl for '{type_name}' must be in the file that declares it ({def_file})")));
+        }
+        if self.generics.generic_impls.contains_key(&type_name) {
+            return Err(self.fail(&format!("duplicate generic impl for '{type_name}'")));
+        }
+        let params = self.type_params()?;
+        self.take(Kind::LBrace)?;
+        let mut methods: Vec<GenericImplMethod> = Vec::new();
+        while *self.current() != Kind::RBrace {
+            if *self.current() == Kind::Eof { return Err(self.fail("expected '}' before end of file")); }
+            self.take_pub();
+            self.take(Kind::Fn)?;
+            let method = self.identifier()?;
+            if method == "main" { return Err(self.fail("a method cannot be named main")); }
+            if RESERVED.contains(&method.as_str()) {
+                return Err(self.fail(&format!("'{method}' is a built-in name and cannot be a method")));
+            }
+            if methods.iter().any(|m: &GenericImplMethod| m.name == method) {
+                return Err(self.fail(&format!("duplicate method '{method}' in the impl for '{type_name}'")));
+            }
+            // Field collisions: `value.name` must mean one thing, and for an
+            // instantiation the fields are exactly the declaration's fields.
+            if self.generics.struct_defs[gid].fields.iter().any(|(name, _)| *name == method) {
+                return Err(self.fail(&format!("method '{method}' collides with the field of the same name on '{type_name}'; 'value.{method}' has to mean one thing, so rename one")));
+            }
+            // Only the receiver spelling is read here; the rest of the
+            // signature and the body are stored as a token range and parsed
+            // per instantiation, where the type parameters are known. The
+            // stored range starts at the parameter list's '(' so the
+            // instantiation re-parses the whole signature.
+            let body_start = self.pos;
+            let mut receiver: Option<ReceiverKind> = None;
+            self.take(Kind::LParen)?;
+            if *self.current() != Kind::RParen {
+                let mut borrowed = false;
+                let mut mutable_borrow = false;
+                if *self.current() == Kind::Amp {
+                    self.pos += 1;
+                    if *self.current() == Kind::Mut { self.pos += 1; mutable_borrow = true; }
+                    if !matches!(self.current(), Kind::Ident(text) if text.as_str() == "self") {
+                        return Err(self.fail("write '&self' or '&mut self' to borrow the receiver; any other parameter is written 'name: Type'"));
+                    }
+                    self.pos += 1;
+                    borrowed = true;
+                }
+                if borrowed || matches!(self.current(), Kind::Ident(text) if text.as_str() == "self") {
+                    if !borrowed {
+                        self.pos += 1;
+                        if *self.current() == Kind::Colon {
+                            return Err(self.fail(&format!("write the receiver as 'self'; it already has type '{}'", type_name)));
+                        }
+                        receiver = Some(ReceiverKind::ByValue);
+                    } else if mutable_borrow {
+                        receiver = Some(ReceiverKind::Mutable);
+                    } else {
+                        receiver = Some(ReceiverKind::Shared);
+                    }
+                }
+            }
+            self.skip_function_body()?;
+            methods.push(GenericImplMethod { name: method, receiver, body_start, tokens: Rc::clone(&self.tokens), source: Rc::clone(&self.shared_source) });
+        }
+        self.take(Kind::RBrace)?;
+        self.generics.generic_impls.insert(type_name, GenericImplDef { name: self.generics.struct_defs[gid].name.clone(), params, methods, file: self.file.clone(), public: self.generics.struct_defs[gid].public });
+        Ok(())
+    }
+
     pub(super) fn collect_impl(&mut self, next_id: &mut usize) -> Result<(), ae_span::Diagnostic> {
         self.pos += 1; // impl
         let first = self.identifier()?;
         // `impl Type { ... }` carries no `for`, so that name is the type itself.
+        // A generic struct instantiates its methods per argument list, so its
+        // impl is collected as a template instead of signatures (ADR-0187).
+        if *self.current() == Kind::LBracket && self.generics.struct_names.contains_key(&first) {
+            return self.collect_generic_impl(first);
+        }
         if *self.current() != Kind::For { return self.collect_inherent_impl(first, next_id); }
         let trait_name = first;
         let tid = *self.generics.trait_names.get(&trait_name)
@@ -537,6 +618,13 @@ impl Parser<'_> {
     pub(super) fn parse_impl_bodies(&mut self, result: &mut Vec<Function>) -> Result<(), ae_span::Diagnostic> {
         self.pos += 1; // impl
         let first = self.identifier()?;
+        // A generic impl's methods are templates: their bodies were stored as
+        // token ranges in the signature pass and are parsed per instantiation,
+        // so this pass steps over the whole block (ADR-0187).
+        if *self.current() == Kind::LBracket && self.generics.struct_names.contains_key(&first) {
+            self.skip_type_params();
+            return self.skip_balanced_braces();
+        }
         // The same shape decision the signature pass made, asked again from the
         // tokens: `for` means a trait impl, its absence an inherent one.
         let inherent_type = if *self.current() == Kind::For {
@@ -777,6 +865,60 @@ impl Parser<'_> {
         self.pending.append(&mut nested);
         self.generics.fn_done.insert(key.clone(), instance.clone());
         self.generics.fn_in_progress.remove(&key);
+        Ok(instance)
+    }
+    // One instantiation of a generic impl method (ADR-0187). The receiver's
+    // type is built from the kind the declaration recorded and the struct
+    // instantiation the call arrived on; the body is parsed once per
+    // (method, argument list) pair with the impl's parameters substituted.
+    pub(super) fn instantiate_impl_method(&mut self, impl_name: &str, method: &str, sid: usize, gid: usize, args: &[Type], offset: usize) -> Result<Instance, ae_span::Diagnostic> {
+        let Some(def) = self.generics.generic_impls.get(impl_name).cloned() else {
+            return Err(self.error_at(offset, &format!("'{impl_name}' has no generic impl block")));
+        };
+        if args.len() != def.params.len() {
+            return Err(self.error_at(offset, &format!("'{impl_name}' takes {} type argument(s), found {}", def.params.len(), args.len())));
+        }
+        let Some(mdef) = def.methods.iter().find(|m| m.name == method).cloned() else {
+            let mut names: Vec<String> = def.methods.iter().map(|m| m.name.clone()).collect();
+            names.sort();
+            return Err(self.error_at(offset, &format!("the impl for '{impl_name}' has no method '{method}'; it has {}", names.join(", "))));
+        };
+        let key = format!("{gid}#{method}#{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
+        if let Some(instance) = self.generics.generic_impl_done.get(&key) { return Ok(instance.clone()); }
+        if self.generics.impl_in_progress.contains(&key) {
+            return Err(self.error_at(offset, &format!("'{impl_name}#{method}' is already being instantiated with these type arguments; the expansion would never finish")));
+        }
+        self.generics.impl_in_progress.insert(key.clone());
+        let id = self.generics.next_fn_id;
+        self.generics.next_fn_id += 1;
+        let receiver_ty = mdef.receiver.map(|kind| match kind {
+            ReceiverKind::ByValue => Type::Struct(sid),
+            ReceiverKind::Shared => Type::StructRef(sid),
+            ReceiverKind::Mutable => Type::StructMut(sid),
+        });
+        let mut subst = HashMap::new();
+        for (index, param) in def.params.iter().enumerate() {
+            subst.insert(param.clone(), args[index]);
+        }
+        let mut sub = Parser {
+            file: def.file.clone(), source: &*mdef.source, tokens: Rc::clone(&mdef.tokens), shared_source: Rc::clone(&mdef.source), pos: mdef.body_start,
+            names: HashMap::new(), binding_ranges: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0,
+            loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0,
+            functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
+            enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
+            id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
+            borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(),
+            subst, trait_bounds: HashMap::new(), receiver: receiver_ty, impl_self: Some(Type::Struct(sid)), pending: Vec::new(),
+        };
+        let parsed = sub.function_rest(false, id);
+        let mut nested = std::mem::take(&mut sub.pending);
+        drop(sub);
+        let function = parsed?;
+        let instance: Instance = (id, function.params.iter().map(|&(_, ty)| ty).collect(), function.returns);
+        self.pending.push(function);
+        self.pending.append(&mut nested);
+        self.generics.generic_impl_done.insert(key.clone(), instance.clone());
+        self.generics.impl_in_progress.remove(&key);
         Ok(instance)
     }
     // The argument list of a call, starting at '(' (ADR-31 shares it between

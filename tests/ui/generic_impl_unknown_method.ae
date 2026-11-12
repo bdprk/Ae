@@ -1,0 +1,12 @@
+struct Pair[K, V] { left: K, right: V }
+
+impl Pair[K, V] {
+    fn count(&self) -> V {
+        return self.right;
+    }
+}
+
+fn main() {
+    let p = Pair[string, i64] { left: "a", right: 1 };
+    print(p.nope());
+}

@@ -1,0 +1,1 @@
+ae: $DIR/generic_impl_field_collision.ae:4:12: method 'left' collides with the field of the same name on 'Pair'; 'value.left' has to mean one thing, so rename one

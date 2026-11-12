@@ -228,7 +228,7 @@ struct EnumDef { name: &'static str, variants: Vec<(String, Vec<Type>)>, file: S
 // declaration's type parameters. Substitution replaces every Param with a
 // concrete argument, so Param never reaches code generation.
 #[derive(Debug, Clone, Copy, PartialEq)]
-enum Payload { Concrete(Type), Param(usize) }
+enum Payload { Concrete(Type), Param(usize), SelfType }
 // `enum Option[T] { Some(T), None }` before it is instantiated. Kept apart from
 // EnumDef because a declaration has no layout: only instantiations do.
 #[derive(Debug, Clone)]
@@ -341,7 +341,7 @@ type Instance = (usize, Vec<Type>, Type);
 // arguments (ADR-21, ADR-30, ADR-31). `next_fn_id` is the one id space shared
 // by ordinary and instantiated functions, so C names never collide.
 #[derive(Default, Clone)]
-struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef> }
+struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, struct_origin: HashMap<usize, (usize, Vec<Type>)>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef>, generic_impls: HashMap<String, GenericImplDef>, generic_impl_done: HashMap<String, Instance>, impl_in_progress: std::collections::HashSet<String> }
 #[derive(Debug)]
 struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 
@@ -358,6 +358,23 @@ enum ImplTarget { Struct(usize), Enum(usize) }
 fn sid_of(target: &ImplTarget) -> usize {
     match target { ImplTarget::Struct(sid) => *sid, ImplTarget::Enum(_) => unreachable!("enum receivers are by value only") }
 }
+
+// A method declared inside a generic impl block (ADR-0187). Only the shape
+// the call site needs is stored: the name, how the receiver was spelled, and
+// where the signature starts. The signature and body are parsed once per
+// (method, argument list) pair with the impl's parameters substituted —
+// exactly how a generic function instantiates — so signatures may use the
+// parameters anywhere a type can appear.
+#[derive(Debug, Clone)]
+struct GenericImplMethod { name: String, receiver: Option<ReceiverKind>, body_start: usize, tokens: Rc<Vec<Token>>, source: Rc<str> }
+// How a generic impl method receives its receiver; the receiver's concrete
+// type is built from the instantiation, never spelled in the signature.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ReceiverKind { ByValue, Shared, Mutable }
+// One generic impl block: `impl Pair[K, V] { ... }`. Coherence keeps it in
+// the file that declares the struct, one per generic struct.
+#[derive(Debug, Clone)]
+struct GenericImplDef { name: String, params: Vec<String>, methods: Vec<GenericImplMethod>, file: String, public: bool }
 
 // One entry of an inherent `impl` block. `receiver` records the type the first
 // parameter was bound to — the struct by value for `self`, a read-only borrow

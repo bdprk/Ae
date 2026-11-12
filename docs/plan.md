@@ -244,7 +244,7 @@ A custom native machine code backend/linker will only be considered as a separat
 
 ### 5.1 Existing Features (To be preserved and migrated)
 
-- Inherent methods with `&self` auto-borrow over read-only struct borrows (ADR-0184) and `&mut self` receivers over exclusive mutable borrows with pointer field writes (ADR-0185); enum methods and `Self` (ADR-0186); by-value receivers and associated functions (ADR-0182/0183).
+- Inherent methods with `&self` auto-borrow over read-only struct borrows (ADR-0184) and `&mut self` receivers over exclusive mutable borrows with pointer field writes (ADR-0185); enum methods and `Self` (ADR-0186); generic impl blocks with per-instantiation methods (ADR-0187); by-value receivers and associated functions (ADR-0182/0183).
 - Frontend in Rust, split across three workspace crates — `ae-span`, `ae-syntax`, and `ae-compiler` (11 frontend modules, ~340 KB total) — plus a strict C11 backend; runtime trimmed by reachability, `<windows.h>` included on-demand.
 - Primitive types, structs, enums, `match`, generic functions/structs/enums, trait v1 static dispatch, modules and `pub`, `?` propagation.
 - Built-ins for file/path/directory/process/env/time/JSON query; `check --json`, `fmt`, `test`, `cache`, `deps`.
@@ -501,6 +501,6 @@ Legend: ☑ done, ◐ partial (see note), ☐ not started.
 5. ☑ UI/execution snapshot testing framework and migration of legacy tests (M0.6–0.7) — `scripts/snapshots.py`, `tests/ui`, `tests/run`.
 6. ◐ Repository cleanup, dual-platform CI, baseline reports (M0.8–0.9) — CI matrix and script unit tests exist; no dependency caching, and only one baseline report.
 7. ◐ Begin M1.1: Type system specification — `spec/types.md`, `spec/methods_and_traits.md`, `spec/modules.md`, and `spec/diagnostics.md` exist; they describe the current language, not the M1 target.
-8. ◐ M1.2/M1.5: inherent `impl` blocks with `value.method(...)` (ADR-0182), associated functions with `Type::name(...)` (ADR-0183), and `&self` receivers with auto-borrow over new struct borrows (ADR-0184) are implemented — `tests/run/methods.ae`, `tests/run/struct_borrow.ae`, `examples/methods.ae`, `examples/struct_borrow.ae`. Still unimplemented from `spec/methods_and_traits.md`: generic impl blocks (the resolution-order polish is done).
+8. ◐ M1.2/M1.5: inherent `impl` blocks with `value.method(...)` (ADR-0182), associated functions with `Type::name(...)` (ADR-0183), and `&self` receivers with auto-borrow over new struct borrows (ADR-0184) are implemented — `tests/run/methods.ae`, `tests/run/struct_borrow.ae`, `examples/methods.ae`, `examples/struct_borrow.ae`. M1.5 is complete as of ADR-0187 (generic impl blocks); the resolution-order polish is done.
 
 Note: This document serves as a design and implementation plan and does not imply that the listed capabilities are already implemented. Actual progress is governed by the §9 status table and individual reports; the roadmap may be adjusted based on evidence, but modifications to §1.1 priorities and §2.2 hard rules must be approved via ADR.

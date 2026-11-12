@@ -41,11 +41,37 @@ impl Parser<'_> {
         let mut names: Vec<String> = self.generics.inherent.keys()
             .filter_map(|key| key.strip_prefix(&prefix).map(str::to_owned))
             .collect();
+        // A generic struct keeps its methods in its impl template, keyed by
+        // the declaration name; list them by their own names (ADR-0187).
+        if let Some((gid, _)) = self.struct_origin_of(type_name) {
+            let def_name = self.generics.struct_defs[gid].name.clone();
+            if let Some(gimpl) = self.generics.generic_impls.get(&def_name) {
+                names.extend(gimpl.methods.iter().map(|m| m.name.clone()));
+            }
+        }
         if names.is_empty() {
             return self.fail(&format!("type '{type_name}' has no {form}s; declare one in 'impl {type_name} {{ ... }}'"));
         }
         names.sort();
+        names.dedup();
         self.fail(&format!("type '{type_name}' has no {form} '{method}'; it has {}", names.join(", ")))
+    }
+
+    // The generic declaration behind a type name, when the name is an
+    // instantiation. Accepts the display spelling (Pair[string, i64]) as
+    // well as the declaration name (Pair).
+    fn struct_origin_of(&self, type_name: &str) -> Option<(usize, Vec<Type>)> {
+        if let Some(&(gid, ref args)) = self.generics.struct_origin.values().find(|(gid, _)| {
+            self.generics.struct_defs[*gid].name == type_name
+        }) {
+            return Some((gid, args.clone()));
+        }
+        for (sid, origin) in &self.generics.struct_origin {
+            if self.structs[*sid].name == type_name {
+                return Some(origin.clone());
+            }
+        }
+        None
     }
 
     pub(super) fn expression(&mut self, min: u8, moving: bool) -> Result<(Expr, Type), ae_span::Diagnostic> {
@@ -183,10 +209,38 @@ impl Parser<'_> {
                     self.take(Kind::RBracket)?;
                     let sid = self.instantiate_struct(gid, args, name_offset)?;
                     self.require_public("struct", &self.structs[sid].name.clone(), &self.structs[sid].file.clone(), self.structs[sid].public)?;
-                    if *self.current() != Kind::LBrace {
+                    if *self.current() == Kind::ColonColon {
+                        // `Pair[string, i64]::new(...)` (ADR-0187): the type
+                        // arguments pick both the layout and the method body.
+                        self.pos += 1;
+                        let method = self.identifier()?;
+                        let display = self.structs[sid].name.clone();
+                        let Some(&(origin_gid, ref origin_args)) = self.generics.struct_origin.get(&sid) else {
+                            return Err(self.error_at(name_offset, "internal: a generic instantiation has no origin"));
+                        };
+                        let origin: Vec<Type> = origin_args.clone();
+                        let def_name = self.generics.struct_defs[origin_gid].name.clone();
+                        let Some(gimpl) = self.generics.generic_impls.get(&def_name).cloned() else {
+                            return Err(self.error_at(name_offset, &format!("'{}' has no generic impl block, so it has no associated functions", def_name)));
+                        };
+                        let Some(mdef) = gimpl.methods.iter().find(|m| m.name == method).cloned() else {
+                            let mut names: Vec<String> = gimpl.methods.iter().map(|m| m.name.clone()).collect();
+                            names.sort();
+                            return Err(self.error_at(name_offset, &format!("the impl for '{def_name}' has no associated function '{method}'; it has {}", names.join(", "))));
+                        };
+                        let has_receiver = mdef.receiver.is_some();
+                        let instance = self.instantiate_impl_method(&def_name, &method, sid, origin_gid, &origin, name_offset)?;
+                        let (id, params, ret) = instance;
+                        let call_params = if has_receiver { params[1..].to_vec() } else { params.clone() };
+                        let call_args = self.call_arguments(&format!("{display}::{method}"), &call_params)?;
+                        // A tail value, not an early return: the postfix loop
+                        // still owns chaining (Pair[string, i64]::new(..).m()).
+                        (Expr::Call(id, call_args, ret), ret)
+                    } else if *self.current() == Kind::LBrace {
+                        self.struct_literal(sid, name_offset)?
+                    } else {
                         return Err(self.error_at(name_offset, &format!("'{}' is a struct; construct it with '{}{{ ... }}'", self.structs[sid].name.clone(), self.structs[sid].name.clone())));
                     }
-                    return self.struct_literal(sid, name_offset);
                 } else if name == "Self" && (*self.current() == Kind::LBrace || *self.current() == Kind::ColonColon) {
                     // `Self` in an expression (ADR-0186): the impl's type as a
                     // constructor — `Self { ... }` or `Self::assoc(...)`.
@@ -835,24 +889,54 @@ impl Parser<'_> {
             if *self.current() == Kind::LParen {
                 let struct_name = type_name;
                 let key = format!("{struct_name}#{fname}");
-                let Some(method) = self.generics.inherent.get(&key).cloned() else {
+                // A concrete inherent method, or one instantiation of the
+                // type's generic impl block (ADR-0187): the call site cannot
+                // tell them apart, and does not need to.
+                let call_offset = self.tokens[self.pos].offset;
+                let generic = if self.generics.inherent.contains_key(&key) {
+                    None
+                } else if let Some(struct_sid) = sid {
+                    if let Some(&(gid, ref origin_args)) = self.generics.struct_origin.get(&struct_sid) {
+                        let def_name = self.generics.struct_defs[gid].name.clone();
+                        let origin: Vec<Type> = origin_args.clone();
+                        if self.generics.generic_impls.contains_key(&def_name) {
+                            Some(self.instantiate_impl_method(&def_name, &fname, struct_sid, gid, &origin, call_offset)?)
+                        } else { None }
+                    } else { None }
+                } else { None };
+                let (call_id, receiver_ty, ret, full_params) = if let Some(method) = self.generics.inherent.get(&key).cloned() {
+                    (method.signature.id, method.receiver, method.signature.ret, method.signature.params.clone())
+                } else if let Some(instance) = generic {
+                    let (id, params, ret) = instance;
+                    let def_name = match sid.map(|struct_sid| self.generics.struct_origin.get(&struct_sid)) {
+                        Some(Some(&(gid, _))) => self.generics.struct_defs[gid].name.clone(),
+                        _ => struct_name.clone(),
+                    };
+                    let has_receiver = self.generics.generic_impls.get(&def_name)
+                        .and_then(|def| def.methods.iter().find(|m| m.name == fname))
+                        .map(|m| m.receiver.is_some())
+                        .unwrap_or(false);
+                    if has_receiver {
+                        let receiver = params[0];
+                        (id, Some(receiver), ret, params)
+                    } else {
+                        (id, None, ret, params)
+                    }
+                } else {
                     return Err(self.no_such_method(&struct_name, &fname, "method"));
                 };
-                let Some(receiver_ty) = method.receiver else {
+                let Some(receiver_ty) = receiver_ty else {
                     return Err(self.fail(&format!("'{struct_name}::{fname}' is an associated function, so it takes no receiver; call it as '{struct_name}::{fname}(...)'")));
                 };
-                let signature = method.signature;
-                // A borrowed receiver (ADR-0184) auto-borrows at the call
-                // site: the caller keeps ownership and only a bare struct
-                // variable (or a borrow itself) can be lent, since the borrow
-                // must be covered by storage that outlives the call.
+                let signature_id = call_id;
+                let signature_ret = ret;
                 // A borrowed receiver (ADR-0184, ADR-0185) auto-borrows at
                 // the call site: the caller keeps ownership and only a bare
                 // struct variable (or a borrow itself) can be lent, since the
                 // borrow must be covered by storage that outlives the call.
                 if matches!(receiver_ty, Type::StructRef(_) | Type::StructMut(_)) {
                     let wants_mut = matches!(receiver_ty, Type::StructMut(_));
-                    let params = signature.params[1..].to_vec();
+                    let params = full_params[1..].to_vec();
                     let mut args = self.call_arguments(&format!("{struct_name}.{fname}"), &params)?;
                     match (&base, base_ty) {
                         (Expr::Variable(id, ..), Type::Struct(_)) => {
@@ -896,7 +980,7 @@ impl Parser<'_> {
                         }
                         _ => return Err(self.fail(&format!("'{fname}' borrows its receiver, so the receiver must be a bare struct variable; bind the value to a variable first"))),
                     }
-                    lhs = (Expr::Call(signature.id, args, signature.ret), signature.ret);
+                    lhs = (Expr::Call(signature_id, args, signature_ret), signature_ret);
                     continue;
                 }
                 // The receiver is a by-value parameter, so an owned receiver
@@ -922,10 +1006,10 @@ impl Parser<'_> {
                     }
                     _ => {}
                 }
-                let params = signature.params[1..].to_vec();
+                let params = full_params[1..].to_vec();
                 let mut args = self.call_arguments(&format!("{struct_name}.{fname}"), &params)?;
                 args.insert(0, Argument::Value(base));
-                lhs = (Expr::Call(signature.id, args, signature.ret), signature.ret);
+                lhs = (Expr::Call(signature_id, args, signature_ret), signature_ret);
                 continue;
             }
             let Some(sid) = sid else {
