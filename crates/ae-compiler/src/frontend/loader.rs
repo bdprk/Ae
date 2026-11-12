@@ -278,9 +278,19 @@ fn verified_import_prefix(path: &Path, errors: &[ae_span::Diagnostic]) -> Option
     }
     if current != errors { return None; }
     let first_offset = errors.first()?.primary.as_ref()?.span.range.start;
-    let prefix_end = source.get(..first_offset)?.rfind(';')? + 1;
-    let prefix = source.get(..prefix_end)?;
-    let tokens = Rc::new(lex(prefix).ok()?);
+    let mut prefix = source.get(..first_offset)?;
+    let tokens = match ae_syntax::lex_diagnostic(prefix) {
+        Ok(tokens) => tokens,
+        Err(diagnostic) if diagnostic.code.as_deref() == Some("E0003") => {
+            // The error can be inside a string; its opening quote is the
+            // previous complete token boundary, regardless of semicolons.
+            let start = diagnostic.primary.as_ref()?.span.range.start;
+            prefix = prefix.get(..start)?;
+            ae_syntax::lex_diagnostic(prefix).ok()?
+        }
+        Err(_) => return None,
+    };
+    let tokens = Rc::new(tokens);
     let uses = scan_uses(&file, prefix, tokens.as_ref()).ok()?;
     if uses.is_empty() { return None; }
     Some(LoadingFile { canonical: std::fs::canonicalize(path).ok()?, path: path.to_owned(), source, file, tokens, uses, next_import: 0 })

@@ -4269,6 +4269,11 @@ fn json_lexical_recovery_follows_verified_import_prefixes() {
     let positions: Vec<_> = ["E0002", "E0001", "nested.ae"].iter().map(|item| json.find(item).unwrap()).collect();
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{json}");
     assert_eq!(json.matches("\"code\":").count(), 3, "{json}");
+    // A semicolon inside the malformed string is not an import boundary.
+    fs::write(&entry, "use \"child.ae\";\nfn main() { print(\"text; bad\\q\"); }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&entry).output().unwrap();
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert!(json.contains("child.ae") && json.contains("nested.ae"), "{json}");
     // A malformed import before the lexical error is not guessed or traversed.
     fs::write(&entry, "use nope;\n@\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&entry).output().unwrap();
