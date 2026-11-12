@@ -1,0 +1,52 @@
+// tests/run/batch_core_compiler_pe2.ae
+// Verification of PeOptHeader64, PeDataDirectory, PeImportDirectoryEntry, and PeExportDirectory primitives.
+
+use "../../std/core/ir_pe_opt_header.ae";
+use "../../std/core/ir_pe_data_dir.ae";
+use "../../std/core/ir_pe_import_dir.ae";
+use "../../std/core/ir_pe_export_dir.ae";
+
+fn main() {
+    print("--- batch_core_compiler_pe2 test start ---");
+
+    // 1. PE32+ Optional Header
+    // entry=0x1000, base=0x140000000, sect_align=4096, file_align=512, sub=3 (CUI), dll_chars=0x0140 (320: ASLR | DEP)
+    let opt = pe_opt_header_new(4096, 5368709120, 4096, 512, 3, 320);
+    assert(pe_is_pe32_plus(opt));
+    let opt_b = pe_opt_header_new(4096, 5368709120, 4096, 512, 3, 320);
+    assert(pe_is_console_subsystem(opt_b));
+    let opt_c = pe_opt_header_new(4096, 5368709120, 4096, 512, 3, 320);
+    assert(pe_has_aslr(opt_c));
+    let opt_d = pe_opt_header_new(4096, 5368709120, 4096, 512, 3, 320);
+    assert(pe_has_dep(opt_d));
+    print("pe_opt_header ok");
+
+    // 2. PE Data Directory
+    let dir_import = pe_data_dir_new(8192, 120);
+    assert(pe_data_dir_is_present(dir_import));
+    let dir_import_b = pe_data_dir_new(8192, 120);
+    assert(pe_data_dir_end_addr(dir_import_b) == 8312);
+
+    let dir_empty = pe_data_dir_new(0, 0);
+    assert(!pe_data_dir_is_present(dir_empty));
+    print("pe_data_dir ok");
+
+    // 3. PE Import Directory
+    let imp_entry = pe_import_dir_new(8192, 9000, 8256);
+    assert(!pe_import_is_null_terminator(imp_entry));
+    let imp_entry_b = pe_import_dir_new(8192, 9000, 8256);
+    assert(pe_import_iat_rva(imp_entry_b) == 8256);
+
+    let imp_null = pe_import_dir_new(0, 0, 0);
+    assert(pe_import_is_null_terminator(imp_null));
+    print("pe_import_dir ok");
+
+    // 4. PE Export Directory
+    let exp_dir = pe_export_dir_new(1, 10, 8, 4096); // base 1, 10 funcs, 8 names
+    assert(pe_export_has_names(exp_dir));
+    let exp_dir_b = pe_export_dir_new(1, 10, 8, 4096);
+    assert(pe_export_ordinal_index(exp_dir_b, 5) == 4);
+    print("pe_export_dir ok");
+
+    print("--- batch_core_compiler_pe2 test end ---");
+}

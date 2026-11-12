@@ -1,0 +1,6 @@
+--- batch_core_compiler_pe2 test start ---
+pe_opt_header ok
+pe_data_dir ok
+pe_import_dir ok
+pe_export_dir ok
+--- batch_core_compiler_pe2 test end ---
