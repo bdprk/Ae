@@ -1237,4 +1237,4 @@
   1. **map 索引读不存在**（有意设计）再次确认——示例初版直接踩到，改走 map_get + match。
   2. **字段 map 赋值的外层类型检查漏改**（`fty == Type::Map` 没带 MapF）：变量分支改了、字段分支没改——与 ADR-61 的 by_ref 教训同类，「同一规则的第二处出现」必须 grep 全部出现点。
   3. heredoc→python 转义第三次出错后，本轮全部改为 Write 落盘脚本 + 原始字符串，未再发生——硬规则生效。
-- 验证：Windows 36 单元 + 179 集成、`--leak` 34 用例 PASS（基线 2 块）、fmt 44 文件、42 程序 `check`；归档 `bench/results/2026-11-12-windows-mapf/`。状态：**单平台验证**，Linux 回填（`2026-11-12-linux-mapf/`）前不得升级。
+- 验证：Windows 36 单元 + 179 集成、`--leak` 34 用例 PASS（基线 2 块）、fmt 44 文件、42 程序 `check`；归档 `bench/results/2026-11-12-windows-mapf/`。Linux 回填（同一源码树 740b50c，`bench/results/2026-11-12-linux-mapf/`）：36 + 179 全通过、`--leak` 34 用例基线 0 块、`--sanitize` 34 用例 0 报告、fmt 44 文件幂等、**sensor_stats 输出两平台逐字节一致**、生成 C 字节数两平台相同（print(1) 14,820）。状态：**双平台验证**（2026-11-12）。

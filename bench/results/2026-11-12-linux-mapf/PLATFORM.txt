@@ -1,0 +1,27 @@
+ADR-65 `map[string, f64]` · Linux 回填（2026-11-12）
+
+## 平台
+instabox-node 沙箱：Debian 13，Linux 6.18.54，x86-64，4 vCPU；
+gcc 14.2.0-19；rustc 1.99.0；Python 3.13.5。AE 0.1.1。
+代码由 ssh tar 管道同步自 Windows 工作区（提交 740b50c，与 Windows 归档同一源码树）。
+
+## 命令（工作目录 = ~/ae-backfill）
+- cargo build --locked && cargo build --release --locked
+- cargo test --locked（含 map[string, f64] 三个新测试）
+- python3 scripts/verify_generated_c.py --leak / --sanitize（用例表含 sensor_stats.ae）
+- python3 scripts/fmt_acceptance.py --json fmt-acceptance.json
+- target/debug/ae run examples/sensor_stats.ae（sensor-stats-output.txt）
+
+## 结果
+- cargo test：36 单元 + 179 集成全通过（与 Windows 相同计数）。
+- `--leak`：34 个用例 PASS，基线 0 块；`--sanitize`：34 个用例 0 报告。
+- fmt 验收：44 个文件幂等。
+- **sensor_stats 输出与 Windows 逐字节一致**（行尾归一化后）：
+  sensors 3 / temp 21.5 / mean 21.3 / min 20.0 / max 22.5 / false / 22.0 /
+  first humidity / count 3——map[string, f64] 的读取、FloatResult 缺失语义、
+  keys 排序在两个 CRT/分配器组合下行为一致。
+- 生成 C 字节数与 Windows 相同：print(1) 14,820（+911 为 FloatResult 布局
+  常驻前缀）、sensor_stats 41,742。
+
+## 说明
+- 至此 ADR-65 升级为**双平台验证**（2026-11-12）。
