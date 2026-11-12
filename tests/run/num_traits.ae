@@ -1,0 +1,44 @@
+use "../../std/core/num.ae";
+
+pub struct Delta {
+    offset: i64,
+}
+
+impl SignedMagnitude for Delta {
+    fn magnitude(d: Delta) -> Delta {
+        if d.offset < 0 {
+            return Delta { offset: -d.offset };
+        }
+        return Delta { offset: d.offset };
+    }
+
+    fn sign_indicator(d: Delta) -> i64 {
+        if d.offset > 0 {
+            return 1;
+        }
+        if d.offset < 0 {
+            return -1;
+        }
+        return 0;
+    }
+}
+
+fn compute_mag[T: SignedMagnitude](item: T) -> T {
+    return magnitude(item);
+}
+
+fn compute_sign[T: SignedMagnitude](item: T) -> i64 {
+    return sign_indicator(item);
+}
+
+fn main() {
+    let d1 = Delta { offset: -45 };
+    let d2 = Delta { offset: 60 };
+    let d3 = Delta { offset: 0 };
+    assert(compute_mag[Delta](d1).offset == 45);
+    assert(compute_sign[Delta](d2) == 1);
+    assert(compute_sign[Delta](d3) == 0);
+    assert(compute_mag[i64](-100) == 100);
+    assert(compute_sign[i64](-99) == -1);
+    print("NUMERIC TRAITS OPERATIONAL\n");
+}
