@@ -1,0 +1,63 @@
+// tests/run/batch_core_compiler_elf.ae
+// Verification of ELF64Header, SectionDescriptor, StrtabBuilder, and BranchRelaxation.
+
+use "../../std/core/ir_elf_header.ae";
+use "../../std/core/ir_section.ae";
+use "../../std/core/ir_strtab.ae";
+use "../../std/core/ir_branch_relax.ae";
+
+fn main() {
+    print("--- batch_core_compiler_elf test start ---");
+
+    // 1. ELF Header
+    let hdr = elf64_header_new(4096, 8192);
+    assert(elf64_header_is_valid(hdr));
+    let hdr2 = elf64_header_new(4096, 8192);
+    assert(elf64_header_entry(hdr2) == 4096);
+    print("elf_header ok");
+
+    // 2. Section Descriptor
+    // flags: 6 = 2 (ALLOC) + 4 (EXECINSTR) -> .text section
+    let sec_text = section_new(1, 1, 6, 16);
+    assert(section_is_executable(sec_text));
+    let sec_text2 = section_new(1, 1, 6, 16);
+    assert(!section_is_writable(sec_text2));
+
+    // flags: 3 = 1 (WRITE) + 2 (ALLOC) -> .data section
+    let sec_data = section_new(2, 1, 3, 8);
+    assert(section_is_writable(sec_data));
+
+    let sec_data2 = section_new(2, 1, 3, 8);
+    let sec_sized = section_with_size(sec_data2, 1024);
+    assert(section_is_writable(sec_sized));
+    print("section ok");
+
+    // 3. Strtab Builder
+    let sb0 = strtab_builder_new();
+    assert(strtab_builder_offset(sb0) == 1);
+    let sb0_cnt = strtab_builder_new();
+    assert(strtab_builder_count(sb0_cnt) == 0);
+
+    // Append ".text" (length 5 -> 5 + 1 = 6 bytes)
+    let sb1 = strtab_builder_append(strtab_builder_new(), 5);
+    assert(strtab_builder_offset(sb1) == 7);
+    let sb1_cnt = strtab_builder_append(strtab_builder_new(), 5);
+    assert(strtab_builder_count(sb1_cnt) == 1);
+    print("strtab ok");
+
+    // 4. Branch Relaxation
+    let b_short = branch_decision_new(150, 100); // disp = +50 -> short jump
+    let disp1 = branch_decision_displacement(b_short);
+    assert(disp1 == 50);
+    assert(branch_can_use_short_jump(disp1));
+    assert(!branch_needs_near_jump(disp1));
+
+    let b_long = branch_decision_new(1000, 100); // disp = +900 -> near jump
+    let disp2 = branch_decision_displacement(b_long);
+    assert(disp2 == 900);
+    assert(!branch_can_use_short_jump(disp2));
+    assert(branch_needs_near_jump(disp2));
+    print("branch_relax ok");
+
+    print("--- batch_core_compiler_elf test end ---");
+}

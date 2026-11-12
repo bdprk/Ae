@@ -1,0 +1,6 @@
+--- batch_core_compiler_elf test start ---
+elf_header ok
+section ok
+strtab ok
+branch_relax ok
+--- batch_core_compiler_elf test end ---
