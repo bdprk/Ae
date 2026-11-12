@@ -1,0 +1,19 @@
+// std/core/ref.ae
+// Core Reference Counter State (M1.4 / M2.4)
+
+pub struct RefCount {
+    strong: i64,
+    weak: i64,
+}
+
+pub fn ref_count_new() -> RefCount {
+    return RefCount { strong: 1, weak: 0 };
+}
+
+pub fn ref_count_is_unique(rc: RefCount) -> bool {
+    return rc.strong == 1;
+}
+
+pub fn ref_count_inc_strong(rc: RefCount) -> RefCount {
+    return RefCount { strong: rc.strong + 1, weak: rc.weak };
+}

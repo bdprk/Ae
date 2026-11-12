@@ -1,0 +1,30 @@
+use "../../std/core/heap.ae";
+use "../../std/core/arena.ae";
+use "../../std/core/ref.ae";
+use "../../std/core/order.ae";
+
+fn main() {
+    let h = alloc_header_create(256, 16);
+    assert(alloc_payload_size(h) == 256);
+    assert(alloc_is_aligned(64, 16));
+    assert(!alloc_is_aligned(65, 16));
+
+    let c = arena_chunk_new(4096);
+    assert(arena_chunk_remaining(c) == 4096);
+
+    let c2 = arena_chunk_new(4096);
+    assert(arena_chunk_has_space(c2, 1024));
+
+    let rc0 = ref_count_new();
+    assert(ref_count_is_unique(rc0));
+
+    let rc_init = ref_count_new();
+    let rc1 = ref_count_inc_strong(rc_init);
+    assert(!ref_count_is_unique(rc1));
+
+    assert(ordering_is_eq(Ordering::Equal));
+    assert(!ordering_is_eq(Ordering::Less));
+    assert(ordering_is_eq(ordering_from_diff(0)));
+
+    print("MEMORY AND ORDER PRIMITIVES OPERATIONAL\n");
+}

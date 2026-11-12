@@ -1,0 +1,19 @@
+// std/core/arena.ae
+// Core Region & Arena Offset Tracking (M1.4 / M2.4)
+
+pub struct ArenaChunk {
+    offset: i64,
+    limit: i64,
+}
+
+pub fn arena_chunk_new(limit: i64) -> ArenaChunk {
+    return ArenaChunk { offset: 0, limit: limit };
+}
+
+pub fn arena_chunk_remaining(c: ArenaChunk) -> i64 {
+    return c.limit - c.offset;
+}
+
+pub fn arena_chunk_has_space(c: ArenaChunk, needed: i64) -> bool {
+    return c.offset + needed <= c.limit;
+}

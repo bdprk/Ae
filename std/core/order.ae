@@ -1,0 +1,28 @@
+// std/core/order.ae
+// Core Total Ordering Enumeration (M1.4 / M1.7)
+
+pub enum Ordering {
+    Less,
+    Equal,
+    Greater,
+}
+
+pub fn ordering_from_diff(diff: i64) -> Ordering {
+    if diff < 0 {
+        return Ordering::Less;
+    }
+    if diff > 0 {
+        return Ordering::Greater;
+    }
+    return Ordering::Equal;
+}
+
+pub fn ordering_is_eq(o: Ordering) -> bool {
+    var eq = false;
+    match o {
+        Ordering::Equal => { eq = true; }
+        Ordering::Less => {}
+        Ordering::Greater => {}
+    }
+    return eq;
+}
