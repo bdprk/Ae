@@ -1,0 +1,41 @@
+use "../../std/core/version.ae";
+use "../../std/core/priority.ae";
+use "../../std/core/metric.ae";
+use "../../std/core/throttle.ae";
+
+fn main() {
+    let v1 = semver_new(1, 2, 3);
+    let v2 = semver_new(1, 2, 0);
+    assert(semver_is_compatible(v1, v2));
+
+    let v1_b = semver_new(1, 2, 3);
+    let v3 = semver_new(2, 0, 0);
+    assert(!semver_is_compatible(v1_b, v3));
+
+    assert(priority_weight(Priority::Idle) == 0);
+    assert(priority_weight(Priority::Critical) == 100);
+    assert(priority_is_higher(Priority::High, Priority::Normal));
+    assert(!priority_is_higher(Priority::Low, Priority::Critical));
+
+    let g0 = metric_gauge_new();
+    let g1 = metric_record(g0, 50);
+    assert(metric_peak_val(g1) == 50);
+
+    let g1_b = metric_record(metric_gauge_new(), 50);
+    let g2 = metric_record(g1_b, 30);
+    assert(metric_peak_val(g2) == 50);
+
+    let g2_b = metric_record(metric_gauge_new(), 50);
+    let g3 = metric_record(g2_b, 90);
+    assert(metric_peak_val(g3) == 90);
+
+    let b0 = bucket_new(10);
+    assert(bucket_has_tokens(b0, 5));
+
+    let b_temp = bucket_new(10);
+    let b1 = bucket_consume(b_temp, 8);
+    assert(b1.tokens == 2);
+    assert(!bucket_has_tokens(b1, 5));
+
+    print("INFRASTRUCTURE PRIMITIVES OPERATIONAL\n");
+}

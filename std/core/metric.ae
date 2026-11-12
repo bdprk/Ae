@@ -1,0 +1,23 @@
+// std/core/metric.ae
+// Core Telemetry & Metric Gauges (M1.4 / M3.3)
+
+pub struct CounterGauge {
+    count: i64,
+    peak: i64,
+}
+
+pub fn metric_gauge_new() -> CounterGauge {
+    return CounterGauge { count: 0, peak: 0 };
+}
+
+pub fn metric_record(g: CounterGauge, current_val: i64) -> CounterGauge {
+    var p = g.peak;
+    if current_val > p {
+        p = current_val;
+    }
+    return CounterGauge { count: current_val, peak: p };
+}
+
+pub fn metric_peak_val(g: CounterGauge) -> i64 {
+    return g.peak;
+}

@@ -1,0 +1,26 @@
+// std/core/priority.ae
+// Core Task & Scheduler Priority Levels (M1.4 / M4.4)
+
+pub enum Priority {
+    Idle,
+    Low,
+    Normal,
+    High,
+    Critical,
+}
+
+pub fn priority_weight(p: Priority) -> i64 {
+    var w = 0;
+    match p {
+        Priority::Idle => { w = 0; }
+        Priority::Low => { w = 10; }
+        Priority::Normal => { w = 50; }
+        Priority::High => { w = 80; }
+        Priority::Critical => { w = 100; }
+    }
+    return w;
+}
+
+pub fn priority_is_higher(a: Priority, b: Priority) -> bool {
+    return priority_weight(a) > priority_weight(b);
+}

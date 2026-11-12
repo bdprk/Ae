@@ -1,0 +1,26 @@
+// std/core/version.ae
+// Core Semantic Versioning Representation (M1.4 / M3.4)
+
+pub struct SemVer {
+    major: i64,
+    minor: i64,
+    patch: i64,
+}
+
+pub fn semver_new(major: i64, minor: i64, patch: i64) -> SemVer {
+    return SemVer { major: major, minor: minor, patch: patch };
+}
+
+pub fn semver_is_compatible(current: SemVer, target: SemVer) -> bool {
+    // Basic SemVer rule: major must match (for non-zero major) and minor/patch must be >= target
+    if current.major != target.major {
+        return false;
+    }
+    if current.minor < target.minor {
+        return false;
+    }
+    if current.minor == target.minor && current.patch < target.patch {
+        return false;
+    }
+    return true;
+}

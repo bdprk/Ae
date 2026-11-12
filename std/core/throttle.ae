@@ -1,0 +1,20 @@
+// std/core/throttle.ae
+// Core Rate Limiting & Token Bucket Primitives (M1.4 / M4.6)
+
+pub struct TokenBucket {
+    capacity: i64,
+    tokens: i64,
+}
+
+pub fn bucket_new(cap: i64) -> TokenBucket {
+    return TokenBucket { capacity: cap, tokens: cap };
+}
+
+pub fn bucket_has_tokens(b: TokenBucket, needed: i64) -> bool {
+    return b.tokens >= needed;
+}
+
+pub fn bucket_consume(b: TokenBucket, needed: i64) -> TokenBucket {
+    let rem = b.tokens - needed;
+    return TokenBucket { capacity: b.capacity, tokens: rem };
+}
