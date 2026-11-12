@@ -1,0 +1,106 @@
+use "../../std/core/ir_eh_pe.ae";
+use "../../std/core/ir_cfi.ae";
+use "../../std/core/ir_cfi_state.ae";
+use "../../std/core/ir_lsda.ae";
+
+fn main() {
+    // Pointer encodings: format nibble, pcrel bit, indirect bit, field width.
+    assert(eh_pe_field_bytes(155) == 4); // 0x9b: indirect | pcrel | sdata4
+    assert(eh_pe_field_bytes(27) == 4);  // 0x1b: pcrel | sdata4
+    assert(eh_pe_field_bytes(3) == 4);   // udata4
+    assert(eh_pe_field_bytes(4) == 8);   // udata8
+    assert(eh_pe_field_bytes(12) == 8);  // sdata8
+    assert(eh_pe_field_bytes(1) == 0);   // uleb128: width depends on the value
+    assert(eh_pe_field_bytes(255) == 0); // omitted pointer
+    assert(eh_pe_is_omitted(255));
+    assert(!eh_pe_is_omitted(155));
+    assert(eh_pe_is_pcrel(155));
+    assert(eh_pe_is_pcrel(27));
+    assert(!eh_pe_is_pcrel(11));
+    assert(eh_pe_is_indirect(155));
+    assert(!eh_pe_is_indirect(11));
+    assert(eh_pe_is_variable_width(1));
+    assert(eh_pe_is_variable_width(9));
+    assert(!eh_pe_is_variable_width(3));
+    assert(eh_pe_value(100, 1000, 155) == 1100);
+    assert(eh_pe_value(100, 1000, 11) == 100);
+    assert(eh_pe_apply_offset(100, 500) == 600);
+
+    // CFI opcodes: the six-bit primary forms and their extended fallbacks.
+    assert(cfi_advance_loc_primary(1) == 65);
+    assert(cfi_advance_loc_primary(63) == 127);
+    assert(cfi_advance_loc_primary(0) == -1);
+    assert(cfi_advance_loc_primary(64) == -1);
+    assert(cfi_offset_primary(6) == 134);
+    assert(cfi_offset_primary(64) == -1);
+    assert(cfi_restore_primary(6) == 198);
+    assert(cfi_advance_loc_extended() == 2);
+    assert(cfi_offset_extended() == 5);
+    assert(cfi_restore_extended() == 6);
+    assert(cfi_def_cfa() == 12);
+    assert(cfi_def_cfa_register() == 13);
+    assert(cfi_def_cfa_offset() == 14);
+    assert(cfi_remember_state() == 10);
+    assert(cfi_restore_state() == 11);
+    assert(cfi_nop() == 0);
+    assert(cfi_set_loc() == 1);
+    assert(cfi_primary_opcode_fits(0));
+    assert(cfi_primary_opcode_fits(63));
+    assert(!cfi_primary_opcode_fits(64));
+    assert(!cfi_primary_opcode_fits(-1));
+
+    // FDE records: length counts everything after the length field.
+    assert(cfi_fde_len(8, 4, 0, 3) == 24);
+    assert(cfi_fde_len(8, 4, 200, 3) == 25);
+    assert(cfi_fde_len(-1, 4, 0, 3) == -1);
+    assert(cfi_fde_cie_pointer(100, 40) == 60);
+    assert(cfi_fde_cie_pointer_valid(100, 40));
+    assert(!cfi_fde_cie_pointer_valid(40, 40));
+    assert(!cfi_fde_cie_pointer_valid(40, 100));
+    assert(cfi_is_terminator(0));
+    assert(!cfi_is_terminator(4));
+
+    // CFA rows: the register and offset move independently.
+    assert(cfa_row_is_usable(cfa_row_init()));
+    assert(!cfa_row_is_usable(cfa_row_def_cfa(cfa_row_init(), -1, 4)));
+    assert(cfa_row_canonical_address(cfa_row_init(), 1000) == 1008);
+    assert(cfa_row_same_state(cfa_row_def_cfa_offset(cfa_row_init(), 8), cfa_row_init()));
+    assert(!cfa_row_same_state(cfa_row_def_cfa_register(cfa_row_init(), 6), cfa_row_init()));
+    assert(!cfa_row_same_state(cfa_row_def_cfa_offset(cfa_row_init(), 16), cfa_row_init()));
+    assert(cfa_row_max_depth(cfa_row_remember(cfa_row_remember(cfa_row_init())), 1));
+    assert(!cfa_row_max_depth(cfa_row_remember(cfa_row_init()), 1));
+    // A restore with nothing remembered is malformed input, not a crash.
+    assert(cfa_row_same_state(cfa_row_restore(cfa_row_init()), cfa_row_init()));
+
+    // LSDA tables.
+    assert(lsda_call_site_entry_bytes(155) == 16);
+    assert(lsda_call_site_table_bytes(3, 155) == 48);
+    assert(lsda_call_site_table_bytes(0, 155) == 0);
+    assert(lsda_call_site_entry_bytes(1) == 0);
+    assert(lsda_type_table_bytes(3, 155) == 12);
+    assert(lsda_type_table_index(1, 155) == 0);
+    assert(lsda_type_table_index(2, 155) == 4);
+    assert(lsda_type_table_index(0, 155) == 0);
+    assert(lsda_sleb_bytes(0) == 1);
+    assert(lsda_sleb_bytes(63) == 1);
+    assert(lsda_sleb_bytes(-64) == 1);
+    assert(lsda_sleb_bytes(64) == 2);
+    assert(lsda_sleb_bytes(-65) == 2);
+    assert(lsda_sleb_bytes(8191) == 2);
+    assert(lsda_sleb_bytes(8192) == 3);
+    assert(lsda_sleb_bytes(-8192) == 2);
+    assert(lsda_sleb_bytes(-8193) == 3);
+    assert(lsda_sleb_bytes(134217727) == 4);
+    assert(lsda_sleb_bytes(134217728) == 5);
+    assert(lsda_action_record_bytes(0, 0) == 2);
+    assert(lsda_cleanup_action() == 0);
+    assert(lsda_action_is_cleanup(0));
+    assert(!lsda_action_is_cleanup(4));
+    assert(lsda_action_record_offset(4, 16) == 12);
+    assert(lsda_action_record_offset(0, 16) == 0);
+    assert(lsda_action_record_offset(20, 16) == 0);
+    assert(lsda_section_bytes(4, 48, 12, 6) == 70);
+    assert(lsda_section_bytes(-1, 48, 12, 6) == -1);
+
+    print("batch_core_unwind_all_passed");
+}
