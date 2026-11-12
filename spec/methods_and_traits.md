@@ -1,0 +1,52 @@
+﻿# Methods, Impl Blocks, and Traits Specification (M1.2)
+
+## 1. Syntax and Grammar
+
+### 1.1 Inherent `impl` Blocks
+Inherent implementations associate methods and functions directly with a nominal type (struct or enum):
+
+```ae
+impl TypeName {
+    // Associated function (static method, no receiver)
+    pub fn new() -> TypeName { ... }
+
+    // Inherent methods with receiver
+    pub fn by_value(self) { ... }
+    pub fn by_ref(&self) -> i64 { ... }
+    pub fn by_mut(&mut self, val: i64) { ... }
+}
+```
+
+### 1.2 Trait Definitions
+Traits declare capability interfaces with method signatures and optional default implementations:
+
+```ae
+pub trait Display {
+    fn fmt(&self) -> String;
+}
+
+pub trait Clone {
+    fn clone(&self) -> Self;
+}
+```
+
+### 1.3 Trait Implementations
+```ae
+impl Display for Point {
+    fn fmt(&self) -> String {
+        return "Point";
+    }
+}
+```
+
+## 2. Receiver Resolution Rules
+When resolving `expr.method(args...)`:
+1. Check inherent methods on `Type` where receiver matches `Type`, `&Type`, `&mut Type`.
+2. Check in-scope trait methods for `Type`.
+3. Auto-borrow (`&` or `&mut`) is applied implicitly when calling methods expecting a reference.
+
+## 3. Coherence and Orphan Rules
+1. An `impl Trait for Type` block is allowed only if:
+   - `Trait` is defined in the current crate/module, OR
+   - `Type` is defined in the current crate/module.
+2. Overlapping implementations for the same type are rejected at compile-time.

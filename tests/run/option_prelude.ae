@@ -1,0 +1,50 @@
+fn check_option_some() -> bool {
+    let opt = Option[i64]::Some(42);
+    var ok = false;
+    match opt {
+        Option::Some(v) => {
+            if v == 42 {
+                ok = true;
+            }
+        }
+        Option::None => {}
+    }
+    return ok;
+}
+
+fn make_none() -> Option[i64] {
+    return Option[i64]::None;
+}
+
+fn check_option_none() -> bool {
+    let opt = make_none();
+    var ok = false;
+    match opt {
+        Option::Some(_) => {}
+        Option::None => {
+            ok = true;
+        }
+    }
+    return ok;
+}
+
+fn check_option_propagation() -> Option[i64] {
+    let a = Option[i64]::Some(10)?;
+    let b = Option[i64]::Some(20)?;
+    return Option[i64]::Some(a + b);
+}
+
+fn main() {
+    assert(check_option_some());
+    assert(check_option_none());
+    let res = check_option_propagation();
+    match res {
+        Option::Some(val) => {
+            assert(val == 30);
+            print("OPTION PRELUDE FULLY OPERATIONAL\n");
+        }
+        Option::None => {
+            assert(false);
+        }
+    }
+}

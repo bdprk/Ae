@@ -1,0 +1,30 @@
+// std/core/result.ae
+// Core Result[T, E] algebraic data type definition (M1.2/M1.11)
+
+pub enum Result[T, E] {
+    Ok(T),
+    Err(E),
+}
+
+impl[T, E] Result[T, E] {
+    pub fn is_ok(&self) -> bool {
+        match self {
+            Result::Ok(_) => true,
+            Result::Err(_) => false,
+        }
+    }
+
+    pub fn is_err(&self) -> bool {
+        match self {
+            Result::Ok(_) => false,
+            Result::Err(_) => true,
+        }
+    }
+
+    pub fn unwrap_or(self, default_val: T) -> T {
+        match self {
+            Result::Ok(val) => val,
+            Result::Err(_) => default_val,
+        }
+    }
+}
