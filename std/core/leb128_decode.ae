@@ -1,0 +1,61 @@
+// std/core/leb128_decode.ae
+// LEB128 decoded byte sequence parsing state primitives for AE core.
+
+pub struct Leb128Decoder {
+    value: i64,
+    shift: i64,
+    completed: bool,
+}
+
+pub fn leb128_decoder_new() -> Leb128Decoder {
+    return Leb128Decoder {
+        value: 0,
+        shift: 0,
+        completed: false,
+    };
+}
+
+pub fn leb128_decoder_value(d: Leb128Decoder) -> i64 {
+    return d.value;
+}
+
+pub fn leb128_decoder_is_completed(d: Leb128Decoder) -> bool {
+    return d.completed;
+}
+
+pub fn leb128_decoder_feed_byte(d: Leb128Decoder, b: i64) -> Leb128Decoder {
+    let cur_val = d.value;
+    let cur_shift = d.shift;
+    let cur_completed = d.completed;
+
+    if cur_completed {
+        return Leb128Decoder {
+            value: cur_val,
+            shift: cur_shift,
+            completed: cur_completed,
+        };
+    }
+    let lower7 = b % 128;
+    let has_more = b >= 128;
+
+    var multiplier = 1;
+    var i = 0;
+    while i < cur_shift {
+        multiplier = multiplier * 2;
+        i = i + 1;
+    }
+
+    let next_val = cur_val + lower7 * multiplier;
+    if !has_more {
+        return Leb128Decoder {
+            value: next_val,
+            shift: cur_shift + 7,
+            completed: true,
+        };
+    }
+    return Leb128Decoder {
+        value: next_val,
+        shift: cur_shift + 7,
+        completed: false,
+    };
+}

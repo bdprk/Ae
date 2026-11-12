@@ -1,0 +1,22 @@
+// std/core/ascii_case.ae
+// Case-insensitive ASCII string slice comparison state primitives for AE core.
+
+use "ascii_table.ae";
+
+pub fn ascii_char_eq_ignore_case(a: i64, b: i64) -> bool {
+    let lower_a = ascii_to_lowercase(a);
+    let lower_b = ascii_to_lowercase(b);
+    return lower_a == lower_b;
+}
+
+pub fn ascii_compare_char(a: i64, b: i64) -> i64 {
+    let lower_a = ascii_to_lowercase(a);
+    let lower_b = ascii_to_lowercase(b);
+    if lower_a < lower_b {
+        return -1;
+    }
+    if lower_a > lower_b {
+        return 1;
+    }
+    return 0;
+}

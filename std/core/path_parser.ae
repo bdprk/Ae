@@ -1,0 +1,33 @@
+// std/core/path_parser.ae
+// Path separator and extension offset split primitives for AE core.
+
+pub fn path_is_separator(c: i64) -> bool {
+    // '/' is 47, '\\' is 92
+    return c == 47 || c == 92;
+}
+
+pub fn path_find_last_separator(arr: &[i64; 8], count: i64) -> i64 {
+    var i = count - 1;
+    while i >= 0 {
+        if path_is_separator(arr[i]) {
+            return i;
+        }
+        i = i - 1;
+    }
+    return -1;
+}
+
+pub fn path_find_extension_dot(arr: &[i64; 8], count: i64) -> i64 {
+    // '.' is 46
+    var i = count - 1;
+    while i >= 0 {
+        if path_is_separator(arr[i]) {
+            return -1;
+        }
+        if arr[i] == 46 {
+            return i;
+        }
+        i = i - 1;
+    }
+    return -1;
+}

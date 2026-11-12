@@ -1,0 +1,55 @@
+use "../../std/core/ascii_case.ae";
+use "../../std/core/tokenizer_state.ae";
+use "../../std/core/path_parser.ae";
+use "../../std/core/leb128_decode.ae";
+
+fn main() {
+    assert(ascii_char_eq_ignore_case(65, 97)); // 'A' == 'a'
+    assert(ascii_char_eq_ignore_case(90, 122)); // 'Z' == 'z'
+    assert(!ascii_char_eq_ignore_case(65, 66)); // 'A' != 'B'
+    assert(ascii_compare_char(65, 98) == -1); // 'a' < 'b'
+    assert(ascii_compare_char(99, 65) == 1); // 'c' > 'a'
+    assert(ascii_compare_char(65, 97) == 0); // 'a' == 'a'
+
+    let t0 = tokenizer_new();
+    assert(tokenizer_offset(t0) == 0);
+    assert(tokenizer_line(tokenizer_new()) == 1);
+    assert(tokenizer_col(tokenizer_new()) == 1);
+
+    let t1 = tokenizer_advance_char(tokenizer_new(), false);
+    assert(tokenizer_offset(t1) == 1);
+    let t1_b = tokenizer_advance_char(tokenizer_new(), false);
+    assert(tokenizer_line(t1_b) == 1);
+    let t1_c = tokenizer_advance_char(tokenizer_new(), false);
+    assert(tokenizer_col(t1_c) == 2);
+
+    let t_nl = tokenizer_advance_char(tokenizer_new(), true);
+    assert(tokenizer_line(t_nl) == 2);
+    let t_nl_b = tokenizer_advance_char(tokenizer_new(), true);
+    assert(tokenizer_col(t_nl_b) == 1);
+
+    assert(path_is_separator(47)); // '/'
+    assert(path_is_separator(92)); // '\\'
+    assert(!path_is_separator(46)); // '.'
+
+    let p = [97, 47, 98, 46, 99, 0, 0, 0]; // "a/b.c"
+    assert(path_find_last_separator(&p, 5) == 1);
+    assert(path_find_extension_dot(&p, 5) == 3);
+
+    let d0 = leb128_decoder_new();
+    assert(!leb128_decoder_is_completed(d0));
+
+    // Decode 1-byte LEB128: 42
+    let d1 = leb128_decoder_feed_byte(leb128_decoder_new(), 42);
+    assert(leb128_decoder_is_completed(d1));
+    let d1_b = leb128_decoder_feed_byte(leb128_decoder_new(), 42);
+    assert(leb128_decoder_value(d1_b) == 42);
+
+    // Decode 2-byte LEB128: 300 -> [172, 2]
+    let d_multi = leb128_decoder_feed_byte(leb128_decoder_feed_byte(leb128_decoder_new(), 172), 2);
+    assert(leb128_decoder_is_completed(d_multi));
+    let d_multi_b = leb128_decoder_feed_byte(leb128_decoder_feed_byte(leb128_decoder_new(), 172), 2);
+    assert(leb128_decoder_value(d_multi_b) == 300);
+
+    print("ASCIICASE TOKENIZER PATH LEBDECODE OPERATIONAL");
+}
