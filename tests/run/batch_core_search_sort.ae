@@ -1,0 +1,37 @@
+use "../../std/core/search.ae";
+use "../../std/core/sort.ae";
+use "../../std/core/span.ae";
+use "../../std/core/utf8.ae";
+
+fn main() {
+    let arr = [10, 20, 30, 40, 50, 60, 70, 80];
+    let res = binary_search_i64(&arr, 40);
+    assert(binary_search_result_is_found(res));
+    let res2 = binary_search_i64(&arr, 40);
+    assert(binary_search_result_index(res2) == 3);
+
+    let res_miss = binary_search_i64(&arr, 45);
+    assert(!binary_search_result_is_found(res_miss));
+    let res_miss2 = binary_search_i64(&arr, 45);
+    assert(binary_search_result_index(res_miss2) == 4);
+
+    let unsorted = [50, 20, 80, 10, 30, 70, 40, 60];
+    assert(!is_sorted_i64_8(&unsorted));
+    assert(count_inversions_i64_8(&unsorted) > 0);
+    assert(is_sorted_i64_8(&arr));
+    assert(count_inversions_i64_8(&arr) == 0);
+
+    let span_inst = source_span_new(100, 150, 1);
+    assert(source_span_len(span_inst) == 50);
+    let span_inst2 = source_span_new(100, 150, 1);
+    assert(source_span_contains(span_inst2, 120));
+    let span_inst3 = source_span_new(100, 150, 1);
+    assert(!source_span_contains(span_inst3, 160));
+
+    assert(is_utf8_continuation_byte(140));
+    assert(!is_utf8_continuation_byte(65));
+    assert(utf8_sequence_length(65) == 1);
+    assert(utf8_sequence_length(224) == 3);
+
+    print("SEARCH SORT AND SPAN OPERATIONAL");
+}

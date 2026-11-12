@@ -1,0 +1,29 @@
+// std/core/sort.ae
+// In-place sorting and ordering verification primitives for fixed buffers.
+
+pub fn is_sorted_i64_8(arr: &[i64; 8]) -> bool {
+    var i = 0;
+    while i < 7 {
+        if arr[i] > arr[i + 1] {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+pub fn count_inversions_i64_8(arr: &[i64; 8]) -> i64 {
+    var count = 0;
+    var i = 0;
+    while i < 8 {
+        var j = i + 1;
+        while j < 8 {
+            if arr[i] > arr[j] {
+                count = count + 1;
+            }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return count;
+}

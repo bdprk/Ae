@@ -1,0 +1,64 @@
+// std/core/search.ae
+// Search primitives for AE standard library.
+
+pub struct BinarySearchResult {
+    found: bool,
+    index: i64,
+}
+
+pub fn binary_search_result_new(found: bool, index: i64) -> BinarySearchResult {
+    return BinarySearchResult {
+        found: found,
+        index: index,
+    };
+}
+
+pub fn binary_search_result_is_found(res: BinarySearchResult) -> bool {
+    return res.found;
+}
+
+pub fn binary_search_result_index(res: BinarySearchResult) -> i64 {
+    return res.index;
+}
+
+pub fn binary_search_i64(arr: &[i64; 8], target: i64) -> BinarySearchResult {
+    var low = 0;
+    var high = 7;
+    var found_idx = -1;
+    var is_found = false;
+    var done = false;
+
+    while !done {
+        if low > high {
+            done = true;
+        } else {
+            let mid = low + (high - low) / 2;
+            let val = arr[mid];
+            if val == target {
+                found_idx = mid;
+                is_found = true;
+                done = true;
+            } else if val < target {
+                low = mid + 1;
+            } else {
+                high = mid - 1;
+            }
+        }
+    }
+
+    if is_found {
+        return BinarySearchResult { found: true, index: found_idx };
+    }
+    return BinarySearchResult { found: false, index: low };
+}
+
+pub fn linear_find_i64(arr: &[i64; 8], target: i64) -> i64 {
+    var idx = 0;
+    while idx < 8 {
+        if arr[idx] == target {
+            return idx;
+        }
+        idx = idx + 1;
+    }
+    return -1;
+}
