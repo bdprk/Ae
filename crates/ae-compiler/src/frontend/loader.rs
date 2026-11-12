@@ -42,8 +42,10 @@ pub(super) fn parse_source(file: &str, source: &str, shared: &mut SharedFunction
 }
 
 /// One source file in the import graph. `raw` matches the `file` field stored
-/// on declarations; `label` is a platform-independent name for reports.
-struct ModuleInfo { raw: String, label: String, uses: Vec<String> }
+/// on declarations; `label` is a platform-independent name for reports; `path`
+/// is where the file was read from and `digest` is the content hash the build
+/// cache later re-checks without re-parsing anything.
+struct ModuleInfo { raw: String, label: String, path: std::path::PathBuf, digest: String, uses: Vec<String> }
 
 /// Source diagnostics retain structured locations; loader and other errors
 /// that have no source location still use the legacy text representation.
@@ -226,6 +228,8 @@ fn load_file(path: &Path, root: &Path, visited: &mut HashMap<std::path::PathBuf,
         modules.push(ModuleInfo {
             raw: frame.file,
             label: module_label(&frame.path, root),
+            path: frame.path.clone(),
+            digest: crate::sha256::hex(frame.source.as_bytes()),
             uses: frame.uses.iter().map(|u| u.replace('\\', "/")).collect(),
         });
         visited.insert(frame.canonical, ModuleState::Loaded);
@@ -260,6 +264,23 @@ fn load_program_full(entry: &Path, recover: bool) -> Result<Loaded, FrontendErro
 
 pub(super) fn load_program(entry: &Path) -> Result<Program, String> {
     load_program_full(entry, false).map(|loaded| loaded.program).map_err(Into::into)
+}
+
+/// One file of the import graph, identified well enough for a build cache to
+/// re-check it without re-parsing: the path it was read from, a stable label,
+/// and the hash of the exact bytes that were compiled.
+pub struct SourceUnit { pub label: String, pub path: std::path::PathBuf, pub digest: String }
+
+/// The program plus the source units it was built from. The caller gets both in
+/// one pass so a cache never has to walk the import graph a second time.
+pub(super) fn load_with_units(entry: &Path) -> Result<(Program, Vec<SourceUnit>), FrontendError> {
+    let loaded = load_program_full(entry, false)?;
+    let units = loaded.modules.iter().map(|module| SourceUnit {
+        label: module.label.clone(),
+        path: module.path.clone(),
+        digest: module.digest.clone(),
+    }).collect();
+    Ok((loaded.program, units))
 }
 
 pub fn check_path(path: &Path) -> Result<(), String> {

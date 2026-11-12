@@ -7,7 +7,7 @@ mod types;
 mod declarations;
 mod loader;
 use loader::{load_program, parse_source};
-pub use loader::{check_path, check_path_diagnostic, describe_path, FrontendDiagnostic, FrontendError};
+pub use loader::{check_path, check_path_diagnostic, describe_path, FrontendDiagnostic, FrontendError, SourceUnit};
 mod capability_audit;
 use capability_audit::audit_generic_fn;
 mod codegen;
@@ -385,6 +385,23 @@ pub fn compile_path_parts(path: &Path) -> Result<(String, String), String> {
     let mut runtime = full;
     runtime.truncate(runtime_len);
     Ok((runtime, user))
+}
+
+/// A compilation result together with the exact source units behind it.
+/// The driver caches `runtime + user` and later re-checks every unit's digest;
+/// nothing here decides whether the output is current.
+pub struct TrackedC { pub runtime: String, pub user: String, pub units: Vec<SourceUnit> }
+
+/// Compile a file and report what the output depends on, in one pass. This is
+/// the only entry point that exposes the unit list; the plain `compile_path`
+/// forms stay the authority for what a program means.
+pub fn compile_path_tracked(path: &Path) -> Result<TrackedC, String> {
+    let (program, units) = loader::load_with_units(path).map_err(String::from)?;
+    let GeneratedC { full, runtime_len } = emit_program(program)?;
+    let user = full[runtime_len..].to_owned();
+    let mut runtime = full;
+    runtime.truncate(runtime_len);
+    Ok(TrackedC { runtime, user, units })
 }
 
 #[cfg(test)]

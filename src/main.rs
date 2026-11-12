@@ -2,6 +2,7 @@ use std::{env, ffi::{OsStr, OsString}, fs, path::{Path, PathBuf}, process::{Comm
 
 use ae_compiler::{fmt, frontend, harness, sha256};
 use frontend::compile_path;
+mod frontend_cache;
 
 const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae check --json <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae> [filter]\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
 
@@ -84,11 +85,14 @@ fn cache_limit() -> Option<u64> {
     raw.to_str()?.trim().parse::<u64>().ok().filter(|n| *n > 0)
 }
 
-fn entry_exe(entry: &Path) -> PathBuf { entry.join(if cfg!(windows) { "program.exe" } else { "program" }) }
-
-fn entry_bytes(entry: &Path) -> u64 {
-    [entry_exe(entry), entry.join("manifest")].iter()
-        .filter_map(|p| fs::metadata(p).ok())
+/// Sum of the regular files directly inside one cache entry directory. Both
+/// layouts (executable plus manifest, generated C plus entry) are flat, so a
+/// recursive walk would only add failure modes.
+fn dir_bytes(dir: &Path) -> u64 {
+    let Ok(read) = fs::read_dir(dir) else { return 0 };
+    read.flatten()
+        .filter_map(|e| e.metadata().ok())
+        .filter(|m| m.is_file())
         .map(|m| m.len())
         .sum()
 }
@@ -98,23 +102,32 @@ fn entry_bytes(entry: &Path) -> u64 {
 /// source of truth to keep in sync.
 fn touch_used(entry: &Path) { let _ = fs::write(entry.join("used"), b""); }
 
-fn entry_used(entry: &Path) -> std::time::SystemTime {
-    fs::metadata(entry.join("used")).and_then(|m| m.modified())
-        .or_else(|_| fs::metadata(entry_exe(entry)).and_then(|m| m.modified()))
+/// Last use of an entry directory. The marker file exists only for executable
+/// entries; for the frontend entries the directory's own timestamp is the
+/// clock, which moves whenever an entry file is rewritten.
+fn dir_used(dir: &Path) -> std::time::SystemTime {
+    fs::metadata(dir.join("used")).and_then(|m| m.modified())
+        .or_else(|_| fs::metadata(dir).and_then(|m| m.modified()))
         .unwrap_or(std::time::UNIX_EPOCH)
 }
 
-/// Drops least recently used entries until the cache fits the limit. Runs after
+/// Drops least recently used entries until the cache fits the limit. Both the
+/// executable cache and the frontend cache share the budget: a limit that
+/// counted only one of them would not bound the disk this tool uses. Runs after
 /// publishing; a delete that fails is not a build failure — the entry simply
 /// survives to the next prune.
 fn prune_cache(limit: u64) {
-    let entries = cache_root().join("entries");
-    let Ok(read) = fs::read_dir(&entries) else { return };
-    let mut found: Vec<(PathBuf, u64, std::time::SystemTime)> = read.flatten()
-        .map(|e| e.path())
-        .filter(|p| p.is_dir())
-        .map(|p| (p.clone(), entry_bytes(&p), entry_used(&p)))
-        .collect();
+    let root = cache_root();
+    let mut found: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();
+    for sub in ["entries", "frontend"] {
+        let Ok(read) = fs::read_dir(root.join(sub)) else { continue };
+        for entry in read.flatten() {
+            let path = entry.path();
+            if !path.is_dir() { continue; }
+            let (bytes, used) = (dir_bytes(&path), dir_used(&path));
+            found.push((path, bytes, used));
+        }
+    }
     let mut total: u64 = found.iter().map(|(_, size, _)| size).sum();
     if total <= limit { return; }
     found.sort_by_key(|(_, _, used)| *used);
@@ -274,6 +287,7 @@ fn build_c(c: &str, dir: &Path, release: bool, use_cache: bool) -> Result<PathBu
 
 fn cache_command(subcommand: Option<&OsString>) -> Result<u8, String> {
     let entries = cache_root().join("entries");
+    let frontend_entries = cache_root().join("frontend");
     match subcommand.and_then(|s| s.to_str()) {
         None | Some("stats") => {
             let mut count = 0usize;
@@ -286,19 +300,37 @@ fn cache_command(subcommand: Option<&OsString>) -> Result<u8, String> {
                     }
                 }
             }
+            let mut frontend_count = 0usize;
+            let mut frontend_bytes = 0u64;
+            if let Ok(read) = fs::read_dir(&frontend_entries) {
+                for entry in read.flatten() {
+                    if let Ok(meta) = fs::metadata(entry.path().join("program.c")) {
+                        frontend_count += 1;
+                        frontend_bytes += meta.len();
+                    }
+                }
+            }
             println!("entries: {count}");
             println!("bytes: {bytes}");
+            println!("frontend entries: {frontend_count}");
+            println!("frontend bytes: {frontend_bytes}");
             println!("limit: {}", cache_limit().map(|n| n.to_string()).unwrap_or_else(|| "none".into()));
             println!("dir: {}", entries.display());
             Ok(0)
         }
         Some("dir") => { println!("{}", entries.display()); Ok(0) }
         Some("clear") => {
-            match fs::remove_dir_all(&entries) {
-                Ok(()) => println!("cleared {}", entries.display()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => println!("cache is already empty"),
-                Err(e) => return Err(format!("clearing cache: {e}")),
+            // Both caches are cleared together: leaving the frontend entries
+            // behind would let a "cleared" cache still skip compilation.
+            let mut cleared = false;
+            for dir in [&entries, &frontend_entries] {
+                match fs::remove_dir_all(dir) {
+                    Ok(()) => { cleared = true; println!("cleared {}", dir.display()); }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(e) => return Err(format!("clearing {}: {e}", dir.display())),
+                }
             }
+            if !cleared { println!("cache is already empty"); }
             Ok(0)
         }
         Some(other) => Err(format!("unknown cache subcommand '{other}'; expected dir, clear, or stats\n{USAGE}")),
@@ -428,10 +460,34 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         }
         return Ok(0);
     }
-    let c = compile_path(input)?;
-    if timings_enabled() {
-        eprintln!("ae timing: frontend_and_codegen_ms={:.3}", started.elapsed().as_secs_f64() * 1000.0);
-    }
+    // `build` and `run` only need the C; if no source byte moved since the
+    // previous build, the frontend work is skipped entirely. `emit-c` and
+    // `check` always run the frontend, because their output *is* the
+    // frontend's answer.
+    let cacheable = matches!(cmd.as_str(), "build" | "run");
+    let c = match if cacheable { frontend_cache::lookup(&cache_root(), input) } else { None } {
+        Some(hit) => {
+            if timings_enabled() {
+                eprintln!("ae frontend-cache: hit (key {})", hit.key);
+                eprintln!("ae timing: frontend_and_codegen_ms=0.000 (frontend cache hit)");
+            }
+            hit.c
+        }
+        None => {
+            let tracked = frontend::compile_path_tracked(input)?;
+            let c = format!("{}{}", tracked.runtime, tracked.user);
+            let key = frontend_cache::store(&cache_root(), input, &tracked);
+            if timings_enabled() {
+                if cacheable {
+                    eprintln!("ae frontend-cache: miss (key {})", key.unwrap_or_else(|| "not stored".into()));
+                } else {
+                    eprintln!("ae frontend-cache: bypassed (this command always compiles)");
+                }
+                eprintln!("ae timing: frontend_and_codegen_ms={:.3}", started.elapsed().as_secs_f64() * 1000.0);
+            }
+            c
+        }
+    };
     match cmd.as_str() {
         "emit-c" => { print!("{c}"); Ok(0) },
         "run" => {

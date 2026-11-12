@@ -27,3 +27,10 @@ validated. Build memory passes use separate executable paths, and cold AE
 measurements use separate empty caches for timing and memory. Memory-pass failures
 abort the run rather than being reported as unavailable samples. Reports
 created before this change retain their original measurement limitations.
+
+Since ADR-0177 the driver also caches the generated C per source-file set, so a
+warm AE build no longer runs the frontend at all. Warm and no-modification
+build numbers from before that change therefore measured a different pipeline
+and are not like-for-like with later runs; `--cold` is unaffected. The cost
+removed by that cache on one synthetic 3,002-line program is in
+`bench/reports/2026-11-12-windows-frontend-cache.md`.

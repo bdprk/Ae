@@ -694,13 +694,75 @@ fn build_cache_serves_identical_executables_and_rebuilds_on_corruption() {
     assert!(clear.status.success());
     let stats = Command::new(env!("CARGO_BIN_EXE_ae")).arg("cache").arg("stats")
         .env("AE_CACHE", &cache).output().unwrap();
-    assert!(String::from_utf8_lossy(&stats.stdout).contains("entries: 0"));
+    assert_eq!(String::from_utf8_lossy(&stats.stdout).lines().next().unwrap_or(""), "entries: 0");
     let fourth = dir.join(if cfg!(windows) { "out4.exe" } else { "out4" });
     let miss = build(&fourth);
     assert!(miss.status.success(), "{}", String::from_utf8_lossy(&miss.stderr));
     assert!(String::from_utf8_lossy(&miss.stderr).contains("cache: miss"));
     let output = Command::new(&fourth).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "cached");
+    let _ = fs::remove_dir_all(&dir);
+}
+#[test]
+fn frontend_cache_reuses_generated_c_until_an_imported_file_changes() {
+    let dir = std::env::temp_dir().join(format!("ae-frontend-cache-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    let cache = dir.join("cache");
+    let source = dir.join("prog.ae");
+    let lib = dir.join("lib.ae");
+    fs::create_dir(&dir).unwrap();
+    fs::write(&lib, "pub fn answer() -> i64 { return 41; }").unwrap();
+    fs::write(&source, "use \"lib.ae\";\nfn main() { print(answer() + 1); }").unwrap();
+    let build = |out: &std::path::Path| Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("build").arg(&source).arg("-o").arg(out)
+        .env("AE_CACHE", &cache).env("AE_TIMINGS", "1").output().unwrap();
+    let stderr = |out: &std::process::Output| String::from_utf8_lossy(&out.stderr).into_owned();
+
+    // A cold build compiles the frontend and publishes the generated C.
+    let first = dir.join(if cfg!(windows) { "one.exe" } else { "one" });
+    let cold = build(&first);
+    assert!(cold.status.success(), "{}", stderr(&cold));
+    assert!(stderr(&cold).contains("frontend-cache: miss"), "{}", stderr(&cold));
+
+    // Nothing moved, so the second build must not run the frontend at all,
+    // and it must still produce the same executable.
+    let second = dir.join(if cfg!(windows) { "two.exe" } else { "two" });
+    let warm = build(&second);
+    assert!(warm.status.success(), "{}", stderr(&warm));
+    assert!(stderr(&warm).contains("frontend-cache: hit"), "{}", stderr(&warm));
+    assert_eq!(fs::read(&first).unwrap(), fs::read(&second).unwrap());
+    let output = Command::new(&second).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "42");
+
+    // Editing the imported file, not the entry file, must invalidate the entry:
+    // the unit list is what the cache is keyed on.
+    fs::write(&lib, "pub fn answer() -> i64 { return 42; }").unwrap();
+    let third = dir.join(if cfg!(windows) { "three.exe" } else { "three" });
+    let stale = build(&third);
+    assert!(stale.status.success(), "{}", stderr(&stale));
+    assert!(stderr(&stale).contains("frontend-cache: miss"), "{}", stderr(&stale));
+    let output = Command::new(&third).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "43");
+
+    // A damaged frontend entry is a miss, never a wrong binary.
+    let frontend = cache.join("frontend");
+    let entry = fs::read_dir(&frontend).unwrap().next().unwrap().unwrap().path();
+    fs::write(entry.join("program.c"), b"garbage").unwrap();
+    let fourth = dir.join(if cfg!(windows) { "four.exe" } else { "four" });
+    let repaired = build(&fourth);
+    assert!(repaired.status.success(), "{}", stderr(&repaired));
+    assert!(stderr(&repaired).contains("frontend-cache: miss"), "{}", stderr(&repaired));
+    let output = Command::new(&fourth).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "43");
+
+    // The report counts the frontend entries, and clearing removes them too.
+    let stats = || String::from_utf8_lossy(&Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("cache").arg("stats").env("AE_CACHE", &cache).output().unwrap().stdout).into_owned();
+    assert!(stats().contains("frontend entries: 1"), "{}", stats());
+    let clear = Command::new(env!("CARGO_BIN_EXE_ae")).arg("cache").arg("clear")
+        .env("AE_CACHE", &cache).output().unwrap();
+    assert!(clear.status.success());
+    assert!(stats().contains("frontend entries: 0"), "{}", stats());
     let _ = fs::remove_dir_all(&dir);
 }
 #[test]
@@ -3126,7 +3188,9 @@ fn cache_prunes_entries_beyond_the_configured_limit() {
     let first = dir.join(if cfg!(windows) { "one.exe" } else { "one" });
     let out = build(&first, Some("1"));
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    assert!(stats().contains("entries: 0"), "{}", stats());
+    // `frontend entries:` also ends in `entries: 0`, so compare the first line
+    // instead of searching the whole report.
+    assert_eq!(stats().lines().next().unwrap_or(""), "entries: 0", "{}", stats());
     assert!(stats().contains("limit: 1"), "{}", stats());
     let output = Command::new(&first).output().unwrap();
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "limited");
@@ -3136,7 +3200,7 @@ fn cache_prunes_entries_beyond_the_configured_limit() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let after = String::from_utf8_lossy(&Command::new(env!("CARGO_BIN_EXE_ae"))
         .arg("cache").arg("stats").env("AE_CACHE", &cache).env_remove("AE_CACHE_LIMIT").output().unwrap().stdout).into_owned();
-    assert!(after.contains("entries: 1"), "{after}");
+    assert_eq!(after.lines().next().unwrap_or(""), "entries: 1", "{after}");
     assert!(after.contains("limit: none"), "{after}");
     let _ = fs::remove_dir_all(&dir);
 }
