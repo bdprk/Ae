@@ -5,6 +5,7 @@ mod parser;
 mod closures;
 mod tree;
 mod cfg;
+mod movewalk;
 mod expression;
 mod types;
 mod declarations;

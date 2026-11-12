@@ -3275,6 +3275,26 @@ fn main() { let r = pick(E::A(7)); print(r); }
 }
 
 #[test]
+fn move_walk_agrees_with_the_parser_on_the_run_suite() {
+    // M2.5 L1: the CFG move walk runs as part of every compile; these
+    // programs exercise moves, re-initialization, borrows, and loop
+    // back-edges, and the walk must accept everything the parser accepts.
+    let suite = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run");
+    let mut checked = 0;
+    for entry in fs::read_dir(&suite).unwrap() {
+        let entry = entry.unwrap();
+        if entry.path().extension().and_then(|e| e.to_str()) != Some("ae") { continue; }
+        let source = fs::read_to_string(entry.path()).unwrap();
+        // Programs that intentionally fail at runtime still compile clean.
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-tree").arg(entry.path()).output().unwrap();
+        assert!(output.status.success(), "compile failed for {}: {}", entry.path().display(), String::from_utf8_lossy(&output.stderr));
+        let _ = source;
+        checked += 1;
+    }
+    assert!(checked > 50, "the run suite shrank: {checked} files");
+}
+
+#[test]
 fn emit_cfg_runs_clean_on_the_run_suite() {
     // Every construct the run suite uses must lower into a validated graph.
     let suite = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run");

@@ -296,7 +296,15 @@ fn load_program_full(entry: &Path, recover: bool) -> Result<Loaded, FrontendErro
     let mut modules = Vec::new();
     load_file(entry, root, &mut visited, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut generics, &mut next_id, &mut files, &mut mains, &mut modules, recover)?;
     if mains != 1 { return Err(format!("program must define exactly one main function (found {mains})").into()); }
-    Ok(Loaded { program: Program { files, structs, enums }, shared, generics, modules })
+    let program = Program { files, structs, enums };
+    // The CFG move walk re-derives the parser's move verdicts on the graph.
+    // It runs on accepted programs only, so a violation means the parser's
+    // single-pass rules and the dataflow disagree — an internal error, never
+    // a user-facing diagnostic.
+    if let Err(disagreement) = movewalk::verify_program_moves(&program) {
+        return Err(disagreement.into());
+    }
+    Ok(Loaded { program, shared, generics, modules })
 }
 
 pub(super) fn load_program(entry: &Path) -> Result<Program, String> {
