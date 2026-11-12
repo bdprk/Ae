@@ -1,0 +1,1 @@
+[{"file":"$DIR/bad_print_operands.ae","line":1,"column":33,"message":"cannot print a value of type vec"},{"file":"$DIR/bad_print_operands.ae","line":2,"column":34,"message":"cannot print a value of type vec"}]

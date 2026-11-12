@@ -1,0 +1,1 @@
+[{"file":"$DIR/invalid_indexing.ae","line":1,"column":28,"message":"expected RParen, found LBracket"},{"file":"$DIR/invalid_indexing.ae","line":2,"column":32,"message":"expected RParen, found LBracket"}]

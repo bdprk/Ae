@@ -1,0 +1,1 @@
+[{"file":"$DIR/duplicate_and_missing.ae","line":1,"column":38,"message":"duplicate variable 'x'"},{"file":"$DIR/duplicate_and_missing.ae","line":2,"column":28,"message":"unknown variable 'absent'"}]

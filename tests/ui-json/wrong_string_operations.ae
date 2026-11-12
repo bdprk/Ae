@@ -1,0 +1,3 @@
+fn first() -> i64 { print(contains(1, "x")); return 0; }
+fn second() -> i64 { print(contains("x", 1)); return 0; }
+fn main() {}

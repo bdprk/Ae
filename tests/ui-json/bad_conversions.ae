@@ -1,0 +1,3 @@
+fn first() -> i64 { let x = to_i64(true); return 0; }
+fn second() -> i64 { let y = to_f64(false); return 0; }
+fn main() {}

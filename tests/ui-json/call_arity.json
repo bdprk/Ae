@@ -1,0 +1,1 @@
+[{"file":"$DIR/call_arity.ae","line":1,"column":34,"message":"sqrt expects 1 f64 argument(s)"},{"file":"$DIR/call_arity.ae","line":2,"column":38,"message":"sqrt takes 1 argument(s)"}]

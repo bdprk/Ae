@@ -1,0 +1,1 @@
+[{"file":"$DIR/assert_and_condition.ae","line":1,"column":29,"message":"assert requires a boolean condition"},{"file":"$DIR/assert_and_condition.ae","line":2,"column":29,"message":"condition must be a boolean expression"}]

@@ -1,0 +1,3 @@
+fn first() -> i64 { let x = -true; return 0; }
+fn second() -> i64 { let y = !1; return 0; }
+fn main() {}

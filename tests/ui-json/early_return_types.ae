@@ -1,0 +1,3 @@
+fn first() -> i64 { if true { return false; } return 0; }
+fn second() -> i64 { if true { return true; } return 0; }
+fn main() {}

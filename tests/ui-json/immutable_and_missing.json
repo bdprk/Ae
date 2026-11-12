@@ -1,0 +1,1 @@
+[{"file":"$DIR/immutable_and_missing.ae","line":1,"column":32,"message":"cannot assign to immutable variable 'x'"},{"file":"$DIR/immutable_and_missing.ae","line":2,"column":28,"message":"unknown variable 'absent'"}]

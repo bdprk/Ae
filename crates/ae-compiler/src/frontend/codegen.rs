@@ -1,0 +1,1119 @@
+//! Statement/expression emission to C.
+use super::*;
+
+// Expression emission tracks ownership of string values so every buffer is
+// released exactly once: moved variables are nulled after hand-off, owned
+// temporaries are consumed or freed by their statement, and releases are
+// idempotent even if analysis and emission ever disagree.
+#[derive(Debug)]
+pub(super) struct Emitted { text: String, ty: Type, owned: bool, moves: Vec<(usize, Type)>, materialized: bool }
+impl Emitted {
+    fn value(text: String, ty: Type) -> Self { Emitted { text, ty, owned: false, moves: Vec::new(), materialized: true } }
+    fn moved(id: usize, ty: Type, text: String) -> Self { Emitted { text, ty, owned: true, moves: vec![(id, ty)], materialized: true } }
+}
+
+// Rust's Debug formatting is the shortest decimal that round-trips and always
+// carries a '.' or an exponent, so it is a valid C double literal. Non-finite
+// values never reach here: the lexer rejects them (ADR-37).
+pub(super) fn c_float_literal(value: f64) -> String {
+    let text = format!("{value:?}");
+    if text.contains(['.', 'e', 'E']) { text } else { format!("{text}.0") }
+}
+
+pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> Emitted {
+    let emitted = match expr {
+        Expr::Number(n) => Emitted::value(format!("INT64_C({n})"), Type::Int),
+        Expr::FloatLit(x) => Emitted::value(c_float_literal(*x), Type::F64),
+        Expr::ToF64(value, line, column) => {
+            let t = emit_expr(value, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    double t{id} = ae_f64_from_i64({}, {line}, {column});\n", t.text));
+            Emitted { text: format!("t{id}"), ty: Type::F64, owned: false, moves: t.moves, materialized: true }
+        }
+        Expr::ToI64(value, ty, line, column) => {
+            let t = emit_expr(value, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_f64_to_i64({}, {line}, {column});\n", ty.c_temp(), t.text));
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::MathCall(index, args, _line, _column) => {
+            // Direct libm call: <math.h> is already in every generated C (the
+            // float formatter needs it), no runtime function or pruning root
+            // is involved. f64 arguments own nothing, so no move tracking.
+            let c_symbol = MATH_FNS[*index as usize].1;
+            let mut parts = Vec::new();
+            for arg in args {
+                let t = emit_expr(arg, out, next, false);
+                parts.push(t.text);
+            }
+            let id = *next; *next += 1;
+            out.push_str(&format!("    double t{id} = {c_symbol}({});\n", parts.join(", ")));
+            Emitted { text: format!("t{id}"), ty: Type::F64, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::FloatToString(value, line, column) => {
+            let t = emit_expr(value, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_f64_to_string({}, {line}, {column});\n", t.text));
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::BoolLit(b) => Emitted::value(if *b { "true" } else { "false" }.to_owned(), Type::Bool),
+        Expr::StrLit(text, line, column) => Emitted {
+            text: format!("ae_str_from(\"{text}\", {line}, {column})"),
+            ty: Type::String, owned: true, moves: Vec::new(), materialized: false,
+        },
+        Expr::Variable(id, ty, line, column) => {
+            if *ty == Type::VecRef {
+                out.push_str(&format!("    if (!v{id}->data) ae_fail(\"use of moved vector\", {line}, {column});
+"));
+                Emitted { text: format!("(*v{id})"), ty: Type::Vec, owned: false, moves: Vec::new(), materialized: true }
+            } else if *ty == Type::StrVecRef {
+                out.push_str(&format!("    if (!v{id}->data) ae_fail(\"use of moved vector\", {line}, {column});\n"));
+                Emitted { text: format!("(*v{id})"), ty: Type::StrVec, owned: false, moves: Vec::new(), materialized: true }
+            } else if *ty == Type::VecFRef {
+                out.push_str(&format!("    if (!v{id}->data) ae_fail(\"use of moved vector\", {line}, {column});\n"));
+                Emitted { text: format!("(*v{id})"), ty: Type::VecF, owned: false, moves: Vec::new(), materialized: true }
+            } else if ty.owned() {
+                // Runtime backstop: a moved value's slot is empty.
+                match ty {
+                    // Structs and enums have no runtime sentinel: the compile-time
+                    // move set is their only guard (documented limitation).
+                    Type::Struct(_) | Type::Enum(_, _) => {}
+                    _ => {
+                        let probe = match ty { Type::Vec | Type::StrVec | Type::VecF => format!("!v{id}.data"), Type::Map | Type::MapF => format!("!v{id}.slots"), _ => format!("!v{id}.ptr") };
+                        let message = match ty { Type::Vec | Type::StrVec | Type::VecF => "use of moved vector", Type::Map | Type::MapF => "use of moved map", _ => "use of moved string" };
+                        out.push_str(&format!("    if ({probe}) ae_fail(\"{message}\", {line}, {column});\n"));
+                    }
+                }
+                if moving {
+                    let t = *next; *next += 1;
+                    out.push_str(&format!("    {}t{t} = v{id};\n", ty.c_temp()));
+                    Emitted::moved(*id, *ty, format!("t{t}"))
+                } else {
+                    Emitted { text: format!("v{id}"), ty: *ty, owned: false, moves: Vec::new(), materialized: true }
+                }
+            } else {
+                Emitted::value(format!("v{id}"), *ty)
+            }
+        }
+        Expr::Call(id, args, ret) => {
+            let mut moves = Vec::new();
+            // A read-only argument only borrows its value, so a temporary
+            // (literal or `+` result) stays owned by this expression and is
+            // released after the call. Without this, `f("a" + b)` leaks.
+            let mut view_temps: Vec<String> = Vec::new();
+            let arguments = args.iter().map(|arg| match arg {
+                Argument::Value(e) => { let t = emit_expr(e, out, next, true); moves.extend(t.moves); t.text }
+                Argument::Borrow(id, is_vec) => if *is_vec { format!("&v{id}") } else { format!("v{id}") },
+                Argument::View(e) => {
+                    let t = emit_expr(e, out, next, false);
+                    moves.extend(t.moves);
+                    if t.owned { view_temps.push(t.text.clone()); }
+                    format!("AE_VIEW({})", t.text)
+                }
+            }).collect::<Vec<_>>().join(", ");
+            let t = *next; *next += 1;
+            out.push_str(&format!("    {}t{t} = ae_fn_{id}({arguments});\n", ret.c_temp()));
+            for text in &view_temps { out.push_str(&format!("    ae_str_release(&{text});\n")); }
+            null_moves(out, &moves);
+            Emitted { text: format!("t{t}"), ty: *ret, owned: ret.owned(), moves: Vec::new(), materialized: true }
+        }
+        Expr::VecLit(values, vector_ty, line, column) => {
+            let t = *next; *next += 1;
+            let (c_ty, new_fn, push_fn) = if *vector_ty == Type::VecF {
+                ("ae_f64vec", "ae_f64vec_new", "ae_f64vec_push")
+            } else {
+                ("ae_vec", "ae_vec_new", "ae_vec_push")
+            };
+            out.push_str(&format!("    {c_ty} t{t} = {new_fn}({line}, {column});\n"));
+            for value in values {
+                let element = emit_expr(value, out, next, false);
+                out.push_str(&format!("    {push_fn}(&t{t}, {}, {line}, {column});\n", element.text));
+                null_moves(out, &element.moves);
+            }
+            Emitted { text: format!("t{t}"), ty: *vector_ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::VecIndex(id, index, line, col, by_ref, elem_ty) => {
+            let (check, receiver) = if *by_ref {
+                (format!("if (!v{id}->data) ae_fail(\"use of moved vector\", {line}, {col});"), format!("(*v{id})"))
+            } else {
+                (format!("if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});"), format!("v{id}"))
+            };
+            out.push_str(&format!("    {check}\n"));
+            let i = emit_expr(index, out, next, false);
+            let get = if *elem_ty == Type::F64 {
+                format!("ae_f64vec_get({receiver}, {}, {line}, {col})", i.text)
+            } else {
+                format!("ae_vec_get({receiver}, {}, {line}, {col})", i.text)
+            };
+            Emitted { text: get, ty: *elem_ty, owned: false, moves: i.moves, materialized: false }
+        }
+        Expr::Index(id, len, index, line, col) => {
+            let i = emit_expr(index, out, next, false);
+            Emitted { text: format!("v{id}[ae_index({}, {len}, {line}, {col})]", i.text), ty: Type::Int, owned: false, moves: i.moves, materialized: false }
+        }
+        Expr::Len(e, line, col) => {
+            let t = emit_expr(e, out, next, false);
+            let id = *next; *next += 1;
+            let call = match t.ty {
+                Type::String | Type::StrView => format!("ae_str_len(AE_VIEW({}), {line}, {col})", t.text),
+                Type::StrVec => format!("ae_strvec_len({}, {line}, {col})", t.text),
+                Type::VecF => format!("ae_f64vec_len({}, {line}, {col})", t.text),
+                Type::Map => format!("ae_map_len(&{}, {line}, {col})", t.text),
+                Type::MapF => format!("ae_mapf_len(&{}, {line}, {col})", t.text),
+                _ => format!("ae_vec_len({}, {line}, {col})", t.text),
+            };
+            out.push_str(&format!("    int64_t t{id} = {call};\n"));
+            if t.owned { drop_owned_temp(out, &t); }
+            Emitted { text: format!("t{id}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Neg(a, line, column) => {
+            let t = emit_expr(a, out, next, false);
+            if t.ty == Type::F64 {
+                Emitted { text: format!("-({})", t.text), ty: Type::F64, owned: false, moves: t.moves, materialized: false }
+            } else {
+                Emitted { text: format!("ae_neg({}, {line}, {column})", t.text), ty: Type::Int, owned: false, moves: t.moves, materialized: false }
+            }
+        }
+        Expr::Not(a) => {
+            let t = emit_expr(a, out, next, false);
+            Emitted { text: format!("!{}", t.text), ty: Type::Bool, owned: false, moves: t.moves, materialized: false }
+        }
+        Expr::ReadFile(e, line, col) => {
+            let t = emit_expr(e, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_read_file({}.ptr, {line}, {col});
+", t.text));
+            // The path is only read: an owned temporary is released here, a
+            // named slot keeps owning its buffer.
+            if t.owned { drop_owned_temp(out, &t); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::WriteFile(path, content, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let c = emit_expr(content, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{id} = ae_write_file({}, AE_VIEW({}), {line}, {col});
+", p.text, c.text));
+            // Both operands are read, never consumed by the call.
+            if p.owned { drop_owned_temp(out, &p); }
+            if c.owned { drop_owned_temp(out, &c); }
+            Emitted { text: format!("t{id}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Bytes(e, line, col) => {
+            let t = emit_expr(e, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_vec t{id} = ae_bytes(AE_VIEW({}), {line}, {col});
+", t.text));
+            if t.owned { drop_owned_temp(out, &t); }
+            Emitted { text: format!("t{id}"), ty: Type::Vec, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Slice(e, start, end, line, col) => {
+            let t = emit_expr(e, out, next, false);
+            let st = emit_expr(start, out, next, false);
+            let en = emit_expr(end, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_slice(AE_VIEW({}), {}, {}, {line}, {col});
+", t.text, st.text, en.text));
+            if t.owned { drop_owned_temp(out, &t); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Contains(haystack, needle, line, col) => {
+            let h = emit_expr(haystack, out, next, false);
+            let n = emit_expr(needle, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    bool t{id} = ae_contains(AE_VIEW({}), AE_VIEW({}), {line}, {col});
+", h.text, n.text));
+            if h.owned { drop_owned_temp(out, &h); }
+            if n.owned { drop_owned_temp(out, &n); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Find(haystack, needle, ty, line, col) => {
+            let h = emit_expr(haystack, out, next, false);
+            let n = emit_expr(needle, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_find(AE_VIEW({}), AE_VIEW({}), {line}, {col});\n", ty.c_temp(), h.text, n.text));
+            if n.owned { drop_owned_temp(out, &n); }
+            if h.owned { drop_owned_temp(out, &h); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::StartsWith(s, prefix) => {
+            let h = emit_expr(s, out, next, false);
+            let p = emit_expr(prefix, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    bool t{id} = ae_starts_with(AE_VIEW({}), AE_VIEW({}));\n", h.text, p.text));
+            if h.owned { drop_owned_temp(out, &h); }
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::EndsWith(s, suffix) => {
+            let h = emit_expr(s, out, next, false);
+            let p = emit_expr(suffix, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    bool t{id} = ae_ends_with(AE_VIEW({}), AE_VIEW({}));\n", h.text, p.text));
+            if h.owned { drop_owned_temp(out, &h); }
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Trim(s, line, col) => {
+            let t = emit_expr(s, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_trim(AE_VIEW({}), {line}, {col});\n", t.text));
+            if t.owned { drop_owned_temp(out, &t); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Split(s, sep, line, col) => {
+            let h = emit_expr(s, out, next, false);
+            let n = emit_expr(sep, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_strvec t{id} = ae_split(AE_VIEW({}), AE_VIEW({}), {line}, {col});\n", h.text, n.text));
+            if h.owned { drop_owned_temp(out, &h); }
+            if n.owned { drop_owned_temp(out, &n); }
+            Emitted { text: format!("t{id}"), ty: Type::StrVec, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Args(line, col) => {
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_strvec t{id} = ae_args({line}, {col});\n"));
+            Emitted { text: format!("t{id}"), ty: Type::StrVec, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::StrVecIndex(id, index, line, col, by_ref) => {
+            let (check, access) = if *by_ref {
+                (format!("if (!v{id}->data) ae_fail(\"use of moved vector\", {line}, {col});"), format!("ae_strvec_get_const(v{id}"))
+            } else {
+                (format!("if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});"), format!("ae_strvec_get(&v{id}"))
+            };
+            out.push_str(&format!("    {check}\n"));
+            let i = emit_expr(index, out, next, false);
+            // Elements are borrow-only: the pointer view never owns.
+            Emitted { text: format!("(*{access}, {}, {line}, {col}))", i.text), ty: Type::String, owned: false, moves: i.moves, materialized: true }
+        }
+        Expr::SliceView(vid, field, start, end, line, col) => {
+            // The base is a borrowed string (a variable, or a string field of a
+            // struct variable); it cannot move, be reassigned, or have that
+            // field written while the view exists (borrow tracker).
+            let access = match field { Some(name) => format!("v{vid}.{name}"), None => format!("v{vid}") };
+            let st = emit_expr(start, out, next, false);
+            let en = emit_expr(end, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    if (!{access}.ptr) ae_fail(\"use of moved string\", {line}, {col});\n"));
+            out.push_str(&format!("    ae_strview t{id} = ae_slice_view(AE_VIEW({access}), {}, {}, {line}, {col});\n", st.text, en.text));
+            Emitted { text: format!("t{id}"), ty: Type::StrView, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Tokens(vid, field, sep, line, col) => {
+            // The cursor only remembers a view of the base and the separator;
+            // it allocates nothing, so it needs no release (ADR-53).
+            let access = match field { Some(name) => format!("v{vid}.{name}"), None => format!("v{vid}") };
+            let sp = emit_expr(sep, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    if (!{access}.ptr) ae_fail(\"use of moved string\", {line}, {col});\n"));
+            out.push_str(&format!("    ae_tokens t{id} = ae_tokens_new(AE_VIEW({access}), AE_VIEW({}), {line}, {col});\n", sp.text));
+            // The cursor copies the separator bytes, so the temporary can be
+            // released here without leaving a dangling pointer (ADR-53).
+            if sp.owned { drop_owned_temp(out, &sp); }
+            Emitted { text: format!("t{id}"), ty: Type::Tokens, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Join(vid, sep, line, col) => {
+            out.push_str(&format!("    if (!v{vid}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+            let n = emit_expr(sep, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_join(&v{vid}, AE_VIEW({}), {line}, {col});\n", n.text));
+            if n.owned { drop_owned_temp(out, &n); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Lines(s, line, col) => {
+            let t = emit_expr(s, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_strvec t{id} = ae_lines(AE_VIEW({}), {line}, {col});
+", t.text));
+            if t.owned { drop_owned_temp(out, &t); }
+            Emitted { text: format!("t{id}"), ty: Type::StrVec, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::CountLinesWith(s, pat, line, col) => {
+            let t = emit_expr(s, out, next, false);
+            let pt = emit_expr(pat, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{id} = ae_count_lines_with(AE_VIEW({}), AE_VIEW({}), {line}, {col});\n", t.text, pt.text));
+            if t.owned { drop_owned_temp(out, &t); }
+            if pt.owned { drop_owned_temp(out, &pt); }
+            Emitted { text: format!("t{id}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::StructLit(sid, values) => {
+            let mut parts = Vec::new();
+            let mut moves = Vec::new();
+            for v in values {
+                let e = emit_expr(v, out, next, true);
+                moves.extend(e.moves);
+                parts.push(e.text);
+            }
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_t{sid} t{id} = {{ {} }};\n", parts.join(", ")));
+            null_moves(out, &moves);
+            Emitted { text: format!("t{id}"), ty: Type::Struct(*sid), owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::EnumLit(_name, eid, vidx, values) => {
+            let mut parts = Vec::new();
+            let mut moves = Vec::new();
+            for value in values.iter() {
+                let e = emit_expr(value, out, next, true);
+                moves.extend(e.moves);
+                parts.push(e.text);
+            }
+            let id = *next; *next += 1;
+            let payload = if parts.is_empty() { "{ 0 }".to_owned() } else { format!("{{ .v{vidx} = {{ {} }} }}", parts.join(", ")) };
+            out.push_str(&format!("    ae_e{eid} t{id} = {{ AE_E{eid}_{vidx}, {payload} }};\n"));
+            null_moves(out, &moves);
+            Emitted { text: format!("t{id}"), ty: Type::Enum(_name, *eid), owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryReadFile(path, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_read_file({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryWriteFile(path, content, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let c = emit_expr(content, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_write_file({}.ptr, AE_VIEW({}), {line}, {col});\n", ty.c_temp(), p.text, c.text));
+            if c.owned { drop_owned_temp(out, &c); }
+            // The path may be an owned temporary too (path_join of two views,
+            // for instance); it is consumed by the call, not by the caller.
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryAppendFile(path, content, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let c = emit_expr(content, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_append_file({}.ptr, AE_VIEW({}), {line}, {col});\n", ty.c_temp(), p.text, c.text));
+            if c.owned { drop_owned_temp(out, &c); }
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::JsonGet(doc, path, ty, line, col) => {
+            let d = emit_expr(doc, out, next, false);
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_json_get({}.ptr, {}.len, {}.ptr, {}.len, {line}, {col});\n", ty.c_temp(), d.text, d.text, p.text, p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            if d.owned { drop_owned_temp(out, &d); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::JsonInt(doc, path, ty, line, col) => {
+            let d = emit_expr(doc, out, next, false);
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_json_int({}.ptr, {}.len, {}.ptr, {}.len, {line}, {col});\n", ty.c_temp(), d.text, d.text, p.text, p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            if d.owned { drop_owned_temp(out, &d); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::JsonBool(doc, path, ty, line, col) => {
+            let d = emit_expr(doc, out, next, false);
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_json_bool({}.ptr, {}.len, {}.ptr, {}.len, {line}, {col});\n", ty.c_temp(), d.text, d.text, p.text, p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            if d.owned { drop_owned_temp(out, &d); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::JsonLen(doc, path, ty, line, col) => {
+            let d = emit_expr(doc, out, next, false);
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_json_len({}.ptr, {}.len, {}.ptr, {}.len, {line}, {col});\n", ty.c_temp(), d.text, d.text, p.text, p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            if d.owned { drop_owned_temp(out, &d); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::JsonHas(doc, path, line, col) => {
+            let d = emit_expr(doc, out, next, false);
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    const bool t{id} = ae_json_has({}.ptr, {}.len, {}.ptr, {}.len, {line}, {col});\n", d.text, d.text, p.text, p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            if d.owned { drop_owned_temp(out, &d); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Env(variable, ty, line, col) => {
+            let v = emit_expr(variable, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_env({}.ptr, {line}, {col});\n", ty.c_temp(), v.text));
+            if v.owned { drop_owned_temp(out, &v); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::RunCommand(program, vid, ty, line, col) => {
+            out.push_str(&format!("    if (!v{vid}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+            let p = emit_expr(program, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_run_command({}.ptr, &v{vid}, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::F64VecNew(line, col) => Emitted {
+            text: format!("ae_f64vec_new({line}, {col})"),
+            ty: Type::VecF, owned: true, moves: Vec::new(), materialized: true
+        },
+        Expr::StrVecNew(line, col) => Emitted {
+            text: format!("ae_strvec_new({line}, {col})"),
+            ty: Type::StrVec, owned: true, moves: Vec::new(), materialized: false,
+        },
+        Expr::ReadStdin(ty, line, col) => {
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_read_stdin({line}, {col});\n", ty.c_temp()));
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Cwd(ty, line, col) => {
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_cwd({line}, {col});\n", ty.c_temp()));
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::NowMs => {
+            let id = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{id} = ae_now_ms();\n"));
+            Emitted { text: format!("t{id}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::NowS => {
+            let id = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{id} = ae_now_s();\n"));
+            Emitted { text: format!("t{id}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryListDir(path, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_list_dir({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::PathJoin(dir, name, line, col) => {
+            let d = emit_expr(dir, out, next, false);
+            let n = emit_expr(name, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_path_join(AE_VIEW({}), AE_VIEW({}), {line}, {col});\n", d.text, n.text));
+            if d.owned { drop_owned_temp(out, &d); }
+            if n.owned { drop_owned_temp(out, &n); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::PathName(path, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_path_name(AE_VIEW({}), {line}, {col});\n", p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::PathParent(path, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_path_parent(AE_VIEW({}), {line}, {col});\n", p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryFileInfo(path, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_file_info({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryCopyFile(from, to, ty, line, col) => {
+            let a = emit_expr(from, out, next, false);
+            let b = emit_expr(to, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_copy_file({}.ptr, {}.ptr, {line}, {col});\n", ty.c_temp(), a.text, b.text));
+            if a.owned { drop_owned_temp(out, &a); }
+            if b.owned { drop_owned_temp(out, &b); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryRenamePath(from, to, ty, line, col) => {
+            let a = emit_expr(from, out, next, false);
+            let b = emit_expr(to, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_rename_path({}.ptr, {}.ptr, {line}, {col});\n", ty.c_temp(), a.text, b.text));
+            if a.owned { drop_owned_temp(out, &a); }
+            if b.owned { drop_owned_temp(out, &b); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryRemoveFile(path, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_remove_file({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::MapNew(line, col, kind) => {
+            let id = *next; *next += 1;
+            let (c_ty, new_fn, ty) = if *kind == MapKind::Float {
+                ("ae_mapf", "ae_mapf_new", Type::MapF)
+            } else {
+                ("ae_map", "ae_map_new", Type::Map)
+            };
+            out.push_str(&format!("    {c_ty} t{id} = {new_fn}({line}, {col});\n"));
+            Emitted { text: format!("t{id}"), ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::MapGet(place, key, ty, line, col) => {
+            let k = emit_expr(key, out, next, false);
+            let id = *next; *next += 1;
+            let get_fn = if matches!(ty, Type::Enum(name, _) if *name == "FloatResult") { "ae_mapf_get" } else { "ae_map_get" };
+            out.push_str(&format!("    {}t{id} = {get_fn}(&{}, AE_VIEW({}), {line}, {col});\n", ty.c_temp(), place.text(), k.text));
+            if k.owned { drop_owned_temp(out, &k); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::MapHas(place, key, line, col) => {
+            let k = emit_expr(key, out, next, false);
+            let id = *next; *next += 1;
+            let has_fn = if place.f64_value() { "ae_mapf_has" } else { "ae_map_has" };
+            out.push_str(&format!("    bool t{id} = {has_fn}(&{}, AE_VIEW({}), {line}, {col});\n", place.text(), k.text));
+            if k.owned { drop_owned_temp(out, &k); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::MapInc(place, key, delta, line, col) => {
+            let k = emit_expr(key, out, next, false);
+            let d = emit_expr(delta, out, next, false);
+            let id = *next; *next += 1;
+            let (inc_fn, c_ty, ty) = if place.f64_value() {
+                ("ae_mapf_inc", "double", Type::F64)
+            } else {
+                ("ae_map_inc", "int64_t", Type::Int)
+            };
+            out.push_str(&format!("    {c_ty} t{id} = {inc_fn}(&{}, AE_VIEW({}), {}, {line}, {col});\n", place.text(), k.text, d.text));
+            if d.owned { drop_owned_temp(out, &d); }
+            if k.owned { drop_owned_temp(out, &k); }
+            Emitted { text: format!("t{id}"), ty, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::MapRemove(place, key, line, col) => {
+            let k = emit_expr(key, out, next, false);
+            let id = *next; *next += 1;
+            let remove_fn = if place.f64_value() { "ae_mapf_remove" } else { "ae_map_remove" };
+            out.push_str(&format!("    bool t{id} = {remove_fn}(&{}, AE_VIEW({}), {line}, {col});\n", place.text(), k.text));
+            if k.owned { drop_owned_temp(out, &k); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::MapKeys(place, line, col) => {
+            let id = *next; *next += 1;
+            let keys_fn = if place.f64_value() { "ae_mapf_keys" } else { "ae_map_keys" };
+            out.push_str(&format!("    ae_strvec t{id} = {keys_fn}(&{}, {line}, {col});\n", place.text()));
+            Emitted { text: format!("t{id}"), ty: Type::StrVec, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryRemoveDir(path, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_remove_dir({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::TryCreateDir(path, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_try_create_dir({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::SetCwd(path, ty, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_set_cwd({}.ptr, {line}, {col});\n", ty.c_temp(), p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Utf8Len(e, line, col) => {
+            let t = emit_expr(e, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{id} = ae_utf8_len(AE_VIEW({}), {line}, {col});\n", t.text));
+            if t.owned { drop_owned_temp(out, &t); }
+            Emitted { text: format!("t{id}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Utf8Prefix(e, count, line, col) => {
+            let t = emit_expr(e, out, next, false);
+            let n = emit_expr(count, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_utf8_prefix(AE_VIEW({}), {}, {line}, {col});\n", t.text, n.text));
+            if t.owned { drop_owned_temp(out, &t); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::PathExists(path, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    bool t{id} = ae_path_exists({}.ptr, {line}, {col});\n", p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::PathIsDir(path, line, col) => {
+            let p = emit_expr(path, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    bool t{id} = ae_path_is_dir({}.ptr, {line}, {col});\n", p.text));
+            if p.owned { drop_owned_temp(out, &p); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::ParseInt(text, ty, line, col) => {
+            let t = emit_expr(text, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    {}t{id} = ae_parse_int(AE_VIEW({}), {line}, {col});\n", ty.c_temp(), t.text));
+            if t.owned { drop_owned_temp(out, &t); }
+            Emitted { text: format!("t{id}"), ty: *ty, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::ToString(value, line, col) => {
+            let t = emit_expr(value, out, next, false);
+            let id = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{id} = ae_to_string({}, {line}, {col});\n", t.text));
+            if t.owned { drop_owned_temp(out, &t); }
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Field(base, fname, fty) => {
+            let b = emit_expr(base, out, next, false);
+            if fty.owned() {
+                // Owned fields are borrows: inline, consumer never releases.
+                Emitted { text: format!("{}.{}", b.text, fname), ty: *fty, owned: false, moves: b.moves, materialized: true }
+            } else {
+                // Scalars copy immediately: a later release of the base must
+                // not clobber the value (return paths release before return).
+                Emitted { text: format!("{}.{}", b.text, fname), ty: *fty, owned: false, moves: b.moves, materialized: false }
+            }
+        }
+        Expr::StrEq(a, b, negated) => {
+            let l = emit_expr(a, out, next, false);
+            let r = emit_expr(b, out, next, false);
+            let id = *next; *next += 1;
+            let cmp = format!("ae_str_eq(AE_VIEW({}), AE_VIEW({}))", l.text, r.text);
+            let text = if *negated { format!("!{cmp}") } else { cmp };
+            out.push_str(&format!("    bool t{id} = {text};
+"));
+            if l.owned { drop_owned_temp(out, &l); }
+            if r.owned { drop_owned_temp(out, &r); }
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Binary(a, op, b, line, column, ty) if *op == Kind::And || *op == Kind::Or => {
+            let l = emit_expr(a, out, next, false);
+            let id = *next; *next += 1;
+            // `&&` starts false and fills the result only when the left side
+            // is true; `||` mirrors it. The right operand's statements land
+            // inside the if body, giving real short-circuit semantics.
+            let initial = if *op == Kind::And { "false" } else { "true" };
+            let guard = if *op == Kind::And { l.text.clone() } else { format!("!{}", l.text) };
+            out.push_str(&format!("    bool t{id} = {initial};\n    if ({guard}) {{\n"));
+            let r = emit_expr(b, out, next, false);
+            out.push_str(&format!("    t{id} = {};\n    }}\n", r.text));
+            Emitted { text: format!("t{id}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::Binary(a, op, b, line, column, ty) if *op == Kind::Plus && *ty == Type::String => {
+            // A literal operand is program text, not an owned value: emitting
+            // it as ae_str_from would allocate and free a fresh buffer on
+            // every evaluation only so ae_str_cat could free it again.
+            // The fused helpers copy the literal straight into the result and
+            // consume just the non-literal side. A literal is a pure
+            // expression, so skipping its evaluation changes nothing.
+            let owned_part = |part: &Emitted| if part.owned {
+                part.text.clone()
+            } else {
+                format!("ae_str_copy_view(AE_VIEW({}), {line}, {column})", part.text)
+            };
+            let id = *next; *next += 1;
+            // A `to_string(i64)` on the other side also skips the allocator:
+            // the digits are formatted into a stack buffer that dies with the
+            // expression, so `"k" + to_string(n)` performs one allocation in
+            // total. Same formatter, same value, no owned temporary.
+            let digits_of = |part: &Expr, out: &mut String, next: &mut usize| -> Option<String> {
+                if let Expr::ToString(inner, _, _) = part {
+                    let v = emit_expr(inner, out, next, false);
+                    debug_assert_eq!(v.ty, Type::Int);
+                    return Some(v.text);
+                }
+                None
+            };
+            if let Expr::StrLit(text, _, _) = a.as_ref() {
+                if let Some(value) = digits_of(b, out, next) {
+                    out.push_str(&format!("    char buf{id}[24];\n    const int64_t dlen{id} = ae_int_to_buf({value}, buf{id}, {line}, {column});\n"));
+                    out.push_str(&format!("    ae_string t{id} = ae_str_cat_lit_buf(\"{text}\", buf{id}, dlen{id}, {line}, {column});\n"));
+                    return Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true };
+                }
+                let r = emit_expr(b, out, next, true);
+                let right = owned_part(&r);
+                out.push_str(&format!("    ae_string t{id} = ae_str_cat_lit_left(\"{text}\", {right}, {line}, {column});\n"));
+                null_moves(out, &r.moves);
+                return Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true };
+            }
+            if let Expr::StrLit(text, _, _) = b.as_ref() {
+                if let Some(value) = digits_of(a, out, next) {
+                    out.push_str(&format!("    char buf{id}[24];\n    const int64_t dlen{id} = ae_int_to_buf({value}, buf{id}, {line}, {column});\n"));
+                    out.push_str(&format!("    ae_string t{id} = ae_str_cat_buf_lit(buf{id}, dlen{id}, \"{text}\", {line}, {column});\n"));
+                    return Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true };
+                }
+                let l = emit_expr(a, out, next, true);
+                let left = owned_part(&l);
+                out.push_str(&format!("    ae_string t{id} = ae_str_cat_lit_right({left}, \"{text}\", {line}, {column});\n"));
+                null_moves(out, &l.moves);
+                return Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true };
+            }
+            let l = emit_expr(a, out, next, true);
+            let r = emit_expr(b, out, next, true);
+            // ae_str_cat frees both operands, so only a value this
+            // expression actually owns may be handed over. Views, vec elements
+            // and struct fields are borrows: they are copied instead, and the
+            // borrow stays valid and untouched.
+            let (left, right) = (owned_part(&l), owned_part(&r));
+            out.push_str(&format!("    ae_string t{id} = ae_str_cat({left}, {right}, {line}, {column});\n"));
+            let mut moves = l.moves; moves.extend(r.moves);
+            null_moves(out, &moves);
+            Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Binary(a, op, b, line, column, _) => {
+            let l = emit_expr(a, out, next, false); let r = emit_expr(b, out, next, false);
+            // f64 arithmetic maps to the C operators: no overflow trapping, no
+            // fast-math, and division goes through a checked helper so `x / 0.0`
+            // is a reported failure instead of a silent infinity (ADR-37).
+            let floating = l.ty == Type::F64;
+            let text = match op {
+                Kind::EqEq => format!("{} == {}", l.text, r.text),
+                Kind::NotEq => format!("{} != {}", l.text, r.text),
+                Kind::Less => format!("{} < {}", l.text, r.text),
+                Kind::LessEq => format!("{} <= {}", l.text, r.text),
+                Kind::Greater => format!("{} > {}", l.text, r.text),
+                Kind::GreaterEq => format!("{} >= {}", l.text, r.text),
+                Kind::Plus if floating => format!("{} + {}", l.text, r.text),
+                Kind::Minus if floating => format!("{} - {}", l.text, r.text),
+                Kind::Star if floating => format!("{} * {}", l.text, r.text),
+                Kind::Slash if floating => format!("ae_f64_div({}, {}, {line}, {column})", l.text, r.text),
+                Kind::Plus => format!("ae_add({}, {}, {line}, {column})", l.text, r.text),
+                Kind::Minus => format!("ae_sub({}, {}, {line}, {column})", l.text, r.text),
+                Kind::Star => format!("ae_mul({}, {}, {line}, {column})", l.text, r.text),
+                Kind::Slash => format!("ae_div({}, {}, {line}, {column})", l.text, r.text),
+                Kind::Percent => format!("ae_mod({}, {}, {line}, {column})", l.text, r.text),
+                _ => unreachable!(),
+            };
+            let ty = if matches!(op, Kind::EqEq | Kind::NotEq | Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq) {
+                Type::Bool
+            } else if floating {
+                Type::F64
+            } else {
+                Type::Int
+            };
+            Emitted { text, ty, owned: false, moves: Vec::new(), materialized: false }
+        }
+    };
+    if emitted.materialized { return emitted; }
+    let id = *next; *next += 1;
+    out.push_str(&format!("    {}t{id} = {};\n", emitted.ty.c_temp(), emitted.text));
+    Emitted { text: format!("t{id}"), owned: emitted.ty.owned(), ..emitted }
+}
+pub(super) fn release_var(out: &mut String, id: usize, ty: Type) {
+    match ty {
+        Type::Vec => out.push_str(&format!("    ae_vec_release(&v{id});\n")),
+        Type::StrVec => out.push_str(&format!("    ae_strvec_release(&v{id});\n")),
+        Type::VecF => out.push_str(&format!("    ae_f64vec_release(&v{id});\n")),
+        Type::Map => out.push_str(&format!("    ae_map_release(&v{id});\n")),
+        Type::MapF => out.push_str(&format!("    ae_mapf_release(&v{id});\n")),
+        Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&v{id});\n")),
+        Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_release(&v{id});\n")),
+        _ => out.push_str(&format!("    ae_str_release(&v{id});\n")),
+    }
+}
+// Release one enum payload or struct field in place, addressed by an arbitrary
+// C lvalue. Propagation discards Ok/Some payloads it does not bind, and those
+// payloads may be any owned type, not just strings (ADR-34).
+pub(super) fn release_member(out: &mut String, member: &str, ty: Type) {
+    match ty {
+        Type::Vec => out.push_str(&format!("    ae_vec_release(&{member});\n")),
+        Type::StrVec => out.push_str(&format!("    ae_strvec_release(&{member});\n")),
+        Type::VecF => out.push_str(&format!("    ae_f64vec_release(&{member});\n")),
+        Type::Map => out.push_str(&format!("    ae_map_release(&{member});\n")),
+        Type::MapF => out.push_str(&format!("    ae_mapf_release(&{member});\n")),
+        Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&{member});\n")),
+        Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_release(&{member});\n")),
+        _ => out.push_str(&format!("    ae_str_release(&{member});\n")),
+    }
+}
+// An owned temporary (not a named slot) that a statement has finished using.
+pub(super) fn drop_owned_temp(out: &mut String, emitted: &Emitted) {
+    match emitted.ty {
+        Type::Vec => out.push_str(&format!("    ae_vec_release(&{});\n", emitted.text)),
+        Type::String => out.push_str(&format!("    ae_str_release(&{});\n", emitted.text)),
+        Type::StrVec => out.push_str(&format!("    ae_strvec_release(&{});\n", emitted.text)),
+        Type::VecF => out.push_str(&format!("    ae_f64vec_release(&{});\n", emitted.text)),
+        Type::Map => out.push_str(&format!("    ae_map_release(&{});\n", emitted.text)),
+        Type::MapF => out.push_str(&format!("    ae_mapf_release(&{});\n", emitted.text)),
+        Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&{});\n", emitted.text)),
+        Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_release(&{});\n", emitted.text)),
+        _ => out.push_str(&format!("    free({});\n", emitted.text)),
+    }
+}
+pub(super) fn null_moves(out: &mut String, moves: &[(usize, Type)]) {
+    for &(id, ty) in moves {
+        match ty {
+            Type::Vec => out.push_str(&format!("    ae_vec_forfeit(&v{id});\n")),
+            Type::String => out.push_str(&format!("    ae_str_forfeit(&v{id});\n")),
+            Type::StrVec => out.push_str(&format!("    ae_strvec_forfeit(&v{id});\n")),
+            Type::VecF => out.push_str(&format!("    ae_f64vec_forfeit(&v{id});\n")),
+            Type::Map => out.push_str(&format!("    ae_map_forfeit(&v{id});\n")),
+            Type::MapF => out.push_str(&format!("    ae_mapf_forfeit(&v{id});\n")),
+            Type::Struct(k) => out.push_str(&format!("    ae_t{k}_forfeit(&v{id});\n")),
+            Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_forfeit(&v{id});\n")),
+            _ => out.push_str(&format!("    v{id} = NULL;\n")),
+        }
+    }
+}
+pub(super) fn emit_print(printed: &Printed, out: &mut String, next: &mut usize) {
+    match printed {
+        Printed::Expr(e) => {
+            let t = emit_expr(e, out, next, false);
+            match t.ty {
+                Type::String | Type::StrView => {
+                    let pv = *next; *next += 1;
+                    out.push_str(&format!("    ae_strview t{pv} = AE_VIEW({});\n", t.text));
+                    out.push_str(&format!("    ae_print_view(t{pv});\n"));
+                    if t.owned { drop_owned_temp(out, &t); }
+                }
+                Type::Bool => out.push_str(&format!("    ae_print_bool({});\n", t.text)),
+                Type::F64 => out.push_str(&format!("    ae_f64_print({});\n", t.text)),
+                _ => out.push_str(&format!("    ae_print_i64({});\n", t.text)),
+            }
+        }
+        Printed::Text(text) => {
+            // The literal body is already a valid C string body (the lexer
+            // checked the escapes), so it is passed as a plain C string: one copy
+            // in the generated C, no format string to misinterpret.
+            out.push_str(&format!("    ae_print_cstr(\"{text}\");\n"));
+        }
+    }
+}
+pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
+    for stmt in stmts {
+        match stmt {
+            Statement::Return(e, frees) => {
+                let t = emit_expr(e, out, next, true);
+                // A slot the return expression moved out of no longer owns its
+                // buffer; releasing it would free the returned value's memory.
+                for &(id, ty) in frees {
+                    if t.moves.iter().any(|&(m, _)| m == id) { continue; }
+                    release_var(out, id, ty);
+                }
+                null_moves(out, &t.moves);
+                out.push_str(&format!("    return {};\n", t.text));
+            }
+            Statement::Declare(id, e) => {
+                let t = emit_expr(e, out, next, true);
+                out.push_str(&format!("    {}v{id} = {};\n", t.ty.c_temp(), t.text));
+                null_moves(out, &t.moves);
+            }
+            Statement::Array(id, values) => {
+                let items: Vec<_> = values.iter().map(|e| emit_expr(e, out, next, false).text).collect();
+                out.push_str(&format!("    int64_t v{id}[{}] = {{", items.len()));
+                for item in items { out.push_str(&format!("{item},")); }
+                out.push_str("};\n");
+            }
+            Statement::Store(id, len, index, value, line, col) => {
+                let i = emit_expr(index, out, next, false);
+                let checked = *next; *next += 1;
+                out.push_str(&format!("    size_t t{checked} = ae_index({}, {len}, {line}, {col});\n", i.text));
+                let value = emit_expr(value, out, next, false);
+                out.push_str(&format!("    v{id}[t{checked}] = {};\n", value.text));
+            }
+            Statement::VecPush(id, value, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                let value = emit_expr(value, out, next, false);
+                out.push_str(&format!("    ae_vec_push(&v{id}, {}, {line}, {col});\n", value.text));
+                null_moves(out, &value.moves);
+            }
+            Statement::Sort(id, strings, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                out.push_str(&format!("    ae_{}_sort(&v{id});\n", if *strings { "strvec" } else { "vec" }));
+            }
+            Statement::Reverse(id, strings, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                out.push_str(&format!("    ae_{}_reverse(&v{id});\n", if *strings { "strvec" } else { "vec" }));
+            }
+            Statement::VecPop(id, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                out.push_str(&format!("    ae_vec_pop(&v{id}, {line}, {col});\n"));
+            }
+            Statement::VecStore(id, index, value, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                // The index is computed and checked before the right side, as
+                // with fixed arrays.
+                let i = emit_expr(index, out, next, false);
+                let checked = *next; *next += 1;
+                out.push_str(&format!("    int64_t t{checked} = ae_vec_index({}, v{id}.len, {line}, {col});\n", i.text));
+                let value = emit_expr(value, out, next, false);
+                out.push_str(&format!("    v{id}.data[t{checked}] = {};\n", value.text));
+            }
+            Statement::VecFPush(id, value, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                let value = emit_expr(value, out, next, false);
+                out.push_str(&format!("    ae_f64vec_push(&v{id}, {}, {line}, {col});\n", value.text));
+                null_moves(out, &value.moves);
+            }
+            Statement::VecFPop(id, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                out.push_str(&format!("    ae_f64vec_pop(&v{id}, {line}, {col});\n"));
+            }
+            Statement::VecFStore(id, index, value, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                let i = emit_expr(index, out, next, false);
+                let checked = *next; *next += 1;
+                out.push_str(&format!("    int64_t t{checked} = ae_vec_index({}, v{id}.len, {line}, {col});\n", i.text));
+                let value = emit_expr(value, out, next, false);
+                out.push_str(&format!("    v{id}.data[t{checked}] = {};\n", value.text));
+            }
+            Statement::StrVecPush(id, value, line, col, borrowed) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                // A borrowed element is copied into the vector; only an owned
+                // string is moved, because moving a view would empty the slot
+                // it was read from.
+                let value = emit_expr(value, out, next, !*borrowed);
+                let text = if *borrowed { format!("ae_str_copy_view(AE_VIEW({}), {line}, {col})", value.text) } else { value.text.clone() };
+                out.push_str(&format!("    ae_strvec_push(&v{id}, {text}, {line}, {col});\n"));
+                null_moves(out, &value.moves);
+            }
+            Statement::StrVecPop(id, line, col) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                out.push_str(&format!("    ae_strvec_pop(&v{id}, {line}, {col});\n"));
+            }
+            Statement::StrVecStore(id, index, value, line, col, borrowed) => {
+                out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));
+                let i = emit_expr(index, out, next, false);
+                let checked = *next; *next += 1;
+                out.push_str(&format!("    int64_t t{checked} = ae_strvec_index({}, v{id}.len, {line}, {col});\n", i.text));
+                let value = emit_expr(value, out, next, !*borrowed);
+                let text = if *borrowed { format!("ae_str_copy_view(AE_VIEW({}), {line}, {col})", value.text) } else { value.text.clone() };
+                out.push_str(&format!("    ae_strvec_clear_slot(&v{id}, t{checked}, {line}, {col});\n"));
+                out.push_str(&format!("    v{id}.data[t{checked}] = {text};\n"));
+                null_moves(out, &value.moves);
+            }
+            Statement::FieldStore(id, fname, fty, value) => {
+                // Overwriting an owned field releases the old value first.
+                let release_old = match fty {
+                    Type::String => format!("    ae_str_release(&v{id}.{});\n", fname),
+                    Type::Vec => format!("    ae_vec_release(&v{id}.{});\n", fname),
+                    Type::StrVec => format!("    ae_strvec_release(&v{id}.{});\n", fname),
+                    Type::Map => format!("    ae_map_release(&v{id}.{});\n", fname),
+                    Type::MapF => format!("    ae_mapf_release(&v{id}.{});\n", fname),
+                    Type::Struct(k) => format!("    ae_t{k}_release(&v{id}.{});\n", fname),
+                    Type::Enum(_, k) => format!("    ae_e{k}_release(&v{id}.{});\n", fname),
+                    _ => String::new(),
+                };
+                out.push_str(&release_old);
+                let value = emit_expr(value, out, next, false);
+                out.push_str(&format!("    v{id}.{} = {};\n", fname, value.text));
+                null_moves(out, &value.moves);
+            }
+            Statement::Assign(id, e, release_old) => {
+                let t = emit_expr(e, out, next, true);
+                if *release_old { release_var(out, *id, t.ty); }
+                out.push_str(&format!("    v{id} = {};\n", t.text));
+                null_moves(out, &t.moves);
+            }
+            Statement::Print(printed) => emit_print(printed, out, next),
+            Statement::Exit(code, frees) => {
+                let value = emit_expr(code, out, next, false);
+                for &(id, ty) in frees { release_var(out, id, ty); }
+                out.push_str(&format!("    ae_exit({});\n", value.text));
+            }
+            Statement::Assert(condition, line, col) => {
+                let t = emit_expr(condition, out, next, false);
+                out.push_str(&format!("    if (!({})) ae_fail(\"assertion failed\", {line}, {col});\n", t.text));
+            }
+            Statement::If(condition, yes, no) => {
+                let cond = emit_expr(condition, out, next, false);
+                out.push_str(&format!("    if ({}) {{\n", cond.text)); emit_statements(yes, out, next);
+                out.push_str("    } else {\n"); emit_statements(no, out, next); out.push_str("    }\n");
+            }
+            Statement::While(condition, body) => {
+                out.push_str("    while (1) {\n");
+                let cond = emit_expr(condition, out, next, false);
+                out.push_str(&format!("    if (!({})) break;\n", cond.text));
+                emit_statements(body, out, next); out.push_str("    }\n");
+            }
+            // The while(1) form re-evaluates the condition after `continue`.
+            Statement::Break => out.push_str("    break;\n"),
+            Statement::Continue(label) => match label {
+                // In a for loop, continue must still run the increment.
+                Some(label) => out.push_str(&format!("    goto ae_next_{label};\n")),
+                None => out.push_str("    continue;\n"),
+            },
+            // `m[key] = value;` copies the key into the table, so the key
+            // expression may be a temporary or a view.
+            Statement::MapPut(place, key, value, line, col) => {
+                let k = emit_expr(key, out, next, false);
+                let v = emit_expr(value, out, next, false);
+                let put_fn = if place.f64_value() { "ae_mapf_put" } else { "ae_map_put" };
+                out.push_str(&format!("    {put_fn}(&{}, AE_VIEW({}), {}, {line}, {col});\n", place.text(), k.text, v.text));
+                null_moves(out, &k.moves);
+                null_moves(out, &v.moves);
+                if k.owned { drop_owned_temp(out, &k); }
+            }
+            // Propagating a result returns the error value itself after every
+            // live owned value is released, so the failure path owns nothing
+            // the caller could reach. The Ok payload moves out of the enum and
+            // the enum is then forfeited, which is what keeps it from being
+            // freed twice.
+            Statement::Propagate(value, ty, fields, binding, frees) => {
+                let t = emit_expr(value, out, next, true);
+                let eid = match ty { Type::Enum(_, k) => *k, _ => unreachable!("propagation is enum-typed") };
+                null_moves(out, &t.moves);
+                out.push_str(&format!("    if ({}.tag == AE_E{eid}_1) {{\n", t.text));
+                for &(id, vty) in frees {
+                    if t.moves.iter().any(|&(m, _)| m == id) { continue; }
+                    release_var(out, id, vty);
+                }
+                out.push_str(&format!("        return {};\n    }}\n", t.text));
+                match binding {
+                    Some((id, pty)) => out.push_str(&format!("    {}v{id} = {}.u.v0.p0;\n", pty.c_temp(), t.text)),
+                    None => {
+                        for (index, field) in fields.iter().enumerate() {
+                            if !field.owned() { continue; }
+                            release_member(out, &format!("{}.u.v0.p{index}", t.text), *field);
+                        }
+                    }
+                }
+                out.push_str(&format!("    ae_e{eid}_forfeit(&{});\n", t.text));
+            }
+            // Arms become an if/else chain rather than a C switch: a `break`
+            // in an arm body must leave the enclosing loop, which a switch
+            // would swallow. Coverage is exhaustive, so no fall-through case
+            // is needed.
+            Statement::Match(subject, subject_ty, arms) => {
+                let eid = match subject_ty { Type::Enum(_, k) => *k, _ => unreachable!("match subjects are enum-typed") };
+                let mut first = true;
+                for arm in arms {
+                    let test = format!("v{subject}.tag == AE_E{eid}_{}", arm.variant);
+                    if first { out.push_str(&format!("    if ({test}) {{\n")); } else { out.push_str(&format!("    }} else if ({test}) {{\n")); }
+                    first = false;
+                    for &(bid, pty, index) in &arm.bindings {
+                        let member = format!("v{subject}.u.v{}.p{index}", arm.variant);
+                        match pty {
+                            Type::String => out.push_str(&format!("    ae_strview v{bid} = AE_VIEW({member});\n")),
+                            Type::Bool => out.push_str(&format!("    bool v{bid} = {member};\n")),
+                            Type::F64 => out.push_str(&format!("    double v{bid} = {member};\n")),
+                            // Vector payloads bind as read-only borrows of the slot.
+                            Type::Vec => out.push_str(&format!("    const ae_vec *v{bid} = &{member};\n")),
+                            Type::VecF => out.push_str(&format!("    const ae_f64vec *v{bid} = &{member};\n")),
+                            Type::StrVec => out.push_str(&format!("    const ae_strvec *v{bid} = &{member};\n")),
+                            _ => out.push_str(&format!("    int64_t v{bid} = {member};\n")),
+                        }
+                    }
+                    emit_statements(&arm.body, out, next);
+                }
+                out.push_str("    }\n");
+            }
+            Statement::For(var, end_var, body, label, line, col) => {
+                out.push_str("    while (1) {\n");
+                out.push_str(&format!("    if (!(v{var} < v{end_var})) break;\n"));
+                emit_statements(body, out, next);
+                out.push_str(&format!("    ae_next_{label}: ;\n"));
+                out.push_str(&format!("    v{var} = ae_add(v{var}, 1, {line}, {col});\n"));
+                out.push_str("    }\n");
+            }
+            Statement::ForTokens(cursor, elem, body, label, _line, _col) => {
+                // Restart the cursor so a second loop over the same binding
+                // behaves like the first; the element is a view into the base,
+                // never a copy.
+                out.push_str(&format!("    ae_tokens_reset(&v{cursor});\n"));
+                out.push_str("    while (1) {\n");
+                out.push_str(&format!("    ae_strview v{elem};\n"));
+                out.push_str(&format!("    if (!ae_tokens_next(&v{cursor}, &v{elem})) break;\n"));
+                emit_statements(body, out, next);
+                out.push_str(&format!("    ae_next_{label}: ;\n"));
+                out.push_str("    }\n");
+            }
+            Statement::Frees(ids) => { for &(id, ty) in ids { release_var(out, id, ty); } }
+        }
+    }
+}

@@ -1,0 +1,1 @@
+[{"file":"$DIR/mixed_syntax.ae","line":1,"column":24,"message":"expected expression"},{"file":"$DIR/mixed_syntax.ae","line":2,"column":24,"message":"unknown variable 'unknown'"}]

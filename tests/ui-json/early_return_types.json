@@ -1,0 +1,1 @@
+[{"file":"$DIR/early_return_types.ae","line":1,"column":45,"message":"return type must be i64"},{"file":"$DIR/early_return_types.ae","line":2,"column":45,"message":"return type must be i64"}]

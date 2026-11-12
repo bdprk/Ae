@@ -1,0 +1,5 @@
+fn main() {
+    let values = vec[3];
+    print("before");
+    print(values[1]);
+}

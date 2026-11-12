@@ -1,0 +1,1 @@
+[{"file":"$DIR/missing_function_args.ae","line":1,"column":31,"message":"expected expression"},{"file":"$DIR/missing_function_args.ae","line":2,"column":33,"message":"expected RParen, found Comma"}]

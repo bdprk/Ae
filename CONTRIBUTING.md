@@ -1,20 +1,20 @@
-# 贡献指南
+# Contributing
 
-## 独立实现规则
+## Independent implementation
 
-AE 是自主研发实现：不复制其他语言项目（包括 Gojo）的实现、测试、文档或资源。可以阅读公开资料吸收通用思想，但提交的实现与文字必须是本项目原创；涉及设计来源时在提交说明或 ADR 中注明。
+AE is an independently developed implementation. Do not copy implementation code, tests, documentation, or assets from other language projects, including Gojo. Public material may be studied for general ideas, but submitted code and text must be original to this project. Identify design sources in the change description or an ADR when applicable.
 
-## 提交要求
+## Change requirements
 
-1. 每个功能或修复附测试：正例、拒绝案例（非法程序必须被拒绝）、必要时加回归。
-2. `cargo test --locked` 与 `python scripts/verify_generated_c.py` 全部通过；Linux 上额外通过 `--sanitize`。
-3. 语言行为变化必须同步更新 `docs/current-language.md`；影响长期设计的决策写入 `docs/decisions.md`（ADR 格式）。
-4. 安全语义不得为性能让路：受检算术、边界检查、移动后检查在任何构建模式下保持。
-5. 生成 C 不得引入未定义行为；新模板需在两种优化模式下验证输出一致。
-6. 基准数据只做记录与比较，不作为"全面超越"的证明；原始数据与命令一并保存。
+1. Include tests for each feature or fix: positive cases, rejection cases for invalid programs, and regression tests when appropriate.
+2. Pass `cargo test --workspace --locked` and `python scripts/verify_generated_c.py`. On Linux, also pass the latter with `--sanitize`.
+3. Update `docs/current-language.md` when language behavior changes. Record decisions affecting the long-term design in a new `docs/adr/NNNN.md` using `docs/adr/TEMPLATE.md`.
+4. Never trade safety semantics for performance. Checked arithmetic, bounds checks, and checks against use after move must remain in every build mode.
+5. Generated C must not introduce undefined behavior. Verify new templates produce consistent results in both optimization modes.
+6. Record and compare benchmark data without treating it as proof of universal superiority. Preserve raw data and commands.
 
-## 代码风格
+## Code style
 
-- 编译器保持小而清晰的模块划分：前端（词法/语法/检查）→ 生成 C → 驱动。
-- 错误信息包含行列位置与原因；拒绝路径必须有测试覆盖。
-- 提交信息说明"是什么、为什么"；一次提交一个主题。
+- The current transitional layout has source positions and diagnostic foundations in `crates/ae-span`, the lexer, tokens, and formatter in `crates/ae-syntax`, and parsing, checking, and C generation in `crates/ae-compiler/src/frontend/`. Test helpers remain in the compiler library for now; `src/main.rs` is the command-line driver. Split crates further as planned and follow the design charter in `docs/adr/0067.md` and the freeze list in `docs/adr/0068.md`.
+- Errors should identify the line, column, and cause. Rejection paths require test coverage.
+- Explain what changed and why in commit messages; keep each commit focused on one topic.

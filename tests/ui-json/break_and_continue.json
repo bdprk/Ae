@@ -1,0 +1,1 @@
+[{"file":"$DIR/break_and_continue.ae","line":1,"column":21,"message":"'break' outside of a loop"},{"file":"$DIR/break_and_continue.ae","line":2,"column":22,"message":"'continue' outside of a loop"}]

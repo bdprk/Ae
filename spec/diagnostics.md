@@ -1,0 +1,9 @@
+# Diagnostic recovery (current implementation)
+
+When lexical analysis encounters an unexpected character outside a string or comment, `check --json` reports that character and may continue scanning for further lexical errors. Diagnostics retain source order, byte offsets, and line and Unicode-scalar column positions from the original source. No tokens from a source with lexical errors are accepted for parsing or code generation.
+
+At most 32 lexical diagnostics are reported per source file. Errors whose recovery point is ambiguous, including invalid string escapes, unterminated strings and invalid numeric literals, end scanning after the diagnostic. Text-mode commands continue to report the first error.
+
+When the first compilation error is lexical, JSON checking may also collect lexical errors from independently reachable sibling imports. It follows depth-first import order, visits canonical files once, and returns at most 32 diagnostics for the graph. A file with lexical errors cannot reveal further imports. An unreadable file, malformed import header, or import cycle stops this supplementary traversal. If its first diagnostics differ from the normal compilation result, the normal result takes precedence. Supplementary diagnostics never authorize compilation.
+
+After declaration collection succeeds, `check --json` may report one body diagnostic per ordinary function or impl method, in source order. Each body is checked using a fresh copy of the declaration state; failed checks cannot modify the state used by other functions. No program with errors is accepted for code generation. Recovery falls back to the original first diagnostic if its function boundaries or original error cannot be verified. Declaration errors and multiple errors within one body remain fail-fast. At most 32 body diagnostics are returned.

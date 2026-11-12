@@ -1,0 +1,1 @@
+[{"file":"$DIR/vector_operations.ae","line":1,"column":43,"message":"cannot modify immutable variable 'x'"},{"file":"$DIR/vector_operations.ae","line":2,"column":43,"message":"cannot modify immutable variable 'y'"}]

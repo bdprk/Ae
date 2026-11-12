@@ -1,0 +1,1 @@
+[{"file":"$DIR/return_mismatch.ae","line":1,"column":34,"message":"return type must be i64"},{"file":"$DIR/return_mismatch.ae","line":2,"column":36,"message":"return type must be i64"}]

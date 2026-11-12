@@ -1,0 +1,1 @@
+[{"file":"$DIR/multiple_names.ae","line":1,"column":24,"message":"unknown variable 'missing_a'"},{"file":"$DIR/multiple_names.ae","line":2,"column":24,"message":"unknown variable 'missing_b'"},{"file":"$DIR/multiple_names.ae","line":3,"column":19,"message":"unknown variable 'missing_c'"}]

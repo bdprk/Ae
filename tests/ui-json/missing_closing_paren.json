@@ -1,0 +1,1 @@
+[{"file":"$DIR/missing_closing_paren.ae","line":1,"column":28,"message":"expected RParen, found Semi"},{"file":"$DIR/missing_closing_paren.ae","line":2,"column":29,"message":"expected RParen, found Semi"}]

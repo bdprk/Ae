@@ -28,8 +28,6 @@
 
 use std::path::Path;
 
-use crate::frontend;
-
 // Mirrors the compiler's `Kind` one-for-one (so the two lexers can be
 // compared token by token) plus `Comment`, which the compiler drops.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,8 +260,15 @@ fn need_space(prev: &FmtToken, next: &FmtToken) -> bool {
     true
 }
 
-// Pure text-to-text formatting: no I/O, so a failure can never touch a file.
-pub(crate) fn format_source(source: &str) -> Result<String, String> {
+/// Format lexically valid source without requiring it to pass semantic checks.
+/// A lexical error is returned before any output is produced.
+pub fn format_source(source: &str) -> Result<String, String> {
+    crate::lex(source)?;
+    format_validated(source)
+}
+
+// Pure text-to-text formatting after compiler-lexer validation.
+fn format_validated(source: &str) -> Result<String, String> {
     let tokens = lex_fmt(source)?;
     // Preserve whichever line ending dominates the input; mixed files come
     // out uniform, which the docs list as a deliberate normalization.
@@ -318,9 +323,9 @@ pub fn fmt_path(path: &Path) -> Result<bool, String> {
     // main of their own), and a semantic error elsewhere does not make
     // whitespace normalization unsafe: the tokens and their line structure
     // come out untouched.
-    frontend::check_lexable(&source)
+    crate::lex(&source).map(|_| ())
         .map_err(|e| format!("{}: {e}", path.display()))?;
-    let formatted = format_source(&source)?;
+    let formatted = format_validated(&source)?;
     if formatted == source { return Ok(false); }
     let name = path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -339,6 +344,14 @@ pub fn fmt_path(path: &Path) -> Result<bool, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_formatter_rejects_the_same_unlexable_input_as_the_compiler() {
+        for source in ["fn main() { print(\"bad\\q\"); }", "fn main() { print(9223372036854775808); }"] {
+            assert_eq!(format_source(source).unwrap_err(), crate::lex(source).unwrap_err());
+        }
+        assert!(format_source("fn main() { print(unknown); }").is_ok());
+    }
 
     fn fmt(source: &str) -> String {
         format_source(source).unwrap()
@@ -442,7 +455,7 @@ mod tests {
     // lexer must cut the file into exactly the tokens the compiler sees.
     #[test]
     fn fmt_lexer_matches_compiler_lexer_on_all_sources() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut files = Vec::new();
         for dir in ["examples", "examples/modules", "bench"] {
             if let Ok(read) = std::fs::read_dir(root.join(dir)) {
@@ -456,7 +469,7 @@ mod tests {
         for file in files {
             let source = std::fs::read_to_string(&file).unwrap();
             // Both streams end with their own EOF marker; compare real tokens.
-            let compiler: Vec<&str> = frontend::lex_kind_names(&source).unwrap().into_iter().filter(|n| *n != "Eof").collect();
+            let compiler: Vec<&str> = crate::lex_kind_names(&source).unwrap().into_iter().filter(|n| *n != "Eof").collect();
             let fmt_tokens = lex_fmt(&source).unwrap();
             let mine: Vec<&str> = fmt_tokens.iter().map(|t| t.class.name()).filter(|n| *n != "Comment").collect();
             assert_eq!(mine, compiler, "lexer drift on {}", file.display());

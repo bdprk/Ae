@@ -1,0 +1,1 @@
+ae: $DIR/use_after_move.ae:1:43: cannot use 'a' because it was moved

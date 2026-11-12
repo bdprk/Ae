@@ -1,0 +1,1 @@
+[{"file":"$DIR/multiple_types.ae","line":1,"column":30,"message":"return type must be i64"},{"file":"$DIR/multiple_types.ae","line":2,"column":28,"message":"return type must be bool"}]

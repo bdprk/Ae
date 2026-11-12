@@ -1,0 +1,1 @@
+[{"file":"$DIR/parameter_types.ae","line":1,"column":35,"message":"sqrt expects an f64 argument; convert integers explicitly with to_f64"},{"file":"$DIR/parameter_types.ae","line":2,"column":39,"message":"sqrt expects an f64 argument; convert integers explicitly with to_f64"}]

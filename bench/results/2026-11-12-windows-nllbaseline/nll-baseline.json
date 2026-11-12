@@ -1,0 +1,119 @@
+{
+  "compiler": "D:\\\u7528\u6237\\trevv\\\u684c\u9762\\ae\\target\\debug\\ae.exe",
+  "cases": [
+    {
+      "name": "scope_exit_then_write",
+      "expect_now": "accept",
+      "verdict": "accept",
+      "matches": true,
+      "flip_level": "L0-allow",
+      "message": ""
+    },
+    {
+      "name": "push_after_for_loop",
+      "expect_now": "accept",
+      "verdict": "accept",
+      "matches": true,
+      "flip_level": "L0-allow",
+      "message": ""
+    },
+    {
+      "name": "string_view_stored_in_let",
+      "expect_now": "accept",
+      "verdict": "accept",
+      "matches": true,
+      "flip_level": "L0-allow",
+      "message": ""
+    },
+    {
+      "name": "other_base_unaffected",
+      "expect_now": "accept",
+      "verdict": "accept",
+      "matches": true,
+      "flip_level": "L0-allow",
+      "message": ""
+    },
+    {
+      "name": "write_between_creation_and_use",
+      "expect_now": "reject",
+      "verdict": "reject",
+      "matches": true,
+      "flip_level": "L0-keep",
+      "message": "ae: C:\\Users\\trevv\\AppData\\Local\\Temp\\ae-nll-6c2l7wgt\\write_between_creation_and_use.ae:4:7: cannot assign to 's' while it is borrowed"
+    },
+    {
+      "name": "move_between_creation_and_use",
+      "expect_now": "reject",
+      "verdict": "reject",
+      "matches": true,
+      "flip_level": "L0-keep",
+      "message": "ae: C:\\Users\\trevv\\AppData\\Local\\Temp\\ae-nll-6c2l7wgt\\move_between_creation_and_use.ae:5:20: cannot move a value while it is borrowed"
+    },
+    {
+      "name": "push_during_for_loop",
+      "expect_now": "reject",
+      "verdict": "reject",
+      "matches": true,
+      "flip_level": "L0-keep",
+      "message": "ae: C:\\Users\\trevv\\AppData\\Local\\Temp\\ae-nll-6c2l7wgt\\push_during_for_loop.ae:3:24: cannot modify 'v' while it is borrowed"
+    },
+    {
+      "name": "vec_view_stored_in_let",
+      "expect_now": "reject",
+      "verdict": "reject",
+      "matches": true,
+      "flip_level": "L0-keep",
+      "message": "ae: C:\\Users\\trevv\\AppData\\Local\\Temp\\ae-nll-6c2l7wgt\\vec_view_stored_in_let.ae:5:5: cannot store a borrowed vector in a variable; pass it directly to a parameter that borrows"
+    },
+    {
+      "name": "write_after_last_use",
+      "expect_now": "reject",
+      "verdict": "reject",
+      "matches": true,
+      "flip_level": "L1-flip",
+      "message": "ae: C:\\Users\\trevv\\AppData\\Local\\Temp\\ae-nll-6c2l7wgt\\write_after_last_use.ae:5:7: cannot assign to 's' while it is borrowed"
+    },
+    {
+      "name": "move_after_last_use",
+      "expect_now": "reject",
+      "verdict": "reject",
+      "matches": true,
+      "flip_level": "L1-flip",
+      "message": "ae: C:\\Users\\trevv\\AppData\\Local\\Temp\\ae-nll-6c2l7wgt\\move_after_last_use.ae:6:20: cannot move a value while it is borrowed"
+    },
+    {
+      "name": "field_write_after_field_view_last_use",
+      "expect_now": "reject",
+      "verdict": "reject",
+      "matches": true,
+      "flip_level": "L1-flip",
+      "message": "ae: C:\\Users\\trevv\\AppData\\Local\\Temp\\ae-nll-6c2l7wgt\\field_write_after_field_view_last_use.ae:8:11: cannot modify 'p' while it is borrowed"
+    },
+    {
+      "name": "dead_loan_does_not_block_its_own_base",
+      "expect_now": "reject",
+      "verdict": "reject",
+      "matches": true,
+      "flip_level": "L1-flip",
+      "message": "ae: C:\\Users\\trevv\\AppData\\Local\\Temp\\ae-nll-6c2l7wgt\\dead_loan_does_not_block_its_own_base.ae:10:7: cannot assign to 'a' while it is borrowed"
+    },
+    {
+      "name": "field_write_while_field_view_alive",
+      "expect_now": "reject",
+      "verdict": "reject",
+      "matches": true,
+      "flip_level": "L2-flip",
+      "message": "ae: C:\\Users\\trevv\\AppData\\Local\\Temp\\ae-nll-6c2l7wgt\\field_write_while_field_view_alive.ae:7:11: cannot modify 'p' while it is borrowed"
+    },
+    {
+      "name": "return_view_from_function",
+      "expect_now": "reject",
+      "verdict": "reject",
+      "matches": true,
+      "flip_level": "L3-flip",
+      "message": "ae: C:\\Users\\trevv\\AppData\\Local\\Temp\\ae-nll-6c2l7wgt\\return_view_from_function.ae:4:32: expected LBrace, found Ident(\"view\")"
+    }
+  ],
+  "disagreements": 0,
+  "total": 14
+}

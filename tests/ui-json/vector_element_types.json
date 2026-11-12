@@ -1,0 +1,1 @@
+[{"file":"$DIR/vector_element_types.ae","line":1,"column":37,"message":"vector elements must be i64 or f64, found bool"},{"file":"$DIR/vector_element_types.ae","line":2,"column":42,"message":"vector elements must all be i64; bool does not convert implicitly"}]

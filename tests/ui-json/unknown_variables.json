@@ -1,0 +1,1 @@
+[{"file":"$DIR/unknown_variables.ae","line":1,"column":27,"message":"unknown variable 'first_missing'"},{"file":"$DIR/unknown_variables.ae","line":2,"column":28,"message":"unknown variable 'second_missing'"}]

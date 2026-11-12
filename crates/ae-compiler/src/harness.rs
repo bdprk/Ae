@@ -86,8 +86,8 @@ pub(crate) fn synthetic_main(tests: &[String]) -> String {
 /// The staged test program: a copy of the source with the driver appended,
 /// written next to the original so relative `use` paths keep working. The
 /// file is removed when this value drops, on every path.
-pub(crate) struct TestProgram {
-    pub(crate) staging: PathBuf,
+pub struct TestProgram {
+    pub staging: PathBuf,
     pub tests: Vec<String>,
 }
 
@@ -95,7 +95,7 @@ impl Drop for TestProgram {
     fn drop(&mut self) { let _ = std::fs::remove_file(&self.staging); }
 }
 
-pub(crate) fn prepare(path: &Path, filter: Option<&str>) -> Result<TestProgram, String> {
+pub fn prepare(path: &Path, filter: Option<&str>) -> Result<TestProgram, String> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let mut tests = discover(&source).map_err(|e| format!("{}: {e}", path.display()))?;

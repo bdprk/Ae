@@ -1,0 +1,5 @@
+fn main() {
+    print("before");
+    let divisor = 0;
+    print(7 / divisor);
+}

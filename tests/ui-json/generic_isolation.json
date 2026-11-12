@@ -1,0 +1,1 @@
+[{"file":"$DIR/generic_isolation.ae","line":2,"column":44,"message":"argument 1 to 'identity' must be i64"},{"file":"$DIR/generic_isolation.ae","line":4,"column":19,"message":"unknown variable 'unknown_main'"}]

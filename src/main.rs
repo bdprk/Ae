@@ -1,9 +1,6 @@
 use std::{env, ffi::{OsStr, OsString}, fs, path::{Path, PathBuf}, process::{Command, ExitCode}, time::Instant};
 
-mod fmt;
-mod frontend;
-mod harness;
-mod sha256;
+use ae_compiler::{fmt, frontend, harness, sha256};
 use frontend::compile_path;
 
 const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae check --json <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae> [filter]\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
@@ -175,6 +172,15 @@ fn diagnostic_json(message: &str) -> String {
     format!("{{\"file\":{},\"line\":{line},\"column\":{column},\"message\":\"{}\"}}",
         file.as_ref().map_or("null".to_owned(), |f| format!("\"{}\"", json_escape(f))),
         json_escape(rest))
+}
+
+fn structured_diagnostic_json(diagnostic: &ae_compiler::frontend::FrontendDiagnostic) -> String {
+    let location = diagnostic.primary.as_ref().map(|label| &label.span);
+    let file = location.and_then(|span| span.file.as_ref())
+        .map_or("null".to_owned(), |file| format!("\"{}\"", json_escape(file)));
+    let line = location.map_or("null".to_owned(), |span| span.line.to_string());
+    let column = location.map_or("null".to_owned(), |span| span.column.to_string());
+    format!("{{\"file\":{file},\"line\":{line},\"column\":{column},\"message\":\"{}\"}}", json_escape(&diagnostic.message))
 }
 
 /// Build the generated C. Results are cached under a key covering every
@@ -352,13 +358,13 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
     };
     if let Some(source) = json_check {
         // Editor diagnostics: one structured array on stdout, nothing else.
-        // Success prints `[]` and exits 0; failure prints one object (the
-        // front end is fail-fast, so the array has one element until error
-        // recovery exists — the array shape is the contract, not its length).
+        // Success prints `[]`; lexical recovery may return multiple errors.
         let started = Instant::now();
-        let report = match frontend::check_path(Path::new(source)) {
+        let report = match frontend::check_path_diagnostic(Path::new(source)) {
             Ok(()) => "[]".to_owned(),
-            Err(message) => format!("[{}]", diagnostic_json(&message)),
+            Err(frontend::FrontendError::Legacy(message)) => format!("[{}]", diagnostic_json(&message)),
+            Err(frontend::FrontendError::Diagnostic(diagnostic)) => format!("[{}]", structured_diagnostic_json(&diagnostic)),
+            Err(frontend::FrontendError::Diagnostics(diagnostics) | frontend::FrontendError::LexDiagnostics(diagnostics)) => format!("[{}]", diagnostics.iter().map(structured_diagnostic_json).collect::<Vec<_>>().join(",")),
         };
         println!("{report}");
         if timings_enabled() {

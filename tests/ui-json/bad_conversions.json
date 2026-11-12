@@ -1,0 +1,1 @@
+[{"file":"$DIR/bad_conversions.ae","line":1,"column":40,"message":"to_i64 expects an f64"},{"file":"$DIR/bad_conversions.ae","line":2,"column":42,"message":"to_f64 expects an i64"}]

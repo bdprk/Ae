@@ -1,0 +1,3 @@
+fn first() -> i64 { break; return 0; }
+fn second() -> i64 { continue; return 0; }
+fn main() {}

@@ -1,0 +1,3 @@
+fn first() -> i64 { missing_first(); return 0; }
+fn second() -> i64 { missing_second(); return 0; }
+fn main() {}

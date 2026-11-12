@@ -1,0 +1,1 @@
+[{"file":"$DIR/use_after_move.ae","line":1,"column":51,"message":"cannot use 'x' because it was moved"},{"file":"$DIR/use_after_move.ae","line":2,"column":52,"message":"cannot use 'a' because it was moved"}]

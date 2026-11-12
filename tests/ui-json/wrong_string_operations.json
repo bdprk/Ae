@@ -1,0 +1,1 @@
+[{"file":"$DIR/wrong_string_operations.ae","line":1,"column":37,"message":"contains expects a string or string view argument"},{"file":"$DIR/wrong_string_operations.ae","line":2,"column":43,"message":"contains expects a string or string view pattern"}]

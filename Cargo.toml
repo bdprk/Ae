@@ -4,3 +4,9 @@ version = "0.1.1"
 edition = "2024"
 
 [dependencies]
+ae-compiler = { path = "crates/ae-compiler" }
+
+[workspace]
+members = ["crates/ae-compiler", "crates/ae-syntax", "crates/ae-span"]
+default-members = [".", "crates/ae-compiler", "crates/ae-syntax", "crates/ae-span"]
+resolver = "3"

@@ -1,0 +1,3 @@
+fn first() -> i64 { let x = vec[1]; push(x, 2); return 0; }
+fn second() -> i64 { let y = vec[1]; pop(y); return 0; }
+fn main() {}

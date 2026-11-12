@@ -872,6 +872,59 @@ fn len_works_in_binary_and_condition_contexts() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "4\n8\ntrue\n");
 }
 #[test]
+fn deep_import_chain_loads_without_recursive_host_stack() {
+    let dir = unique_temp_dir("deep-imports");
+    const COUNT: usize = 700;
+    for index in 0..COUNT {
+        let name = format!("module_{index:04}.ae");
+        let mut source = if index + 1 < COUNT {
+            format!("use \"module_{:04}.ae\";\n", index + 1)
+        } else { String::new() };
+        if index == 0 { source.push_str("fn main() { print(7); }\n"); }
+        fs::write(dir.join(name), source).unwrap();
+    }
+    let entry = dir.join("module_0000.ae");
+    let library_entry = entry.clone();
+    let library_result = std::thread::Builder::new().stack_size(512 * 1024)
+        .spawn(move || ae_compiler::frontend::check_path(&library_entry)).unwrap()
+        .join().expect("small-stack check must not panic");
+    assert!(library_result.is_ok(), "{library_result:?}");
+    let result = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&entry).output().unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+    let deps = Command::new(env!("CARGO_BIN_EXE_ae")).arg("deps").arg(&entry).output().unwrap();
+    assert!(deps.status.success(), "{}", String::from_utf8_lossy(&deps.stderr));
+    let text = String::from_utf8_lossy(&deps.stdout);
+    let modules: Vec<_> = text.lines().filter(|s| s.starts_with("module ")).collect();
+    assert_eq!(modules.len(), COUNT);
+    assert_eq!(modules.first().copied(), Some("module module_0699.ae"));
+    assert_eq!(modules.last().copied(), Some("module module_0000.ae"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn diamond_and_repeated_imports_load_one_module_and_cycles_still_fail() {
+    let dir = unique_temp_dir("diamond");
+    fs::create_dir(dir.join("sub")).unwrap();
+    fs::write(dir.join("shared.ae"), "pub fn shared() -> i64 { return 7; }\n").unwrap();
+    fs::write(dir.join("left.ae"), "use \"shared.ae\";\npub fn left() -> i64 { return shared(); }\n").unwrap();
+    fs::write(dir.join("right.ae"), "use \"sub/../shared.ae\";\npub fn right() -> i64 { return shared() + 1; }\n").unwrap();
+    let main = dir.join("main.ae");
+    fs::write(&main, "use \"left.ae\";\nuse \"right.ae\";\nuse \"shared.ae\";\nfn main() { print(left()); print(right()); }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&main).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "7\n8\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("deps").arg(&main).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).lines().filter(|line| *line == "module shared.ae").count(), 1);
+
+    fs::write(dir.join("shared.ae"), "use \"left.ae\";\npub fn shared() -> i64 { return 7; }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&main).output().unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("circular import"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn modules_import_transitively_and_reject_cycles_or_conflicts() {
     let dir = std::env::temp_dir().join(format!("ae-mod-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -3731,10 +3784,7 @@ fn trait_rules_are_enforced() {
 #[test]
 fn trait_impl_lives_with_its_trait_or_type_and_third_files_are_refused() {
     // Coherence, v1 shape: an impl belongs to the file that declares the
-    // trait or the type. (Diamond imports are circular imports in the module
-    // system, so a separate impl file that re-imports the trait file cannot
-    // be combined with a direct import of the same file — the impl therefore
-    // lives in one of the two authors' files.)
+    // trait or the type; an unrelated third file cannot provide the impl.
     let dir = unique_temp_dir("traitmod");
     let modules = dir.join("modules");
     fs::create_dir(&modules).unwrap();
@@ -3792,4 +3842,142 @@ fn check_json_reports_structured_diagnostics_or_an_empty_array() {
     #[cfg(unix)]
     assert!(stdout.contains("\"file\":\"/"), "absolute unix path missing: {stdout}");
     let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn check_json_recovers_impl_methods_and_functions_in_source_order() {
+    let dir = unique_temp_dir("json-impl-recovery");
+    let path = dir.join("bad.ae");
+    fs::write(&path, "trait Area { fn area(x: T) -> i64; fn width(x: T) -> i64; }\nfn before() -> i64 { return missing_before; }\nimpl Area for i64 {\n fn area(x: i64) -> i64 { return missing_area; }\n fn width(x: i64) -> i64 { return missing_width; }\n}\nfn main() { print(missing_main); }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    let json = String::from_utf8(output.stdout).unwrap();
+    let positions: Vec<_> = ["missing_before", "missing_area", "missing_width", "missing_main"].iter()
+        .map(|name| json.find(name).unwrap_or_else(|| panic!("missing {name}: {json}"))).collect();
+    assert!(positions.windows(2).all(|w| w[0] < w[1]), "{json}");
+    assert_eq!(json.matches("\"message\":").count(), 4, "{json}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn check_json_recovers_independent_function_body_errors() {
+    let dir = unique_temp_dir("json-multiple-bodies");
+    let path = dir.join("bad.ae");
+    fs::write(&path, "fn first() -> i64 { return missing_a; }\nfn second() -> i64 { return missing_b; }\nfn main() { print(missing_c); }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(json.matches("\"message\":").count(), 3, "{json}");
+    for name in ["missing_a", "missing_b", "missing_c"] { assert!(json.contains(name), "{json}"); }
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(text.contains("missing_a") && !text.contains("missing_b"), "{text}");
+    fs::write(&path, "fn identity[T](x: T) -> T { return x; }\nfn first() -> i64 { return identity[i64](true); }\nfn good() -> i64 { return identity[i64](7); }\nfn last() -> i64 { return missing_last; }\nfn main() {}\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(json.matches("\"message\":").count(), 2, "{json}");
+    assert!(json.contains("missing_last"), "{json}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn check_json_collects_lexical_errors_across_sibling_imports() {
+    let dir = unique_temp_dir("json-import-lex");
+    fs::create_dir(dir.join("sub")).unwrap();
+    let entry = dir.join("main.ae");
+    fs::write(&entry, "use \"left.ae\";\nuse \"right.ae\";\nfn main() {}\n").unwrap();
+    fs::write(dir.join("left.ae"), "use \"shared.ae\";\n").unwrap();
+    fs::write(dir.join("right.ae"), "use \"sub/../shared.ae\";\nuse \"other.ae\";\n").unwrap();
+    fs::write(dir.join("shared.ae"), "@\n").unwrap();
+    fs::write(dir.join("other.ae"), "#\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&entry).output().unwrap();
+    assert!(!output.status.success());
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(json.matches("\"message\":").count(), 2, "{json}");
+    assert!(json.find("shared.ae").unwrap() < json.find("other.ae").unwrap(), "{json}");
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&entry).output().unwrap();
+    let text = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success());
+    assert!(text.contains("shared.ae") && !text.contains("other.ae"), "{text}");
+    // A later unreadable import is a recovery boundary, not a fabricated
+    // lexical diagnostic or an invitation to inspect subsequent branches.
+    fs::write(dir.join("right.ae"), "use \"missing.ae\";\nuse \"other.ae\";\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&entry).output().unwrap();
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(json.matches("\"message\":").count(), 1, "{json}");
+    assert!(json.contains("shared.ae") && !json.contains("other.ae"), "{json}");
+    fs::write(dir.join("right.ae"), "use \"other.ae\";\n").unwrap();
+    fs::write(dir.join("shared.ae"), "@\n".repeat(20)).unwrap();
+    fs::write(dir.join("other.ae"), "#\n".repeat(20)).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&entry).output().unwrap();
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(json.matches("\"message\":").count(), 32, "{json}");
+    // A semantic failure in the first branch must not be replaced by a
+    // later branch's lexical failure discovered by supplementary scanning.
+    fs::write(dir.join("shared.ae"), "fn bad() -> i64 { return unknown_name; }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&entry).output().unwrap();
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert!(json.contains("unknown_name") && !json.contains("unexpected character"), "{json}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn check_json_reports_multiple_lexical_errors_without_accepting_program() {
+    let dir = unique_temp_dir("json-multiple-lex");
+    let path = dir.join("bad.ae");
+    fs::write(&path, "// 注释中的 @ 不报错\n@ 中 #\nfn main() {}\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("check").arg("--json").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(json.matches("\"message\":").count(), 3, "{json}");
+    for (column, character) in [(1, "@"), (3, "中"), (5, "#")] {
+        assert!(json.contains(&format!("\"line\":2,\"column\":{column},\"message\":\"unexpected character '{character}'\"")), "{json}");
+    }
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("2:1: unexpected character '@'"), "{stderr}");
+    assert!(!stderr.contains("unexpected character '中'"), "{stderr}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn check_json_preserves_diagnostic_location_in_imported_file() {
+    let dir = unique_temp_dir("json-lex");
+    #[cfg(windows)]
+    let name = "模块.ae";
+    #[cfg(not(windows))]
+    let name = "模块: part.ae";
+    let imported = dir.join(name);
+    let entry = dir.join("main.ae");
+    fs::write(&imported, "// 中文\n  @\n").unwrap();
+    fs::write(&entry, format!("use \"{name}\";\nfn main() {{}}\n")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("check").arg("--json").arg(&entry).output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let escaped = imported.display().to_string().replace('\\', "\\\\").replace('"', "\\\"");
+    let expected = format!("[{{\"file\":\"{escaped}\",\"line\":2,\"column\":3,\"message\":\"unexpected character '@'\"}}]");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
+    fs::write(&imported, "// 中文\nuse nope;\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("check").arg("--json").arg(&entry).output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let expected = format!("[{{\"file\":\"{escaped}\",\"line\":2,\"column\":5,\"message\":\"expected a string path after 'use'\"}}]");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
+    let source = "pub fn broken() -> i64 { return nope; }\n";
+    fs::write(&imported, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("check").arg("--json").arg(&entry).output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let column = source.find("nope").unwrap() + 1;
+    let expected = format!("[{{\"file\":\"{escaped}\",\"line\":1,\"column\":{column},\"message\":\"unknown variable 'nope'\"}}]");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
+    fs::remove_dir_all(dir).unwrap();
 }

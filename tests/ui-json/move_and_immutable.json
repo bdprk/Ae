@@ -1,0 +1,1 @@
+[{"file":"$DIR/move_and_immutable.ae","line":1,"column":51,"message":"cannot use 'x' because it was moved"},{"file":"$DIR/move_and_immutable.ae","line":2,"column":33,"message":"cannot assign to immutable variable 'n'"}]
