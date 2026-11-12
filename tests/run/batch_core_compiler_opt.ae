@@ -1,0 +1,58 @@
+use "../../std/core/ir_ssa.ae";
+use "../../std/core/ir_live_range.ae";
+use "../../std/core/ir_constant_fold.ae";
+use "../../std/core/ir_dead_code.ae";
+
+fn main() {
+    let v0 = ssa_var_new(1, 0);
+    assert(ssa_var_id(v0) == 1);
+    let v0_b = ssa_var_new(1, 0);
+    assert(ssa_var_version(v0_b) == 0);
+
+    let v1 = ssa_var_next_def(ssa_var_new(1, 0));
+    assert(ssa_var_version(v1) == 1);
+
+    let phi = phi_node2_new(ssa_var_new(1, 2), ssa_var_new(1, 0), ssa_var_new(1, 1));
+    assert(phi_node2_out_version(phi) == 2);
+
+    let lr1 = live_range_new(1, 10, 30);
+    assert(live_range_reg(lr1) == 1);
+    let lr1_b = live_range_new(1, 10, 30);
+    assert(live_range_start(lr1_b) == 10);
+    let lr1_c = live_range_new(1, 10, 30);
+    assert(live_range_end(lr1_c) == 30);
+    let lr1_d = live_range_new(1, 10, 30);
+    assert(live_range_covers(lr1_d, 20));
+    let lr1_e = live_range_new(1, 10, 30);
+    assert(!live_range_covers(lr1_e, 35));
+
+    let lr2 = live_range_new(2, 25, 40);
+    assert(live_range_interferes(live_range_new(1, 10, 30), lr2));
+    let lr3 = live_range_new(3, 35, 50);
+    assert(!live_range_interferes(live_range_new(1, 10, 30), lr3));
+
+    let fold_add = fold_add_i64(10, 20);
+    assert(fold_result_is_folded(fold_add));
+    let fold_add_b = fold_add_i64(10, 20);
+    assert(fold_result_val(fold_add_b) == 30);
+
+    let fold_div = fold_div_i64(100, 5);
+    assert(fold_result_is_folded(fold_div));
+    let fold_div_b = fold_div_i64(100, 5);
+    assert(fold_result_val(fold_div_b) == 20);
+
+    let fold_div_zero = fold_div_i64(100, 0);
+    assert(!fold_result_is_folded(fold_div_zero));
+
+    let reach0 = reachability_map_new();
+    assert(reachability_map_is_reached(reach0, 0));
+    let reach0_b = reachability_map_new();
+    assert(!reachability_map_is_reached(reach0_b, 1));
+
+    let reach1 = reachability_map_mark_reached(reachability_map_new(), 1);
+    assert(reachability_map_is_reached(reach1, 1));
+    let reach1_b = reachability_map_mark_reached(reachability_map_new(), 1);
+    assert(!reachability_map_is_reached(reach1_b, 2));
+
+    print("SSA LIVERANGE CONSTFOLD REACHABILITY OPERATIONAL");
+}
