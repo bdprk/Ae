@@ -1,0 +1,38 @@
+use "../../std/core/ring.ae";
+use "../../std/core/flags.ae";
+use "../../std/core/status.ae";
+use "../../std/core/state.ae";
+
+fn main() {
+    let r0 = ring_create(8);
+    assert(ring_is_empty(r0));
+
+    let r_temp = ring_create(8);
+    assert(!ring_is_full(r_temp));
+
+    let r_init = ring_create(8);
+    let r1 = ring_advance_head(r_init);
+    assert(r1.head == 1);
+    assert(r1.count == 1);
+
+    let m1 = bitmask_new(5); // 1 + 4
+    assert(bitmask_has_flag(m1, 1));
+
+    let m2 = bitmask_new(5);
+    assert(!bitmask_has_flag(m2, 2));
+
+    let m3 = bitmask_new(5);
+    assert(bitmask_has_flag(m3, 4));
+
+    assert(status_code_number(StatusCode::Ok) == 200);
+    assert(status_is_success(StatusCode::Ok));
+    assert(status_is_success(StatusCode::Created));
+    assert(!status_is_success(StatusCode::NotFound));
+    assert(!status_is_success(StatusCode::InternalError));
+
+    assert(lifecycle_can_transition(LifecycleState::Uninitialized, LifecycleState::Starting));
+    assert(lifecycle_can_transition(LifecycleState::Starting, LifecycleState::Running));
+    assert(!lifecycle_can_transition(LifecycleState::Starting, LifecycleState::Terminated));
+
+    print("ADVANCED CORE PRIMITIVES OPERATIONAL\n");
+}

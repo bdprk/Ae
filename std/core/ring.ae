@@ -1,0 +1,31 @@
+// std/core/ring.ae
+// Core RingBuffer Index & Capacity Logic (M1.4 / M1.10)
+
+pub struct RingCursor {
+    head: i64,
+    tail: i64,
+    capacity: i64,
+    count: i64,
+}
+
+pub fn ring_create(cap: i64) -> RingCursor {
+    return RingCursor { head: 0, tail: 0, capacity: cap, count: 0 };
+}
+
+pub fn ring_is_empty(r: RingCursor) -> bool {
+    return r.count == 0;
+}
+
+pub fn ring_is_full(r: RingCursor) -> bool {
+    return r.count >= r.capacity;
+}
+
+pub fn ring_advance_head(r: RingCursor) -> RingCursor {
+    let next_head = (r.head + 1) % r.capacity;
+    return RingCursor {
+        head: next_head,
+        tail: r.tail,
+        capacity: r.capacity,
+        count: r.count + 1,
+    };
+}

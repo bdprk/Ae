@@ -1,0 +1,28 @@
+// std/core/state.ae
+// Core State Machine & Lifecycle Transitions (M1.4)
+
+pub enum LifecycleState {
+    Uninitialized,
+    Starting,
+    Running,
+    Stopping,
+    Terminated,
+}
+
+pub fn lifecycle_code(state: LifecycleState) -> i64 {
+    var c = 0;
+    match state {
+        LifecycleState::Uninitialized => { c = 0; }
+        LifecycleState::Starting => { c = 1; }
+        LifecycleState::Running => { c = 2; }
+        LifecycleState::Stopping => { c = 3; }
+        LifecycleState::Terminated => { c = 4; }
+    }
+    return c;
+}
+
+pub fn lifecycle_can_transition(from: LifecycleState, to: LifecycleState) -> bool {
+    let f = lifecycle_code(from);
+    let t = lifecycle_code(to);
+    return t == f + 1;
+}

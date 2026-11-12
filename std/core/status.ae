@@ -1,0 +1,27 @@
+// std/core/status.ae
+// Core HTTP & Protocol Status Code Classifications (M1.4 / M4.7)
+
+pub enum StatusCode {
+    Ok,
+    Created,
+    BadRequest,
+    NotFound,
+    InternalError,
+}
+
+pub fn status_code_number(s: StatusCode) -> i64 {
+    var code = 0;
+    match s {
+        StatusCode::Ok => { code = 200; }
+        StatusCode::Created => { code = 201; }
+        StatusCode::BadRequest => { code = 400; }
+        StatusCode::NotFound => { code = 404; }
+        StatusCode::InternalError => { code = 500; }
+    }
+    return code;
+}
+
+pub fn status_is_success(s: StatusCode) -> bool {
+    let n = status_code_number(s);
+    return n >= 200 && n < 300;
+}

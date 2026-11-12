@@ -1,0 +1,19 @@
+// std/core/flags.ae
+// Core 64-bit Bitmask Flag Operations (M1.4 / M1.7)
+
+pub struct Bitmask {
+    raw: i64,
+}
+
+pub fn bitmask_new(init: i64) -> Bitmask {
+    return Bitmask { raw: init };
+}
+
+pub fn bitmask_raw(m: Bitmask) -> i64 {
+    return m.raw;
+}
+
+pub fn bitmask_has_flag(m: Bitmask, flag: i64) -> bool {
+    // Arithmetic check for power-of-two bit flags
+    return (m.raw / flag) % 2 == 1;
+}
