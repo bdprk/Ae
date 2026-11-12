@@ -1,0 +1,33 @@
+// std/core/hash_chain.ae
+// Bucket chain collision index tracking primitives for open hash tables.
+
+pub struct HashChainSlot {
+    key_hash: i64,
+    next_index: i64,
+}
+
+pub fn hash_chain_slot_new(hash_val: i64) -> HashChainSlot {
+    return HashChainSlot {
+        key_hash: hash_val,
+        next_index: -1,
+    };
+}
+
+pub fn hash_chain_slot_hash(slot: HashChainSlot) -> i64 {
+    return slot.key_hash;
+}
+
+pub fn hash_chain_slot_next(slot: HashChainSlot) -> i64 {
+    return slot.next_index;
+}
+
+pub fn hash_chain_slot_has_next(slot: HashChainSlot) -> bool {
+    return slot.next_index >= 0;
+}
+
+pub fn hash_chain_slot_link(slot: HashChainSlot, next_idx: i64) -> HashChainSlot {
+    return HashChainSlot {
+        key_hash: slot.key_hash,
+        next_index: next_idx,
+    };
+}

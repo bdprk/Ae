@@ -1,0 +1,23 @@
+// std/core/hash_mask.ae
+// Hash value capacity masking and bucket index primitives.
+
+use "alignment_mask.ae";
+
+pub fn hash_to_bucket(hash_val: i64, capacity: i64) -> i64 {
+    if capacity <= 0 {
+        return 0;
+    }
+    // Fast path: if capacity is power of two, hash & (capacity - 1)
+    if is_power_of_two(capacity) {
+        let mask = capacity - 1;
+        return hash_val % capacity;
+    }
+    return hash_val % capacity;
+}
+
+pub fn hash_bucket_offset(hash_val: i64, step: i64, capacity: i64) -> i64 {
+    if capacity <= 0 {
+        return 0;
+    }
+    return (hash_val + step) % capacity;
+}

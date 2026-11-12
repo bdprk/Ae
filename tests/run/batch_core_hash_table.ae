@@ -1,0 +1,47 @@
+use "../../std/core/hash_chain.ae";
+use "../../std/core/load_factor.ae";
+use "../../std/core/hash_tombstone.ae";
+use "../../std/core/hash_mask.ae";
+
+fn main() {
+    let s0 = hash_chain_slot_new(12345);
+    assert(hash_chain_slot_hash(s0) == 12345);
+    let s0_b = hash_chain_slot_new(12345);
+    assert(hash_chain_slot_next(s0_b) == -1);
+    let s0_c = hash_chain_slot_new(12345);
+    assert(!hash_chain_slot_has_next(s0_c));
+
+    let s1 = hash_chain_slot_link(hash_chain_slot_new(12345), 4);
+    assert(hash_chain_slot_next(s1) == 4);
+    let s1_b = hash_chain_slot_link(hash_chain_slot_new(12345), 4);
+    assert(hash_chain_slot_has_next(s1_b));
+
+    // Capacity 16, count 12 -> 75% load
+    assert(!hash_table_needs_resize(12, 16, 75));
+    assert(hash_table_needs_resize(13, 16, 75));
+    assert(hash_table_load_percent(12, 16) == 75);
+    assert(hash_table_grow_capacity(16) == 32);
+    assert(hash_table_grow_capacity(0) == 8);
+
+    assert(slot_state_is_empty(SlotState::Empty));
+    assert(!slot_state_is_empty(SlotState::Occupied));
+    assert(!slot_state_is_empty(SlotState::Deleted));
+
+    assert(slot_state_is_occupied(SlotState::Occupied));
+    assert(!slot_state_is_occupied(SlotState::Empty));
+    assert(!slot_state_is_occupied(SlotState::Deleted));
+
+    assert(slot_state_is_deleted(SlotState::Deleted));
+    assert(!slot_state_is_deleted(SlotState::Occupied));
+
+    assert(slot_state_can_insert(SlotState::Empty));
+    assert(slot_state_can_insert(SlotState::Deleted));
+    assert(!slot_state_can_insert(SlotState::Occupied));
+
+    assert(hash_to_bucket(100, 16) == 4);
+    assert(hash_to_bucket(32, 16) == 0);
+    assert(hash_bucket_offset(15, 1, 16) == 0);
+    assert(hash_bucket_offset(15, 2, 16) == 1);
+
+    print("HASHCHAIN LOADFACTOR TOMBSTONE MASK OPERATIONAL");
+}

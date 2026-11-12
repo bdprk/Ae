@@ -1,0 +1,48 @@
+// std/core/hash_tombstone.ae
+// Open addressing hash table tombstone entry state primitives.
+
+pub enum SlotState {
+    Empty,
+    Occupied,
+    Deleted,
+}
+
+pub fn slot_state_is_empty(s: SlotState) -> bool {
+    var r = false;
+    match s {
+        SlotState::Empty => { r = true; }
+        SlotState::Occupied => {}
+        SlotState::Deleted => {}
+    }
+    return r;
+}
+
+pub fn slot_state_is_occupied(s: SlotState) -> bool {
+    var r = false;
+    match s {
+        SlotState::Empty => {}
+        SlotState::Occupied => { r = true; }
+        SlotState::Deleted => {}
+    }
+    return r;
+}
+
+pub fn slot_state_is_deleted(s: SlotState) -> bool {
+    var r = false;
+    match s {
+        SlotState::Empty => {}
+        SlotState::Occupied => {}
+        SlotState::Deleted => { r = true; }
+    }
+    return r;
+}
+
+pub fn slot_state_can_insert(s: SlotState) -> bool {
+    var r = false;
+    match s {
+        SlotState::Empty => { r = true; }
+        SlotState::Occupied => {}
+        SlotState::Deleted => { r = true; }
+    }
+    return r;
+}

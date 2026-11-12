@@ -1,0 +1,25 @@
+// std/core/load_factor.ae
+// Hash table resize threshold and load factor calculation primitives.
+
+pub fn hash_table_needs_resize(count: i64, capacity: i64, max_percent: i64) -> bool {
+    if capacity <= 0 {
+        return true;
+    }
+    // Check if count / capacity > max_percent / 100
+    // => count * 100 > max_percent * capacity
+    return count * 100 > max_percent * capacity;
+}
+
+pub fn hash_table_grow_capacity(capacity: i64) -> i64 {
+    if capacity <= 0 {
+        return 8;
+    }
+    return capacity * 2;
+}
+
+pub fn hash_table_load_percent(count: i64, capacity: i64) -> i64 {
+    if capacity <= 0 {
+        return 100;
+    }
+    return (count * 100) / capacity;
+}
