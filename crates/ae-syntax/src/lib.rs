@@ -69,8 +69,8 @@ impl From<Diagnostic> for LexFailure {
 
 const MAX_LEX_DIAGNOSTICS: usize = 32;
 
-/// Recover only from unexpected characters, never returning tokens for an
-/// invalid source. All positions are calculated against the original input.
+/// Recover from unexpected characters and complete invalid numeric literals,
+/// never returning tokens for an invalid source. All positions are calculated against the original input.
 pub fn lex_with_diagnostics(source: &str) -> Result<Vec<Token>, Vec<Diagnostic>> {
     let mut diagnostics = Vec::new();
     let tokens = match lex_inner(source, Some(&mut diagnostics)) {
@@ -97,6 +97,19 @@ fn lex_inner(source: &str, mut recovered: Option<&mut Vec<Diagnostic>>) -> Resul
     let mut i = 0;
     let mut result = Vec::new();
     let (mut location_offset, mut line, mut column) = (0, 1, 1);
+    macro_rules! recover_numeric {
+        ($diagnostic:expr) => {{
+            let diagnostic = $diagnostic;
+            match recovered.as_deref_mut() {
+                Some(diagnostics) => {
+                    diagnostics.push(diagnostic);
+                    if diagnostics.len() >= MAX_LEX_DIAGNOSTICS { return Ok(result); }
+                    continue;
+                }
+                None => return Err(LexFailure::Fatal(diagnostic)),
+            }
+        }};
+    }
     while i < bytes.len() {
         let start = i;
         let c = source[i..].chars().next().unwrap();
@@ -161,17 +174,23 @@ fn lex_inner(source: &str, mut recovered: Option<&mut Vec<Diagnostic>>) -> Resul
             }
             let text = &source[start..i];
             if floating {
-                let value: f64 = text.parse().map_err(|_| lex_error(source, start, "E0006", "invalid float literal"))?;
-                if !value.is_finite() { return Err(lex_error(source, start, "E0007", "float literal is not finite").into()); }
+                let value: f64 = match text.parse() {
+                    Ok(value) => value,
+                    Err(_) => recover_numeric!(lex_error(source, start, "E0006", "invalid float literal")),
+                };
+                if !value.is_finite() { recover_numeric!(lex_error(source, start, "E0007", "float literal is not finite")); }
                 // Rounding a nonzero literal down to zero would silently replace
                 // the value the user wrote, so it is rejected instead of stored.
                 let mantissa = text.split(['e', 'E']).next().unwrap_or(text);
                 if value == 0.0 && mantissa.bytes().any(|b| b.is_ascii_digit() && b != b'0') {
-                    return Err(lex_error(source, start, "E0008", "float literal underflows to zero").into());
+                    recover_numeric!(lex_error(source, start, "E0008", "float literal underflows to zero"));
                 }
                 Kind::Float(value)
             } else {
-                Kind::Number(text.parse().map_err(|_| lex_error(source, start, "E0005", "integer literal exceeds i64 maximum"))?)
+                match text.parse() {
+                    Ok(value) => Kind::Number(value),
+                    Err(_) => recover_numeric!(lex_error(source, start, "E0005", "integer literal exceeds i64 maximum")),
+                }
             }
         } else if ["==", "!=", "<=", ">=", "->", "&&", "||", "..", "=>", "::"].iter().any(|op| source[i..].starts_with(op)) {
             i += 2;
@@ -256,6 +275,23 @@ mod diagnostic_tests {
         assert_eq!(diagnostic.primary.unwrap().span.range, 0.."中".len());
         let diagnostic = lex_diagnostic("\"unterminated").unwrap_err();
         assert_eq!(diagnostic.primary.unwrap().span.range, 0..1);
+    }
+
+    #[test]
+    fn recovery_continues_after_complete_invalid_numeric_literals() {
+        let source = "// 中文\n9223372036854775808 @ 1e999 1e-999 #";
+        let errors = lex_with_diagnostics(source).unwrap_err();
+        let codes: Vec<_> = errors.iter().map(|d| d.code.as_deref().unwrap()).collect();
+        assert_eq!(codes, ["E0005", "E0001", "E0007", "E0008", "E0001"]);
+        for (error, needle) in errors.iter().zip(["9223372036854775808", "@", "1e999", "1e-999", "#"]) {
+            let span = &error.primary.as_ref().unwrap().span;
+            assert_eq!(span.range.start, source.find(needle).unwrap());
+            assert_eq!(span.line, 2);
+        }
+        assert_eq!(lex_diagnostic(source).unwrap_err(), errors[0]);
+        let many = std::iter::repeat_n("9223372036854775808", 40).collect::<Vec<_>>().join(" ");
+        assert_eq!(lex_with_diagnostics(&many).unwrap_err().len(), 32);
+        assert!(lex_with_diagnostics("9223372036854775808 \"bad\\q\" @").unwrap_err().len() == 2);
     }
 
     #[test]

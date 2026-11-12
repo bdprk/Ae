@@ -4152,3 +4152,26 @@ fn check_json_preserves_diagnostic_location_in_imported_file() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn numeric_lexical_errors_recover_in_json_without_accepting_program() {
+    let dir = unique_temp_dir("json-numeric-recovery");
+    let path = dir.join("bad.ae");
+    fs::write(&path, "// unicode: 中文\nfn main() { print(9223372036854775808); @ print(1e999); print(1e-999); }\n").unwrap();
+    let json = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    assert!(!json.status.success());
+    assert!(json.stderr.is_empty());
+    let text = String::from_utf8(json.stdout).unwrap();
+    let positions: Vec<_> = ["E0005", "E0001", "E0007", "E0008"].iter().map(|code| text.find(code).unwrap()).collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{text}");
+    assert_eq!(text.matches("\"code\":").count(), 4, "{text}");
+    let plain = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+    assert!(!plain.status.success());
+    let stderr = String::from_utf8_lossy(&plain.stderr);
+    assert!(stderr.contains("integer literal exceeds i64 maximum"), "{stderr}");
+    assert!(!stderr.contains("unexpected character"), "{stderr}");
+    let generated = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-c").arg(&path).output().unwrap();
+    assert!(!generated.status.success());
+    assert!(generated.stdout.is_empty());
+    fs::remove_dir_all(dir).unwrap();
+}

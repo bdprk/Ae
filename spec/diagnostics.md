@@ -34,7 +34,7 @@ Every JSON diagnostic includes `secondary`, an array of related source labels. E
 
 When lexical analysis encounters an unexpected character outside a string or comment, `check --json` reports that character and may continue scanning for further lexical errors. Diagnostics retain source order, byte offsets, and line and Unicode-scalar column positions from the original source. No tokens from a source with lexical errors are accepted for parsing or code generation.
 
-At most 32 lexical diagnostics are reported per source file. Errors whose recovery point is ambiguous, including invalid string escapes, unterminated strings and invalid numeric literals, end scanning after the diagnostic. Text-mode commands continue to report the first error.
+At most 32 lexical diagnostics are reported per source file. After a complete numeric literal has been scanned, an out-of-range or invalid numeric value is reported and scanning may resume at the end of that literal. Errors whose recovery point is ambiguous, including invalid string escapes and unterminated strings, end scanning after the diagnostic. Text-mode commands continue to report the first error.
 
 When the first compilation error is lexical, JSON checking may also collect lexical errors from independently reachable sibling imports. It follows depth-first import order, visits canonical files once, and returns at most 32 diagnostics for the graph. A file with lexical errors cannot reveal further imports. An unreadable file, malformed import header, or import cycle stops this supplementary traversal. If its first diagnostics differ from the normal compilation result, the normal result takes precedence. Supplementary diagnostics never authorize compilation.
 
