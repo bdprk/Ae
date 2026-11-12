@@ -1,0 +1,28 @@
+// std/core/uninit_guard.ae
+// Uninitialized heap memory slot state guard primitive for AE allocators.
+
+pub enum SlotInitState {
+    Uninitialized,
+    Initialized,
+    MovedOut,
+}
+
+pub fn slot_init_state_is_ready(s: SlotInitState) -> bool {
+    var r = false;
+    match s {
+        SlotInitState::Uninitialized => {}
+        SlotInitState::Initialized => { r = true; }
+        SlotInitState::MovedOut => {}
+    }
+    return r;
+}
+
+pub fn slot_init_state_can_write(s: SlotInitState) -> bool {
+    var r = false;
+    match s {
+        SlotInitState::Uninitialized => { r = true; }
+        SlotInitState::Initialized => {}
+        SlotInitState::MovedOut => { r = true; }
+    }
+    return r;
+}

@@ -1,0 +1,47 @@
+use "../../std/core/cow_state.ae";
+use "../../std/core/rc_header.ae";
+use "../../std/core/builder_cap.ae";
+use "../../std/core/uninit_guard.ae";
+
+fn main() {
+    let cow0 = cow_state_borrowed();
+    assert(cow_state_is_borrowed(cow0));
+    let cow0_b = cow_state_borrowed();
+    assert(!cow_state_is_owned(cow0_b));
+
+    let cow1 = cow_state_to_mut(cow_state_borrowed());
+    assert(cow_state_is_owned(cow1));
+    let cow2 = cow_state_to_mut(cow_state_to_mut(cow_state_borrowed()));
+    assert(cow_state_is_owned(cow2));
+
+    let rc0 = rc_header_new();
+    assert(rc_header_strong(rc0) == 1);
+    let rc0_b = rc_header_new();
+    assert(rc_header_weak(rc0_b) == 0);
+    let rc0_c = rc_header_new();
+    assert(rc_header_is_unique(rc0_c));
+
+    let rc1 = rc_header_inc_strong(rc_header_new());
+    assert(rc_header_strong(rc1) == 2);
+    let rc1_b = rc_header_inc_strong(rc_header_new());
+    assert(!rc_header_is_unique(rc1_b));
+
+    let rc_dec = rc_header_dec_strong(rc_header_inc_strong(rc_header_new()));
+    assert(rc_header_strong(rc_dec) == 1);
+
+    assert(builder_growth_capacity(0, 4) == 8);
+    assert(builder_growth_capacity(8, 10) == 12); // 8 + 4 = 12
+    assert(builder_growth_capacity(8, 20) == 20); // max(12, 20) = 20
+    assert(builder_needs_growth(10, 10));
+    assert(!builder_needs_growth(5, 10));
+
+    assert(!slot_init_state_is_ready(SlotInitState::Uninitialized));
+    assert(slot_init_state_is_ready(SlotInitState::Initialized));
+    assert(!slot_init_state_is_ready(SlotInitState::MovedOut));
+
+    assert(slot_init_state_can_write(SlotInitState::Uninitialized));
+    assert(!slot_init_state_can_write(SlotInitState::Initialized));
+    assert(slot_init_state_can_write(SlotInitState::MovedOut));
+
+    print("COW RC BUILDER UNINIT OPERATIONAL");
+}

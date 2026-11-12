@@ -1,0 +1,21 @@
+// std/core/builder_cap.ae
+// Dynamic string and vector builder capacity growth calculation primitive.
+
+pub fn builder_growth_capacity(current_cap: i64, required_cap: i64) -> i64 {
+    if current_cap <= 0 {
+        if required_cap > 8 {
+            return required_cap;
+        }
+        return 8;
+    }
+    // Growth factor 1.5x (current + current / 2)
+    let double_cap = current_cap + current_cap / 2;
+    if double_cap > required_cap {
+        return double_cap;
+    }
+    return required_cap;
+}
+
+pub fn builder_needs_growth(item_count: i64, capacity: i64) -> bool {
+    return item_count >= capacity;
+}

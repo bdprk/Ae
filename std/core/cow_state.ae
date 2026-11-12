@@ -1,0 +1,46 @@
+// std/core/cow_state.ae
+// Copy-On-Write (COW) buffer ownership state tracking primitive.
+
+pub struct CowState {
+    is_owned: bool,
+    version: i64,
+}
+
+pub fn cow_state_borrowed() -> CowState {
+    return CowState {
+        is_owned: false,
+        version: 0,
+    };
+}
+
+pub fn cow_state_owned() -> CowState {
+    return CowState {
+        is_owned: true,
+        version: 1,
+    };
+}
+
+pub fn cow_state_is_borrowed(s: CowState) -> bool {
+    return !s.is_owned;
+}
+
+pub fn cow_state_is_owned(s: CowState) -> bool {
+    return s.is_owned;
+}
+
+pub fn cow_state_version(s: CowState) -> i64 {
+    return s.version;
+}
+
+pub fn cow_state_to_mut(s: CowState) -> CowState {
+    if !s.is_owned {
+        return CowState {
+            is_owned: true,
+            version: 1,
+        };
+    }
+    return CowState {
+        is_owned: true,
+        version: s.version + 1,
+    };
+}

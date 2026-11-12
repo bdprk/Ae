@@ -1,0 +1,44 @@
+// std/core/rc_header.ae
+// Reference count control block header primitive for AE allocators.
+
+pub struct RcHeader {
+    strong_count: i64,
+    weak_count: i64,
+}
+
+pub fn rc_header_new() -> RcHeader {
+    return RcHeader {
+        strong_count: 1,
+        weak_count: 0,
+    };
+}
+
+pub fn rc_header_strong(h: RcHeader) -> i64 {
+    return h.strong_count;
+}
+
+pub fn rc_header_weak(h: RcHeader) -> i64 {
+    return h.weak_count;
+}
+
+pub fn rc_header_is_unique(h: RcHeader) -> bool {
+    return h.strong_count == 1;
+}
+
+pub fn rc_header_inc_strong(h: RcHeader) -> RcHeader {
+    return RcHeader {
+        strong_count: h.strong_count + 1,
+        weak_count: h.weak_count,
+    };
+}
+
+pub fn rc_header_dec_strong(h: RcHeader) -> RcHeader {
+    var next_c = h.strong_count - 1;
+    if next_c < 0 {
+        next_c = 0;
+    }
+    return RcHeader {
+        strong_count: next_c,
+        weak_count: h.weak_count,
+    };
+}
