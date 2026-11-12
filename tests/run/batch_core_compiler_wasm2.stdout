@@ -1,0 +1,6 @@
+--- batch_core_compiler_wasm2 test start ---
+wasm_local ok
+wasm_import ok
+wasm_mem ok
+wasm_branch ok
+--- batch_core_compiler_wasm2 test end ---

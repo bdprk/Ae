@@ -1,0 +1,45 @@
+// tests/run/batch_core_compiler_wasm2.ae
+// Verification of WasmLocalRun, WasmImport, WasmMemoryLimits, and WasmBranchTarget primitives.
+
+use "../../std/core/ir_wasm_local.ae";
+use "../../std/core/ir_wasm_import.ae";
+use "../../std/core/ir_wasm_memory.ae";
+use "../../std/core/ir_wasm_branch.ae";
+
+fn main() {
+    print("--- batch_core_compiler_wasm2 test start ---");
+
+    // 1. Wasm Local Run
+    let r1 = wasm_local_run_new(4, 126); // 4 local variables of i64
+    assert(wasm_local_count(r1) == 4);
+    let r1_b = wasm_local_run_new(4, 126);
+    assert(wasm_local_type(r1_b) == 126);
+    print("wasm_local ok");
+
+    // 2. Wasm Import
+    let imp = wasm_import_new(3, 4, 0, 1); // env.puts func with type 1
+    assert(wasm_import_is_function(imp));
+    let imp_b = wasm_import_new(3, 4, 0, 1);
+    assert(wasm_import_type_idx(imp_b) == 1);
+    print("wasm_import ok");
+
+    // 3. Wasm Memory Limits
+    // 2 min pages = 131072 bytes
+    let mem = wasm_mem_new(2, 16, true);
+    assert(wasm_mem_has_max(mem));
+    let mem_b = wasm_mem_new(2, 16, true);
+    assert(wasm_mem_min_bytes(mem_b) == 131072);
+    print("wasm_mem ok");
+
+    // 4. Wasm Branch Target
+    let br_block = wasm_branch_new(0, false); // br 0 breaks to end of current block
+    assert(wasm_branch_depth(br_block) == 0);
+    let br_block_b = wasm_branch_new(0, false);
+    assert(!wasm_branch_is_loop(br_block_b));
+
+    let br_loop = wasm_branch_new(1, true); // br 1 jumps to loop header
+    assert(wasm_branch_is_loop(br_loop));
+    print("wasm_branch ok");
+
+    print("--- batch_core_compiler_wasm2 test end ---");
+}
