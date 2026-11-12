@@ -4755,12 +4755,60 @@ const WIN32_HEADER_OMITTED: &str = "/* windows.h omitted */";
 /// that the generated code never names directly). The walk then follows calls
 /// between retained functions. Dropping an unreachable function cannot change
 /// behaviour: it has no caller in this translation unit.
-fn prune_runtime(prefix: &str, suffix: &str) -> (String, usize) {
-    let units = runtime_units(prefix);
-    // A name can have several definitions under #ifdef/_WIN32 branches. The
-    // scanner does not run the preprocessor, so every definition must be kept
-    // and every body scanned: keeping only the last one would silently drop a
-    // helper that the Windows branch calls.
+fn strip_define_lines(text: &str) -> String {
+    // `#define` bodies in this runtime are numbers and type names, never
+    // function calls, so they are not roots. The prelude result macros name
+    // `ae_eN` types; a macro's *use* in a kept function forces that
+    // layout through the AE_<NAME>_ scan below, not its definition line.
+    let mut out = String::with_capacity(text.len());
+    for line in text.lines() {
+        if line.trim_start().starts_with("#define") { continue; }
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// Which prelude enum an `AE_<NAME>_...` macro belongs to. The layout of
+/// that enum must exist whenever a kept function uses any of its macros.
+const PRELUDE_MACRO_PREFIXES: &[(&str, usize)] = &[
+    ("AE_READ_", 0), ("AE_WRITE_", 1), ("AE_INT_", 2), ("AE_DIR_", 3),
+    ("AE_FILE_", 4), ("AE_STATUS_", 5), ("AE_BOOL_", 6), ("AE_COMMAND_", 7),
+    ("AE_FLOAT_", 8),
+];
+
+/// Keep only runtime functions reachable from the program. Roots are the
+/// symbols in the program suffix plus every symbol in the always-retained
+/// non-function text (static initialisers can call functions that the
+/// generated code never names directly). The walk then follows calls between
+/// retained functions. Prelude enum layouts are emitted on demand (ADR-66):
+/// a layout exists when user code names the type, or when a kept function
+/// uses one of the enum's `AE_<NAME>_` macros.
+fn prune_runtime(core: &str, ex: &str, prelude: &[(String, String, String)], suffix: &str) -> (String, usize) {
+    let core_units = runtime_units(core);
+    let ex_units = runtime_units(ex);
+    // The layout release/forfeit functions are ordinary named units: they join
+    // the reachability walk and are emitted (right after their typedef) only
+    // when something calls them.
+    let mut units: Vec<(Option<String>, String)> = Vec::new();
+    units.extend(core_units.iter().cloned());
+    for (eid, (_, release, forfeit)) in prelude.iter().enumerate() {
+        let _ = eid;
+        units.push((Some("LAYOUT_RELEASE".to_owned()), release.clone()));
+        units.push((Some("LAYOUT_FORFEIT".to_owned()), forfeit.clone()));
+    }
+    units.extend(ex_units.iter().cloned());
+    // Give the layout functions their real names for the definitions map.
+    let mut layout_index = 0usize;
+    for index in 0..units.len() {
+        if units[index].0.as_deref() == Some("LAYOUT_RELEASE") || units[index].0.as_deref() == Some("LAYOUT_FORFEIT") {
+            let eid = layout_index / 2;
+            let kind = if layout_index % 2 == 0 { "release" } else { "forfeit" };
+            units[index].0 = Some(format!("ae_e{eid}_{kind}"));
+            layout_index += 1;
+        }
+    }
+
     let mut definitions: HashMap<String, Vec<usize>> = HashMap::new();
     for (index, (name, _)) in units.iter().enumerate() {
         if let Some(name) = name { definitions.entry(name.clone()).or_default().push(index); }
@@ -4768,8 +4816,11 @@ fn prune_runtime(prefix: &str, suffix: &str) -> (String, usize) {
     let mut keep: HashSet<String> = HashSet::new();
     let mut queue: Vec<String> = Vec::new();
     queue.extend(ae_symbols(suffix));
-    for (name, text) in &units {
-        if name.is_none() { queue.extend(ae_symbols(text)); }
+    for (index, (name, body)) in units.iter().enumerate() {
+        if name.is_none() {
+            queue.extend(ae_symbols(&strip_define_lines(body)));
+        }
+        let _ = index;
     }
     // Hosts embedding the generated C may substitute the allocator without
     // the generated code naming it; keep that documented entry point.
@@ -4778,15 +4829,33 @@ fn prune_runtime(prefix: &str, suffix: &str) -> (String, usize) {
         if !keep.insert(symbol.clone()) { continue; }
         if let Some(indices) = definitions.get(&symbol) {
             for &index in indices {
-                for next in ae_symbols(&units[index].1) {
+                // A kept function that uses a prelude result macro needs that
+                // enum's typedef, even though the body only names the macro.
+                let body = &units[index].1;
+                for (macro_prefix, eid) in PRELUDE_MACRO_PREFIXES {
+                    if body.contains(macro_prefix) {
+                        let typedef = format!("ae_e{eid}");
+                        if !keep.contains(&typedef) { queue.push(typedef); }
+                    }
+                }
+                for next in ae_symbols(body) {
                     if !keep.contains(&next) { queue.push(next); }
                 }
             }
         }
     }
     let mut out = String::new();
-    for (name, text) in &units {
-        if name.is_none() || name.as_ref().is_some_and(|n| keep.contains(n)) { out.push_str(text); }
+    for (name, body) in &core_units {
+        if name.is_none() || name.as_ref().is_some_and(|n| keep.contains(n)) { out.push_str(body); }
+    }
+    for (eid, (typedef, release, forfeit)) in prelude.iter().enumerate() {
+        if !keep.contains(&format!("ae_e{eid}")) { continue; }
+        out.push_str(typedef);
+        if keep.contains(&format!("ae_e{eid}_release")) { out.push_str(release); }
+        if keep.contains(&format!("ae_e{eid}_forfeit")) { out.push_str(forfeit); }
+    }
+    for (name, body) in &ex_units {
+        if name.is_none() || name.as_ref().is_some_and(|n| keep.contains(n)) { out.push_str(body); }
     }
     // The <windows.h> include lives in a non-function unit, so pruning alone
     // keeps it even when every Win32-dependent function was removed. Parsing
@@ -4804,78 +4873,86 @@ fn prune_runtime(prefix: &str, suffix: &str) -> (String, usize) {
     (out, runtime_len)
 }
 
-fn emit_enum_layouts(enums: &[EnumDef], from: usize, to: usize, out: &mut String) {
-    // Enum layouts: a tag plus a union of per-variant payload records. Each
-    // variant gets its own struct so a variant can carry several fields at
-    // once (a union of individual fields would alias them). Release frees the
-    // live variant's owned payloads (idempotently); forfeit only clears them
-    // because the value moved elsewhere.
-    for eid in from..to {
-        let def = &enums[eid];
-        let tags = (0..def.variants.len()).map(|v| format!("    AE_E{eid}_{v} = {v}")).collect::<Vec<_>>().join(",\n");
-        out.push_str(&format!("\ntypedef enum {{\n{tags}\n}} ae_e{eid}_tag;\n"));
-        let mut members = String::new();
-        for (vidx, (_, fields)) in def.variants.iter().enumerate() {
-            if fields.is_empty() { continue; }
-            let mut record = String::new();
-            for (index, ty) in fields.iter().enumerate() {
-                record.push_str(&format!("    {} p{index};\n", c_type_field(*ty)));
-            }
-            out.push_str(&format!("typedef struct {{\n{record}}} ae_e{eid}_v{vidx};\n"));
-            members.push_str(&format!("        ae_e{eid}_v{vidx} v{vidx};\n"));
+/// One prelude enum's C layout, in three independently-emittable pieces
+/// (ADR-66): the typedef/tags, the release function, the forfeit function.
+fn prelude_enum_pieces(enums: &[EnumDef], eid: usize) -> (String, String, String) {
+    let def = &enums[eid];
+    let mut typedef = String::new();
+    let tags = (0..def.variants.len()).map(|v| format!("    AE_E{eid}_{v} = {v}")).collect::<Vec<_>>().join(",\n");
+    typedef.push_str(&format!("\ntypedef enum {{\n{tags}\n}} ae_e{eid}_tag;\n"));
+    let mut members = String::new();
+    for (vidx, (_, fields)) in def.variants.iter().enumerate() {
+        if fields.is_empty() { continue; }
+        let mut record = String::new();
+        for (index, ty) in fields.iter().enumerate() {
+            record.push_str(&format!("    {} p{index};\n", c_type_field(*ty)));
         }
-        // A union needs at least one member; enums without payloads get a
-        // placeholder so the initializer form stays uniform.
-        if members.is_empty() { members.push_str("        char ae_empty;\n"); }
-        out.push_str(&format!("typedef struct {{\n    ae_e{eid}_tag tag;\n    union {{\n{members}    }} u;\n}} ae_e{eid};\n"));
-        let mut release = String::new();
-        let mut forfeit = String::new();
-        for (vidx, (_, fields)) in def.variants.iter().enumerate() {
-            if fields.is_empty() { continue; }
-            let mut clears = String::new();
-            let mut forfeits = String::new();
-            for (index, ty) in fields.iter().enumerate() {
-                let member = format!("v->u.v{vidx}.p{index}");
-                match ty {
-                    Type::String => {
-                        clears.push_str(&format!("        ae_str_release(&{member});\n"));
-                        forfeits.push_str(&format!("        ae_str_forfeit(&{member});\n"));
-                    }
-                    Type::Vec => {
-                        clears.push_str(&format!("        ae_vec_release(&{member});\n"));
-                        forfeits.push_str(&format!("        ae_vec_forfeit(&{member});\n"));
-                    }
-                    Type::StrVec => {
-                        clears.push_str(&format!("        ae_strvec_release(&{member});\n"));
-                        forfeits.push_str(&format!("        ae_strvec_forfeit(&{member});\n"));
-                    }
-                    Type::VecF => {
-                        clears.push_str(&format!("        ae_f64vec_release(&{member});\n"));
-                        forfeits.push_str(&format!("        ae_f64vec_forfeit(&{member});\n"));
-                    }
-                    Type::Map => {
-                        clears.push_str(&format!("        ae_map_release(&{member});\n"));
-                        forfeits.push_str(&format!("        ae_map_forfeit(&{member});\n"));
-                    }
-                    Type::MapF => {
-                        clears.push_str(&format!("        ae_mapf_release(&{member});\n"));
-                        forfeits.push_str(&format!("        ae_mapf_forfeit(&{member});\n"));
-                    }
-                    Type::Bool => {
-                        clears.push_str(&format!("        {member} = false;\n"));
-                        forfeits.push_str(&format!("        {member} = false;\n"));
-                    }
-                    _ => {
-                        clears.push_str(&format!("        {member} = 0;\n"));
-                        forfeits.push_str(&format!("        {member} = 0;\n"));
-                    }
+        typedef.push_str(&format!("typedef struct {{\n{record}}} ae_e{eid}_v{vidx};\n"));
+        members.push_str(&format!("        ae_e{eid}_v{vidx} v{vidx};\n"));
+    }
+    // A union needs at least one member; enums without payloads get a
+    // placeholder so the initializer form stays uniform.
+    if members.is_empty() { members.push_str("        char ae_empty;\n"); }
+    typedef.push_str(&format!("typedef struct {{\n    ae_e{eid}_tag tag;\n    union {{\n{members}    }} u;\n}} ae_e{eid};\n"));
+    let mut release = String::new();
+    let mut forfeit = String::new();
+    for (vidx, (_, fields)) in def.variants.iter().enumerate() {
+        if fields.is_empty() { continue; }
+        let mut clears = String::new();
+        let mut forfeits = String::new();
+        for (index, ty) in fields.iter().enumerate() {
+            let member = format!("v->u.v{vidx}.p{index}");
+            match ty {
+                Type::String => {
+                    clears.push_str(&format!("        ae_str_release(&{member});\n"));
+                    forfeits.push_str(&format!("        ae_str_forfeit(&{member});\n"));
+                }
+                Type::Vec => {
+                    clears.push_str(&format!("        ae_vec_release(&{member});\n"));
+                    forfeits.push_str(&format!("        ae_vec_forfeit(&{member});\n"));
+                }
+                Type::StrVec => {
+                    clears.push_str(&format!("        ae_strvec_release(&{member});\n"));
+                    forfeits.push_str(&format!("        ae_strvec_forfeit(&{member});\n"));
+                }
+                Type::VecF => {
+                    clears.push_str(&format!("        ae_f64vec_release(&{member});\n"));
+                    forfeits.push_str(&format!("        ae_f64vec_forfeit(&{member});\n"));
+                }
+                Type::Map => {
+                    clears.push_str(&format!("        ae_map_release(&{member});\n"));
+                    forfeits.push_str(&format!("        ae_map_forfeit(&{member});\n"));
+                }
+                Type::MapF => {
+                    clears.push_str(&format!("        ae_mapf_release(&{member});\n"));
+                    forfeits.push_str(&format!("        ae_mapf_forfeit(&{member});\n"));
+                }
+                Type::Bool => {
+                    clears.push_str(&format!("        {member} = false;\n"));
+                    forfeits.push_str(&format!("        {member} = false;\n"));
+                }
+                _ => {
+                    clears.push_str(&format!("        {member} = 0;\n"));
+                    forfeits.push_str(&format!("        {member} = 0;\n"));
                 }
             }
-            release.push_str(&format!("    if (v->tag == AE_E{eid}_{vidx}) {{\n{clears}    }}\n"));
-            forfeit.push_str(&format!("    if (v->tag == AE_E{eid}_{vidx}) {{\n{forfeits}    }}\n"));
         }
-        out.push_str(&format!("static void ae_e{eid}_release(ae_e{eid} *v) {{\n{release}}}\n"));
-        out.push_str(&format!("static void ae_e{eid}_forfeit(ae_e{eid} *v) {{\n{forfeit}}}\n"));
+        release.push_str(&format!("    if (v->tag == AE_E{eid}_{vidx}) {{\n{clears}    }}\n"));
+        forfeit.push_str(&format!("    if (v->tag == AE_E{eid}_{vidx}) {{\n{forfeits}    }}\n"));
+    }
+    let release = format!("static void ae_e{eid}_release(ae_e{eid} *v) {{\n{release}}}\n");
+    let forfeit = format!("static void ae_e{eid}_forfeit(ae_e{eid} *v) {{\n{forfeit}}}\n");
+    (typedef, release, forfeit)
+}
+
+fn emit_enum_layouts(enums: &[EnumDef], from: usize, to: usize, out: &mut String) {
+    // User enums (and any caller that wants a contiguous block) emit all three
+    // pieces; the prelude path hands them to the pruner instead (ADR-66).
+    for eid in from..to {
+        let (typedef, release, forfeit) = prelude_enum_pieces(enums, eid);
+        out.push_str(&typedef);
+        out.push_str(&release);
+        out.push_str(&forfeit);
     }
 }
 
@@ -4890,13 +4967,16 @@ fn emit_program(program: Program) -> Result<GeneratedC, String> {
     if names != ["ReadResult", "WriteResult", "IntResult", "DirResult", "FileResult", "StatusResult"] {
         return Err(format!("internal: prelude enums must be registered first and in order, found {names:?}"));
     }
-    let mut out = String::from(include_str!("runtime.c"));
-    emit_enum_layouts(&enums, 0, prelude_count, &mut out);
-    out.push_str(include_str!("runtime_ex.c"));
-    // Everything above is byte-identical for every program: no user enum,
-    // struct, function or literal reaches it. Keeping the cut here lets the
-    // build driver reuse one compiled runtime object across programs.
-    let runtime_len = out.len();
+    // The runtime reaches the pruner in three parts (ADR-66): the core, the
+    // platform extensions, and one layout piece-triple per prelude enum. The
+    // pruner emits a prelude layout only when the program references it, so a
+    // program that uses no fallible built-in carries none of their layouts.
+    let core = String::from(include_str!("runtime.c"));
+    let ex = String::from(include_str!("runtime_ex.c"));
+    let prelude: Vec<(String, String, String)> = (0..prelude_count)
+        .map(|eid| prelude_enum_pieces(&enums, eid))
+        .collect();
+    let mut out = String::new();
     // User enums are emitted after the runtime prefix. runtime_ex.c only names
     // prelude ids, so this does not change any type it can reference.
     emit_enum_layouts(&enums, prelude_count, enums.len(), &mut out);
@@ -4977,8 +5057,8 @@ fn emit_program(program: Program) -> Result<GeneratedC, String> {
     out.push_str("    if (fflush(stdout) == EOF) return 1;\n    return 0;\n}\n");
     // The fixed prefix is program-independent; emit only its reachable part.
     // `split_off` avoids copying the 100 KB runtime text.
-    let user = out.split_off(runtime_len);
-    let (full, pruned_len) = prune_runtime(&out, &user);
+    let user = out;
+    let (full, pruned_len) = prune_runtime(&core, &ex, &prelude, &user);
     Ok(GeneratedC { full, runtime_len: pruned_len })
 }
 #[allow(dead_code)] // exercised by in-memory unit tests
@@ -5104,12 +5184,12 @@ mod tests {
             "static void ae_plain(void) { }\n",
             "static void ae_win(void) { /* win32-header */ }\n",
         );
-        let (plain, len) = prune_runtime(prefix, "int main(void) { ae_plain(); return 0; }\n");
+        let (plain, len) = prune_runtime(prefix, "", &[], "int main(void) { ae_plain(); return 0; }\n");
         assert!(plain[..len].contains(WIN32_HEADER_OMITTED), "header should be dropped");
         assert!(!plain[..len].contains(WIN32_HEADER_INCLUDE), "include line must be gone");
         assert!(!plain.contains("ae_win"), "unreachable Win32 function must be pruned");
 
-        let (win, len) = prune_runtime(prefix, "int main(void) { ae_win(); return 0; }\n");
+        let (win, len) = prune_runtime(prefix, "", &[], "int main(void) { ae_win(); return 0; }\n");
         assert!(win[..len].contains(WIN32_HEADER_INCLUDE), "header must stay for Win32 functions");
         assert!(win[..len].contains(WIN32_HEADER_MARKER));
     }

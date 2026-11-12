@@ -1,0 +1,46 @@
+ADR-66 按需 prelude 枚举布局 · Windows 归档（2026-11-12）
+
+## 平台
+Windows x86-64，8 核 / 16 线程，MinGW-W64 GCC 16.2.0（UCRT）。AE 0.1.1。
+
+## 命令（工作目录 = 仓库根）
+- cargo test --locked
+- python scripts/verify_generated_c.py --leak（34 用例）
+- python scripts/fmt_acceptance.py --json fmt-acceptance.json
+- for f in $(find examples -name "*.ae" ! -name "report.ae" ! -name "words.ae"); do ae check "$f"; done
+- emit-c 字节数对比（generated-c-sizes.txt）
+
+## 交付内容
+- prelude 枚举布局从「无条件常驻前缀」改为**按需发出**：布局存在当且仅当
+  (a) 用户代码直接命名 `ae_eN`（声明、release/forfeit 调用），或
+  (b) 被保留的运行时函数体使用该枚举的 `AE_<NAME>_` 宏族。
+- `prune_runtime` 改为三段输入（runtime.c / runtime_ex.c / 布局片三元组）：
+  布局的 release/forfeit 作为普通命名单元参与可达闭包；typedef 在闭包后
+  按 `ae_eN` 是否在 keep 集中决定发出；`#define` 行从根符号收集中排除
+  （44 个 #define 体全部是数字/类型名，无函数调用——宏的*使用*由
+  (a)(b) 覆盖，定义行不构成根）。
+- `emit_enum_layouts` 拆出 `prelude_enum_pieces`（typedef/release/forfeit
+  三片）；用户枚举路径行为不变。
+
+## 结果
+- cargo test：36 单元 + 179 集成全通过（windows-header 按需测试与
+  prune 测试随新签名更新后照常通过）。
+- --leak：34 用例 PASS，基线 2 块。fmt 44 文件；42 程序 `check`。
+- 生成 C 字节数（本机实测）：
+  | 程序 | ADR-65 后 | ADR-66 后 | 变化 |
+  |---|---|---|---|
+  | print(1) | 14,820 | **12,733** | −2,087（9 个布局全去） |
+  | float_stats.ae | 32,783 | 31,607 | −1,176（FloatResult 未用即去） |
+  | sensor_stats.ae | 41,742 | 39,964 | −1,778（只留 FloatResult） |
+  print(1) 甚至低于 ADR-65 之前的 13,909——此前 8 个旧 prelude 布局也是
+  无条件常驻的，现在同样按需。
+
+## 说明
+- W3 的「运行时前缀逐字节相同」性质由此改变：runtime.c 段仍逐字节相同，
+  中段（布局）随程序变化。当初支撑该性质的「编译产物跨程序复用」从未实现
+  （分离翻译单元已被 ADR-38 实测否决并回退），性质的实际价值是测试对照
+  便利——本次以 ADR 记录新不变量。
+- 失败成本为零的保守性论证：布局缺失只会导致 C 编译期「未定义类型」错误
+  （显式失败），不会静默改变行为；verify 套件 34 个用例覆盖全部 prelude
+  枚举的使用路径。
+- Linux 回填待做：归档 `2026-11-12-linux-demandlayouts/`。
