@@ -1,0 +1,32 @@
+// std/core/escape.ae
+// ASCII & control character escaping primitives for string printers.
+
+pub fn ascii_needs_escape(b: i64) -> bool {
+    // Escapes: \n (10), \r (13), \t (9), \" (34), \\ (92), or control chars (< 32)
+    if b < 32 {
+        return true;
+    }
+    if b == 34 || b == 92 {
+        return true;
+    }
+    return false;
+}
+
+pub fn ascii_escape_char(b: i64) -> i64 {
+    if b == 10 {
+        return 110; // 'n'
+    }
+    if b == 13 {
+        return 114; // 'r'
+    }
+    if b == 9 {
+        return 116; // 't'
+    }
+    if b == 34 {
+        return 34; // '"'
+    }
+    if b == 92 {
+        return 92; // '\'
+    }
+    return 0;
+}

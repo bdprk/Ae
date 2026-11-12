@@ -1,0 +1,33 @@
+// std/core/slot_map.ae
+// SlotMap generational index state primitive for AE core.
+
+pub struct GenerationalSlot {
+    index: i64,
+    generation: i64,
+}
+
+pub fn generational_slot_new(index: i64, gen: i64) -> GenerationalSlot {
+    return GenerationalSlot {
+        index: index,
+        generation: gen,
+    };
+}
+
+pub fn generational_slot_index(slot: GenerationalSlot) -> i64 {
+    return slot.index;
+}
+
+pub fn generational_slot_generation(slot: GenerationalSlot) -> i64 {
+    return slot.generation;
+}
+
+pub fn generational_slot_is_match(slot: GenerationalSlot, exp_gen: i64) -> bool {
+    return slot.generation == exp_gen;
+}
+
+pub fn generational_slot_advance(slot: GenerationalSlot) -> GenerationalSlot {
+    return GenerationalSlot {
+        index: slot.index,
+        generation: slot.generation + 1,
+    };
+}

@@ -1,0 +1,35 @@
+use "../../std/core/arena_layout.ae";
+use "../../std/core/slot_map.ae";
+use "../../std/core/escape.ae";
+use "../../std/core/simd_lane.ae";
+
+fn main() {
+    assert(arena_layout_align_up(0, 8) == 0);
+    assert(arena_layout_align_up(1, 8) == 8);
+    assert(arena_layout_align_up(8, 8) == 8);
+    assert(arena_layout_align_up(9, 8) == 16);
+    assert(arena_layout_fits(0, 64, 8, 128));
+    assert(!arena_layout_fits(120, 16, 8, 128));
+
+    let slot0 = generational_slot_new(5, 1);
+    assert(generational_slot_index(slot0) == 5);
+    let slot0_b = generational_slot_new(5, 1);
+    assert(generational_slot_generation(slot0_b) == 1);
+    let slot0_c = generational_slot_new(5, 1);
+    assert(generational_slot_is_match(slot0_c, 1));
+    let slot1 = generational_slot_advance(generational_slot_new(5, 1));
+    assert(generational_slot_generation(slot1) == 2);
+
+    assert(ascii_needs_escape(10)); // '\n'
+    assert(ascii_needs_escape(34)); // '"'
+    assert(!ascii_needs_escape(65)); // 'A'
+    assert(ascii_escape_char(10) == 110); // 'n'
+    assert(ascii_escape_char(9) == 116); // 't'
+
+    let splat = lane4_splat(10);
+    assert(lane4_sum(splat) == 40);
+    let l_sum = lane4_add(lane4_splat(5), lane4_splat(15));
+    assert(lane4_sum(l_sum) == 80);
+
+    print("ARENA SLOT ESCAPE SIMD OPERATIONAL");
+}

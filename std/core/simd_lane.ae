@@ -1,0 +1,40 @@
+// std/core/simd_lane.ae
+// Conceptual 4-lane SIMD lane state and arithmetic primitives.
+
+pub struct Lane4 {
+    v0: i64,
+    v1: i64,
+    v2: i64,
+    v3: i64,
+}
+
+pub fn lane4_new(a: i64, b: i64, c: i64, d: i64) -> Lane4 {
+    return Lane4 {
+        v0: a,
+        v1: b,
+        v2: c,
+        v3: d,
+    };
+}
+
+pub fn lane4_splat(val: i64) -> Lane4 {
+    return Lane4 {
+        v0: val,
+        v1: val,
+        v2: val,
+        v3: val,
+    };
+}
+
+pub fn lane4_sum(l: Lane4) -> i64 {
+    return l.v0 + l.v1 + l.v2 + l.v3;
+}
+
+pub fn lane4_add(a: Lane4, b: Lane4) -> Lane4 {
+    return Lane4 {
+        v0: a.v0 + b.v0,
+        v1: a.v1 + b.v1,
+        v2: a.v2 + b.v2,
+        v3: a.v3 + b.v3,
+    };
+}
