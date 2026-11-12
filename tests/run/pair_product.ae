@@ -1,0 +1,8 @@
+use "../../std/core/tuple.ae";
+
+fn main() {
+    let p = make_pair[i64, bool](42, true);
+    assert(p.first == 42);
+    assert(p.second == true);
+    print("PAIR PRODUCT TYPE OPERATIONAL\n");
+}

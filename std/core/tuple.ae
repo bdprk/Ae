@@ -1,0 +1,19 @@
+// std/core/tuple.ae
+// Core Pair and Tuple Abstractions (M1.4 / M1.10)
+
+pub struct Pair[A, B] {
+    first: A,
+    second: B,
+}
+
+pub fn make_pair[A, B](a: A, b: B) -> Pair[A, B] {
+    return Pair[A, B] { first: a, second: b };
+}
+
+pub fn pair_first[A, B](p: Pair[A, B]) -> A {
+    return p.first;
+}
+
+pub fn pair_second[A, B](p: Pair[A, B]) -> B {
+    return p.second;
+}
