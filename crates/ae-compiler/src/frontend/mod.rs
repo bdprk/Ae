@@ -396,8 +396,14 @@ pub struct TrackedC { pub runtime: String, pub user: String, pub units: Vec<Sour
 /// the only entry point that exposes the unit list; the plain `compile_path`
 /// forms stay the authority for what a program means.
 pub fn compile_path_tracked(path: &Path) -> Result<TrackedC, String> {
+    let t0 = std::time::Instant::now();
     let (program, units) = loader::load_with_units(path).map_err(String::from)?;
+    let t1 = std::time::Instant::now();
     let GeneratedC { full, runtime_len } = emit_program(program)?;
+    let t2 = std::time::Instant::now();
+    if std::env::var_os("AE_PHASE_SPLIT").is_some() {
+        eprintln!("ae phase: load_ms={:.3} emit_ms={:.3}", (t1-t0).as_secs_f64()*1000.0, (t2-t1).as_secs_f64()*1000.0);
+    }
     let user = full[runtime_len..].to_owned();
     let mut runtime = full;
     runtime.truncate(runtime_len);

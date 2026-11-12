@@ -2,7 +2,7 @@
 
 Version: 0.4 (Refactored, replaces 0.3; charter, priorities, and roadmap unchanged — §5 status and §10 checklist refreshed against the working tree)
 Date: 2026-11-12
-Status: Prototyping (M0 partially complete; the self-hosting IR/data layer of ADR-0150–0179 is in place, the M0 crates are not). The full text of the legacy version 0.2 is backed up in `Autonomous-Programming-Language-Full-Plan.v0.2-backup.md`.
+Status: Prototyping (M0 partially complete; the self-hosting IR/data layer of ADR-0150–0180 is in place, the M0 crates are not). The full text of the legacy version 0.2 is backed up in `Autonomous-Programming-Language-Full-Plan.v0.2-backup.md`.
 
 > This document covers only **goals, design rules, roadmap, and thresholds**. Granular benchmark figures, ADR details, and evidence logs are excluded from this document and are instead maintained in `ae/bench/reports/`, `ae/docs/adr/`, and `ae/CHANGELOG.md` respectively. This document is kept to a length suitable for a single reading session.
 
@@ -249,7 +249,7 @@ A custom native machine code backend/linker will only be considered as a separat
 - Built-ins for file/path/directory/process/env/time/JSON query; `check --json`, `fmt`, `test`, `cache`, `deps`.
 - Dual-platform testing, C generation verification (`--leak`, Linux ASan/UBSan), ADR and benchmark archiving discipline.
 - Frontend reuse cache for `build`/`run`: the generated C is stored per source-unit set with SHA-256 digests, and a build whose units are unchanged skips lexing, parsing, type checking, and code generation entirely (ADR-0177). Single-platform measurement in `bench/reports/2026-11-12-windows-frontend-cache.md`.
-- A self-hosting IR and data layer under `std/core/` (252 modules, ADR-0150–0179): CFG/SSA form, register allocation, optimization passes, ELF64/Mach-O/PE-COFF/Wasm containers, DWARF, assembly text, linker scripts and archives, unwind tables, incremental query primitives, and dependency resolution. These are structures and pure helpers; the compiler still emits C from the AST.
+- A self-hosting IR and data layer under `std/core/` (256 modules, ADR-0150–0180): CFG/SSA form, register allocation, optimization passes, ELF64/Mach-O/PE-COFF/Wasm containers, DWARF, assembly text, linker scripts and archives, unwind tables, incremental query primitives, dependency resolution, and link-time symbol resolution, section layout and relocation application. These are structures and pure helpers; the compiler still emits C from the AST.
 
 ### 5.2 Structural Gaps (Must be resolved in M0–M2)
 
@@ -259,6 +259,7 @@ A custom native machine code backend/linker will only be considered as a separat
 | 9 built-in result enums, dozens of global built-in functions | Verbose code, namespace pollution | M1 |
 | No method syntax, closures, or iterators | Expressiveness far below Go/Rust | M1 |
 | No IR, AST emits C directly | Blocks borrow checking, optimization, backend swapping. `std/core` models IR structures, but no MIR pass exists | M2 |
+| Build shells out to gcc for compile and link | M5.4's 100 ms budget is unreachable: an empty program costs 96.5 ms to compile and 112.9 ms to link on the measured machine | M2/M5 |
 | Borrow checking is limited rules + runtime fallback | Does not meet static safety guarantees | M2 |
 | Frontend is split by module but not query-based; no LSP; multi-error recovery covers one body at a time | Blocks M5.4 and M6.1; editing feedback stays coarse | M0, M5, M6 |
 | Incremental compilation exists only as value types and predicates (ADR-0176, ADR-0177); no query cache, no per-item or per-crate granularity | M5.4's four build cases cannot be verified beyond no-modification | M5 |
@@ -273,7 +274,7 @@ A custom native machine code backend/linker will only be considered as a separat
 
 ### 5.4 Verified Progress Since Version 0.3 (2026-11-12)
 
-These numbers are read from the working tree, not from memory: `cargo test --workspace --locked` reports 255 passing tests; `tests/run` holds 79 cases, `tests/ui` 4, `tests/ui-json` 36; `examples/` holds 41 programs; `std/core/` holds 252 modules; `docs/adr/` is numbered to 0179. CI runs the suite on `ubuntu-latest` and `windows-latest`.
+These numbers are read from the working tree, not from memory: `cargo test --workspace --locked` reports 255 passing tests; `tests/run` holds 80 cases, `tests/ui` 4, `tests/ui-json` 36; `examples/` holds 41 programs; `std/core/` holds 256 modules; `docs/adr/` is numbered to 0180. CI runs the suite on `ubuntu-latest` and `windows-latest`.
 
 Landed since the 0.3 revision:
 
@@ -282,7 +283,8 @@ Landed since the 0.3 revision:
 - **Test frameworks** (M0.6–0.7): `tests/ui` with `.stderr` snapshots, `tests/run` with `.stdout` snapshots, driven by `scripts/snapshots.py`.
 - **CI** (M0.8, partial): dual-platform matrix and script unit tests; no dependency caching.
 - **Frontend reuse cache** (new beyond 0.3): ADR-0177, with a single-platform measurement.
-- **Self-hosting IR and data layer** (new beyond 0.3): ADR-0150–0179 cover CFG/SSA, register allocation, optimization passes, five object containers, DWARF, assembly text, linker scripts and archives, unwind tables, incremental query primitives, and dependency resolution.
+- **Self-hosting IR and data layer** (new beyond 0.3): ADR-0150–0180 cover CFG/SSA, register allocation, optimization passes, five object containers, DWARF, assembly text, linker scripts and archives, unwind tables, incremental query primitives, dependency resolution, and link-time symbol resolution, section layout and relocation application.
+- **Build-latency budget** (new beyond 0.3): ADR-0180 measures the phases. The frontend is ~6% of a cold build (24.8 ms load, 8.5 ms emit on 1,484 lines) and 0% of a warm one; gcc is the other 94%, and an empty `hello.c` still costs 96.5 ms to compile plus 112.9 ms to link. **M5.4's 100 ms budget is unreachable through the C backend**; it needs an object-file backend and an in-process link.
 
 What has *not* moved, and is still blocked: no MIR, no borrow checker beyond limited move rules, no method syntax, closures, or iterators, no concurrency, no networking, no package management, and no LSP. §9 keeps those levels unchanged; the IR layer above does not imply them.
 

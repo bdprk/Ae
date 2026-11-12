@@ -1,0 +1,250 @@
+use "../../std/core/ir_link_sym.ae";
+use "../../std/core/ir_link_resolve.ae";
+use "../../std/core/ir_section_merge.ae";
+use "../../std/core/ir_reloc_apply.ae";
+
+fn defined_global(obj: i64, val: i64) -> LinkSymbol {
+    return link_sym_new(7, link_binding_global(), obj, 1, val, 16);
+}
+
+fn defined_weak(obj: i64, val: i64) -> LinkSymbol {
+    return link_sym_new(7, link_binding_weak(), obj, 1, val, 16);
+}
+
+fn defined_local(obj: i64, val: i64) -> LinkSymbol {
+    return link_sym_new(7, link_binding_local(), obj, 1, val, 4);
+}
+
+fn missing_global() -> LinkSymbol {
+    return link_sym_undefined(7, link_binding_global());
+}
+
+fn missing_weak() -> LinkSymbol {
+    return link_sym_undefined(7, link_binding_weak());
+}
+
+fn cursor_at(offset: i64) -> SectionCursor {
+    // A cursor holding `offset` bytes; built fresh for every use because a
+    // struct handed to a function is moved, not borrowed.
+    return merge_place(section_cursor_start(), offset, 1);
+}
+
+fn main() {
+    // ---- symbol identity -------------------------------------------------
+    assert(link_sym_is_defined(defined_global(0, 100)));
+    assert(!link_sym_is_defined(missing_global()));
+    assert(link_sym_is_global(defined_global(0, 100)));
+    assert(link_sym_is_weak(defined_weak(0, 100)));
+    assert(link_sym_is_local(defined_local(0, 100)));
+    assert(!link_sym_is_global(defined_weak(0, 100)));
+
+    // An undefined symbol carries the same name and binding as the definition it
+    // is waiting for; only obj and section differ.
+    let missing = link_sym_undefined(7, link_binding_global());
+    assert(missing.obj == -1);
+    assert(missing.section == -1);
+    assert(missing.value == 0);
+    assert(missing.size_bytes == 0);
+    assert(missing.name_id == 7);
+
+    // ---- merge decisions --------------------------------------------------
+    // A reference never displaces the definition it was waiting for.
+    assert(link_sym_merge_decision(missing_global(), defined_global(0, 100)) == link_merge_replace());
+    assert(link_sym_merge_decision(defined_global(0, 100), missing_global()) == link_merge_keep());
+    // Two strong definitions have no defensible winner.
+    assert(link_sym_merge_decision(defined_global(0, 100), defined_global(1, 200)) == link_merge_conflict());
+    // A strong definition overrides a weak one, in either order.
+    assert(link_sym_merge_decision(defined_global(0, 100), defined_weak(1, 200)) == link_merge_keep());
+    assert(link_sym_merge_decision(defined_weak(0, 100), defined_global(1, 200)) == link_merge_replace());
+    // Two weak definitions: the first stands.
+    assert(link_sym_merge_decision(defined_weak(0, 100), defined_weak(1, 200)) == link_merge_keep());
+    // Locals are private to their object, so same-named locals are two symbols.
+    assert(link_sym_merge_decision(defined_local(0, 1), defined_local(1, 2)) == link_merge_keep());
+    assert(link_sym_merge_decision(defined_global(0, 1), defined_local(1, 2)) == link_merge_keep());
+
+    let strong_wins = link_sym_merge(defined_weak(0, 100), defined_global(1, 200));
+    assert(strong_wins.obj == 1);
+    assert(strong_wins.value == 200);
+    let first_stays = link_sym_merge(defined_global(0, 100), defined_weak(1, 200));
+    assert(first_stays.obj == 0);
+    assert(first_stays.value == 100);
+
+    // ---- resolution -------------------------------------------------------
+    let duplicate = link_resolve_pair(defined_global(0, 100), defined_global(1, 200));
+    assert(duplicate.code == link_duplicate());
+    // No winner is named for a duplicate: there is nothing safe to link against.
+    assert(duplicate.winner_obj == -1);
+
+    let replaced = link_resolve_pair(missing_global(), defined_global(1, 200));
+    assert(replaced.code == link_ok());
+    assert(replaced.winner_obj == 1);
+    assert(replaced.winner_value == 200);
+
+    let kept = link_resolve_pair(defined_global(0, 100), missing_global());
+    assert(kept.code == link_ok());
+    assert(kept.winner_obj == 0);
+    assert(kept.winner_value == 100);
+
+    // ---- what a name means at the end of a link ---------------------------
+    assert(link_final_status(defined_global(0, 1)) == link_ok());
+    assert(link_final_status(missing_global()) == link_undefined());
+    // A weak reference that nothing defined is legal and takes the value zero.
+    assert(link_final_status(missing_weak()) == link_ok());
+    // A local has no other object to satisfy it, so an undefined one is an error.
+    assert(link_final_status(link_sym_undefined(7, link_binding_local())) == link_undefined());
+
+    assert(link_ref_is_zero(missing_weak()));
+    assert(!link_ref_is_zero(missing_global()));
+    assert(!link_ref_is_zero(link_sym_new(7, link_binding_weak(), 0, 0, 0, 0)));
+
+    // Only an undefined strong global obliges the link to pull an archive member.
+    assert(link_pull_archive_member(missing_global()));
+    assert(!link_pull_archive_member(missing_weak()));
+    assert(!link_pull_archive_member(defined_global(0, 1)));
+
+    assert(link_code_is_error(link_duplicate()));
+    assert(link_code_is_error(link_undefined()));
+    assert(!link_code_is_error(link_ok()));
+
+    // ---- section layout ---------------------------------------------------
+    assert(align_up(0, 4) == 0);
+    assert(align_up(1, 4) == 4);
+    assert(align_up(4, 4) == 4);
+    assert(align_up(5, 8) == 8);
+    // Alignment is a number, not necessarily a power of two.
+    assert(align_up(7, 3) == 9);
+    // Zero and one mean "no constraint".
+    assert(align_up(5, 1) == 5);
+    assert(align_up(5, 0) == 5);
+    // A negative offset is malformed and is returned rather than rounded.
+    assert(align_up(-3, 4) == -3);
+
+    assert(merge_padding(5, 8) == 3);
+    assert(merge_padding(8, 8) == 0);
+    assert(merge_padding(9, 4) == 3);
+    assert(merge_padding(5, 0) == 0);
+
+    assert(merge_total_bytes(section_cursor_start()) == 0);
+    assert(merge_slot_offset(cursor_at(5), 4) == 8);
+    assert(merge_slot_offset(cursor_at(8), 8) == 8);
+
+    let first = merge_place(section_cursor_start(), 5, 4);
+    assert(merge_total_bytes(first) == 5);
+    let second = merge_place(cursor_at(5), 3, 4);
+    assert(merge_total_bytes(second) == 11);
+    // A negative size still reserves its alignment slot but adds no bytes.
+    let empty = merge_place(cursor_at(5), -9, 8);
+    assert(merge_total_bytes(empty) == 8);
+
+    assert(merge_address(4096, 11) == 4107);
+    assert(merge_address(0, 0) == 0);
+
+    // Executable and writable must agree before two input sections share one
+    // output section.
+    assert(merge_flags_compatible(6, 6));
+    assert(merge_flags_compatible(1, 1));
+    assert(!merge_flags_compatible(2, 6));
+    assert(!merge_flags_compatible(6, 3));
+    assert(!merge_flags_compatible(2, 3));
+
+    // ---- relocation widths ------------------------------------------------
+    assert(reloc_width_byte() == 1);
+    assert(reloc_width_word() == 2);
+    assert(reloc_width_long() == 4);
+    assert(reloc_width_quad() == 8);
+
+    assert(reloc_mask(1) == 255);
+    assert(reloc_mask(2) == 65535);
+    assert(reloc_mask(4) == 4294967295);
+    assert(reloc_mask(8) == 0 - 1);
+    assert(reloc_mask(3) == 0);
+
+    // ---- signed fields ----------------------------------------------------
+    assert(reloc_fits_signed(127, 1));
+    assert(!reloc_fits_signed(128, 1));
+    assert(reloc_fits_signed(-128, 1));
+    assert(!reloc_fits_signed(-129, 1));
+    assert(reloc_fits_signed(32767, 2));
+    assert(!reloc_fits_signed(32768, 2));
+    assert(reloc_fits_signed(2147483647, 4));
+    assert(!reloc_fits_signed(2147483648, 4));
+    assert(reloc_fits_signed(-2147483648, 4));
+    assert(!reloc_fits_signed(-2147483649, 4));
+    assert(reloc_fits_signed(9223372036854775807, 8));
+    assert(!reloc_fits_signed(0, 0));
+
+    // ---- unsigned fields --------------------------------------------------
+    assert(reloc_fits_unsigned(255, 1));
+    assert(!reloc_fits_unsigned(256, 1));
+    assert(!reloc_fits_unsigned(-1, 1));
+    assert(reloc_fits_unsigned(65535, 2));
+    assert(!reloc_fits_unsigned(65536, 2));
+    assert(reloc_fits_unsigned(4294967295, 4));
+    assert(!reloc_fits_unsigned(4294967296, 4));
+    assert(reloc_fits_unsigned(0, 8));
+    assert(!reloc_fits_unsigned(-1, 8));
+    assert(!reloc_fits_unsigned(0, 0));
+
+    // ---- applying a PC-relative relocation --------------------------------
+    let near = reloc_apply_pcrel(4096, 8192, -4, 4);
+    assert(near.ok);
+    assert(!near.overflow);
+    assert(near.value == 4092);
+
+    // One past the top of a signed 32-bit field is a link error, not a wrap.
+    let too_far = reloc_apply_pcrel(0, 2147483647, 1, 4);
+    assert(!too_far.ok);
+    assert(too_far.overflow);
+    assert(too_far.value == 0);
+
+    let lowest = reloc_apply_pcrel(0, -2147483648, 0, 4);
+    assert(lowest.ok);
+    assert(lowest.value == -2147483648);
+
+    let zero_disp = reloc_apply_pcrel(100, 105, -5, 1);
+    assert(zero_disp.ok);
+    assert(zero_disp.value == 0);
+    let byte_overflow = reloc_apply_pcrel(0, 128, 0, 1);
+    assert(!byte_overflow.ok);
+
+    // An eight-byte field holds every i64, so it never overflows.
+    let wide = reloc_apply_pcrel(0, 9223372036854775807, 0, 8);
+    assert(wide.ok);
+    assert(wide.value == 9223372036854775807);
+
+    // ---- applying an absolute relocation ----------------------------------
+    let abs_ok = reloc_apply_abs(0, 4096, 0, 4);
+    assert(abs_ok.ok);
+    assert(abs_ok.value == 4096);
+
+    // R_X86_64_32 is zero-extended, so a negative address does not fit.
+    let abs_negative = reloc_apply_abs(0, -1, 0, 4);
+    assert(!abs_negative.ok);
+    assert(abs_negative.overflow);
+
+    // R_X86_64_32S is sign-extended, so the same value does fit.
+    let abs_signed = reloc_apply_abs_signed(0, -1, 0, 4);
+    assert(abs_signed.ok);
+    assert(abs_signed.value == -1);
+    let signed_too_big = reloc_apply_abs_signed(0, 2147483648, 0, 4);
+    assert(!signed_too_big.ok);
+
+    // The unsigned form accepts the top of its range where the signed form does not.
+    let top_unsigned = reloc_apply_abs(0, 4294967295, 0, 4);
+    assert(top_unsigned.ok);
+    let top_signed = reloc_apply_abs_signed(0, 4294967295, 0, 4);
+    assert(!top_signed.ok);
+
+    // A zero-width field holds nothing, whichever extension applies.
+    assert(!reloc_apply_abs(0, 0, 0, 0).ok);
+    assert(!reloc_apply_abs_signed(0, 0, 0, 0).ok);
+
+    // ---- where the field sits ---------------------------------------------
+    assert(reloc_pcrel_place(1000, 4) == 1004);
+    assert(reloc_field_in_bounds(0, 4, 4));
+    assert(!reloc_field_in_bounds(1, 4, 4));
+    assert(!reloc_field_in_bounds(-1, 4, 8));
+    assert(!reloc_field_in_bounds(0, 0, 8));
+
+    print("batch_core_link_all_passed");
+}
