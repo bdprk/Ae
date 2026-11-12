@@ -3,7 +3,7 @@ pub mod fmt;
 use ae_span::{Diagnostic, SourceFile};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kind {
-    Ident(String), Number(i64), Float(f64), Text(String), Fn, Let, Var, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
+    Ident(String), Number(i64), Float(f64), Text(String), Fn, Let, Var, Mut, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, Struct,
     Enum, Match, ColonColon, FatArrow, Question, Trait, Impl, Eof,
@@ -20,7 +20,7 @@ pub fn lex_kind_names(source: &str) -> Result<Vec<&'static str>, String> {
 fn kind_name(kind: &Kind) -> &'static str {
     match kind {
         Kind::Ident(_) => "Ident", Kind::Number(_) => "Number", Kind::Float(_) => "Float", Kind::Text(_) => "Text",
-        Kind::Fn => "Fn", Kind::Let => "Let", Kind::Var => "Var", Kind::Print => "Print",
+        Kind::Fn => "Fn", Kind::Let => "Let", Kind::Var => "Var", Kind::Mut => "Mut", Kind::Print => "Print",
         Kind::If => "If", Kind::Else => "Else", Kind::While => "While", Kind::For => "For",
         Kind::In => "In", Kind::Return => "Return", Kind::Break => "Break", Kind::Continue => "Continue",
         Kind::Assert => "Assert", Kind::True => "True", Kind::False => "False", Kind::Use => "Use",
@@ -173,7 +173,7 @@ fn lex_inner(source: &str, mut recovered: Option<&mut Vec<Diagnostic>>) -> Resul
             i += 1;
             while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') { i += 1; }
             match &source[start..i] {
-                "fn" => Kind::Fn, "let" => Kind::Let, "var" => Kind::Var, "print" => Kind::Print,
+                "fn" => Kind::Fn, "let" => Kind::Let, "var" => Kind::Var, "mut" => Kind::Mut, "print" => Kind::Print,
                 "if" => Kind::If, "else" => Kind::Else, "while" => Kind::While, "return" => Kind::Return,
                 "for" => Kind::For, "in" => Kind::In,
                 "break" => Kind::Break, "continue" => Kind::Continue, "assert" => Kind::Assert,

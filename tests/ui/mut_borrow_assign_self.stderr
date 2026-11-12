@@ -1,0 +1,1 @@
+ae: $DIR/mut_borrow_assign_self.ae:4:7: cannot assign to 'c' itself through a '&mut' borrow; write its fields instead

@@ -31,6 +31,7 @@ def run():
         ("functions.ae", b"720", True),
         ("methods.ae", b"(4, 0)\n3\n8", True),
         ("struct_borrow.ae", b"60\ntrue\nfalse\n34\nplot: 60 sq units\n200\nfield: 200 sq units", True),
+        ("struct_mut_borrow.ae", b"1\n6\n6\n3\n12", True),
         ("control-flow.ae", b"45", True),
         ("strings.ae", b"hello\nhello!\nhi there\n8\n\xe4\xb8\xad\xe6\x96\x87 \xf0\x9f\x98\x80", True),
         ("enums.ae", b"27\n20\n0\ncircle r=3\nrect 4x5\nempty\ntext:hi\nnumber:7\nflag:true\n12\nnumber:9", True),

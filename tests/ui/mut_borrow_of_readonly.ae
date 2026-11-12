@@ -1,0 +1,16 @@
+struct Counter { n: i64 }
+
+impl Counter {
+    fn inc(&mut self) -> i64 {
+        self.n = self.n + 1;
+        return self.n;
+    }
+    fn through(&self) -> i64 {
+        return self.inc();
+    }
+}
+
+fn main() {
+    var c = Counter { n: 0 };
+    print(c.through());
+}

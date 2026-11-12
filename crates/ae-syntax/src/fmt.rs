@@ -33,7 +33,7 @@ use std::path::Path;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Class {
     Ident, Number, Float, Text, Comment,
-    Fn, Let, Var, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use, Struct, Enum, Match,
+    Fn, Let, Var, Mut, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use, Struct, Enum, Match,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, ColonColon, FatArrow, Question,
     Trait, Impl, Eof,
@@ -48,7 +48,7 @@ impl Class {
         match self {
             Class::Ident => "Ident", Class::Number => "Number", Class::Float => "Float", Class::Text => "Text",
             Class::Comment => "Comment",
-            Class::Fn => "Fn", Class::Let => "Let", Class::Var => "Var", Class::Print => "Print",
+            Class::Fn => "Fn", Class::Let => "Let", Class::Var => "Var", Class::Mut => "Mut", Class::Print => "Print",
             Class::If => "If", Class::Else => "Else", Class::While => "While", Class::For => "For",
             Class::In => "In", Class::Return => "Return", Class::Break => "Break", Class::Continue => "Continue",
             Class::Assert => "Assert", Class::True => "True", Class::False => "False", Class::Use => "Use",
@@ -152,7 +152,7 @@ fn lex_fmt(source: &str) -> Result<Vec<FmtToken>, String> {
             i += 1;
             while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') { i += 1; }
             class = match &source[start..i] {
-                "fn" => Class::Fn, "let" => Class::Let, "var" => Class::Var, "print" => Class::Print,
+                "fn" => Class::Fn, "let" => Class::Let, "var" => Class::Var, "mut" => Class::Mut, "print" => Class::Print,
                 "if" => Class::If, "else" => Class::Else, "while" => Class::While, "return" => Class::Return,
                 "for" => Class::For, "in" => Class::In, "break" => Class::Break, "continue" => Class::Continue,
                 "assert" => Class::Assert, "true" => Class::True, "false" => Class::False, "use" => Class::Use,

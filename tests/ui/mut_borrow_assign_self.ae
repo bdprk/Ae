@@ -1,0 +1,11 @@
+struct Counter { n: i64 }
+
+fn replace(c: &mut Counter) -> i64 {
+    c = Counter { n: 9 };
+    return c.n;
+}
+
+fn main() {
+    var c = Counter { n: 0 };
+    print(replace(&mut c));
+}

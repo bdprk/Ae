@@ -1,0 +1,11 @@
+struct Counter { n: i64 }
+
+fn bump(c: &mut Counter) -> i64 {
+    c.n = c.n + 1;
+    return c.n;
+}
+
+fn main() {
+    let c = Counter { n: 0 };
+    print(bump(&mut c));
+}

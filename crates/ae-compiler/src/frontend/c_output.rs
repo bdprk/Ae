@@ -16,6 +16,7 @@ pub(super) fn c_type_field(ty: Type) -> String {
         // Unreachable: there is no syntax for a borrow-typed field; the value
         // keeps the pointer shape so a future slip prints valid C.
         Type::StructRef(k) => format!("const ae_t{k} *"),
+        Type::StructMut(k) => format!("ae_t{k} *"),
         Type::Enum(_, k) => format!("ae_e{k}"),
         Type::VecRef => "const ae_vec *".to_owned(),
         Type::StrVecRef => "const ae_strvec *".to_owned(),
@@ -40,6 +41,8 @@ pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Struct(k) => format!("ae_t{k} v{id}"),
         Type::StructRef(k) if declaration => format!("const ae_t{k} *v{id}"),
         Type::StructRef(k) => format!("const ae_t{k} *"),
+        Type::StructMut(k) if declaration => format!("ae_t{k} *v{id}"),
+        Type::StructMut(k) => format!("ae_t{k} *"),
         Type::Enum(_, k) => format!("ae_e{k} v{id}"),
         Type::VecRef if declaration => format!("const ae_vec *v{id}"),
         Type::VecRef => "const ae_vec *".to_owned(),

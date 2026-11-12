@@ -72,8 +72,10 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             } else if *ty == Type::VecFRef {
                 out.push_str(&format!("    if (!v{id}->data) ae_fail(\"use of moved vector\", {line}, {column});\n"));
                 Emitted { text: format!("(*v{id})"), ty: Type::VecF, owned: false, moves: Vec::new(), materialized: true }
-            } else if let Type::StructRef(sid) = *ty {
-                // A struct borrow reads through the pointer (ADR-0184). The
+            } else if let Type::StructRef(sid) | Type::StructMut(sid) = *ty {
+                // A struct borrow reads through the pointer (ADR-0184); the
+                // mutable form reads the same way (ADR-0185) and writes go
+                // through the field-store statement instead. The
                 // dereferenced shape is the owned struct, so every consumer
                 // downstream — field access, views of string fields — works
                 // unchanged. There is no sentinel to check: the pointer is
@@ -984,21 +986,25 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                 out.push_str(&format!("    v{id}.data[t{checked}] = {text};\n"));
                 null_moves(out, &value.moves);
             }
-            Statement::FieldStore(id, fname, fty, value) => {
+            Statement::FieldStore(id, fname, fty, value, through_pointer) => {
                 // Overwriting an owned field releases the old value first.
+                // `through_pointer` writes into a `&mut`-borrowed struct, so
+                // every access reads `v{id}->field` instead of `v{id}.field`
+                // (ADR-0185); the release targets what the caller owns.
+                let dot = if *through_pointer { "->" } else { "." };
                 let release_old = match fty {
-                    Type::String => format!("    ae_str_release(&v{id}.{});\n", fname),
-                    Type::Vec => format!("    ae_vec_release(&v{id}.{});\n", fname),
-                    Type::StrVec => format!("    ae_strvec_release(&v{id}.{});\n", fname),
-                    Type::Map => format!("    ae_map_release(&v{id}.{});\n", fname),
-                    Type::MapF => format!("    ae_mapf_release(&v{id}.{});\n", fname),
-                    Type::Struct(k) => format!("    ae_t{k}_release(&v{id}.{});\n", fname),
-                    Type::Enum(_, k) => format!("    ae_e{k}_release(&v{id}.{});\n", fname),
+                    Type::String => format!("    ae_str_release(&v{id}{}{});\n", dot, fname),
+                    Type::Vec => format!("    ae_vec_release(&v{id}{}{});\n", dot, fname),
+                    Type::StrVec => format!("    ae_strvec_release(&v{id}{}{});\n", dot, fname),
+                    Type::Map => format!("    ae_map_release(&v{id}{}{});\n", dot, fname),
+                    Type::MapF => format!("    ae_mapf_release(&v{id}{}{});\n", dot, fname),
+                    Type::Struct(k) => format!("    ae_t{k}_release(&v{id}{}{});\n", dot, fname),
+                    Type::Enum(_, k) => format!("    ae_e{k}_release(&v{id}{}{});\n", dot, fname),
                     _ => String::new(),
                 };
                 out.push_str(&release_old);
                 let value = emit_expr(value, out, next, false);
-                out.push_str(&format!("    v{id}.{} = {};\n", fname, value.text));
+                out.push_str(&format!("    v{id}{}{} = {};\n", dot, fname, value.text));
                 null_moves(out, &value.moves);
             }
             Statement::Assign(id, e, release_old) => {

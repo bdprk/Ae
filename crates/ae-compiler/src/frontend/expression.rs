@@ -775,7 +775,7 @@ impl Parser<'_> {
             // Field access works on owned structs and on read-only borrows of
             // them (ADR-0184): the borrowed form reads through the pointer and
             // emits the same `Expr::Field`, whose C emission is member access.
-            let sid = match base_ty { Type::Struct(sid) | Type::StructRef(sid) => sid, other => return Err(self.fail(&format!("type {} has no fields", other.name()))) };
+            let sid = match base_ty { Type::Struct(sid) | Type::StructRef(sid) | Type::StructMut(sid) => sid, other => return Err(self.fail(&format!("type {} has no fields", other.name()))) };
             // `value.method(args)` resolves to the method's ordinary function,
             // with the receiver as argument 0 (M1.2). Nothing is added to the
             // backend: the call it builds is the one a hand-written call builds.
@@ -793,7 +793,12 @@ impl Parser<'_> {
                 // site: the caller keeps ownership and only a bare struct
                 // variable (or a borrow itself) can be lent, since the borrow
                 // must be covered by storage that outlives the call.
-                if matches!(receiver_ty, Type::StructRef(_)) {
+                // A borrowed receiver (ADR-0184, ADR-0185) auto-borrows at
+                // the call site: the caller keeps ownership and only a bare
+                // struct variable (or a borrow itself) can be lent, since the
+                // borrow must be covered by storage that outlives the call.
+                if matches!(receiver_ty, Type::StructRef(_) | Type::StructMut(_)) {
+                    let wants_mut = matches!(receiver_ty, Type::StructMut(_));
                     let params = signature.params[1..].to_vec();
                     let mut args = self.call_arguments(&format!("{struct_name}.{fname}"), &params)?;
                     match (&base, base_ty) {
@@ -802,14 +807,38 @@ impl Parser<'_> {
                             if self.moved.contains(&id) {
                                 return Err(moved_value_hint(self.binding_label(self.fail(&format!("cannot borrow the receiver of '{fname}' because it was moved")).with_code("E0102"), id)));
                             }
-                            if !self.is_borrowed(id) {
-                                self.call_borrows.push((id, self.scopes.len()));
+                            if wants_mut {
+                                let mutable = self.names.values().find(|slot| slot.0 == id)
+                                    .map(|slot| slot.1)
+                                    .ok_or_else(|| self.fail("internal: receiver variable vanished"))?;
+                                if !mutable {
+                                    return Err(self.fail(&format!("'{fname}' borrows its receiver mutably, but the variable was declared without 'var'")));
+                                }
+                                if self.is_borrowed(id) {
+                                    return Err(self.fail(&format!("cannot borrow the receiver of '{fname}' mutably while it is borrowed in this statement")));
+                                }
+                                self.mut_borrows.push((id, self.scopes.len()));
+                            } else {
+                                if self.mut_borrows.iter().any(|&(bid, _)| bid == id) {
+                                    return Err(self.fail(&format!("cannot borrow the receiver of '{fname}' while it is mutably borrowed in this statement")));
+                                }
+                                if !self.is_borrowed(id) {
+                                    self.call_borrows.push((id, self.scopes.len()));
+                                }
                             }
                             args.insert(0, Argument::Borrow(id, true));
                         }
                         (Expr::Variable(id, ..), Type::StructRef(_)) => {
                             // A borrow parameter forwards its pointer; the
                             // caller's own borrow already covers the reads.
+                            if wants_mut {
+                                return Err(self.fail(&format!("'{fname}' borrows its receiver mutably, which a read-only borrow cannot grant; call it on the owned variable")));
+                            }
+                            args.insert(0, Argument::Borrow(*id, false));
+                        }
+                        (Expr::Variable(id, ..), Type::StructMut(_)) => {
+                            // A mutable borrow forwards its pointer for either
+                            // receiver form: writing shrinks to reading freely.
                             args.insert(0, Argument::Borrow(*id, false));
                         }
                         _ => return Err(self.fail(&format!("'{fname}' borrows its receiver, so the receiver must be a bare struct variable; bind the value to a variable first"))),
@@ -821,7 +850,7 @@ impl Parser<'_> {
                 // moves here exactly as it would in a plain call. A borrowed
                 // struct has no value to move: its storage belongs to the
                 // lender, so a by-value method is simply out of reach.
-                if matches!(base_ty, Type::StructRef(_)) {
+                if matches!(base_ty, Type::StructRef(_) | Type::StructMut(_)) {
                     return Err(self.fail(&format!("'{fname}' takes its receiver by value, but the receiver is a borrow with no value to move; call it on the owned variable")));
                 }
                 match &base {

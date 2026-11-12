@@ -33,7 +33,7 @@ impl<'a> Parser<'a> {
             None => diagnostic,
         }
     }
-    fn immutable_binding_error(&self, diagnostic: ae_span::Diagnostic, id: usize) -> ae_span::Diagnostic {
+    pub(super) fn immutable_binding_error(&self, diagnostic: ae_span::Diagnostic, id: usize) -> ae_span::Diagnostic {
         let diagnostic = self.binding_label(diagnostic, id);
         if diagnostic.secondary.is_empty() { diagnostic } else {
             diagnostic.with_suggestion("If mutation is intended, declare the binding with `var`.")
@@ -84,6 +84,7 @@ impl<'a> Parser<'a> {
         let depth_now = self.scopes.len();
         self.borrows.retain(|&(_, depth)| depth <= depth_now);
         self.call_borrows.retain(|&(_, depth)| depth <= depth_now);
+        self.mut_borrows.retain(|&(_, depth)| depth <= depth_now);
         Ok(result)
     }
     // Is any borrow of this slot live? Two registers feed the answer:
@@ -96,6 +97,7 @@ impl<'a> Parser<'a> {
     pub(super) fn is_borrowed(&self, id: usize) -> bool {
         self.borrows.iter().any(|&(bid, _)| bid == id)
             || self.call_borrows.iter().any(|&(bid, _)| bid == id)
+            || self.mut_borrows.iter().any(|&(bid, _)| bid == id)
     }
     // Views borrow their base: element reads and slice_views of variable
     // bases register the owner so it cannot be modified or moved while a
@@ -164,6 +166,7 @@ impl<'a> Parser<'a> {
             // A call argument's borrow covered only the statement that made
             // the call; the next statement may write the struct again.
             self.call_borrows.clear();
+            self.mut_borrows.clear();
             match self.current().clone() {
                 Kind::Let | Kind::Var => {
                     let mutable = *self.current() == Kind::Var; self.pos += 1;
@@ -212,7 +215,7 @@ impl<'a> Parser<'a> {
                         if matches!(ty, Type::VecRef | Type::StrVecRef) {
                             return Err(self.fail("cannot store a borrowed vector in a variable; pass it directly to a parameter that borrows"));
                         }
-                        if matches!(ty, Type::StructRef(_)) {
+                        if matches!(ty, Type::StructRef(_) | Type::StructMut(_)) {
                             return Err(self.fail("cannot store a borrowed struct in a variable; pass it directly to a parameter that borrows"));
                         }
                         (Statement::Declare(id, value), ty)
@@ -381,6 +384,31 @@ impl<'a> Parser<'a> {
                             return Err(self.fail(&format!("cannot write through '{name}': struct borrows are read-only in this version")));
                         }
                         return Err(self.fail(&format!("cannot assign to '{name}': struct borrows are read-only in this version")));
+                    } else if let Type::StructMut(sid) = ty {
+                        // A mutable borrow exists to write through (ADR-0185):
+                        // field stores go through the pointer. Whole-struct
+                        // assignment would have to release the old pointee
+                        // before storing, which needs a dedicated statement —
+                        // rejected for now rather than guessed at.
+                        if *self.current() == Kind::Dot {
+                            self.take(Kind::Dot)?;
+                            let fname = self.identifier()?;
+                            let fty = {
+                                let def = self.structs[sid].clone();
+                                let fidx = def.fields.iter().position(|(n, _)| *n == fname)
+                                    .ok_or_else(|| self.fail(&format!("struct '{}' has no field '{}'", def.name, fname)))?;
+                                def.fields[fidx].1
+                            };
+                            if matches!(fty, Type::Map | Type::MapF) {
+                                return Err(self.fail("map fields cannot be written through a '&mut' borrow yet; copy the map out with a by-value receiver instead"));
+                            }
+                            self.take(Kind::Equal)?;
+                            let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
+                            if value_ty != fty { return Err(self.fail(&format!("field '{}' must be {}", fname, fty.name()))); }
+                            result.push(Statement::FieldStore(id, fname, fty, value, true));
+                            continue;
+                        }
+                        return Err(self.fail(&format!("cannot assign to '{name}' itself through a '&mut' borrow; write its fields instead")));
                     } else if let Type::Struct(sid) = ty {
                         if *self.current() == Kind::Dot {
                             self.take(Kind::Dot)?;
@@ -416,7 +444,7 @@ impl<'a> Parser<'a> {
                             self.take(Kind::Equal)?;
                             let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
                             if value_ty != fty { return Err(self.fail(&format!("field '{}' must be {}", fname, fty.name()))); }
-                            result.push(Statement::FieldStore(id, fname, fty, value));
+                            result.push(Statement::FieldStore(id, fname, fty, value, false));
                             continue;
                         }
                         // Whole-struct assignment moves a fresh value in.

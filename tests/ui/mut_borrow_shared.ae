@@ -1,0 +1,15 @@
+struct Counter { n: i64 }
+
+fn read(c: &Counter) -> i64 {
+    return c.n;
+}
+
+fn bump(c: &mut Counter) -> i64 {
+    c.n = c.n + 1;
+    return c.n;
+}
+
+fn main() {
+    var c = Counter { n: 0 };
+    print(read(&c) + bump(&mut c));
+}

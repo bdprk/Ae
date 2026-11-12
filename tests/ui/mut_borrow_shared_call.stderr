@@ -1,0 +1,1 @@
+ae: $DIR/mut_borrow_shared_call.ae:15:32: cannot borrow the receiver of 'inc' mutably while it is borrowed in this statement

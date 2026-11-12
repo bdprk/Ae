@@ -352,17 +352,19 @@ impl Parser<'_> {
                     // body reads fields through a pointer and the caller keeps
                     // ownership, so calling the method no longer moves.
                     let mut borrowed = false;
+                    let mut mutable_borrow = false;
                     if types.is_empty() && *self.current() == Kind::Amp {
                         self.pos += 1;
-                        if matches!(self.current(), Kind::Ident(text) if text.as_str() == "mut") {
-                            return Err(self.fail("'&mut self' does not exist yet: struct borrows are read-only, so a method that needs to mutate takes 'self' by value"));
+                        if *self.current() == Kind::Mut {
+                            self.pos += 1;
+                            mutable_borrow = true;
                         }
                         if !matches!(self.current(), Kind::Ident(text) if text.as_str() == "self") {
-                            return Err(self.fail("write '&self' to borrow the receiver read-only; any other borrowed parameter is written 'name: &Type'"));
+                            return Err(self.fail("write '&self' or '&mut self' to borrow the receiver; any other borrowed parameter is written 'name: &Type' or 'name: &mut Type'"));
                         }
                         self.pos += 1;
                         if *self.current() == Kind::Colon {
-                            return Err(self.fail("write the receiver as '&self'; it already has the borrowed receiver type"));
+                            return Err(self.fail("write the receiver as '&self' or '&mut self'; it already has the borrowed receiver type"));
                         }
                         borrowed = true;
                     }
@@ -374,6 +376,8 @@ impl Parser<'_> {
                                 return Err(self.fail(&format!("write the receiver as 'self'; it already has type '{}'", self.structs[sid].name)));
                             }
                             receiver = Some(Type::Struct(sid));
+                        } else if mutable_borrow {
+                            receiver = Some(Type::StructMut(sid));
                         } else {
                             receiver = Some(Type::StructRef(sid));
                         }
@@ -393,7 +397,7 @@ impl Parser<'_> {
             // A borrow may not be returned: the receiver's borrow ends with the
             // call, so anything it points at would be owned by the caller's
             // stack frame and dangle.
-            if matches!(ret, Type::StructRef(_)) {
+            if matches!(ret, Type::StructRef(_) | Type::StructMut(_)) {
                 return Err(self.fail("a method cannot return a borrow; return a value that outlives the borrow instead, or take the borrow again at the call site"));
             }
             self.generics.next_fn_id = self.generics.next_fn_id.max(*next_id);
@@ -596,7 +600,7 @@ impl Parser<'_> {
     pub(super) fn function_rest(&mut self, is_main: bool, id: usize) -> Result<Function, ae_span::Diagnostic> {
         self.take(Kind::LParen)?;
         // Variable ids restart per function, so move tracking must too.
-        self.names.clear(); self.binding_ranges.clear(); self.next_var = 0; self.moved.clear(); self.scopes.clear(); self.borrows.clear(); self.call_borrows.clear();
+        self.names.clear(); self.binding_ranges.clear(); self.next_var = 0; self.moved.clear(); self.scopes.clear(); self.borrows.clear(); self.call_borrows.clear(); self.mut_borrows.clear();
         let mut params = Vec::new();
         if *self.current() != Kind::RParen {
             loop {
@@ -607,8 +611,9 @@ impl Parser<'_> {
                 // the name is read (ADR-0184).
                 if params.is_empty() && *self.current() == Kind::Amp {
                     self.pos += 1;
+                    if *self.current() == Kind::Mut { self.pos += 1; }
                     if !matches!(self.current(), Kind::Ident(text) if text.as_str() == "self") {
-                        return Err(self.fail("write '&self' to borrow the receiver; any other borrowed parameter is written 'name: &Type'"));
+                        return Err(self.fail("write '&self' or '&mut self' to borrow the receiver; any other borrowed parameter is written 'name: &Type' or 'name: &mut Type'"));
                     }
                 }
                 // `var` marks the parameter slot writable. The value was moved
@@ -628,6 +633,10 @@ impl Parser<'_> {
                     };
                     if !params.is_empty() { return Err(self.fail("'self' must be the first parameter")); }
                     let var_id = self.next_var; self.next_var += 1;
+                    // A `&mut self` receiver exists to be written through, so
+                    // its slot is mutable without a `var` spelling; a `&self`
+                    // or by-value receiver keeps the caller's spelling.
+                    let mutable = mutable || matches!(receiver, Type::StructMut(_));
                     self.names.insert(param, (var_id, mutable, receiver));
                     self.binding_ranges.insert(var_id, binding_range);
                     params.push((var_id, receiver));
@@ -639,6 +648,9 @@ impl Parser<'_> {
                 if self.names.contains_key(&param) { return Err(self.fail(&format!("duplicate parameter '{param}'"))); }
                 self.take(Kind::Colon)?;
                 let ty = self.parameter_type()?;
+                // A `&mut Type` parameter exists to be written through, so
+                // its slot is mutable without a `var` spelling (ADR-0185).
+                let mutable = mutable || matches!(ty, Type::StructMut(_));
                 let var_id = self.next_var; self.next_var += 1;
                 self.names.insert(param, (var_id, mutable, ty));
                 self.binding_ranges.insert(var_id, binding_range);
@@ -718,7 +730,7 @@ impl Parser<'_> {
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
-            borrows: Vec::new(), call_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst, trait_bounds, receiver: None, pending: Vec::new(),
+            borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst, trait_bounds, receiver: None, pending: Vec::new(),
         };
         let parsed = sub.function_rest(false, id);
         let mut nested = std::mem::take(&mut sub.pending);
@@ -785,6 +797,9 @@ impl Parser<'_> {
                     match actual {
                         Type::Struct(owned_sid) if owned_sid == sid => {
                             if self.moved.contains(&var) { return Err(moved_value_hint(self.binding_label(self.fail(&format!("cannot borrow '{arg}' because it was moved")).with_code("E0102"), var))); }
+                            if self.mut_borrows.iter().any(|&(bid, _)| bid == var) {
+                                return Err(self.fail(&format!("cannot borrow '{arg}' while it is mutably borrowed in this statement")));
+                            }
                             // The borrow lives only as long as this call, so it
                             // goes on the statement-scoped register: the next
                             // statement may write the struct again.
@@ -795,8 +810,42 @@ impl Parser<'_> {
                         }
                         // A borrow parameter forwards its pointer unchanged:
                         // the callee's reads are already covered by the borrow
-                        // the caller received.
+                        // the caller received. A mutable borrow may shrink to
+                        // a read-only one; the reverse is not allowed.
                         Type::StructRef(forwarded_sid) if forwarded_sid == sid => {
+                            args.push(Argument::Borrow(var, false));
+                        }
+                        Type::StructMut(forwarded_sid) if forwarded_sid == sid => {
+                            args.push(Argument::Borrow(var, false));
+                        }
+                        other => return Err(self.fail(&format!("argument must be {}, found {}", expected.name(), other.name()))),
+                    }
+                } else if let Type::StructMut(sid) = expected {
+                    // `&mut Struct` (ADR-0185) lends the struct for writing:
+                    // spelled `&mut value` at the call site, exclusive for the
+                    // duration of the call, and the lender must own a mutable
+                    // variable — the callee writes what the caller owns.
+                    self.take(Kind::Amp)?;
+                    if *self.current() != Kind::Mut {
+                        return Err(self.fail("this parameter borrows mutably; write the argument as '&mut name'"));
+                    }
+                    self.pos += 1;
+                    let arg = self.identifier()?;
+                    let (var, mutable, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown variable '{arg}'")).with_code("E0101"))?;
+                    match actual {
+                        Type::Struct(owned_sid) if owned_sid == sid => {
+                            if self.moved.contains(&var) { return Err(moved_value_hint(self.binding_label(self.fail(&format!("cannot borrow '{arg}' because it was moved")).with_code("E0102"), var))); }
+                            if !mutable {
+                                return Err(self.immutable_binding_error(self.fail(&format!("cannot borrow '{arg}' mutably: it was declared without 'var'")).with_code("E0103"), var));
+                            }
+                            if self.is_borrowed(var) {
+                                return Err(self.fail(&format!("cannot borrow '{arg}' mutably while it is borrowed in this statement")));
+                            }
+                            self.mut_borrows.push((var, self.scopes.len()));
+                            args.push(Argument::Borrow(var, true));
+                        }
+                        // A mutable borrow parameter forwards its pointer.
+                        Type::StructMut(forwarded_sid) if forwarded_sid == sid => {
                             args.push(Argument::Borrow(var, false));
                         }
                         other => return Err(self.fail(&format!("argument must be {}, found {}", expected.name(), other.name()))),

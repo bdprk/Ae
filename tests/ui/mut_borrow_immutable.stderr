@@ -1,0 +1,1 @@
+ae: $DIR/mut_borrow_immutable.ae:10:22: cannot borrow 'c' mutably: it was declared without 'var'

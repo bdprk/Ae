@@ -1,0 +1,46 @@
+// The exclusive mutable borrow: `&mut Counter` parameters and `&mut self`
+// receivers (ADR-0185).
+//
+// A `&mut self` method writes its fields through a pointer for the duration
+// of the call. The caller keeps ownership and regains every right the
+// moment the call returns; while the call runs, nothing else borrows the
+// struct, which is what makes the writes safe.
+
+struct Counter {
+    n: i64,
+    label: string,
+}
+
+impl Counter {
+    // A `&mut self` method reaches a `&self` method through the same
+    // borrow: reading shrinks freely, writing needs the mutable form.
+    fn doubled(&self) -> i64 {
+        return self.n * 2;
+    }
+    fn inc(&mut self) -> i64 {
+        self.n = self.n + 1;
+        return self.n;
+    }
+    fn inc_doubled(&mut self) -> i64 {
+        self.n = self.n + 1;
+        return self.doubled();
+    }
+}
+
+// A `&mut Counter` parameter is the same contract spelled by hand; the
+// caller must own a `var` binding to lend it.
+fn bump(c: &mut Counter, delta: i64) -> i64 {
+    return c.inc() + delta - 1;
+}
+
+fn main() {
+    var c = Counter { n: 0, label: "start" };
+    print(c.inc());
+    print(bump(&mut c, 5));
+    print(c.inc_doubled());
+    // The writes land in the caller's struct: after the call, the field is
+    // readable directly and the struct can be lent again.
+    print(c.n);
+    let n = c.inc();
+    print(n + c.doubled());
+}

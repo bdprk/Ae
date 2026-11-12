@@ -1,1 +1,0 @@
-ae: $DIR/method_mut_receiver.ae:4:13: '&mut self' does not exist yet: struct borrows are read-only, so a method that needs to mutate takes 'self' by value

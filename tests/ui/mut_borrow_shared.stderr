@@ -1,0 +1,1 @@
+ae: $DIR/mut_borrow_shared.ae:14:33: cannot borrow 'c' mutably while it is borrowed in this statement

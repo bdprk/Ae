@@ -440,6 +440,45 @@ impl Parser<'_> {
                 }
                 return Ok(Type::VecRef);
             }
+            // `&mut Type` (ADR-0185) is the exclusive mutable borrow of a
+            // user struct: the callee may write fields through the pointer,
+            // and the caller may hold no other borrow of the struct while
+            // the call runs.
+            if *self.current() == Kind::Mut {
+                self.pos += 1;
+                let borrowed = match self.current() {
+                    Kind::Ident(text) => text.clone(),
+                    _ => return Err(self.fail("'&mut' must be followed by a struct type")),
+                };
+                if let Some(&sid) = self.struct_names.get(borrowed.as_str()) {
+                    let def = &self.structs[sid];
+                    self.require_public("struct", &def.name.clone(), &def.file.clone(), def.public)?;
+                    self.pos += 1;
+                    return Ok(Type::StructMut(sid));
+                }
+                if let Some(&gid) = self.generics.struct_names.get(borrowed.as_str()) {
+                    let offset = self.tokens[self.pos].offset;
+                    self.pos += 1;
+                    if *self.current() != Kind::LBracket {
+                        return Err(self.fail(&format!("'&mut {borrowed}' is a generic struct; write its type arguments, e.g. &mut {borrowed}[string]")));
+                    }
+                    self.pos += 1;
+                    let mut args = Vec::new();
+                    loop {
+                        args.push(self.named_type()?);
+                        if *self.current() != Kind::Comma { break; }
+                        self.pos += 1;
+                    }
+                    self.take(Kind::RBracket)?;
+                    let sid = self.instantiate_struct(gid, args, offset)?;
+                    let def = &self.structs[sid];
+                    self.require_public("struct", &def.name.clone(), &def.file.clone(), def.public)?;
+                    return Ok(Type::StructMut(sid));
+                }
+                return Err(self.error_at(amp_offset, &format!(
+                    "'&mut {borrowed}' borrows a struct mutably, but '{borrowed}' is {}; only user structs can be borrowed mutably",
+                    if self.struct_names.contains_key(borrowed.as_str()) || self.generics.struct_names.contains_key(borrowed.as_str()) { "a struct" } else { "not a struct" })));
+            }
             if matches!(self.current(), Kind::Ident(name) if name == "mut") {
                 return Err(self.error_at(amp_offset,
                     "'&mut' does not exist yet: struct borrows are read-only, so a method that needs to mutate takes 'self' by value"));

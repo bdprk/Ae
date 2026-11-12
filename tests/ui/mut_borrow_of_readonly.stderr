@@ -1,0 +1,1 @@
+ae: $DIR/mut_borrow_of_readonly.ae:9:26: 'inc' borrows its receiver mutably, which a read-only borrow cannot grant; call it on the owned variable

@@ -1,0 +1,54 @@
+// ADR-0185: the exclusive mutable borrow.
+// `&mut Rect` parameters and `&mut self` receivers write through a pointer
+// for the duration of the call; the caller regains every right the moment
+// the call returns, and nothing else may borrow the struct while the call
+// runs.
+struct Counter { n: i64, label: string }
+
+impl Counter {
+    // `&mut self` writes the fields it was given leave to write.
+    fn inc(&mut self) -> i64 {
+        self.n = self.n + 1;
+        return self.n;
+    }
+    fn add(&mut self, delta: i64) -> i64 {
+        self.n = self.n + delta;
+        return self.n;
+    }
+    fn reset(&mut self) -> i64 {
+        self.n = 0;
+        self.label = "reset";
+        return self.n;
+    }
+    // A mutating method calls a read-only method through the same borrow.
+    fn doubled(&self) -> i64 {
+        return self.n * 2;
+    }
+    fn inc_doubled(&mut self) -> i64 {
+        self.n = self.n + 1;
+        return self.doubled();
+    }
+}
+
+fn bump(c: &mut Counter, delta: i64) -> i64 {
+    return c.add(delta);
+}
+
+fn main() {
+    var c = Counter { n: 0, label: "start" };
+    print(c.inc());
+    print(c.inc());
+    print(c.add(10));
+    print(bump(&mut c, 5));
+    // A `&mut self` method reaches a `&self` method through the borrow.
+    print(c.inc_doubled());
+    print(c.doubled());
+    // The writes land in the caller's struct, and the borrow ends with
+    // each statement, so the field is readable directly afterwards.
+    print(c.n);
+    print(c.label);
+    let zero = c.reset();
+    print(zero);
+    print(c.n);
+    print(c.label);
+}
