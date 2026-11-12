@@ -1,0 +1,62 @@
+// tests/run/batch_core_compiler_opt2.ae
+// Verification of SwitchLoweringStrategy, InlineCandidate, TailCallEligibility, and LatticeValue (SCCP).
+
+use "../../std/core/ir_switch_table.ae";
+use "../../std/core/ir_inline_cost.ae";
+use "../../std/core/ir_tail_call.ae";
+use "../../std/core/ir_constant_prop.ae";
+
+fn main() {
+    print("--- batch_core_compiler_opt2 test start ---");
+
+    // 1. Switch Lowering Strategy
+    // 5 cases between 10 and 15 (span 6) -> 5 * 100 / 6 = 83% density -> jump table
+    let s_dense = switch_strategy_new(5, 10, 15);
+    assert(switch_strategy_density(s_dense) == 83);
+    let s_dense_b = switch_strategy_new(5, 10, 15);
+    assert(switch_should_use_jump_table(s_dense_b));
+
+    // 5 cases between 1 and 100 (span 100) -> 5% density -> binary search / if-else
+    let s_sparse = switch_strategy_new(5, 1, 100);
+    assert(!switch_should_use_jump_table(s_sparse));
+    print("switch_table ok");
+
+    // 2. Inline Cost
+    let cand_small = inline_candidate_new(15, false, 1); // 15 + 10 = 25
+    assert(inline_cost_score(cand_small) == 25);
+    let cand_small_b = inline_candidate_new(15, false, 1);
+    assert(inline_should_inline(cand_small_b, 30));
+
+    let cand_loop = inline_candidate_new(10, true, 0); // 10 + 50 = 60
+    assert(!inline_should_inline(cand_loop, 30));
+    print("inline_cost ok");
+
+    // 3. Tail Call
+    let t_ok = tail_call_new(true, true, true);
+    assert(tail_call_can_optimize(t_ok));
+
+    let t_fail = tail_call_new(false, true, true);
+    assert(!tail_call_can_optimize(t_fail));
+    print("tail_call ok");
+
+    // 4. Lattice Value (SCCP)
+    let c1 = lattice_constant(42);
+    assert(lattice_is_constant(c1));
+    let c1_b = lattice_constant(42);
+    assert(lattice_get_constant(c1_b) == 42);
+
+    // Meet with Top preserves constant
+    let m_top = lattice_meet(lattice_constant(42), lattice_top());
+    assert(lattice_is_constant(m_top));
+
+    // Meet of identical constants stays constant
+    let m_same = lattice_meet(lattice_constant(42), lattice_constant(42));
+    assert(lattice_is_constant(m_same));
+
+    // Meet of differing constants drops to Bottom
+    let m_diff = lattice_meet(lattice_constant(42), lattice_constant(100));
+    assert(!lattice_is_constant(m_diff));
+    print("lattice ok");
+
+    print("--- batch_core_compiler_opt2 test end ---");
+}

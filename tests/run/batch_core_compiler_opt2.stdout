@@ -1,0 +1,6 @@
+--- batch_core_compiler_opt2 test start ---
+switch_table ok
+inline_cost ok
+tail_call ok
+lattice ok
+--- batch_core_compiler_opt2 test end ---
