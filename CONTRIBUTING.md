@@ -18,3 +18,15 @@ AE is an independently developed implementation. Do not copy implementation code
 - The current transitional layout has source positions and diagnostic foundations in `crates/ae-span`, the lexer, tokens, and formatter in `crates/ae-syntax`, and parsing, checking, and C generation in `crates/ae-compiler/src/frontend/`. Test helpers remain in the compiler library for now; `src/main.rs` is the command-line driver. Split crates further as planned and follow the design charter in `docs/adr/0067.md` and the freeze list in `docs/adr/0068.md`.
 - Errors should identify the line, column, and cause. Rejection paths require test coverage.
 - Explain what changed and why in commit messages; keep each commit focused on one topic.
+
+
+### Comparing generated C during compiler refactoring
+
+Preserve a compiler executable built before a refactor and build a separate
+candidate executable. Run `python scripts/compare_emit_c.py --baseline BASELINE --candidate CANDIDATE`
+from the repository. The tool emits both binaries' SHA-256
+hashes and compares raw `emit-c` output for every top-level example and the
+module example entry point. Any failed compilation or byte difference fails
+the comparison. Run it on each platform being verified, using binaries built
+for that platform. Comparing a binary with itself is only a tool smoke test;
+it does not establish equivalence across a refactor.
