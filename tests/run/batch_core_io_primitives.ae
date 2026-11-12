@@ -1,0 +1,48 @@
+use "../../std/core/stream_chunk.ae";
+use "../../std/core/io_error_kind.ae";
+use "../../std/core/io_mode.ae";
+use "../../std/core/io_seek.ae";
+
+fn main() {
+    let c0 = stream_chunk_new(0, 1024, false);
+    assert(stream_chunk_offset(c0) == 0);
+    let c0_b = stream_chunk_new(0, 1024, false);
+    assert(stream_chunk_size(c0_b) == 1024);
+    let c0_c = stream_chunk_new(0, 1024, false);
+    assert(!stream_chunk_is_last(c0_c));
+
+    let c1 = stream_chunk_next(stream_chunk_new(0, 1024, false), 512, true);
+    assert(stream_chunk_offset(c1) == 1024);
+    let c1_b = stream_chunk_next(stream_chunk_new(0, 1024, false), 512, true);
+    assert(stream_chunk_size(c1_b) == 512);
+    let c1_c = stream_chunk_next(stream_chunk_new(0, 1024, false), 512, true);
+    assert(stream_chunk_is_last(c1_c));
+
+    assert(io_error_kind_code(IoErrorKind::NotFound) == 1);
+    assert(io_error_kind_code(IoErrorKind::TimedOut) == 5);
+    assert(io_error_is_recoverable(IoErrorKind::TimedOut));
+    assert(io_error_is_recoverable(IoErrorKind::Interrupted));
+    assert(!io_error_is_recoverable(IoErrorKind::NotFound));
+    assert(!io_error_is_recoverable(IoErrorKind::PermissionDenied));
+
+    let opt_ro = open_options_read_only();
+    assert(open_options_can_read(opt_ro));
+    let opt_ro_b = open_options_read_only();
+    assert(!open_options_can_write(opt_ro_b));
+
+    let opt_wr = open_options_write_new();
+    assert(open_options_can_write(opt_wr));
+    let opt_wr_b = open_options_write_new();
+    assert(!open_options_is_append(opt_wr_b));
+
+    let opt_app = open_options_append();
+    assert(open_options_is_append(opt_app));
+
+    assert(calculate_seek_offset(SeekFrom::Start(100), 50, 1000) == 100);
+    assert(calculate_seek_offset(SeekFrom::Current(25), 50, 1000) == 75);
+    assert(calculate_seek_offset(SeekFrom::Current(-30), 50, 1000) == 20);
+    assert(calculate_seek_offset(SeekFrom::End(-100), 50, 1000) == 900);
+    assert(calculate_seek_offset(SeekFrom::Start(-50), 50, 1000) == 0); // clamped to 0
+
+    print("STREAMCHUNK IOERROR OPENOPT SEEK OPERATIONAL");
+}

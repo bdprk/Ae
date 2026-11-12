@@ -1,0 +1,36 @@
+// std/core/stream_chunk.ae
+// Stream chunk size calculation and fragmentation split primitives for I/O.
+
+pub struct StreamChunk {
+    offset: i64,
+    size: i64,
+    is_last: bool,
+}
+
+pub fn stream_chunk_new(offset: i64, size: i64, is_last: bool) -> StreamChunk {
+    return StreamChunk {
+        offset: offset,
+        size: size,
+        is_last: is_last,
+    };
+}
+
+pub fn stream_chunk_offset(c: StreamChunk) -> i64 {
+    return c.offset;
+}
+
+pub fn stream_chunk_size(c: StreamChunk) -> i64 {
+    return c.size;
+}
+
+pub fn stream_chunk_is_last(c: StreamChunk) -> bool {
+    return c.is_last;
+}
+
+pub fn stream_chunk_next(c: StreamChunk, next_size: i64, is_final: bool) -> StreamChunk {
+    return StreamChunk {
+        offset: c.offset + c.size,
+        size: next_size,
+        is_last: is_final,
+    };
+}
