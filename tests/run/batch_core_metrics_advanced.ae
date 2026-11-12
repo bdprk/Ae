@@ -1,0 +1,50 @@
+use "../../std/core/sliding_window.ae";
+use "../../std/core/exponential_decay.ae";
+use "../../std/core/ascii_table.ae";
+use "../../std/core/radix.ae";
+
+fn main() {
+    let w0 = window4_new();
+    assert(window4_count(w0) == 0);
+    assert(window4_sum(window4_new()) == 0);
+
+    let w1 = window4_push(window4_new(), 10);
+    assert(window4_count(w1) == 1);
+    let w1_b = window4_push(window4_new(), 10);
+    assert(window4_sum(w1_b) == 10);
+
+    let w4 = window4_push(window4_push(window4_push(window4_push(window4_new(), 10), 20), 30), 40);
+    assert(window4_sum(w4) == 100);
+    let w4_b = window4_push(window4_push(window4_push(window4_push(window4_new(), 10), 20), 30), 40);
+    assert(window4_average(w4_b) == 25);
+
+    let ema0 = ema_new(50); // 50% alpha
+    assert(ema_value(ema0) == 0);
+    let ema1 = ema_update(ema_new(50), 100);
+    assert(ema_value(ema1) == 100);
+    let ema2 = ema_update(ema_update(ema_new(50), 100), 200);
+    // (200 * 50 + 100 * 50) / 100 = 150
+    assert(ema_value(ema2) == 150);
+
+    assert(ascii_to_uppercase(97) == 65); // 'a' -> 'A'
+    assert(ascii_to_uppercase(65) == 65); // 'A' -> 'A'
+    assert(ascii_to_lowercase(65) == 97); // 'A' -> 'a'
+    assert(ascii_is_hex_digit(53)); // '5'
+    assert(ascii_is_hex_digit(97)); // 'a'
+    assert(!ascii_is_hex_digit(120)); // 'x'
+    assert(ascii_hex_to_val(48) == 0); // '0'
+    assert(ascii_hex_to_val(97) == 10); // 'a'
+    assert(ascii_hex_to_val(70) == 15); // 'F'
+
+    assert(radix10_digit_count(0) == 1);
+    assert(radix10_digit_count(9) == 1);
+    assert(radix10_digit_count(10) == 2);
+    assert(radix10_digit_count(999) == 3);
+    assert(radix16_digit_count(0) == 1);
+    assert(radix16_digit_count(15) == 1);
+    assert(radix16_digit_count(16) == 2);
+    assert(radix16_digit_count(255) == 2);
+    assert(radix16_digit_count(256) == 3);
+
+    print("WINDOW EMA ASCII RADIX OPERATIONAL");
+}

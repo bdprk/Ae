@@ -1,0 +1,41 @@
+// std/core/exponential_decay.ae
+// Exponential decay moving average (EMA) integer estimation primitives for AE core.
+
+pub struct EmaEstimator {
+    value: i64,
+    alpha_percent: i64,
+}
+
+pub fn ema_new(alpha_percent: i64) -> EmaEstimator {
+    var a = alpha_percent;
+    if a < 1 {
+        a = 1;
+    }
+    if a > 100 {
+        a = 100;
+    }
+    return EmaEstimator {
+        value: 0,
+        alpha_percent: a,
+    };
+}
+
+pub fn ema_value(e: EmaEstimator) -> i64 {
+    return e.value;
+}
+
+pub fn ema_update(e: EmaEstimator, sample: i64) -> EmaEstimator {
+    if e.value == 0 {
+        return EmaEstimator {
+            value: sample,
+            alpha_percent: e.alpha_percent,
+        };
+    }
+    // EMA = (sample * alpha + current * (100 - alpha)) / 100
+    let a = e.alpha_percent;
+    let next_val = (sample * a + e.value * (100 - a)) / 100;
+    return EmaEstimator {
+        value: next_val,
+        alpha_percent: a,
+    };
+}

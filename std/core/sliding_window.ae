@@ -1,0 +1,50 @@
+// std/core/sliding_window.ae
+// Conceptual fixed sliding window average and sum accumulator primitives for AE core.
+
+pub struct WindowAccumulator4 {
+    v0: i64,
+    v1: i64,
+    v2: i64,
+    v3: i64,
+    count: i64,
+}
+
+pub fn window4_new() -> WindowAccumulator4 {
+    return WindowAccumulator4 {
+        v0: 0,
+        v1: 0,
+        v2: 0,
+        v3: 0,
+        count: 0,
+    };
+}
+
+pub fn window4_count(w: WindowAccumulator4) -> i64 {
+    return w.count;
+}
+
+pub fn window4_push(w: WindowAccumulator4, next_val: i64) -> WindowAccumulator4 {
+    let next_count = w.count + 1;
+    return WindowAccumulator4 {
+        v0: w.v1,
+        v1: w.v2,
+        v2: w.v3,
+        v3: next_val,
+        count: next_count,
+    };
+}
+
+pub fn window4_sum(w: WindowAccumulator4) -> i64 {
+    return w.v0 + w.v1 + w.v2 + w.v3;
+}
+
+pub fn window4_average(w: WindowAccumulator4) -> i64 {
+    if w.count == 0 {
+        return 0;
+    }
+    if w.count < 4 {
+        let total = w.v0 + w.v1 + w.v2 + w.v3;
+        return total / w.count;
+    }
+    return (w.v0 + w.v1 + w.v2 + w.v3) / 4;
+}
