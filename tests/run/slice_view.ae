@@ -1,0 +1,12 @@
+use "../../std/core/slice.ae";
+
+fn check_view[T](s: SliceView[T]) -> bool {
+    let l = slice_len[T](s);
+    return l == 3;
+}
+
+fn main() {
+    let view = SliceView[i64] { len: 3 };
+    assert(check_view[i64](view));
+    print("SLICE VIEW MODULE OPERATIONAL\n");
+}

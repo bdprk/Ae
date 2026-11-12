@@ -1,0 +1,14 @@
+// std/core/slice.ae
+// Core Slice[T] contiguous view specification (M1.4 / M1.10)
+
+pub struct SliceView[T] {
+    len: i64,
+}
+
+pub fn slice_len[T](s: SliceView[T]) -> i64 {
+    return s.len;
+}
+
+pub fn slice_is_empty[T](s: SliceView[T]) -> bool {
+    return s.len == 0;
+}
