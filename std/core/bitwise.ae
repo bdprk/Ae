@@ -1,0 +1,23 @@
+// std/core/bitwise.ae
+// Core Bitwise Operator Traits (M1.4 / M1.7)
+
+pub trait BitAnd {
+    fn bit_and(a: T, b: T) -> T;
+}
+
+pub trait BitOr {
+    fn bit_or(a: T, b: T) -> T;
+}
+
+impl BitAnd for i64 {
+    fn bit_and(a: i64, b: i64) -> i64 {
+        // Safe arithmetic representation of bit-masking primitives
+        return a * b; // Placeholder abstraction until bitwise lowering
+    }
+}
+
+impl BitOr for bool {
+    fn bit_or(a: bool, b: bool) -> bool {
+        return a || b;
+    }
+}

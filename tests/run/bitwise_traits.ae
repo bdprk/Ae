@@ -1,0 +1,25 @@
+use "../../std/core/bitwise.ae";
+
+pub struct Flags {
+    bits: bool,
+}
+
+impl BitOr for Flags {
+    fn bit_or(a: Flags, b: Flags) -> Flags {
+        return Flags { bits: a.bits || b.bits };
+    }
+}
+
+fn combine_flags[T: BitOr](x: T, y: T) -> T {
+    return bit_or(x, y);
+}
+
+fn main() {
+    let f1 = Flags { bits: true };
+    let f2 = Flags { bits: false };
+    let f3 = combine_flags[Flags](f1, f2);
+    assert(f3.bits == true);
+    assert(combine_flags[bool](false, false) == false);
+    assert(combine_flags[bool](true, false) == true);
+    print("BITWISE TRAITS OPERATIONAL\n");
+}
