@@ -1,12 +1,14 @@
 ﻿# Methods, Impl Blocks, and Traits Specification (M1.2)
 
-> **Status (ADR-0182)**: this document describes the M1 target, not the current
-> language. Implemented today: inherent `impl Type { fn m(self, ...) -> R }` and
-> the call form `value.m(...)`, with the receiver taken **by value only** —
-> `&self` and `&mut self` are rejected because user structs cannot be borrowed
-> yet. Not implemented from this spec: implicit auto-borrow, `&mut self`,
-> associated functions without a receiver, trait objects, associated types, and
-> the orphan rule in its general form (only "same file as the type" is enforced).
+> **Status (ADR-0182, ADR-0183)**: this document describes the M1 target, not the
+> current language. Implemented today: inherent `impl Type { fn m(self, ...) -> R }`
+> with the call form `value.m(...)`, and associated functions
+> `impl Type { fn f(...) -> R }` with the call form `Type::f(...)`. The receiver is
+> taken **by value only** — `&self` and `&mut self` are rejected because user
+> structs cannot be borrowed yet. Not implemented from this spec: implicit
+> auto-borrow, `&mut self`, methods on enums, generic impl blocks, a `Self` type,
+> trait objects, associated types, and the orphan rule in its general form (only
+> "same file as the type" is enforced).
 
 ## 1. Syntax and Grammar
 

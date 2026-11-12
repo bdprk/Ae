@@ -1,0 +1,1 @@
+ae: $DIR/method_unknown_assoc.ae:10:23: type 'Point' has no associated function 'build'; it has new

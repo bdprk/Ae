@@ -1,0 +1,12 @@
+struct Point { x: i64 }
+
+impl Point {
+    fn new(x: i64) -> Point {
+        return Point { x: x };
+    }
+}
+
+fn main() {
+    let p = Point { x: 1 };
+    print(p.new(2).x);
+}

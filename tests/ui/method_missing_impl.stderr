@@ -1,1 +1,1 @@
-ae: $DIR/method_missing_impl.ae:5:22: type 'Point' has no methods; declare one in 'impl Point { ... }', with 'self' as its first parameter
+ae: $DIR/method_missing_impl.ae:5:22: type 'Point' has no methods; declare one in 'impl Point { ... }'

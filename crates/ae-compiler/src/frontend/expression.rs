@@ -6,16 +6,40 @@ impl Parser<'_> {
     // `value.method(...)` with no such method. Naming what the type does have
     // turns a typo into a one-line fix; a type with no impl at all gets the
     // declaration form instead, since there is nothing to list.
-    fn no_such_method(&self, type_name: &str, method: &str) -> ae_span::Diagnostic {
+    // `Type::name(args)` reaches an associated function — one declared without
+    // a receiver. It is the same call a plain function would be, with the type
+    // name standing in for the namespace the impl block created.
+    fn associated_call(&mut self, type_name: &str, offset: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::ColonColon)?;
+        let method = self.identifier()?;
+        let sid = self.struct_names[type_name];
+        let def = &self.structs[sid];
+        self.require_public("struct", &def.name.clone(), &def.file.clone(), def.public)?;
+        let key = format!("{type_name}#{method}");
+        let Some(def) = self.generics.inherent.get(&key).cloned() else {
+            return Err(self.no_such_method(type_name, &method, "associated function"));
+        };
+        if def.receiver {
+            return Err(self.error_at(offset, &format!("'{type_name}::{method}' takes a receiver; call it as 'value.{method}(...)' instead")));
+        }
+        if !def.signature.public {
+            return Err(self.error_at(offset, &format!("associated function '{type_name}::{method}' is private")));
+        }
+        let params = def.signature.params.clone();
+        let args = self.call_arguments(&format!("{type_name}::{method}"), &params)?;
+        Ok((Expr::Call(def.signature.id, args, def.signature.ret), def.signature.ret))
+    }
+
+    fn no_such_method(&self, type_name: &str, method: &str, form: &str) -> ae_span::Diagnostic {
         let prefix = format!("{type_name}#");
         let mut names: Vec<String> = self.generics.inherent.keys()
             .filter_map(|key| key.strip_prefix(&prefix).map(str::to_owned))
             .collect();
         if names.is_empty() {
-            return self.fail(&format!("type '{type_name}' has no methods; declare one in 'impl {type_name} {{ ... }}', with 'self' as its first parameter"));
+            return self.fail(&format!("type '{type_name}' has no {form}s; declare one in 'impl {type_name} {{ ... }}'"));
         }
         names.sort();
-        self.fail(&format!("type '{type_name}' has no method '{method}'; it has {}", names.join(", ")))
+        self.fail(&format!("type '{type_name}' has no {form} '{method}'; it has {}", names.join(", ")))
     }
 
     pub(super) fn expression(&mut self, min: u8, moving: bool) -> Result<(Expr, Type), ae_span::Diagnostic> {
@@ -93,10 +117,15 @@ impl Parser<'_> {
                     // Bind and fall through to the binary-operator loop.
                     (Expr::VecLit(values, vector_ty, line, column), vector_ty)
                 } else if *self.current() == Kind::ColonColon {
-                    // Enum::Variant or Enum::Variant(payload, ...)
-                    let eid = *self.enum_names.get(&name)
-                        .ok_or_else(|| self.error_at(name_offset, &format!("'{name}' is not an enum; variants are written Enum::Variant")))?;
-                    self.enum_literal(eid, name_offset)?
+                    // `Enum::Variant` / `Enum::Variant(payload, ...)`, or
+                    // `Type::assoc_fn(...)` from the same impl block (ADR-0183).
+                    if let Some(&eid) = self.enum_names.get(&name) {
+                        self.enum_literal(eid, name_offset)?
+                    } else if self.struct_names.contains_key(&name) {
+                        self.associated_call(&name, name_offset)?
+                    } else {
+                        return Err(self.error_at(name_offset, &format!("'{name}' is not an enum or a struct with an impl block; '::' reaches enum variants and associated functions, nothing else")));
+                    }
                 } else if self.generics.names.contains_key(&name) && *self.current() == Kind::LBracket {
                     // Generic enum literal: the arguments pick the layout, so
                     // Option[string]::Some and Option[i64]::Some are different
@@ -750,9 +779,13 @@ impl Parser<'_> {
             if *self.current() == Kind::LParen {
                 let struct_name = self.structs[sid].name.clone();
                 let key = format!("{struct_name}#{fname}");
-                let Some(signature) = self.generics.inherent.get(&key).cloned() else {
-                    return Err(self.no_such_method(&struct_name, &fname));
+                let Some(method) = self.generics.inherent.get(&key).cloned() else {
+                    return Err(self.no_such_method(&struct_name, &fname, "method"));
                 };
+                if !method.receiver {
+                    return Err(self.fail(&format!("'{struct_name}::{fname}' is an associated function, so it takes no receiver; call it as '{struct_name}::{fname}(...)'")));
+                }
+                let signature = method.signature;
                 // The receiver is a by-value parameter, so an owned receiver
                 // moves here exactly as it would in a plain call.
                 match &base {

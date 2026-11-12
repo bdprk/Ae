@@ -1,0 +1,1 @@
+ae: $DIR/method_assoc_as_method.ae:11:16: 'Point::new' is an associated function, so it takes no receiver; call it as 'Point::new(...)'

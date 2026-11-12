@@ -10,6 +10,14 @@ struct Counter {
 }
 
 impl Counter {
+    // Associated functions: declared without a receiver, reached through the
+    // type name. They are the constructors an impl block is expected to hold.
+    fn starting(n: i64, step: i64) -> Counter {
+        return Counter { n: n, step: step };
+    }
+    fn zero() -> Counter {
+        return Counter { n: 0, step: 1 };
+    }
     fn value(self) -> i64 {
         return self.n;
     }
@@ -67,6 +75,13 @@ fn main() {
     assert(p.total() == 13);
     let p2 = Pair { a: 9, b: 4 };
     assert(p2.value() == 5);
+
+    // Constructors: the same value the literal builds, and a chained call on
+    // the returned receiver.
+    assert(Counter::starting(1, 2).value() == 1);
+    assert(Counter::starting(1, 2).advanced(3).value() == 7);
+    assert(Counter::zero().value() == 0);
+    assert(Counter::zero().advanced(5).value() == 5);
 
     print("methods_all_passed");
 }

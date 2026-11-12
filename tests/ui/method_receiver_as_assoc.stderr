@@ -1,0 +1,1 @@
+ae: $DIR/method_receiver_as_assoc.ae:10:11: 'Point::get' takes a receiver; call it as 'value.get(...)' instead

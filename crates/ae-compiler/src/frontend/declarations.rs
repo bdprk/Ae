@@ -340,14 +340,33 @@ impl Parser<'_> {
             }
             if self.generics.inherent.len() >= 256 { return Err(self.fail("method limit exceeded (256 per program)")); }
             self.take(Kind::LParen)?;
-            let mut types = vec![Type::Struct(sid)];
-            self.take_receiver(&type_name)?;
-            while *self.current() == Kind::Comma {
-                self.pos += 1;
-                if types.len() >= 8 { return Err(self.fail("method parameter limit exceeded (8)")); }
-                let _param = self.identifier()?;
-                self.take(Kind::Colon)?;
-                types.push(self.parameter_type()?);
+            let mut types: Vec<Type> = Vec::new();
+            let mut receiver = false;
+            if *self.current() != Kind::RParen {
+                loop {
+                    if types.len() >= 8 { return Err(self.fail("method parameter limit exceeded (8)")); }
+                    // A leading `self` is the receiver; everything else is an
+                    // ordinary `name: Type` parameter. An impl block may hold
+                    // both, and `self` only counts in first position.
+                    if types.is_empty() && *self.current() == Kind::Amp {
+                        return Err(self.fail("'&self' is not supported: borrows exist only for string, vec, and map, so a method takes its receiver by value as 'self'"));
+                    }
+                    let is_receiver = types.is_empty() && matches!(self.current(), Kind::Ident(text) if text.as_str() == "self");
+                    if is_receiver {
+                        self.pos += 1;
+                        if *self.current() == Kind::Colon {
+                            return Err(self.fail(&format!("write the receiver as 'self'; it already has type '{type_name}'")));
+                        }
+                        types.push(Type::Struct(sid));
+                        receiver = true;
+                    } else {
+                        let _param = self.identifier()?;
+                        self.take(Kind::Colon)?;
+                        types.push(self.parameter_type()?);
+                    }
+                    if *self.current() != Kind::Comma { break; }
+                    self.pos += 1;
+                }
             }
             self.take(Kind::RParen)?;
             self.take(Kind::Arrow)?;
@@ -357,30 +376,13 @@ impl Parser<'_> {
             self.generics.next_fn_id += 1;
             *next_id = self.generics.next_fn_id;
             self.id_order.push(id);
-            self.generics.inherent.insert(key, Signature { id, params: types, ret, file: self.file.clone(), public: true });
+            self.generics.inherent.insert(key, MethodDef {
+                signature: Signature { id, params: types, ret, file: self.file.clone(), public: true },
+                receiver,
+            });
             self.skip_balanced_braces()?;
         }
         self.take(Kind::RBrace)
-    }
-
-    // The receiver is spelled `self` and nothing else. A type annotation is
-    // rejected rather than accepted-and-ignored, because the impl already fixed
-    // the type: writing it twice invites the two to disagree.
-    fn take_receiver(&mut self, type_name: &str) -> Result<(), ae_span::Diagnostic> {
-        if *self.current() == Kind::Amp {
-            return Err(self.fail("'&self' is not supported: borrows exist only for string, vec, and map, so a method takes its receiver by value as 'self'"));
-        }
-        if *self.current() == Kind::RParen {
-            return Err(self.fail("an inherent method must take 'self' as its first parameter"));
-        }
-        let param = self.identifier()?;
-        if param != "self" {
-            return Err(self.fail(&format!("the first parameter of an inherent method must be 'self', found '{param}'")));
-        }
-        if *self.current() == Kind::Colon {
-            return Err(self.fail(&format!("write the receiver as 'self'; it already has type '{type_name}'")));
-        }
-        Ok(())
     }
 
     pub(super) fn collect_impl(&mut self, next_id: &mut usize) -> Result<(), ae_span::Diagnostic> {

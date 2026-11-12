@@ -330,7 +330,7 @@ type Instance = (usize, Vec<Type>, Type);
 // arguments (ADR-21, ADR-30, ADR-31). `next_fn_id` is the one id space shared
 // by ordinary and instantiated functions, so C names never collide.
 #[derive(Default, Clone)]
-struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, Signature> }
+struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef> }
 #[derive(Debug)]
 struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 
@@ -338,6 +338,12 @@ struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec
 // site reject a name that exists but was not exported (ADR-18).
 #[derive(Debug, Clone)]
 struct Signature { id: usize, params: Vec<Type>, ret: Type, file: String, public: bool }
+
+// One entry of an inherent `impl` block. `receiver` records whether the first
+// parameter was spelled `self`, which is what decides the call form: a method is
+// reached through a value, an associated function through the type name.
+#[derive(Debug, Clone)]
+struct MethodDef { signature: Signature, receiver: bool }
 
 type SharedFunctions = HashMap<String, Signature>;
 

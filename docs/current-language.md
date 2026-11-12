@@ -140,17 +140,19 @@ v1 boundaries: Trait signatures do not support `&T` (the landing shape for borro
 
 ## Inherent Methods (`impl Type`) (ADR-0182)
 
-`impl Type { fn name(self, ...) -> R { body } }` attaches methods to a concrete struct declared in the same file, and `value.name(args)` calls one. Scope: structs only, `impl` must follow the struct's declaration, the receiver is by value, at most 8 parameters per method, at most 256 methods per program, and generic types are excluded (`impl Pair[K, V]` is rejected).
+`impl Type { fn name(self, ...) -> R { body } }` attaches methods to a concrete struct declared in the same file, and `value.name(args)` calls one; `impl Type { fn name(...) -> R { body } }` declares an associated function, called as `Type::name(args)`. Scope: structs only, `impl` must follow the struct's declaration, the receiver is by value, at most 8 parameters per method, at most 256 methods per program, and generic types are excluded (`impl Pair[K, V]` is rejected).
 
 **Internal shape**: a method is an ordinary function whose parameter 0 is the receiver, and `value.name(args)` is that function called with `value` first. The runtime and the backend are unchanged — no method table, no function pointer, no indirection; dispatch follows the receiver's static type and is resolved at compile time.
 
 **Receiver semantics**: `self` is a by-value parameter, so calling a method on an owned value **moves** it; `c.value(); c.value();` fails for the same reason `f(c); f(c);` does. `&self` and `&mut self` are rejected because read-only borrows exist only for `string`, `vec`, `vec[string]`, `vec[f64]`, and maps — a struct cannot be borrowed, so a method cannot take one by reference. Passing a struct field as a receiver is rejected too, matching the rule that a field cannot be moved out of its owner.
 
+**Associated functions** live in the same block: a function declared without a receiver is reached through the type name, `Point::new(3, 4)`, which is where constructors belong. The two forms are told apart by the declaration, not by the call, so `value.new(...)` on an associated function and `Point::get()` on a receiver method are both errors that name the correct form (ADR-0183). `::` therefore has two meanings, and the receiver's own declaration decides which: `Enum::Variant` for enum variants, `Type::name` for an associated function. Nothing is resolved by guessing at the call site.
+
 `self` is a parameter name rather than a keyword: it is recognized only as the first parameter inside an inherent `impl` block, and anywhere else reports that it is only available there. `pub` is accepted before a method and changes nothing — a method is exactly as visible as the type it belongs to. Trait methods (previous section) remain a separate mechanism: they dispatch through generic bounds and are called with plain function syntax.
 
 Rejected at declaration: a method named `main`; a built-in name (`len`, `push`, ...); a name that repeats a field of the type, because `value.name` would then have to mean two things; a duplicate method on the same type; an `impl` naming something that is not a struct, or a struct declared in another file.
 
-Known gaps: methods on enums, associated functions without a receiver (`Point::new()`), generic impl blocks, and one method calling another on the same receiver — `self.other()` moves `self`, so shared logic goes in a free function. See `examples/methods.ae`.
+Known gaps: methods on enums, generic impl blocks (`impl Pair[K, V]`), associated functions on generic structs, and one method calling another on the same receiver — `self.other()` moves `self`, so shared logic goes in a free function. See `examples/methods.ae`.
 
 ## String Vectors
 

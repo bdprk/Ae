@@ -13,6 +13,11 @@ struct Point {
 }
 
 impl Point {
+    // Associated function (no receiver): reached through the type name, which
+    // is where a constructor belongs.
+    fn new(x: i64, y: i64) -> Point {
+        return Point { x: x, y: y };
+    }
     // Builds a new point: the receiver is consumed, so the caller keeps its
     // original only by building a fresh one.
     fn shifted(self, dx: i64, dy: i64) -> Point {
@@ -39,12 +44,12 @@ fn abs_i64(value: i64) -> i64 {
 fn main() {
     // Chained calls: each `shifted` returns a new point, which the next call
     // consumes. (3, 4) -> (4, 6) -> (4, 0).
-    let start = Point { x: 3, y: 4 };
+    let start = Point::new(3, 4);
     let moved = start.shifted(1, 2).shifted(0, -6);
     print(moved.describe());
 
     // Distance from the origin after shifting: (1, 2) is 3.
-    let from_origin = Point { x: 1, y: 2 };
+    let from_origin = Point::new(1, 2);
     print(from_origin.distance());
 
     // The receiver moved, so build another one rather than reuse it.
