@@ -1,0 +1,23 @@
+pub trait Sized {
+    fn size(x: T) -> i64;
+}
+
+pub struct Container {
+    count: i64,
+}
+
+impl Sized for Container {
+    fn size(x: Container) -> i64 {
+        return x.count;
+    }
+}
+
+fn measure[T: Sized](item: T) -> i64 {
+    return size(item);
+}
+
+fn main() {
+    let c = Container { count: 128 };
+    assert(measure[Container](c) == 128);
+    print("TRAIT BOUND DISPATCH WORKING\n");
+}
