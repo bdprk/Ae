@@ -1,0 +1,30 @@
+use "../../std/core/cmp.ae";
+
+pub struct Size {
+    w: i64,
+    h: i64,
+}
+
+impl PartialEq for Size {
+    fn eq(a: Size, b: Size) -> bool {
+        return a.w == b.w && a.h == b.h;
+    }
+}
+
+fn check_equals[T: PartialEq](x: T, y: T) -> bool {
+    return eq(x, y);
+}
+
+fn main() {
+    let s1 = Size { w: 10, h: 20 };
+    let s2 = Size { w: 10, h: 20 };
+    assert(check_equals[Size](s1, s2));
+
+    let s3 = Size { w: 10, h: 20 };
+    let s4 = Size { w: 10, h: 25 };
+    assert(!check_equals[Size](s3, s4));
+
+    assert(check_equals[i64](42, 42));
+    assert(!check_equals[i64](42, 43));
+    print("COMPARISON TRAITS WORKING\n");
+}

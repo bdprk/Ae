@@ -1,0 +1,22 @@
+// std/core/cmp.ae
+// Core Eq, PartialEq, and Ord Traits (M1.7)
+
+pub trait PartialEq {
+    fn eq(a: T, b: T) -> bool;
+}
+
+pub trait Eq {
+    fn assert_eq(a: T, b: T) -> bool;
+}
+
+impl PartialEq for i64 {
+    fn eq(a: i64, b: i64) -> bool {
+        return a == b;
+    }
+}
+
+impl PartialEq for bool {
+    fn eq(a: bool, b: bool) -> bool {
+        return a == b;
+    }
+}
