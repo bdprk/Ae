@@ -1,0 +1,47 @@
+// tests/run/batch_core_compiler_emit.ae
+// Verification of TargetOp, Peephole heuristics, BlockOrdering, and Relocation calculation.
+
+use "../../std/core/ir_lower.ae";
+use "../../std/core/ir_peep.ae";
+use "../../std/core/ir_block_order.ae";
+use "../../std/core/ir_reloc.ae";
+
+fn main() {
+    print("--- batch_core_compiler_emit test start ---");
+
+    // 1. TargetOp
+    let op1 = target_op_new(1, 0, 42, true); // MOV R0, $42
+    assert(target_op_opcode(op1) == 1);
+    let op1_b = target_op_new(1, 0, 42, true);
+    assert(target_op_dst(op1_b) == 0);
+    let op1_c = target_op_new(1, 0, 42, true);
+    assert(target_op_is_imm(op1_c));
+    print("target_op ok");
+
+    // 2. Peephole
+    assert(peep_is_redundant_mov(3, 3));
+    assert(!peep_is_redundant_mov(3, 4));
+    assert(peep_can_fuse_add_imm(10, 20));
+    assert(peep_fuse_add_imm(10, 20) == 30);
+    assert(peep_is_dead_store(5, 5));
+    print("peephole ok");
+
+    // 3. BlockOrderDecision
+    let blk = block_order_new(0, 1, 3, false);
+    assert(block_order_has_fallthrough(blk));
+    let blk_b = block_order_new(0, 1, 3, false);
+    assert(block_order_needs_jump(blk_b));
+
+    let blk_straight = block_order_new(0, 1, 1, false);
+    assert(!block_order_needs_jump(blk_straight));
+    print("block_order ok");
+
+    // 4. Relocation
+    let rel = reloc_entry_new(128, 50, 2, -4);
+    assert(reloc_is_pc_relative(rel));
+    let disp = reloc_calculate_pc32(16384, 4096, -4);
+    assert(disp == 12284);
+    print("relocation ok");
+
+    print("--- batch_core_compiler_emit test end ---");
+}

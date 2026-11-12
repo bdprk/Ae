@@ -1,0 +1,6 @@
+--- batch_core_compiler_emit test start ---
+target_op ok
+peephole ok
+block_order ok
+relocation ok
+--- batch_core_compiler_emit test end ---
