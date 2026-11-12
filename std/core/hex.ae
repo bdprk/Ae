@@ -1,0 +1,23 @@
+// std/core/hex.ae
+// Core Hexadecimal Conversion Primitives (M1.4 / M3.3)
+
+pub fn hex_encoded_len(raw_len: i64) -> i64 {
+    return raw_len * 2;
+}
+
+pub fn hex_digit_val(b: i64) -> i64 {
+    if b >= 48 && b <= 57 {
+        return b - 48; // '0'..'9'
+    }
+    if b >= 97 && b <= 102 {
+        return b - 97 + 10; // 'a'..'f'
+    }
+    if b >= 65 && b <= 70 {
+        return b - 65 + 10; // 'A'..'F'
+    }
+    return -1;
+}
+
+pub fn hex_is_valid_digit(b: i64) -> bool {
+    return hex_digit_val(b) >= 0;
+}

@@ -1,0 +1,15 @@
+// std/core/base64.ae
+// Core Base64 Encoding Helpers (M1.4 / M3.3)
+
+pub fn base64_encoded_len(unencoded_len: i64) -> i64 {
+    let blocks = (unencoded_len + 2) / 3;
+    return blocks * 4;
+}
+
+pub fn base64_is_valid_char(b: i64) -> bool {
+    // A-Z, a-z, 0-9, +, /
+    if (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || (b >= 48 && b <= 57) {
+        return true;
+    }
+    return b == 43 || b == 47 || b == 61; // '+', '/', '='
+}

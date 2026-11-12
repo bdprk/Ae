@@ -1,0 +1,32 @@
+use "../../std/core/base64.ae";
+use "../../std/core/hex.ae";
+use "../../std/core/crc.ae";
+use "../../std/core/checksum.ae";
+
+fn main() {
+    assert(base64_encoded_len(1) == 4);
+    assert(base64_encoded_len(3) == 4);
+    assert(base64_encoded_len(4) == 8);
+    assert(base64_is_valid_char(65)); // 'A'
+    assert(base64_is_valid_char(61)); // '='
+    assert(!base64_is_valid_char(33)); // '!'
+
+    assert(hex_encoded_len(16) == 32);
+    assert(hex_digit_val(48) == 0); // '0'
+    assert(hex_digit_val(57) == 9); // '9'
+    assert(hex_digit_val(97) == 10); // 'a'
+    assert(hex_digit_val(102) == 15); // 'f'
+    assert(hex_is_valid_digit(65)); // 'A'
+    assert(!hex_is_valid_digit(120)); // 'x'
+
+    let c0 = 0;
+    let c1 = crc32_update_byte(c0, 65);
+    assert(c1 > 0);
+
+    let acc0 = checksum_new();
+    let acc1 = checksum_update(acc0, 10);
+    let acc2 = checksum_update(acc1, 20);
+    assert(checksum_digest(acc2) > 0);
+
+    print("ENCODING AND CHECKSUM OPERATIONAL\n");
+}

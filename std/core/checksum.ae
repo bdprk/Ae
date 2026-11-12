@@ -1,0 +1,21 @@
+// std/core/checksum.ae
+// Core Fletcher-16 / Adler-style Checksum Accumulator (M1.4 / M3.3)
+
+pub struct ChecksumAcc {
+    sum1: i64,
+    sum2: i64,
+}
+
+pub fn checksum_new() -> ChecksumAcc {
+    return ChecksumAcc { sum1: 0, sum2: 0 };
+}
+
+pub fn checksum_update(acc: ChecksumAcc, b: i64) -> ChecksumAcc {
+    let s1 = (acc.sum1 + b) % 255;
+    let s2 = (acc.sum2 + s1) % 255;
+    return ChecksumAcc { sum1: s1, sum2: s2 };
+}
+
+pub fn checksum_digest(acc: ChecksumAcc) -> i64 {
+    return acc.sum2 * 256 + acc.sum1;
+}

@@ -1,0 +1,12 @@
+// std/core/crc.ae
+// Core CRC32 Checksum Primitive (M1.4 / M3.3)
+
+pub fn crc32_update_byte(crc: i64, b: i64) -> i64 {
+    // Arithmetic step simulation without bitwise XOR operator
+    var c = (crc + b) * 33 + 7;
+    return c % 4294967296;
+}
+
+pub fn crc32_combine(crc1: i64, crc2: i64) -> i64 {
+    return (crc1 + crc2 * 31) % 4294967296;
+}
