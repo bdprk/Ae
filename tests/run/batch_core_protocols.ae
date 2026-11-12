@@ -1,0 +1,34 @@
+use "../../std/core/uri.ae";
+use "../../std/core/header.ae";
+use "../../std/core/mime.ae";
+use "../../std/core/backoff.ae";
+
+fn main() {
+    assert(uri_scheme_default_port(UriScheme::Http) == 80);
+    assert(uri_scheme_default_port(UriScheme::Https) == 443);
+    assert(uri_scheme_is_secure(UriScheme::Https));
+    assert(uri_scheme_is_secure(UriScheme::Wss));
+    assert(!uri_scheme_is_secure(UriScheme::Http));
+
+    assert(header_is_token_char(65)); // 'A'
+    assert(header_is_token_char(45)); // '-'
+    assert(!header_is_token_char(58)); // ':'
+
+    assert(mime_is_text(ContentType::TextPlain));
+    assert(mime_is_text(ContentType::TextHtml));
+    assert(!mime_is_text(ContentType::ApplicationJson));
+    assert(!mime_is_text(ContentType::ApplicationOctetStream));
+
+    let b0 = backoff_new(100, 1000);
+    assert(backoff_delay_ms(b0) == 100);
+
+    let b_init = backoff_new(100, 1000);
+    let b1 = backoff_next(b_init);
+    assert(backoff_delay_ms(b1) == 200);
+
+    let b_max = backoff_new(800, 1000);
+    let b_capped = backoff_next(b_max);
+    assert(backoff_delay_ms(b_capped) == 1000);
+
+    print("APPLICATION PROTOCOLS OPERATIONAL\n");
+}

@@ -1,0 +1,34 @@
+// std/core/uri.ae
+// Core URI Scheme & Port Classification (M1.4 / M4.7)
+
+pub enum UriScheme {
+    Http,
+    Https,
+    Ws,
+    Wss,
+    Custom,
+}
+
+pub fn uri_scheme_default_port(scheme: UriScheme) -> i64 {
+    var p = 0;
+    match scheme {
+        UriScheme::Http => { p = 80; }
+        UriScheme::Https => { p = 443; }
+        UriScheme::Ws => { p = 80; }
+        UriScheme::Wss => { p = 443; }
+        UriScheme::Custom => { p = 0; }
+    }
+    return p;
+}
+
+pub fn uri_scheme_is_secure(scheme: UriScheme) -> bool {
+    var sec = false;
+    match scheme {
+        UriScheme::Https => { sec = true; }
+        UriScheme::Wss => { sec = true; }
+        UriScheme::Http => {}
+        UriScheme::Ws => {}
+        UriScheme::Custom => {}
+    }
+    return sec;
+}

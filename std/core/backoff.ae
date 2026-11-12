@@ -1,0 +1,24 @@
+// std/core/backoff.ae
+// Core Exponential Backoff Delay Generator (M1.4 / M4.6)
+
+pub struct BackoffPolicy {
+    current_ms: i64,
+    max_ms: i64,
+    factor: i64,
+}
+
+pub fn backoff_new(init_ms: i64, max_ms: i64) -> BackoffPolicy {
+    return BackoffPolicy { current_ms: init_ms, max_ms: max_ms, factor: 2 };
+}
+
+pub fn backoff_next(p: BackoffPolicy) -> BackoffPolicy {
+    var next_ms = p.current_ms * p.factor;
+    if next_ms > p.max_ms {
+        next_ms = p.max_ms;
+    }
+    return BackoffPolicy { current_ms: next_ms, max_ms: p.max_ms, factor: p.factor };
+}
+
+pub fn backoff_delay_ms(p: BackoffPolicy) -> i64 {
+    return p.current_ms;
+}

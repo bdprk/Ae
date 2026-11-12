@@ -1,0 +1,20 @@
+// std/core/mime.ae
+// Core MIME Content-Type Classifications (M1.4 / M4.7)
+
+pub enum ContentType {
+    TextPlain,
+    ApplicationJson,
+    ApplicationOctetStream,
+    TextHtml,
+}
+
+pub fn mime_is_text(c: ContentType) -> bool {
+    var is_t = false;
+    match c {
+        ContentType::TextPlain => { is_t = true; }
+        ContentType::TextHtml => { is_t = true; }
+        ContentType::ApplicationJson => {}
+        ContentType::ApplicationOctetStream => {}
+    }
+    return is_t;
+}

@@ -1,0 +1,10 @@
+// std/core/header.ae
+// Core HTTP Header Token & Name Validation (M1.4 / M4.7)
+
+pub fn header_is_token_char(b: i64) -> bool {
+    // RFC 7230 tchar: alphanumeric + "!#$%&'*+-.^_`|~"
+    if (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || (b >= 48 && b <= 57) {
+        return true;
+    }
+    return b == 45 || b == 95; // '-' or '_'
+}
