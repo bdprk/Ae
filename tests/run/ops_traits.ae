@@ -1,0 +1,28 @@
+use "../../std/core/ops.ae";
+
+pub struct Complex {
+    re: i64,
+    im: i64,
+}
+
+impl Plus for Complex {
+    fn plus(a: Complex, b: Complex) -> Complex {
+        return Complex {
+            re: a.re + b.re,
+            im: a.im + b.im,
+        };
+    }
+}
+
+fn combine[T: Plus](x: T, y: T) -> T {
+    return plus(x, y);
+}
+
+fn main() {
+    let c1 = Complex { re: 10, im: 20 };
+    let c2 = Complex { re: 5, im: 8 };
+    let res = combine[Complex](c1, c2);
+    assert(res.re == 15);
+    assert(res.im == 28);
+    print("OPERATOR TRAITS WORKING\n");
+}

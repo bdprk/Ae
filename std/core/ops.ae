@@ -1,0 +1,14 @@
+// std/core/ops.ae
+// Core Overloadable Traits (M1.7)
+
+pub trait Plus {
+    fn plus(a: T, b: T) -> T;
+}
+
+pub trait Minus {
+    fn minus(a: T, b: T) -> T;
+}
+
+pub trait Times {
+    fn times(a: T, b: T) -> T;
+}
