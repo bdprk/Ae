@@ -1,5 +1,6 @@
 //! Function and trait declaration collection and instantiation.
 use super::*;
+use super::parser::moved_value_hint;
 
 impl Parser<'_> {
     pub(super) fn skip_uses(&mut self) {
@@ -603,7 +604,7 @@ impl Parser<'_> {
                     if actual != owned_shape && actual != borrowed_shape {
                         return Err(self.fail(&format!("argument must be {}, found {}", owned_shape.name(), actual.name())));
                     }
-                    if self.moved.contains(&var) { return Err(self.binding_label(self.fail(&format!("cannot borrow '{arg}' because it was moved")).with_code("E0102"), var)); }
+                    if self.moved.contains(&var) { return Err(moved_value_hint(self.binding_label(self.fail(&format!("cannot borrow '{arg}' because it was moved")).with_code("E0102"), var))); }
                     // An owned vector needs its address taken; a parameter that
                     // is already `const ae_vec *` is forwarded unchanged.
                     // The flag means "take the address", not "is a vector".

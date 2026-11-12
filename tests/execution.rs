@@ -3992,7 +3992,7 @@ fn duplicate_binding_errors_label_the_earlier_declaration() {
 }
 
 #[test]
-fn move_errors_label_known_declarations_without_claiming_move_site() {
+fn move_errors_name_the_rule_without_claiming_a_move_site() {
     let dir = unique_temp_dir("move-secondary");
     let path = dir.join("case.ae");
     for (source, marker) in [
@@ -4010,7 +4010,12 @@ fn move_errors_label_known_declarations_without_claiming_move_site() {
         let start = source.find(marker).unwrap();
         assert_eq!(label.span.range, start..start + marker.len());
         assert_eq!(label.message.as_deref(), Some("binding declared here"));
-        assert!(diagnostic.suggestions.is_empty());
+        // The diagnostic names the rule and its remedies but must not claim to
+        // know where the move happened: only the declaration is located, so no
+        // label may say "moved here".
+        assert_eq!(diagnostic.suggestions.len(), 1);
+        assert!(diagnostic.suggestions[0].starts_with("Owned values move on assignment or when passed by value"));
+        assert!(diagnostic.secondary.iter().all(|label| label.message.as_deref() != Some("moved here")));
     }
     fs::write(&path, "fn main() { var original = \"x\"; let other = original; original = \"y\"; print(original); }").unwrap();
     assert!(ae_compiler::frontend::check_path_diagnostic(&path).is_ok());

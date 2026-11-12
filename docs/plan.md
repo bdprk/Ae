@@ -274,7 +274,7 @@ A custom native machine code backend/linker will only be considered as a separat
 
 ### 5.4 Verified Progress Since Version 0.3 (2026-11-12)
 
-These numbers are read from the working tree, not from memory: `cargo test --workspace --locked` reports 255 passing tests; `tests/run` holds 80 cases, `tests/ui` 4, `tests/ui-json` 36; `examples/` holds 41 programs; `std/core/` holds 256 modules; `docs/adr/` is numbered to 0180. CI runs the suite on `ubuntu-latest` and `windows-latest`.
+These numbers are read from the working tree, not from memory: `cargo test --workspace --locked` reports 255 passing tests; `tests/run` holds 80 cases, `tests/ui` 4, `tests/ui-json` 38; `examples/` holds 41 programs; `std/core/` holds 256 modules; `docs/adr/` is numbered to 0180. CI runs the suite on `ubuntu-latest` and `windows-latest`.
 
 Landed since the 0.3 revision:
 

@@ -1,5 +1,19 @@
 //! Parser and single-pass semantic checker: tokens to typed statements.
 use super::*;
+
+/// The remedy attached to a use-after-move diagnostic. The move is not tracked
+/// to a byte range, so this names both available fixes instead of pointing at a
+/// site that may not exist.
+pub(super) fn moved_value_hint(diagnostic: ae_span::Diagnostic) -> ae_span::Diagnostic {
+    diagnostic.with_suggestion("Owned values move on assignment or when passed by value; read what you need before the move, or build a fresh value.")
+}
+
+/// The remedy for `s = f(s)`, where the assignment target is consumed by the
+/// call on its own right-hand side.
+pub(super) fn moved_self_assignment_hint(diagnostic: ae_span::Diagnostic) -> ae_span::Diagnostic {
+    diagnostic.with_suggestion("This call consumes the value being assigned to; bind the result to a new name, or read its fields into locals first.")
+}
+
 impl<'a> Parser<'a> {
     pub(super) fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
     pub(super) fn fail(&self, message: &str) -> ae_span::Diagnostic {
@@ -193,6 +207,9 @@ impl<'a> Parser<'a> {
                     result.push(stmt);
                 }
                 Kind::Ident(name) => {
+                    // Kept for diagnostics that must point at the statement's
+                    // own name rather than at whatever token follows it.
+                    let name_offset = self.tokens[self.pos].offset;
                     // `exit(code);` terminates the process. It releases the
                     // live owned values first, so the allocation account stays
                     // balanced and buffered output still flushes.
@@ -211,7 +228,7 @@ impl<'a> Parser<'a> {
                         self.pos += 2;
                         let target = self.identifier()?;
                         let (id, mutable, ty) = *self.names.get(&target).ok_or_else(|| self.fail(&format!("unknown variable '{target}'")).with_code("E0101"))?;
-                        if self.moved.contains(&id) { return Err(self.binding_label(self.fail(&format!("cannot use '{target}' because it was moved")).with_code("E0102"), id)); }
+                        if self.moved.contains(&id) { return Err(moved_value_hint(self.binding_label(self.fail(&format!("cannot use '{target}' because it was moved")).with_code("E0102"), id))); }
                         if !matches!(ty, Type::Vec | Type::StrVec | Type::VecF) { return Err(self.fail(&format!("{name} expects a vec, found {}", ty.name()))); }
                         if !mutable { return Err(self.immutable_binding_error(self.fail(&format!("cannot modify immutable variable '{target}'")).with_code("E0103"), id)); }
                         if self.borrows.iter().any(|&(bid, _)| bid == id) { return Err(self.fail(&format!("cannot modify '{target}' while it is borrowed"))); }
@@ -333,7 +350,7 @@ impl<'a> Parser<'a> {
                         let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
                         if value_ty != ty { return Err(self.fail(&format!("cannot assign a {} value to {} variable", value_ty.name(), ty.name()))); }
                         if self.moved.contains(&id) && !moved_before {
-                            return Err(self.fail(&format!("cannot assign to '{name}' because it was moved in the same statement")));
+                            return Err(moved_self_assignment_hint(self.binding_label(self.error_at(name_offset, &format!("cannot assign to '{name}' because it was moved in the same statement")).with_code("E0102"), id)));
                         }
                         self.moved.remove(&id);
                         result.push(Statement::Assign(id, value, true));
@@ -384,7 +401,7 @@ impl<'a> Parser<'a> {
                         let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
                         if value_ty != ty { return Err(self.fail(&format!("cannot assign a {} value to {} variable", value_ty.name(), ty.name()))); }
                         if self.moved.contains(&id) && !moved_before {
-                            return Err(self.fail(&format!("cannot assign to '{name}' because it was moved in the same statement")));
+                            return Err(moved_self_assignment_hint(self.binding_label(self.error_at(name_offset, &format!("cannot assign to '{name}' because it was moved in the same statement")).with_code("E0102"), id)));
                         }
                         self.moved.remove(&id);
                         result.push(Statement::Assign(id, value, true));
@@ -400,7 +417,7 @@ impl<'a> Parser<'a> {
                         // assigning to an already-moved variable is a legal
                         // re-initialization, so the move flag clears either way.
                         if self.moved.contains(&id) && !moved_before {
-                            return Err(self.fail(&format!("cannot assign to '{name}' because it was moved in the same statement")));
+                            return Err(moved_self_assignment_hint(self.binding_label(self.error_at(name_offset, &format!("cannot assign to '{name}' because it was moved in the same statement")).with_code("E0102"), id)));
                         }
                         self.moved.remove(&id);
                         // Every owned slot releases its old value before the new

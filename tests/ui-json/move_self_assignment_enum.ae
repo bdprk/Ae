@@ -1,0 +1,6 @@
+enum E { A(i64), B }
+fn swap(e: E) -> E { return e; }
+fn main() {
+    var e = E::A(2);
+    e = swap(e);
+}

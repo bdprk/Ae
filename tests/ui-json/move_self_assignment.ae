@@ -1,0 +1,6 @@
+struct S { a: i64 }
+fn take(s: S) -> S { return s; }
+fn main() {
+    var s = S { a: 1 };
+    s = take(s);
+}

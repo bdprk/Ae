@@ -1,5 +1,6 @@
 //! Expression parsing and type checking.
 use super::*;
+use super::parser::moved_value_hint;
 
 impl Parser<'_> {
     pub(super) fn expression(&mut self, min: u8, moving: bool) -> Result<(Expr, Type), ae_span::Diagnostic> {
@@ -135,7 +136,7 @@ impl Parser<'_> {
                         let after = self.tokens.get(self.pos + 1).map(|t| t.kind.clone());
                         if after == Some(Kind::RParen) {
                             if let Some(&(id, _, ty)) = self.names.get(&arg_name) {
-                                if self.moved.contains(&id) { return Err(self.binding_label(self.error_at(name_offset, &format!("cannot use '{arg_name}' because it was moved")).with_code("E0102"), id)); }
+                                if self.moved.contains(&id) { return Err(moved_value_hint(self.binding_label(self.error_at(name_offset, &format!("cannot use '{arg_name}' because it was moved")).with_code("E0102"), id))); }
                                 match ty {
                                     Type::Array(n) => { self.pos += 2; fast = Some((Expr::Number(n as i64), Type::Int)); }
                                     Type::Vec | Type::StrVec | Type::VecRef | Type::StrVecRef | Type::Map => {
@@ -689,7 +690,7 @@ impl Parser<'_> {
                         }
                         self.error_at(name_offset, &format!("unknown variable '{name}'")).with_code("E0101")
                     })?;
-                    if self.moved.contains(&id) { return Err(self.binding_label(self.error_at(name_offset, &format!("cannot use '{name}' because it was moved")).with_code("E0102"), id)); }
+                    if self.moved.contains(&id) { return Err(moved_value_hint(self.binding_label(self.error_at(name_offset, &format!("cannot use '{name}' because it was moved")).with_code("E0102"), id))); }
                     if let Type::Array(len) = ty {
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
                         let (index, index_ty) = self.expression(0, false)?;

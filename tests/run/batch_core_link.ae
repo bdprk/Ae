@@ -23,6 +23,12 @@ fn missing_weak() -> LinkSymbol {
     return link_sym_undefined(7, link_binding_weak());
 }
 
+fn helper_definition() -> LinkSymbol {
+    // The helper object 1 defines; rebuilt per use because passing a struct
+    // moves it.
+    return link_sym_new(9, link_binding_global(), 1, 0, 0, 16);
+}
+
 fn cursor_at(offset: i64) -> SectionCursor {
     // A cursor holding `offset` bytes; built fresh for every use because a
     // struct handed to a function is moved, not borrowed.
@@ -245,6 +251,47 @@ fn main() {
     assert(!reloc_field_in_bounds(1, 4, 4));
     assert(!reloc_field_in_bounds(-1, 4, 8));
     assert(!reloc_field_in_bounds(0, 0, 8));
+
+    // ---- one link, end to end ---------------------------------------------
+    // Object 0 holds `main` at 0 in a 32-byte .text and calls a helper through a
+    // PC-relative field at offset 8. Object 1 defines that helper at 0 in a
+    // 16-byte .text. Placing both at 0x1000 with 16-byte alignment puts the
+    // helper at 0x1020, and the field must hold the difference between that
+    // address and the end of the field.
+    let caller_text = merge_place(section_cursor_start(), 32, 16);
+    let helper_text = merge_place(merge_place(section_cursor_start(), 32, 16), 16, 16);
+    assert(merge_total_bytes(caller_text) == 32);
+    assert(merge_total_bytes(helper_text) == 48);
+
+    let helper_addr = merge_address(4096, 32);
+    assert(helper_addr == 4128);
+    // Rebuilt rather than reused: a struct handed to a function is moved.
+    let both_end = merge_total_bytes(merge_place(merge_place(section_cursor_start(), 32, 16), 16, 16));
+    assert(merge_address(4096, both_end) == 4144);
+
+    // Before the link the helper is only a reference from object 0.
+    assert(link_final_status(link_sym_undefined(9, link_binding_global())) != link_ok());
+    assert(link_pull_archive_member(link_sym_undefined(9, link_binding_global())));
+    let resolved = link_resolve_pair(link_sym_undefined(9, link_binding_global()), helper_definition());
+    assert(resolved.code == link_ok());
+    assert(resolved.winner_obj == 1);
+    assert(link_final_status(helper_definition()) == link_ok());
+
+    // The field sits at 0x1008 and occupies four bytes, so it belongs to the
+    // caller's section and the displacement counts from 0x100c.
+    let field_offset = 8;
+    assert(reloc_field_in_bounds(field_offset, 4, 32));
+    let place = merge_address(4096, reloc_pcrel_place(field_offset, 4));
+    assert(place == 4108);
+    let patched = reloc_apply_pcrel(place, helper_addr, 0, 4);
+    assert(patched.ok);
+    assert(patched.value == 20);
+
+    // If both objects defined the helper strongly the link would have no winner,
+    // and a caller that saw only the first object would link the wrong body.
+    let competing = link_resolve_pair(helper_definition(), link_sym_new(9, link_binding_global(), 0, 0, 0, 16));
+    assert(competing.code == link_duplicate());
+    assert(competing.winner_obj == -1);
 
     print("batch_core_link_all_passed");
 }
