@@ -1,0 +1,24 @@
+// std/core/maybe.ae
+// Core Checked Arithmetic Types (M1.4 / M1.7)
+
+pub enum Checked[T] {
+    Valid(T),
+    Overflow,
+}
+
+pub fn checked_add(a: i64, b: i64) -> Checked[i64] {
+    if b > 0 && a > 9223372036854775807 - b {
+        return Checked[i64]::Overflow;
+    }
+    if b < 0 && a < -9223372036854775807 - 1 - b {
+        return Checked[i64]::Overflow;
+    }
+    return Checked[i64]::Valid(a + b);
+}
+
+pub fn checked_mul(a: i64, b: i64) -> Checked[i64] {
+    if a > 0 && b > 0 && a > 9223372036854775807 / b {
+        return Checked[i64]::Overflow;
+    }
+    return Checked[i64]::Valid(a * b);
+}

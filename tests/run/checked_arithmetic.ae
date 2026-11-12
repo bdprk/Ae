@@ -1,0 +1,33 @@
+use "../../std/core/maybe.ae";
+
+fn check_add_safe(x: i64, y: i64) -> bool {
+    let res = checked_add(x, y);
+    var ok = false;
+    match res {
+        Checked::Valid(v) => {
+            if v == x + y {
+                ok = true;
+            }
+        }
+        Checked::Overflow => {}
+    }
+    return ok;
+}
+
+fn check_add_overflow(x: i64, y: i64) -> bool {
+    let res = checked_add(x, y);
+    var overflowed = false;
+    match res {
+        Checked::Valid(_) => {}
+        Checked::Overflow => {
+            overflowed = true;
+        }
+    }
+    return overflowed;
+}
+
+fn main() {
+    assert(check_add_safe(100, 200));
+    assert(check_add_overflow(9223372036854775800, 100));
+    print("CHECKED ARITHMETIC OPERATIONAL\n");
+}
