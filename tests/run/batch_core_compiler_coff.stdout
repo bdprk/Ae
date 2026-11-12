@@ -1,0 +1,6 @@
+--- batch_core_compiler_coff test start ---
+coff_header ok
+coff_section ok
+coff_reloc ok
+coff_symtab ok
+--- batch_core_compiler_coff test end ---

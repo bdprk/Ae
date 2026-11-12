@@ -1,0 +1,59 @@
+// tests/run/batch_core_compiler_coff.ae
+// Verification of CoffHeader, CoffSectionHeader, CoffRelocEntry, and CoffSymbol primitives.
+
+use "../../std/core/ir_pe_coff_header.ae";
+use "../../std/core/ir_pe_coff_section.ae";
+use "../../std/core/ir_pe_coff_reloc.ae";
+use "../../std/core/ir_pe_coff_symtab.ae";
+
+fn main() {
+    print("--- batch_core_compiler_coff test start ---");
+
+    // 1. COFF Header
+    // machine=34404 (0x8664 AMD64), sects=3, sym_ptr=1024, num_syms=10, chars=32
+    let h_x64 = coff_header_new(34404, 3, 1024, 10, 32);
+    assert(coff_is_x64(h_x64));
+    let h_x64_b = coff_header_new(34404, 3, 1024, 10, 32);
+    assert(!coff_is_arm64(h_x64_b));
+    let h_x64_c = coff_header_new(34404, 3, 1024, 10, 32);
+    assert(coff_has_symbols(h_x64_c));
+
+    let h_arm = coff_header_new(43620, 2, 0, 0, 0); // 0xAA64 ARM64
+    assert(coff_is_arm64(h_arm));
+    print("coff_header ok");
+
+    // 2. COFF Section
+    // .text section: raw_sz=512, chars=0x60000020 (1610612768: CODE | EXECUTE | READ)
+    let sec_text = coff_section_new(1, 512, 0, 512, 512, 1610612768);
+    assert(coff_section_is_executable(sec_text));
+    let sec_text_b = coff_section_new(1, 512, 0, 512, 512, 1610612768);
+    assert(!coff_section_is_writable(sec_text_b));
+    let sec_text_c = coff_section_new(1, 512, 0, 512, 512, 1610612768);
+    assert(coff_section_raw_size(sec_text_c) == 512);
+    print("coff_section ok");
+
+    // 3. COFF Relocation
+    // REL32 at offset 28 referencing symbol 4
+    let rel = coff_reloc_new(28, 4, 4);
+    assert(coff_reloc_is_rel32(rel));
+    let rel_b = coff_reloc_new(28, 4, 4);
+    assert(!coff_reloc_is_addr64(rel_b));
+    let rel_c = coff_reloc_new(28, 4, 4);
+    assert(coff_reloc_addr(rel_c) == 28);
+    print("coff_reloc ok");
+
+    // 4. COFF Symbol
+    // external function defined in section 1
+    let sym_ext = coff_symbol_new(4, 0, 1, 2, 0);
+    assert(coff_symbol_is_external(sym_ext));
+    let sym_ext_b = coff_symbol_new(4, 0, 1, 2, 0);
+    assert(coff_symbol_is_defined(sym_ext_b));
+    let sym_ext_c = coff_symbol_new(4, 0, 1, 2, 0);
+    assert(!coff_symbol_is_undefined(sym_ext_c));
+
+    let sym_undef = coff_symbol_new(16, 0, 0, 2, 0);
+    assert(coff_symbol_is_undefined(sym_undef));
+    print("coff_symtab ok");
+
+    print("--- batch_core_compiler_coff test end ---");
+}
