@@ -1,0 +1,53 @@
+// tests/run/batch_core_compiler_macho.ae
+// Verification of MachO64Header, MachOSegment64, MachOSection64, and MachONlist64 primitives.
+
+use "../../std/core/ir_macho_header.ae";
+use "../../std/core/ir_macho_segment.ae";
+use "../../std/core/ir_macho_section.ae";
+use "../../std/core/ir_macho_symtab.ae";
+
+fn main() {
+    print("--- batch_core_compiler_macho test start ---");
+
+    // 1. Mach-O Header
+    // cpu=16777228 (ARM64), type=1 (MH_OBJECT), ncmds=2, sizeofcmds=256
+    let h_arm = macho64_header_new(16777228, 1, 2, 256);
+    assert(macho64_is_object(h_arm));
+    let h_arm_b = macho64_header_new(16777228, 1, 2, 256);
+    assert(macho64_is_arm64(h_arm_b));
+    let h_arm_c = macho64_header_new(16777228, 1, 2, 256);
+    assert(!macho64_is_x86_64(h_arm_c));
+
+    let h_x64 = macho64_header_new(16777223, 1, 2, 256);
+    assert(macho64_is_x86_64(h_x64));
+    print("macho_header ok");
+
+    // 2. Mach-O Segment
+    // vmaddr=0, vmsize=1024, off=512, sz=1024, nsects=2 (__TEXT)
+    let seg = macho_segment_new(0, 1024, 512, 1024, 2);
+    assert(macho_segment_has_sections(seg));
+    let seg_b = macho_segment_new(0, 1024, 512, 1024, 2);
+    assert(macho_segment_file_size(seg_b) == 1024);
+    print("macho_segment ok");
+
+    // 3. Mach-O Section
+    // __text section: size 512, align 4 (16 bytes), flags=0x80000400
+    let sec = macho_section_new(1, 1, 0, 512, 4, 2147484672);
+    assert(macho_section_is_code(sec));
+    let sec_b = macho_section_new(1, 1, 0, 512, 4, 2147484672);
+    assert(macho_section_size(sec_b) == 512);
+    print("macho_section ok");
+
+    // 4. Mach-O Nlist Entry
+    // strx=4, type=15 (0x0f: N_EXT | N_SECT), sect=1, val=0
+    let nl = macho_nlist_new(4, 15, 1, 0);
+    assert(macho_nlist_is_external(nl));
+    let nl_b = macho_nlist_new(4, 15, 1, 0);
+    assert(macho_nlist_is_defined(nl_b));
+
+    let nl_undef = macho_nlist_new(12, 1, 0, 0); // external undefined
+    assert(!macho_nlist_is_defined(nl_undef));
+    print("macho_symtab ok");
+
+    print("--- batch_core_compiler_macho test end ---");
+}

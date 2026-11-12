@@ -1,0 +1,6 @@
+--- batch_core_compiler_macho test start ---
+macho_header ok
+macho_segment ok
+macho_section ok
+macho_symtab ok
+--- batch_core_compiler_macho test end ---
