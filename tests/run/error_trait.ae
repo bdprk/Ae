@@ -1,0 +1,11 @@
+use "../../std/core/error.ae";
+
+fn report_error_code[E: Error](err: E) -> i64 {
+    return code(err);
+}
+
+fn main() {
+    let err = CustomError { error_code: 408 };
+    assert(report_error_code[CustomError](err) == 408);
+    print("ERROR TRAIT OPERATIONAL\n");
+}

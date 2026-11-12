@@ -1,0 +1,16 @@
+// std/core/error.ae
+// Core Error Trait Specification (M1.11)
+
+pub trait Error {
+    fn code(err: T) -> i64;
+}
+
+pub struct CustomError {
+    error_code: i64,
+}
+
+impl Error for CustomError {
+    fn code(err: CustomError) -> i64 {
+        return err.error_code;
+    }
+}
