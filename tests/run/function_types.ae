@@ -1,0 +1,14 @@
+fn apply(f: fn (i64) -> i64, x: i64) -> i64 {
+    return f(x);
+}
+
+fn twice_all(f: fn (i64) -> i64, x: i64) -> i64 {
+    return f(f(x));
+}
+
+fn main() {
+    let r = apply(| x: i64 | -> i64 { return x * 2; }, 21);
+    print(r);
+    let s = twice_all(| x: i64 | -> i64 { return x + 1; }, 5);
+    print(s);
+}

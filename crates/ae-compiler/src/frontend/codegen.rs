@@ -119,6 +119,10 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
                     if t.owned { view_temps.push(t.text.clone()); }
                     format!("AE_VIEW({})", t.text)
                 }
+                // The function pointer goes into the argument list directly:
+                // a temporary of function type would need C's parenthesized
+                // declarator form, which the temp template cannot print.
+                Argument::FnPtr(cid) => format!("ae_fn_{}", crate::frontend::closures::closure_fn_id(*cid)),
             }).collect::<Vec<_>>().join(", ");
             let t = *next; *next += 1;
             out.push_str(&format!("    {}t{t} = ae_fn_{id}({arguments});\n", ret.c_temp()));
@@ -667,9 +671,35 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             if t.owned { drop_owned_temp(out, &t); }
             Emitted { text: format!("t{id}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
         }
-        // A closure literal emits nothing: the binding names the generated
-        // function and the declaration statement skips its store (ADR-0188).
-        Expr::ClosureLit => Emitted { text: String::new(), ty: Type::Closure(0), owned: false, moves: Vec::new(), materialized: false },
+        // A closure literal bound to a name emits nothing: the declaration
+        // statement skips its store (ADR-0188). Where a function value is
+        // expected, the emitted text is the generated function itself, whose
+        // address is the C function pointer (ADR-0189).
+        Expr::ClosureLit(cid) => {
+            let fn_id = crate::frontend::closures::closure_fn_id(*cid);
+            Emitted { text: format!("ae_fn_{fn_id}"), ty: Type::Closure(*cid), owned: false, moves: Vec::new(), materialized: false }
+        }
+        // An indirect call through a function-typed value: the C name of the
+        // slot is already the function pointer, so the call is a plain C
+        // call through it (ADR-0189).
+        Expr::FnCall(var_id, args, ret) => {
+            let mut moves = Vec::new();
+            let arguments = args.iter().map(|arg| match arg {
+                Argument::Value(e) => { let t = emit_expr(e, out, next, true); moves.extend(t.moves); t.text }
+                Argument::Borrow(id, is_vec) => if *is_vec { format!("&v{id}") } else { format!("v{id}") },
+                Argument::View(e) => {
+                    let t = emit_expr(e, out, next, false);
+                    moves.extend(t.moves);
+                    format!("AE_VIEW({})", t.text)
+                }
+                Argument::FnPtr(cid) => format!("ae_fn_{}", crate::frontend::closures::closure_fn_id(*cid)),
+            }).collect::<Vec<_>>().join(", ");
+            let t = *next; *next += 1;
+            out.push_str(&format!("    {}t{t} = v{var_id}({arguments});
+", ret.c_temp()));
+            null_moves(out, &moves);
+            Emitted { text: format!("t{t}"), ty: *ret, owned: ret.owned(), moves: Vec::new(), materialized: true }
+        }
         Expr::Field(base, fname, fty) => {
             let b = emit_expr(base, out, next, false);
             if fty.owned() {
@@ -903,7 +933,7 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
             Statement::Declare(id, e) => {
                 // A closure binding names its generated function and stores
                 // nothing, so the declaration emits no C at all (ADR-0188).
-                if matches!(e, Expr::ClosureLit) { }
+                if matches!(e, Expr::ClosureLit(_)) { }
                 else {
                     let t = emit_expr(e, out, next, true);
                     out.push_str(&format!("    {}v{id} = {};\n", t.ty.c_temp(), t.text));

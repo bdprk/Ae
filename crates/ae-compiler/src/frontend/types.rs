@@ -406,6 +406,30 @@ impl Parser<'_> {
     }
     // Arrays are borrowed read-only; strings and scalars pass by value.
     pub(super) fn parameter_type(&mut self) -> Result<Type, ae_span::Diagnostic> {
+        // `fn(T, U) -> R` (ADR-0189): a function value. Only non-capturing
+        // closures can be passed as one; the signature is interned so two
+        // closures of the same shape share the type.
+        if *self.current() == Kind::Fn {
+            self.pos += 1;
+            self.take(Kind::LParen)?;
+            let mut params = Vec::new();
+            if *self.current() != Kind::RParen {
+                loop {
+                    if params.len() >= 8 { return Err(self.fail("function type parameter limit exceeded (8)")); }
+                    params.push(self.named_type()?);
+                    if *self.current() != Kind::Comma { break; }
+                    self.pos += 1;
+                }
+            }
+            self.take(Kind::RParen)?;
+            self.take(Kind::Arrow)?;
+            let ret = self.return_annotation()?;
+            if matches!(ret, Type::StructRef(_) | Type::StructMut(_) | Type::Fn(_)) {
+                return Err(self.fail("a function type cannot return a borrow or another function type"));
+            }
+            let sig = super::closures::intern_fn_sig(params, ret);
+            return Ok(Type::Fn(sig));
+        }
         if *self.current() == Kind::Amp {
             let amp_offset = self.tokens[self.pos].offset;
             self.pos += 1;

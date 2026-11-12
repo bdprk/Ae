@@ -822,6 +822,14 @@ impl Parser<'_> {
                     // the call reads the captures at the call site (ADR-0188).
                     let (expr, ty) = self.closure_call(&name, name_offset)?;
                     (expr, ty)
+                } else if matches!(self.names.get(&name), Some((_, _, Type::Fn(_)))) && *self.current() == Kind::LParen {
+                    // A function-typed value is called through the pointer the
+                    // caller passed in (ADR-0189): the signature is interned.
+                    let Some((_, _, Type::Fn(sig))) = self.names.get(&name) else { unreachable!() };
+                    let (params, ret) = super::closures::fn_sig(*sig);
+                    let args = self.call_arguments(&name, &params)?;
+                    let (id, _, _) = *self.names.get(&name).unwrap();
+                    (Expr::FnCall(id, args, ret), ret)
                 } else if *self.current() == Kind::LParen {
                     let signature = match self.functions.get(&name).cloned() {
                         Some(signature) => signature,

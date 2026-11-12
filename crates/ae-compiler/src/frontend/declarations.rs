@@ -964,6 +964,26 @@ impl Parser<'_> {
                     let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown array '{arg}'")))?;
                     if actual != Type::Array(len) { return Err(self.fail(&format!("argument requires array of length {len}"))); }
                     args.push(Argument::Borrow(var, false));
+                } else if let Type::Fn(sig) = expected {
+                    // A function value (ADR-0189): the argument must be a
+                    // closure literal whose shape matches the signature, and
+                    // which captures nothing — a capturing closure has no
+                    // representation without its environment.
+                    let (fn_params, fn_ret) = super::closures::fn_sig(sig);
+                    let (value, ty) = self.expression(0, false)?;
+                    let Expr::ClosureLit(cid) = value else {
+                        return Err(self.fail(&format!("argument {} to '{name}' must be a closure literal of type {}, found {}", args.len() + 1, expected.name(), ty.name())));
+                    };
+                    let def = self.generics.closures[cid].clone();
+                    if !def.value_captures.is_empty() || !def.borrow_captures.is_empty() {
+                        return Err(self.fail("a closure with captures cannot be passed as a function value; make it parameter-only or bind its inputs as arguments"));
+                    }
+                    if def.params != fn_params || def.ret != fn_ret {
+                        let want = format!("fn({}) -> {}", fn_params.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "), fn_ret.name());
+                        let got = format!("fn({}) -> {}", def.params.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "), def.ret.name());
+                        return Err(self.fail(&format!("argument {} to '{name}' must be a closure of type {}, found {}", args.len() + 1, want, got)));
+                    }
+                    args.push(Argument::FnPtr(cid));
                 } else if let Type::StructRef(sid) = expected {
                     // `&Struct` (ADR-0184) borrows a bare struct variable for
                     // the duration of the call, exactly like the container

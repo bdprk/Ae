@@ -26,6 +26,8 @@ pub(super) fn c_type_field(ty: Type) -> String {
         Type::Tokens => "ae_tokens".to_owned(),
         // Unreachable: no syntax for a closure-typed field.
         Type::Closure(_) => "void".to_owned(),
+        // Unreachable: no syntax for a function-typed field.
+        Type::Fn(_) => "void".to_owned(),
     }
 }
 pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
@@ -56,6 +58,17 @@ pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Tokens => "ae_tokens".to_owned(),
         // Never declared: a closure has no storage.
         Type::Closure(_) => "void".to_owned(),
+        // A function pointer parameter declares its name inside the pointer
+        // parens, the way C requires.
+        Type::Fn(sig) => {
+            let (params, ret) = crate::frontend::closures::fn_sig(sig);
+            let c_params = if params.is_empty() { "void".to_owned() } else { params.iter().map(|t| t.c_temp().trim_end().to_owned()).collect::<Vec<_>>().join(", ") };
+            if declaration {
+                format!("{} (*v{id})({})", ret.c_temp().trim_end(), c_params)
+            } else {
+                format!("{} (*)({})", ret.c_temp().trim_end(), c_params)
+            }
+        }
         Type::Array(_) if declaration => format!("const int64_t *v{id}"),
         Type::Array(_) => "const int64_t *".to_owned(),
     }
@@ -64,6 +77,8 @@ pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
 // temporaries use, without the variable name.
 pub(super) fn c_return(ty: Type) -> String {
     match ty {
+        // Never returned: a function value cannot be a return type yet.
+        Type::Fn(_) => "void".to_owned(),
         Type::Bool => "bool".to_owned(),
         Type::F64 => "double".to_owned(),
         Type::String => "ae_string".to_owned(),

@@ -11,6 +11,37 @@
 use super::*;
 use super::parser::moved_value_hint;
 
+// A function type's signature, by registry id. The registry lives on the
+// shared `Generics` state, but `Type::name` runs without a parser handy, so
+// the id maps through a thread-local mirror kept in sync by the parser.
+pub(super) fn fn_sig(id: usize) -> (Vec<Type>, Type) {
+    FN_SIGS.with(|sigs| sigs.borrow()[id].clone())
+}
+thread_local! {
+    static FN_SIGS: std::cell::RefCell<Vec<(Vec<Type>, Type)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+// Intern a signature; identical signatures share one id, which is what lets
+// two closures with the same shape pass through the same parameter.
+// The generated function behind a closure id. Codegen needs it to emit the
+// function pointer of a literal passed as a function value.
+pub(super) fn closure_fn_id(cid: usize) -> usize {
+    FN_IDS.with(|ids| ids.borrow()[cid])
+}
+thread_local! {
+    static FN_IDS: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+pub(super) fn intern_fn_sig(params: Vec<Type>, ret: Type) -> usize {
+    FN_SIGS.with(|sigs| {
+        let mut sigs = sigs.borrow_mut();
+        if let Some(index) = sigs.iter().position(|(p, r)| *p == params && *r == ret) {
+            return index;
+        }
+        sigs.push((params, ret));
+        sigs.len() - 1
+    })
+}
+
 impl Parser<'_> {
     // `|a: i64, b: i64| -> R { body }` — pos sits on the opening pipe.
     pub(super) fn closure_literal(&mut self) -> Result<(Expr, Type), ae_span::Diagnostic> {
@@ -116,7 +147,8 @@ impl Parser<'_> {
         }
         let cid = self.generics.closures.len();
         self.generics.closures.push(ClosureDef { fn_id: id2, params: visible, ret, value_captures, borrow_captures });
-        Ok((Expr::ClosureLit, Type::Closure(cid)))
+        FN_IDS.with(|ids| ids.borrow_mut().push(id2));
+        Ok((Expr::ClosureLit(cid), Type::Closure(cid)))
     }
 
     // One body parse. `outer` pre-binds the enclosing scope under its own
@@ -336,6 +368,7 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
                 match arg {
                     Argument::Value(e) | Argument::View(e) => walk_expr(e, used, mutated),
                     Argument::Borrow(id, _) => { used.insert(*id); }
+                    Argument::FnPtr(_) => {}
                 }
             }
         }
@@ -350,8 +383,13 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
         Expr::MathCall(_, args, ..) => { for v in args { walk_expr(v, used, mutated); } }
         Expr::TryReadFile(a, ..) | Expr::TryListDir(a, ..) | Expr::PathExists(a, ..) | Expr::PathIsDir(a, ..) | Expr::ParseInt(a, ..) | Expr::PathName(a, ..) | Expr::PathParent(a, ..) | Expr::TryFileInfo(a, ..) | Expr::TryRemoveFile(a, ..) | Expr::TryRemoveDir(a, ..) | Expr::TryCreateDir(a, ..) | Expr::SetCwd(a, ..) | Expr::Env(a, ..) | Expr::ToI64(a, ..) => walk_expr(a, used, mutated),
         Expr::TryAppendFile(a, b, ..) => { walk_expr(a, used, mutated); walk_expr(b, used, mutated); }
-        Expr::Number(_) | Expr::FloatLit(_) | Expr::BoolLit(_) | Expr::StrLit(..) | Expr::Args(..) | Expr::ReadStdin(..) | Expr::Cwd(..) | Expr::StrVecNew(..) | Expr::F64VecNew(..) | Expr::NowMs | Expr::NowS | Expr::ClosureLit | Expr::MapNew(..) => {}
+        Expr::Number(_) | Expr::FloatLit(_) | Expr::BoolLit(_) | Expr::StrLit(..) | Expr::Args(..) | Expr::ReadStdin(..) | Expr::Cwd(..) | Expr::StrVecNew(..) | Expr::F64VecNew(..) | Expr::NowMs | Expr::NowS | Expr::ClosureLit(_) | Expr::FnCall(..) | Expr::MapNew(..) => {}
     }
+}
+
+#[allow(static_mut_refs)]
+fn self_closures_fn_id(cid: usize) -> usize {
+    closure_fn_id(cid)
 }
 
 fn record_place(place: &MapPlace, used: &mut std::collections::HashSet<usize>, mutated: &mut std::collections::HashSet<usize>) {

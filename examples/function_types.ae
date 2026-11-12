@@ -1,0 +1,31 @@
+// Function-typed parameters: closures as values (ADR-0189).
+//
+// `fn(i64) -> i64` names a function value. The argument must be a closure
+// literal with exactly that shape and no captures — a capturing closure has
+// no representation without its environment. Inside the callee, the value is
+// called through the pointer the caller passed, which is the generated
+// closure function itself.
+
+fn apply(f: fn (i64) -> i64, x: i64) -> i64 {
+    return f(x);
+}
+
+// Two calls through one parameter: composition by repetition.
+fn twice(f: fn (i64) -> i64, x: i64) -> i64 {
+    return f(f(x));
+}
+
+fn main() {
+    let doubled = apply(| x: i64 | -> i64 { return x * 2; }, 21);
+    print(doubled);
+
+    // Two different closures, same shape: the parameter accepts either.
+    let incremented = twice(| x: i64 | -> i64 { return x + 1; }, 5);
+    print(incremented);
+
+    // A pipeline: pass the result of one call to the next by hand, since
+    // each parameter accepts exactly one shape.
+    let step1 = apply(| x: i64 | -> i64 { return x + 3; }, 10);
+    let step2 = apply(| x: i64 | -> i64 { return x * x; }, step1);
+    print(step2);
+}

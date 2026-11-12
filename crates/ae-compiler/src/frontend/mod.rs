@@ -22,7 +22,7 @@ use c_output::*;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), StructRef(usize), StructMut(usize), Enum(&'static str, usize), Tokens, Closure(usize) }
+enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), StructRef(usize), StructMut(usize), Enum(&'static str, usize), Tokens, Closure(usize), Fn(usize) }
 impl Type {
     fn name(self) -> String {
         match self {
@@ -55,6 +55,13 @@ impl Type {
             // A closure value names its generated function; the captures are
             // hidden parameters, so the value itself has no storage.
             Type::Closure(_) => "closure".to_owned(),
+            // A function type: `fn(params) -> ret`, interned in the shared
+            // signature registry. Only non-capturing closures can be passed
+            // as one (ADR-0189).
+            Type::Fn(sig) => {
+                let (params, ret) = closures::fn_sig(sig);
+                format!("fn({}) -> {}", params.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "), ret.name())
+            }
         }
     }
     fn c_temp(self) -> String {
@@ -79,6 +86,7 @@ impl Type {
             // Never declared: a closure has no storage, and this arm exists
             // so a stray use fails the build instead of printing a bad type.
             Type::Closure(_) => "void ".to_owned(),
+            Type::Fn(_) => "void ".to_owned(),
             _ => "int64_t ".to_owned(),
         }
     }
@@ -177,8 +185,9 @@ enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Bo
     MathCall(u8, Vec<Box<Expr>>, usize, usize), Binary(Box<Expr>, Kind, Box<Expr>, usize, usize, Type),
     // A closure literal names its generated function and stores nothing
     // (ADR-0188): the declaration emits no C, and the call site reads the
-    // captures at the moment of the call.
-    ClosureLit }
+    // captures at the moment of the call. Passed as a function value, the
+    // emitted pointer is the literal's function id (ADR-0189).
+    ClosureLit(usize), FnCall(usize, Vec<Argument>, Type) }
 // Which value type a map holds: the builtins dispatch on it (ADR-65).
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum MapKind { Int, Float }
@@ -208,7 +217,7 @@ fn map_element_ty(kind: MapKind) -> Type {
     if kind == MapKind::Float { Type::F64 } else { Type::Int }
 }
 #[derive(Debug)]
-enum Argument { Value(Expr), Borrow(usize, bool), View(Expr) } // Borrow bool: pass &slot vs array (decays); View: read-only string borrow
+enum Argument { Value(Expr), Borrow(usize, bool), View(Expr), FnPtr(usize) } // Borrow bool: pass &slot vs array (decays); View: read-only string borrow; FnPtr: a closure literal's generated function, inline (ADR-0189)
 #[derive(Debug)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug)]
@@ -352,7 +361,7 @@ type Instance = (usize, Vec<Type>, Type);
 // arguments (ADR-21, ADR-30, ADR-31). `next_fn_id` is the one id space shared
 // by ordinary and instantiated functions, so C names never collide.
 #[derive(Default, Clone)]
-struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, struct_origin: HashMap<usize, (usize, Vec<Type>)>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef>, generic_impls: HashMap<String, GenericImplDef>, generic_impl_done: HashMap<String, Instance>, impl_in_progress: std::collections::HashSet<String>, closures: Vec<ClosureDef> }
+struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, struct_origin: HashMap<usize, (usize, Vec<Type>)>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef>, generic_impls: HashMap<String, GenericImplDef>, generic_impl_done: HashMap<String, Instance>, impl_in_progress: std::collections::HashSet<String>, closures: Vec<ClosureDef>, fn_sigs: Vec<(Vec<Type>, Type)> }
 #[derive(Debug)]
 struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 

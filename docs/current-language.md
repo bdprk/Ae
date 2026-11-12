@@ -158,7 +158,7 @@ Rejected at declaration: a method named `main`; a built-in name (`len`, `push`, 
 
 **Generic impl blocks (ADR-0187)**: `impl Pair[K, V] { fn new(k: K, v: V) -> Self { ... } }` declares a method template for a generic struct. Each (method, argument list) pair instantiates its own function — signatures included, so `V` may appear anywhere a type can (`Option[V]` nests). `Self` is the instantiation; associated functions (`Pair[string, i64]::new(...)`) work and chain into method calls. One impl per generic struct, in the declaring file; no constraints on the parameters yet (a constrained generic function is the workaround for \-shaped needs). Receiver rules are the concrete ones per instantiation.
 
-Known gaps: associated functions on generic structs via trait impls (`impl Show for Pair[K, V]`), bounds on impl parameters, borrowed enum receivers, and method calls on a struct-typed field of a variable (`plot.origin.distance()` is rejected — auto-borrow does not have a place-form for fields yet; compute from the field's scalar members instead). See `examples/methods.ae`, `examples/struct_borrow.ae`, `examples/enum_methods.ae`, `examples/generic_impl.ae`, and `examples/closures.ae`.
+Known gaps: associated functions on generic structs via trait impls (`impl Show for Pair[K, V]`), bounds on impl parameters, borrowed enum receivers, and method calls on a struct-typed field of a variable (`plot.origin.distance()` is rejected — auto-borrow does not have a place-form for fields yet; compute from the field's scalar members instead). See `examples/methods.ae`, `examples/struct_borrow.ae`, `examples/enum_methods.ae`, `examples/generic_impl.ae`, `examples/closures.ae`, and `examples/function_types.ae`.
 
 ## Mutable Struct Borrows (`&mut Type`) (ADR-0185)
 
@@ -174,6 +174,10 @@ A closure literal is `|a: i64, b: i64| -> R { body }` (`||` for no parameters); 
 - **Consumed captures travel by value**: a body that needs ownership (`return note + "!"`) makes every capture a value capture — each call moves the outer variable, so a second call is a use-after-move error.
 - **Scalars always copy.** Maps travel by value (they cannot be borrowed).
 - Mutating a captured container or field is rejected: writes would hit a copy. A closure has no storage, so it cannot be returned or stored, and closures nest.
+
+## Function Types (`fn(T) -> R`) (ADR-0189)
+
+A parameter written `fn apply(f: fn(i64) -> i64, x: i64) -> i64` accepts a **function value**. The argument must be a closure literal with exactly that shape and no captures (a capturing closure has no representation without its environment — bind its inputs as arguments instead). Inside the callee, `f(x)` calls through the pointer the caller passed. Identical signatures intern to one type, so two closures of the same shape are interchangeable. Function values cannot be returned, stored in fields, or named-function references (`apply(double, 5)` is rejected — reference a function without calling it is future work).
 
 ## Struct Borrows (`&Type`) (ADR-0184)
 

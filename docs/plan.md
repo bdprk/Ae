@@ -245,7 +245,7 @@ A custom native machine code backend/linker will only be considered as a separat
 ### 5.1 Existing Features (To be preserved and migrated)
 
 - Inherent methods with `&self` auto-borrow over read-only struct borrows (ADR-0184) and `&mut self` receivers over exclusive mutable borrows with pointer field writes (ADR-0185); enum methods and `Self` (ADR-0186); generic impl blocks with per-instantiation methods (ADR-0187); by-value receivers and associated functions (ADR-0182/0183).
-- **Closures** (M1.8, partial): ADR-0188 landed closure literals with Fn/FnOnce capture inference over hidden leading parameters, borrow-capture loans, and mutation rejection; no `fn(T) -> R` parameter types yet, so adapters wait.
+- **Closures** (M1.8): ADR-0188 landed closure literals with Fn/FnOnce capture inference over hidden leading parameters, borrow-capture loans, and mutation rejection; ADR-0189 landed `fn(T) -> R` parameter types over non-capturing closure pointers with indirect calls — adapter-shaped higher-order functions work; iterator adapters remain.
 - Frontend in Rust, split across three workspace crates — `ae-span`, `ae-syntax`, and `ae-compiler` (11 frontend modules, ~340 KB total) — plus a strict C11 backend; runtime trimmed by reachability, `<windows.h>` included on-demand.
 - Primitive types, structs, enums, `match`, generic functions/structs/enums, trait v1 static dispatch, modules and `pub`, `?` propagation.
 - Built-ins for file/path/directory/process/env/time/JSON query; `check --json`, `fmt`, `test`, `cache`, `deps`.
