@@ -1,0 +1,6 @@
+--- batch_core_compiler_asm test start ---
+x64_asm ok
+arm64_asm ok
+directives ok
+comments ok
+--- batch_core_compiler_asm test end ---

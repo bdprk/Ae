@@ -1,0 +1,48 @@
+// tests/run/batch_core_compiler_asm.ae
+// Verification of x86_64 and ARM64 assembly register conventions, directives, and comment formatting.
+
+use "../../std/core/ir_asm_intel.ae";
+use "../../std/core/ir_asm_arm64.ae";
+use "../../std/core/ir_asm_directive.ae";
+use "../../std/core/ir_asm_comment.ae";
+
+fn main() {
+    print("--- batch_core_compiler_asm test start ---");
+
+    // 1. x86_64 Registers
+    assert(asm_x64_is_param_reg(7));  // RDI
+    assert(asm_x64_is_param_reg(6));  // RSI
+    assert(!asm_x64_is_param_reg(3)); // RBX
+    assert(asm_x64_is_callee_saved(3));  // RBX
+    assert(asm_x64_is_callee_saved(15)); // R15
+    assert(!asm_x64_is_callee_saved(0)); // RAX
+    print("x64_asm ok");
+
+    // 2. ARM64 Registers
+    assert(asm_arm64_is_link_register(30));  // X30 (LR)
+    assert(asm_arm64_is_frame_pointer(29));  // X29 (FP)
+    assert(asm_arm64_is_param_reg(0));      // X0
+    assert(asm_arm64_is_param_reg(7));      // X7
+    assert(!asm_arm64_is_param_reg(8));     // X8
+    assert(asm_arm64_is_callee_saved(19));  // X19
+    assert(!asm_arm64_is_callee_saved(0));  // X0
+    print("arm64_asm ok");
+
+    // 3. Directives
+    let d_sec = asm_directive_new(2, 0); // .text
+    assert(asm_directive_is_section(d_sec));
+    let d_align = asm_directive_new(5, 16); // .align 16
+    assert(asm_directive_is_align(d_align));
+    let d_align_b = asm_directive_new(5, 16);
+    assert(asm_directive_alignment(d_align_b) == 16);
+    print("directives ok");
+
+    // 4. Comments
+    let c_state = asm_comment_new(true, 2);
+    assert(asm_comment_should_emit(c_state));
+    let c_state_b = asm_comment_new(true, 2);
+    assert(asm_comment_indent_spaces(c_state_b) == 8);
+    print("comments ok");
+
+    print("--- batch_core_compiler_asm test end ---");
+}
