@@ -1,0 +1,45 @@
+// std/core/ir_archive_ar.ae
+// Unix ar / static library archive format structures and helpers.
+// Handles ar header "!<arch>\n" (8 bytes), member header (60 bytes: name, timestamp, uid, gid, mode, size, fmag `\x60\n`),
+// long symbol names and GNU/BSD filename extensions.
+
+pub struct ArMemberHeader {
+    pub name_offset: int,
+    pub name_length: int,
+    pub mtime: int,
+    pub uid: int,
+    pub gid: int,
+    pub mode: int,
+    pub size_bytes: int,
+}
+
+pub fn make_ar_member(name_off: int, name_len: int, mtime: int, size: int) -> ArMemberHeader {
+    ArMemberHeader {
+        name_offset: name_off,
+        name_length: name_len,
+        mtime: mtime,
+        uid: 0,
+        gid: 0,
+        mode: 420, // 0644 octal -> 420 decimal
+        size_bytes: size,
+    }
+}
+
+pub fn ar_is_symbol_table(header: ArMemberHeader) -> bool {
+    // In GNU ar, symbol table member name is "/" (len 1) or ""
+    header.name_length == 1
+}
+
+pub fn ar_is_longnames_table(header: ArMemberHeader) -> bool {
+    // In GNU ar, longnames member name is "//" (len 2)
+    header.name_length == 2
+}
+
+pub fn ar_padded_size(size: int) -> int {
+    // ar members are aligned to 2 bytes
+    if size % 2 != 0 {
+        size + 1
+    } else {
+        size
+    }
+}

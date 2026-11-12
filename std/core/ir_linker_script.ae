@@ -1,0 +1,61 @@
+// std/core/ir_linker_script.ae
+// Linker script memory region and section placement abstractions.
+// Provides representations for MEMORY regions, origin/length constraints,
+// section attributes (read, write, execute, alloc), and VMA/LMA mappings.
+
+pub struct MemoryRegion {
+    pub origin: int,
+    pub length: int,
+    pub flags: int, // 1: Read, 2: Write, 4: Execute, 8: Alloc
+}
+
+pub struct SectionPlacement {
+    pub section_id: int,
+    pub region_id: int,
+    pub align_bytes: int,
+    pub vma_offset: int,
+    pub is_load: bool,
+}
+
+pub fn make_memory_region(origin: int, length: int, flags: int) -> MemoryRegion {
+    MemoryRegion {
+        origin: origin,
+        length: length,
+        flags: flags,
+    }
+}
+
+pub fn region_end(region: MemoryRegion) -> int {
+    region.origin + region.length
+}
+
+pub fn region_can_allocate(region: MemoryRegion, current_offset: int, size: int) -> bool {
+    current_offset + size <= region.length
+}
+
+pub fn region_has_flag(region: MemoryRegion, flag: int) -> bool {
+    (region.flags / flag) % 2 != 0
+}
+
+pub fn make_section_placement(sec_id: int, reg_id: int, align_bytes: int, vma: int, is_load: bool) -> SectionPlacement {
+    SectionPlacement {
+        section_id: sec_id,
+        region_id: reg_id,
+        align_bytes: align_bytes,
+        vma_offset: vma,
+        is_load: is_load,
+    }
+}
+
+pub fn placement_align_vma(vma: int, align_bytes: int) -> int {
+    if align_bytes <= 1 {
+        vma
+    } else {
+        let rem = vma % align_bytes;
+        if rem == 0 {
+            vma
+        } else {
+            vma + (align_bytes - rem)
+        }
+    }
+}

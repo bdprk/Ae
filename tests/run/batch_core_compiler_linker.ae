@@ -1,0 +1,67 @@
+// tests/run/batch_core_compiler_linker.ae
+// Execution test for Linker Script, Unix ar, Def Exports, and LTO Summary abstractions.
+
+use std::core::ir_linker_script::*;
+use std::core::ir_archive_ar::*;
+use std::core::ir_def_exports::*;
+use std::core::ir_lto_summary::*;
+
+fn test_linker_script() {
+    // Flash origin at 0x08000000, length 512KB (524288), Read(1) | Exec(4) = 5
+    let flash = make_memory_region(134217728, 524288, 5);
+    assert(region_end(flash) == 134217728 + 524288, 1);
+    assert(region_can_allocate(flash, 1024, 4096), 2);
+    assert(!region_can_allocate(flash, 524000, 1000), 3);
+    assert(region_has_flag(flash, 1), 4);
+    assert(!region_has_flag(flash, 2), 5);
+    assert(region_has_flag(flash, 4), 6);
+
+    let sec = make_section_placement(1, 0, 16, 134217728, true);
+    assert(sec.align_bytes == 16, 7);
+    assert(placement_align_vma(1001, 16) == 1008, 8);
+    assert(placement_align_vma(1024, 16) == 1024, 9);
+    println("linker_script_ok");
+}
+
+fn test_archive_ar() {
+    let sym_tab = make_ar_member(0, 1, 1600000000, 128);
+    assert(ar_is_symbol_table(sym_tab), 10);
+    assert(!ar_is_longnames_table(sym_tab), 11);
+    assert(ar_padded_size(127) == 128, 12);
+    assert(ar_padded_size(128) == 128, 13);
+
+    let long_names = make_ar_member(64, 2, 1600000000, 256);
+    assert(ar_is_longnames_table(long_names), 14);
+    println("archive_ar_ok");
+}
+
+fn test_def_exports() {
+    let exp1 = make_def_export(101, 1);
+    assert(def_has_explicit_ordinal(exp1), 15);
+    assert(!def_is_forwarded(exp1), 16);
+
+    let exp2 = def_export_with_flags(102, 2, true, false);
+    assert(exp2.is_noname, 17);
+    assert(!exp2.is_data, 18);
+    println("def_exports_ok");
+}
+
+fn test_lto_summary() {
+    let fn_sum = make_func_lto_summary(42, 50, 3, true);
+    assert(lto_should_import(fn_sum, 100), 19);
+    assert(!lto_should_import(fn_sum, 30), 20);
+
+    let edge = make_lto_call_edge(42, 99, true);
+    assert(edge.caller_id == 42, 21);
+    assert(edge.callee_id == 99, 22);
+    assert(edge.is_direct, 23);
+    println("lto_summary_ok");
+}
+
+fn main() {
+    test_linker_script();
+    test_archive_ar();
+    test_def_exports();
+    test_lto_summary();
+    println("batch_core_compiler_linker_all_passed");
+}

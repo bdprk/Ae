@@ -1,0 +1,43 @@
+// std/core/ir_lto_summary.ae
+// Link-Time Optimization (LTO) cross-module call graph summary structures.
+// Records function summary records: hotness, instruction count estimate,
+// external reference count, and call site cross-module edges.
+
+pub struct FuncLtoSummary {
+    pub func_id: int,
+    pub inst_count: int,
+    pub call_edges_count: int,
+    pub is_externally_visible: bool,
+    pub hotness_score: int, // 0: cold, 1: normal, 2: hot, 3: critical
+}
+
+pub struct LtoCallEdge {
+    pub caller_id: int,
+    pub callee_id: int,
+    pub call_count_estimate: int,
+    pub is_direct: bool,
+}
+
+pub fn make_func_lto_summary(func_id: int, inst_count: int, calls: int, visible: bool) -> FuncLtoSummary {
+    FuncLtoSummary {
+        func_id: func_id,
+        inst_count: inst_count,
+        call_edges_count: calls,
+        is_externally_visible: visible,
+        hotness_score: 1,
+    }
+}
+
+pub fn lto_should_import(summary: FuncLtoSummary, threshold_insts: int) -> bool {
+    // Import functions that are small enough or not hot-restricted
+    summary.inst_count <= threshold_insts
+}
+
+pub fn make_lto_call_edge(caller: int, callee: int, direct: bool) -> LtoCallEdge {
+    LtoCallEdge {
+        caller_id: caller,
+        callee_id: callee,
+        call_count_estimate: 1,
+        is_direct: direct,
+    }
+}
