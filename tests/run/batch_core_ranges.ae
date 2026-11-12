@@ -1,0 +1,60 @@
+use "../../std/core/cursor.ae";
+use "../../std/core/counter.ae";
+use "../../std/core/hash_combine.ae";
+use "../../std/core/interval.ae";
+
+fn main() {
+    let c0 = cursor_new(100);
+    assert(cursor_pos(c0) == 0);
+    let c0_b = cursor_new(100);
+    assert(cursor_limit(c0_b) == 100);
+    let c0_c = cursor_new(100);
+    assert(cursor_remaining(c0_c) == 100);
+    let c0_d = cursor_new(100);
+    assert(cursor_has_remaining(c0_d));
+
+    let c1 = cursor_advance(cursor_new(100), 40);
+    assert(cursor_pos(c1) == 40);
+    let c1_b = cursor_advance(cursor_new(100), 40);
+    assert(cursor_remaining(c1_b) == 60);
+
+    let c_reset = cursor_reset(cursor_advance(cursor_new(100), 40));
+    assert(cursor_pos(c_reset) == 0);
+
+    let ec0 = event_counter_new();
+    assert(event_counter_total(ec0) == 0);
+    let ec1 = event_counter_record_success(event_counter_new());
+    assert(event_counter_total(ec1) == 1);
+    let ec1_b = event_counter_record_success(event_counter_new());
+    assert(event_counter_errors(ec1_b) == 0);
+
+    let ec_err = event_counter_record_error(event_counter_record_success(event_counter_new()));
+    assert(event_counter_total(ec_err) == 2);
+    let ec_err_b = event_counter_record_error(event_counter_record_success(event_counter_new()));
+    assert(event_counter_errors(ec_err_b) == 1);
+    let ec_err_c = event_counter_record_error(event_counter_record_success(event_counter_new()));
+    assert(event_counter_error_rate_permille(ec_err_c) == 500);
+
+    let h1 = hash_pair_i64(100, 200);
+    let h2 = hash_pair_i64(100, 200);
+    let h3 = hash_pair_i64(200, 100);
+    assert(h1 == h2);
+    assert(h1 != h3);
+
+    let iv1 = interval_new(10, 20);
+    assert(interval_length(iv1) == 10);
+    let iv1_b = interval_new(10, 20);
+    assert(interval_contains(iv1_b, 15));
+    let iv1_c = interval_new(10, 20);
+    assert(!interval_contains(iv1_c, 25));
+
+    let iv_left = interval_new(10, 20);
+    let iv2 = interval_new(18, 30);
+    assert(interval_overlaps(iv_left, iv2));
+
+    let iv_left2 = interval_new(10, 20);
+    let iv3 = interval_new(50, 60);
+    assert(!interval_overlaps(iv_left2, iv3));
+
+    print("CURSOR COUNTER HASHCOMBINE INTERVAL OPERATIONAL");
+}

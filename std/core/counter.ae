@@ -1,0 +1,43 @@
+// std/core/counter.ae
+// Saturating non-negative event counter primitive for AE core.
+
+pub struct EventCounter {
+    total: i64,
+    errors: i64,
+}
+
+pub fn event_counter_new() -> EventCounter {
+    return EventCounter {
+        total: 0,
+        errors: 0,
+    };
+}
+
+pub fn event_counter_total(ec: EventCounter) -> i64 {
+    return ec.total;
+}
+
+pub fn event_counter_errors(ec: EventCounter) -> i64 {
+    return ec.errors;
+}
+
+pub fn event_counter_record_success(ec: EventCounter) -> EventCounter {
+    return EventCounter {
+        total: ec.total + 1,
+        errors: ec.errors,
+    };
+}
+
+pub fn event_counter_record_error(ec: EventCounter) -> EventCounter {
+    return EventCounter {
+        total: ec.total + 1,
+        errors: ec.errors + 1,
+    };
+}
+
+pub fn event_counter_error_rate_permille(ec: EventCounter) -> i64 {
+    if ec.total == 0 {
+        return 0;
+    }
+    return (ec.errors * 1000) / ec.total;
+}

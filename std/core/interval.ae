@@ -1,0 +1,38 @@
+// std/core/interval.ae
+// Closed interval [start, end] numeric range primitives for AE core.
+
+pub struct Interval {
+    start: i64,
+    end: i64,
+}
+
+pub fn interval_new(start: i64, end: i64) -> Interval {
+    var s = start;
+    var e = end;
+    if s > e {
+        let tmp = s;
+        s = e;
+        e = tmp;
+    }
+    return Interval { start: s, end: e };
+}
+
+pub fn interval_start(iv: Interval) -> i64 {
+    return iv.start;
+}
+
+pub fn interval_end(iv: Interval) -> i64 {
+    return iv.end;
+}
+
+pub fn interval_length(iv: Interval) -> i64 {
+    return iv.end - iv.start;
+}
+
+pub fn interval_contains(iv: Interval, val: i64) -> bool {
+    return val >= iv.start && val <= iv.end;
+}
+
+pub fn interval_overlaps(a: Interval, b: Interval) -> bool {
+    return a.start <= b.end && b.start <= a.end;
+}

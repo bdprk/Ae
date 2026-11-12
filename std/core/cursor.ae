@@ -1,0 +1,58 @@
+// std/core/cursor.ae
+// Linear buffer read/write position cursor primitive for AE core.
+
+pub struct BufferCursor {
+    pos: i64,
+    limit: i64,
+}
+
+pub fn cursor_new(limit: i64) -> BufferCursor {
+    var valid_limit = limit;
+    if valid_limit < 0 {
+        valid_limit = 0;
+    }
+    return BufferCursor {
+        pos: 0,
+        limit: valid_limit,
+    };
+}
+
+pub fn cursor_pos(c: BufferCursor) -> i64 {
+    return c.pos;
+}
+
+pub fn cursor_limit(c: BufferCursor) -> i64 {
+    return c.limit;
+}
+
+pub fn cursor_remaining(c: BufferCursor) -> i64 {
+    if c.limit >= c.pos {
+        return c.limit - c.pos;
+    }
+    return 0;
+}
+
+pub fn cursor_has_remaining(c: BufferCursor) -> bool {
+    return c.pos < c.limit;
+}
+
+pub fn cursor_advance(c: BufferCursor, count: i64) -> BufferCursor {
+    var next_pos = c.pos + count;
+    if next_pos > c.limit {
+        next_pos = c.limit;
+    }
+    if next_pos < 0 {
+        next_pos = 0;
+    }
+    return BufferCursor {
+        pos: next_pos,
+        limit: c.limit,
+    };
+}
+
+pub fn cursor_reset(c: BufferCursor) -> BufferCursor {
+    return BufferCursor {
+        pos: 0,
+        limit: c.limit,
+    };
+}
