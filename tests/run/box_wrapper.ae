@@ -1,0 +1,11 @@
+use "../../std/core/box.ae";
+
+pub struct Node {
+    val: i64,
+}
+
+fn main() {
+    let b = box_new[Node](Node { val: 42 });
+    assert(b.val.val == 42);
+    print("BOX HEAP WRAPPER WORKING\n");
+}
