@@ -309,15 +309,32 @@ impl Parser<'_> {
         if self.generics.struct_names.contains_key(&type_name) {
             return Err(self.fail(&format!("'{type_name}' is a generic struct; inherent impls on generic types are not supported yet — write a plain function")));
         }
-        let sid = *self.struct_names.get(&type_name).ok_or_else(|| {
-            self.fail(&format!("impl names unknown type '{type_name}'; declare it with 'struct {type_name} {{ ... }}'"))
-        })?;
+        if self.generics.names.contains_key(&type_name) {
+            return Err(self.fail(&format!("'{type_name}' is a generic enum; inherent impls on generic types are not supported yet — write a plain function")));
+        }
+        // The impl target is a struct or an enum declared in this file. Both
+        // resolve methods the same way — the (type, method) name space — and
+        // `Self` inside the block stands for exactly this type (ADR-0186).
+        let target = if let Some(&sid) = self.struct_names.get(&type_name) {
+            ImplTarget::Struct(sid)
+        } else if let Some(&eid) = self.enum_names.get(&type_name) {
+            ImplTarget::Enum(eid)
+        } else {
+            return Err(self.fail(&format!("impl names unknown type '{type_name}'; declare it with 'struct {type_name} {{ ... }}' or 'enum {type_name} {{ ... }}'")));
+        };
         // Coherence, same shape as traits: the impl lives with the type, so two
         // files can never give one type two different methods of the same name.
-        let owner = self.structs[sid].file.clone();
+        let owner = match target {
+            ImplTarget::Struct(sid) => self.structs[sid].file.clone(),
+            ImplTarget::Enum(eid) => self.enums[eid].file.clone(),
+        };
         if owner != self.file {
             return Err(self.fail(&format!("an inherent impl for '{type_name}' must be in the file that declares it ({owner})")));
         }
+        self.impl_self = Some(match target {
+            ImplTarget::Struct(sid) => Type::Struct(sid),
+            ImplTarget::Enum(eid) => Type::Enum(self.enums[eid].name, eid),
+        });
         self.take(Kind::LBrace)?;
         while *self.current() != Kind::RBrace {
             if *self.current() == Kind::Eof { return Err(self.fail("expected '}' before end of file")); }
@@ -331,8 +348,10 @@ impl Parser<'_> {
             if RESERVED.contains(&method.as_str()) {
                 return Err(self.fail(&format!("'{method}' is a built-in name and cannot be a method")));
             }
-            if self.structs[sid].fields.iter().any(|(name, _)| *name == method) {
-                return Err(self.fail(&format!("method '{method}' collides with the field of the same name on '{type_name}'; 'value.{method}' has to mean one thing, so rename one")));
+            if let ImplTarget::Struct(sid) = target {
+                if self.structs[sid].fields.iter().any(|(name, _)| *name == method) {
+                    return Err(self.fail(&format!("method '{method}' collides with the field of the same name on '{type_name}'; 'value.{method}' has to mean one thing, so rename one")));
+                }
             }
             let key = format!("{type_name}#{method}");
             if self.generics.inherent.contains_key(&key) {
@@ -373,13 +392,15 @@ impl Parser<'_> {
                         if !borrowed {
                             self.pos += 1;
                             if *self.current() == Kind::Colon {
-                                return Err(self.fail(&format!("write the receiver as 'self'; it already has type '{}'", self.structs[sid].name)));
+                                return Err(self.fail(&format!("write the receiver as 'self'; it already has type '{}'", type_name)));
                             }
-                            receiver = Some(Type::Struct(sid));
+                            receiver = Some(self.impl_self.clone().expect("an impl block always has a target"));
+                        } else if matches!(target, ImplTarget::Enum(_)) {
+                            return Err(self.fail(&format!("enum methods take their receiver by value in this version; write 'self', not '{}'", if mutable_borrow { "&mut self" } else { "&self" })));
                         } else if mutable_borrow {
-                            receiver = Some(Type::StructMut(sid));
+                            receiver = Some(Type::StructMut(sid_of(&target)));
                         } else {
-                            receiver = Some(Type::StructRef(sid));
+                            receiver = Some(Type::StructRef(sid_of(&target)));
                         }
                         types.push(receiver.unwrap());
                     } else {
@@ -411,7 +432,9 @@ impl Parser<'_> {
             });
             self.skip_balanced_braces()?;
         }
-        self.take(Kind::RBrace)
+        self.take(Kind::RBrace)?;
+        self.impl_self = None;
+        Ok(())
     }
 
     pub(super) fn collect_impl(&mut self, next_id: &mut usize) -> Result<(), ae_span::Diagnostic> {
@@ -427,6 +450,9 @@ impl Parser<'_> {
             if text == "T" { return Err(self.fail("an impl names the concrete type, not the trait's parameter T")); }
         }
         let ty = self.parameter_type()?;
+        // `Self` inside a trait impl's signatures stands for the concrete
+        // type being implemented, exactly as in an inherent impl.
+        self.impl_self = Some(ty);
         let trait_file = self.generics.traits[tid].file.clone();
         let type_file = match ty {
             Type::Struct(id) => Some(self.structs[id].file.clone()),
@@ -500,7 +526,9 @@ impl Parser<'_> {
             }
             self.skip_balanced_braces()?;
         }
-        self.take(Kind::RBrace)
+        self.take(Kind::RBrace)?;
+        self.impl_self = None;
+        Ok(())
     }
 
     // Pass two: parse the impl method bodies in the same file order the
@@ -513,11 +541,17 @@ impl Parser<'_> {
         // tokens: `for` means a trait impl, its absence an inherent one.
         let inherent_type = if *self.current() == Kind::For {
             self.take(Kind::For)?;
-            self.parameter_type()?;
+            let ty = self.parameter_type()?;
+            self.impl_self = Some(ty);
             None
-        } else {
-            if !self.struct_names.contains_key(&first) { return Err(self.fail(&format!("unknown struct '{first}'"))); }
+        } else if let Some(&sid) = self.struct_names.get(&first) {
+            self.impl_self = Some(Type::Struct(sid));
             Some(first.clone())
+        } else if let Some(&eid) = self.enum_names.get(&first) {
+            self.impl_self = Some(Type::Enum(self.enums[eid].name, eid));
+            Some(first.clone())
+        } else {
+            return Err(self.fail(&format!("unknown type '{first}'")));
         };
         self.take(Kind::LBrace)?;
         while *self.current() != Kind::RBrace {
@@ -537,7 +571,9 @@ impl Parser<'_> {
             self.receiver = None;
             result.push(parsed?);
         }
-        self.take(Kind::RBrace)
+        self.take(Kind::RBrace)?;
+        self.impl_self = None;
+        Ok(())
     }
 
     // Resolves a call that is not a plain function: a trait method of one of
@@ -730,7 +766,7 @@ impl Parser<'_> {
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
-            borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst, trait_bounds, receiver: None, pending: Vec::new(),
+            borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst, trait_bounds, receiver: None, impl_self: None, pending: Vec::new(),
         };
         let parsed = sub.function_rest(false, id);
         let mut nested = std::mem::take(&mut sub.pending);

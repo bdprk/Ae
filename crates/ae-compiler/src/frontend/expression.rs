@@ -12,9 +12,15 @@ impl Parser<'_> {
     fn associated_call(&mut self, type_name: &str, offset: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
         self.take(Kind::ColonColon)?;
         let method = self.identifier()?;
-        let sid = self.struct_names[type_name];
-        let def = &self.structs[sid];
-        self.require_public("struct", &def.name.clone(), &def.file.clone(), def.public)?;
+        if let Some(&sid) = self.struct_names.get(type_name) {
+            let def = &self.structs[sid];
+            self.require_public("struct", &def.name.clone(), &def.file.clone(), def.public)?;
+        } else if let Some(&eid) = self.enum_names.get(type_name) {
+            let def = &self.enums[eid];
+            self.require_public("enum", def.name, &def.file, def.public)?;
+        } else {
+            return Err(self.error_at(offset, &format!("'{type_name}' is not a type with an impl block")));
+        }
         let key = format!("{type_name}#{method}");
         let Some(def) = self.generics.inherent.get(&key).cloned() else {
             return Err(self.no_such_method(type_name, &method, "associated function"));
@@ -118,13 +124,35 @@ impl Parser<'_> {
                     (Expr::VecLit(values, vector_ty, line, column), vector_ty)
                 } else if *self.current() == Kind::ColonColon {
                     // `Enum::Variant` / `Enum::Variant(payload, ...)`, or
-                    // `Type::assoc_fn(...)` from the same impl block (ADR-0183).
-                    if let Some(&eid) = self.enum_names.get(&name) {
-                        self.enum_literal(eid, name_offset)?
+                    // `Type::assoc_fn(...)` from the same impl block
+                    // (ADR-0183, ADR-0186). The name after `::` decides: a
+                    // variant name is a variant path, anything else reaches
+                    // the impl — shallow, deterministic, no guessing.
+                    if name == "Self" {
+                        let Some(target) = self.impl_self.clone() else {
+                            return Err(self.error_at(name_offset, "'Self' is only available inside an impl block"));
+                        };
+                        let type_name = match target {
+                            Type::Struct(sid) => self.structs[sid].name.clone(),
+                            Type::Enum(ename, _) => ename.to_owned(),
+                            other => return Err(self.error_at(name_offset, &format!("'Self' is {} here and has no associated functions", other.name()))),
+                        };
+                        self.associated_call(&type_name, name_offset)?
+                    } else if let Some(&eid) = self.enum_names.get(&name) {
+                        let def = &self.enums[eid];
+                        let next_is_variant = match self.tokens.get(self.pos + 1).map(|t| &t.kind) {
+                            Some(Kind::Ident(v)) => def.variants.iter().any(|(vn, _)| vn == v),
+                            _ => false,
+                        };
+                        if next_is_variant {
+                            self.enum_literal(eid, name_offset)?
+                        } else {
+                            self.associated_call(&name, name_offset)?
+                        }
                     } else if self.struct_names.contains_key(&name) {
                         self.associated_call(&name, name_offset)?
                     } else {
-                        return Err(self.error_at(name_offset, &format!("'{name}' is not an enum or a struct with an impl block; '::' reaches enum variants and associated functions, nothing else")));
+                        return Err(self.error_at(name_offset, &format!("'{name}' is not an enum or a type with an impl block; '::' reaches enum variants and associated functions, nothing else")));
                     }
                 } else if self.generics.names.contains_key(&name) && *self.current() == Kind::LBracket {
                     // Generic enum literal: the arguments pick the layout, so
@@ -159,6 +187,25 @@ impl Parser<'_> {
                         return Err(self.error_at(name_offset, &format!("'{}' is a struct; construct it with '{}{{ ... }}'", self.structs[sid].name.clone(), self.structs[sid].name.clone())));
                     }
                     return self.struct_literal(sid, name_offset);
+                } else if name == "Self" && (*self.current() == Kind::LBrace || *self.current() == Kind::ColonColon) {
+                    // `Self` in an expression (ADR-0186): the impl's type as a
+                    // constructor — `Self { ... }` or `Self::assoc(...)`.
+                    let Some(target) = self.impl_self.clone() else {
+                        return Err(self.error_at(name_offset, "'Self' is only available inside an impl block"));
+                    };
+                    match target {
+                        Type::Struct(sid) => {
+                            if *self.current() == Kind::LBrace {
+                                return self.struct_literal(sid, name_offset);
+                            }
+                            let sname = self.structs[sid].name.clone();
+                            return self.associated_call(&sname, name_offset);
+                        }
+                        Type::Enum(ename, _) => {
+                            return self.associated_call(&ename, name_offset);
+                        }
+                        other => return Err(self.error_at(name_offset, &format!("'Self' is {} here and has no constructor", other.name()))),
+                    }
                 } else if let Some(&sid) = self.struct_names.get(&name) {
                     self.require_public("struct", &self.structs[sid].name, &self.structs[sid].file, self.structs[sid].public)?;
                     if *self.current() == Kind::LBrace {
@@ -775,12 +822,18 @@ impl Parser<'_> {
             // Field access works on owned structs and on read-only borrows of
             // them (ADR-0184): the borrowed form reads through the pointer and
             // emits the same `Expr::Field`, whose C emission is member access.
-            let sid = match base_ty { Type::Struct(sid) | Type::StructRef(sid) | Type::StructMut(sid) => sid, other => return Err(self.fail(&format!("type {} has no fields", other.name()))) };
+            // Methods resolve on the same shapes plus enums (ADR-0186).
+            let (type_name, sid) = match base_ty {
+                Type::Struct(sid) => (self.structs[sid].name.clone(), Some(sid)),
+                Type::StructRef(sid) | Type::StructMut(sid) => (self.structs[sid].name.clone(), Some(sid)),
+                Type::Enum(name, _) => (name.to_owned(), None),
+                other => return Err(self.fail(&format!("type {} has no fields or methods", other.name()))),
+            };
             // `value.method(args)` resolves to the method's ordinary function,
             // with the receiver as argument 0 (M1.2). Nothing is added to the
             // backend: the call it builds is the one a hand-written call builds.
             if *self.current() == Kind::LParen {
-                let struct_name = self.structs[sid].name.clone();
+                let struct_name = type_name;
                 let key = format!("{struct_name}#{fname}");
                 let Some(method) = self.generics.inherent.get(&key).cloned() else {
                     return Err(self.no_such_method(&struct_name, &fname, "method"));
@@ -875,6 +928,9 @@ impl Parser<'_> {
                 lhs = (Expr::Call(signature.id, args, signature.ret), signature.ret);
                 continue;
             }
+            let Some(sid) = sid else {
+                return Err(self.fail(&format!("enum '{}' has no fields; bind its variant payloads with 'match'", type_name)));
+            };
             let fty = {
                 let def = &self.structs[sid];
                 let fidx = def.fields.iter().position(|(n, _)| *n == fname)

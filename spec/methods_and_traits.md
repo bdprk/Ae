@@ -1,13 +1,13 @@
 ﻿# Methods, Impl Blocks, and Traits Specification (M1.2)
 
-> **Status (ADR-0182, ADR-0183, ADR-0184, ADR-0185)**: this document describes the
+> **Status (ADR-0182 – 0186)**: this document describes the
 > M1 target, not the current language. Implemented today: inherent
-> `impl Type { fn m(self, ...) -> R }` with the call form `value.m(...)`,
-> associated functions `impl Type { fn f(...) -> R }` with the call form
-> `Type::f(...)`, `&self` receivers with auto-borrow (ADR-0184), and `&mut self`
-> receivers over exclusive mutable borrows with field writes through the
-> pointer (ADR-0185). Not implemented from this spec: methods on enums,
-> generic impl blocks, a `Self` type, trait objects, associated types, and the
+> `impl Type { fn m(self, ...) -> R }` with the call form `value.m(...)`
+> (structs and enums), associated functions `impl Type { fn f(...) -> R }` with
+> the call form `Type::f(...)`, `&self` receivers with auto-borrow (ADR-0184),
+> `&mut self` receivers over exclusive mutable borrows (ADR-0185), and `Self`
+> in impl signatures and expressions (ADR-0186). Not implemented from this
+> spec: generic impl blocks, trait objects, associated types, and the
 > orphan rule in its general form (only "same file as the type" is enforced).
 
 ## 1. Syntax and Grammar

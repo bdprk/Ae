@@ -140,7 +140,7 @@ v1 boundaries: Trait signatures do not support `&T` (the landing shape for borro
 
 ## Inherent Methods (`impl Type`) (ADR-0182)
 
-`impl Type { fn name(self, ...) -> R { body } }` attaches methods to a concrete struct declared in the same file, and `value.name(args)` calls one; `impl Type { fn name(...) -> R { body } }` declares an associated function, called as `Type::name(args)`. Scope: structs only, `impl` must follow the struct's declaration, the receiver is by value, at most 8 parameters per method, at most 256 methods per program, and generic types are excluded (`impl Pair[K, V]` is rejected).
+`impl Type { fn name(self, ...) -> R { body } }` attaches methods to a concrete struct **or enum** declared in the same file, and `value.name(args)` calls one; `impl Type { fn name(...) -> R { body } }` declares an associated function, called as `Type::name(args)` (ADR-0186). Scope: concrete types only, `impl` must follow the type's declaration, at most 8 parameters per method, at most 256 methods per program, and generic types are excluded (`impl Pair[K, V]` is rejected).
 
 **Internal shape**: a method is an ordinary function whose parameter 0 is the receiver, and `value.name(args)` is that function called with `value` first. The runtime and the backend are unchanged — no method table, no function pointer, no indirection; dispatch follows the receiver's static type and is resolved at compile time.
 
@@ -152,7 +152,11 @@ v1 boundaries: Trait signatures do not support `&T` (the landing shape for borro
 
 Rejected at declaration: a method named `main`; a built-in name (`len`, `push`, ...); a name that repeats a field of the type, because `value.name` would then have to mean two things; a duplicate method on the same type; an `impl` naming something that is not a struct, or a struct declared in another file.
 
-Known gaps: methods on enums, generic impl blocks (`impl Pair[K, V]`), associated functions on generic structs, `&mut self`, and method calls on a struct-typed field of a variable (`plot.origin.distance()` is rejected — auto-borrow does not have a place-form for fields yet; compute from the field's scalar members instead). See `examples/methods.ae` and `examples/struct_borrow.ae`.
+**Enum methods (ADR-0186)**: the receiver is an owned enum, so `value.area()` moves it exactly as passing the enum to a function would — one binding per call. Inside the body, `match self { Shape::Circle(r) => ... }` reads payloads through the usual binding rules (views, no moves). `&self`/`&mut self` on enums are rejected in this version. `::` on an enum stays shallow: the name after it decides — a variant name is a variant path (`Shape::Circle(2)`), anything else reaches the impl's associated functions (`Shape::circle(2)`).
+
+**`Self` (ADR-0186)**: inside any impl block — inherent or trait — `Self` stands for the impl's own type. Three forms: `-> Self` in a signature (the constructor's return type), `Self { ... }` (a struct literal of the impl's type), and `Self::name(...)` (an associated function of the impl's type, which is how a method delegates to its constructor). Outside an impl block, `Self` is rejected in both type and expression position.
+
+Known gaps: generic impl blocks (`impl Pair[K, V]`), associated functions on generic structs, borrowed enum receivers, and method calls on a struct-typed field of a variable (`plot.origin.distance()` is rejected — auto-borrow does not have a place-form for fields yet; compute from the field's scalar members instead). See `examples/methods.ae`, `examples/struct_borrow.ae`, and `examples/enum_methods.ae`.
 
 ## Mutable Struct Borrows (`&mut Type`) (ADR-0185)
 

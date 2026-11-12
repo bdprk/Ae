@@ -1,0 +1,1 @@
+ae: $DIR/self_outside_impl.ae:3:19: 'Self' is only available inside an impl block

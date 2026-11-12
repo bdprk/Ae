@@ -78,6 +78,13 @@ impl Parser<'_> {
                     self.require_public("struct", &def.name.clone(), &def.file.clone(), def.public)?;
                     return Ok(Type::Struct(sid));
                 }
+                if other == "Self" {
+                    // `Self` (ADR-0186) stands for the type the enclosing impl
+                    // block targets; outside one, there is nothing to stand for.
+                    return self.impl_self.clone().ok_or_else(|| {
+                        self.fail("'Self' is only available inside an impl block")
+                    });
+                }
                 match self.struct_names.get(other) {
                 Some(&id) => {
                     let def = &self.structs[id];

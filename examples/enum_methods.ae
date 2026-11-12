@@ -1,0 +1,63 @@
+// Methods on enums and the `Self` type (ADR-0186).
+//
+// An inherent impl works on enums exactly as on structs: the (type, method)
+// name space resolves `value.m(...)` against the receiver's static type, and
+// `Self` inside the block stands for the impl's own type — which is what a
+// constructor returns. Enum receivers are by value in this version, so a
+// method reads the variant through `match` and every call consumes its
+// receiver, one binding per call.
+
+enum Shape {
+    Circle(i64),
+    Rect(i64, i64),
+    Unit,
+}
+
+impl Shape {
+    // An associated function is where a constructor belongs; `Self` is the
+    // enum being implemented.
+    fn circle(r: i64) -> Self {
+        return Shape::Circle(r);
+    }
+    // Variant payloads bind as views in match arms, so a method reads
+    // without moving anything it did not receive by value.
+    fn area(self) -> i64 {
+        match self {
+            Shape::Circle(r) => { return r * r * 3; }
+            Shape::Rect(w, h) => { return w * h; }
+            Shape::Unit => { return 1; }
+        }
+    }
+    fn describe(self) -> string {
+        match self {
+            Shape::Circle(r) => { return "circle r=" + to_string(r); }
+            Shape::Rect(w, h) => { return "rect " + to_string(w) + "x" + to_string(h); }
+            Shape::Unit => { return "unit"; }
+        }
+    }
+    // An enum method may call an associated function of the same type, and
+    // may return the receiver untouched when nothing applies.
+    fn with_min_radius(self, least: i64) -> Self {
+        match self {
+            Shape::Circle(r) => { if r < least { return Self::circle(least); } return Self::circle(r); }
+            Shape::Rect(w, h) => { return Shape::Rect(w, h); }
+            Shape::Unit => { return Shape::Unit; }
+        }
+    }
+}
+
+fn main() {
+    let c = Shape::circle(2);
+    print(c.area());
+    let d = Shape::circle(2);
+    print(d.describe());
+    let r = Shape::Rect(4, 5);
+    print(r.area());
+    let s = Shape::Rect(4, 5);
+    print(s.describe());
+    let u = Shape::Unit;
+    print(u.area());
+    let u2 = Shape::circle(0);
+    let fixed = u2.with_min_radius(1);
+    print(fixed.area());
+}

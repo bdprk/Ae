@@ -1,0 +1,29 @@
+struct Point { x: i64, y: i64 }
+
+impl Point {
+    fn new(x: i64, y: i64) -> Self {
+        return Self { x: x, y: y };
+    }
+    fn shifted(self, dx: i64, dy: i64) -> Self {
+        return Self { x: self.x + dx, y: self.y + dy };
+    }
+    fn manhattan(self) -> i64 {
+        return abs_i64(self.x) + abs_i64(self.y);
+    }
+}
+
+fn abs_i64(v: i64) -> i64 {
+    if v < 0 { return -v; }
+    return v;
+}
+
+fn main() {
+    let p = Point::new(3, 4);
+    print(p.manhattan());
+    let q = Point::new(-1, -2);
+    print(q.manhattan());
+    let r = Point::new(1, 2);
+    let s = r.shifted(1, 2);
+    print(s.x);
+    print(s.y);
+}

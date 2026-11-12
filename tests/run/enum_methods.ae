@@ -1,0 +1,34 @@
+enum Color { Red, Green, Blue, Custom(string) }
+
+impl Color {
+    fn is_custom(self) -> bool {
+        match self { Color::Red => { return false; } Color::Green => { return false; } Color::Blue => { return false; } Color::Custom(_) => { return true; } }
+    }
+    fn priority(self) -> i64 {
+        match self { Color::Red => { return 3; } Color::Green => { return 2; } Color::Blue => { return 1; } Color::Custom(_) => { return 0; } }
+    }
+    fn red() -> Color {
+        return Color::Red;
+    }
+    fn with_name(self) -> string {
+        match self {
+            Color::Red => { return "red"; }
+            Color::Green => { return "green"; }
+            Color::Blue => { return "blue"; }
+            Color::Custom(text) => { return "named " + text; }
+        }
+    }
+}
+
+fn main() {
+    let c = Color::Custom("pink");
+    print(c.is_custom());
+    let d = Color::Custom("pink");
+    print(d.priority());
+    let e = Color::Custom("pink");
+    print(e.with_name());
+    let r = Color::red();
+    print(r.priority());
+    let g = Color::Green;
+    print(g.with_name());
+}
