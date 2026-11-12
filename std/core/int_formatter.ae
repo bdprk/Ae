@@ -1,0 +1,50 @@
+// std/core/int_formatter.ae
+// Fast integer to ASCII digit buffer writer primitives for AE core.
+
+pub struct DigitBuffer4 {
+    d0: i64,
+    d1: i64,
+    d2: i64,
+    d3: i64,
+    len: i64,
+}
+
+pub fn digit_buffer4_from_u16(val: i64) -> DigitBuffer4 {
+    var v = val;
+    if v < 0 {
+        v = 0;
+    }
+    if v > 9999 {
+        v = 9999;
+    }
+
+    let d3 = (v % 10) + 48;
+    let d2 = ((v / 10) % 10) + 48;
+    let d1 = ((v / 100) % 10) + 48;
+    let d0 = ((v / 1000) % 10) + 48;
+
+    var actual_len = 1;
+    if v >= 1000 {
+        actual_len = 4;
+    } else if v >= 100 {
+        actual_len = 3;
+    } else if v >= 10 {
+        actual_len = 2;
+    }
+
+    return DigitBuffer4 {
+        d0: d0,
+        d1: d1,
+        d2: d2,
+        d3: d3,
+        len: actual_len,
+    };
+}
+
+pub fn digit_buffer4_len(b: DigitBuffer4) -> i64 {
+    return b.len;
+}
+
+pub fn digit_buffer4_d3(b: DigitBuffer4) -> i64 {
+    return b.d3;
+}

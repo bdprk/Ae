@@ -1,0 +1,17 @@
+// std/core/crc8.ae
+// Fast 8-bit Cyclic Redundancy Check (CRC-8-CCITT) primitive for AE core.
+
+pub fn crc8_update_byte(crc: i64, data_byte: i64) -> i64 {
+    // Polynomial: x^8 + x^2 + x + 1 (0x07)
+    var curr = (crc + data_byte) % 256;
+    var i = 0;
+    while i < 8 {
+        if curr >= 128 {
+            curr = ((curr * 2) % 256 + 7) % 256;
+        } else {
+            curr = (curr * 2) % 256;
+        }
+        i = i + 1;
+    }
+    return curr;
+}

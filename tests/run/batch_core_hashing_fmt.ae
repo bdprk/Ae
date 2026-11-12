@@ -1,0 +1,41 @@
+use "../../std/core/fnv1a.ae";
+use "../../std/core/line_indexer.ae";
+use "../../std/core/int_formatter.ae";
+use "../../std/core/crc8.ae";
+
+fn main() {
+    let h0 = fnv1a_init();
+    assert(h0 > 0);
+    let h1 = fnv1a_feed_byte(fnv1a_init(), 65); // 'A'
+    assert(h1 > 0);
+    assert(h1 != h0);
+
+    let lo0 = line_offsets8_new();
+    assert(line_offsets8_count(lo0) == 0);
+    let lo1 = line_offsets8_add_line(line_offsets8_new());
+    assert(line_offsets8_count(lo1) == 1);
+    let lo2 = line_offsets8_add_line(line_offsets8_add_line(line_offsets8_new()));
+    assert(line_offsets8_count(lo2) == 2);
+
+    let db1 = digit_buffer4_from_u16(7);
+    assert(digit_buffer4_len(db1) == 1);
+    let db1_check = digit_buffer4_from_u16(7);
+    assert(digit_buffer4_d3(db1_check) == 55); // '7'
+
+    let db2 = digit_buffer4_from_u16(42);
+    assert(digit_buffer4_len(db2) == 2);
+    let db3 = digit_buffer4_from_u16(999);
+    assert(digit_buffer4_len(db3) == 3);
+    let db4 = digit_buffer4_from_u16(2026);
+    assert(digit_buffer4_len(db4) == 4);
+
+    let crc0 = 0;
+    let crc1 = crc8_update_byte(crc0, 65);
+    assert(crc1 >= 0);
+    assert(crc1 < 256);
+    let crc2 = crc8_update_byte(crc1, 66);
+    assert(crc2 >= 0);
+    assert(crc2 < 256);
+
+    print("FNV1A LINEINDEX INTFMT CRC8 OPERATIONAL");
+}
