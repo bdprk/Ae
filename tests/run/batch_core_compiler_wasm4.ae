@@ -1,0 +1,47 @@
+// tests/run/batch_core_compiler_wasm4.ae
+// Verification of WasmCustomSection, WasmRelocEntry, WasmShadowStackFrame, and WasmFeatures.
+
+use "../../std/core/ir_wasm_leb_custom.ae";
+use "../../std/core/ir_wasm_reloc.ae";
+use "../../std/core/ir_wasm_stack_frame.ae";
+use "../../std/core/ir_wasm_features.ae";
+
+fn main() {
+    print("--- batch_core_compiler_wasm4 test start ---");
+
+    // 1. Wasm Custom Section
+    // name="name" (4 bytes), payload=128 bytes -> total payload = 1 + 4 + 128 = 133
+    let cs = wasm_custom_new(4, 128);
+    assert(wasm_custom_total_payload(cs) == 133);
+    print("wasm_custom ok");
+
+    // 2. Wasm Reloc Entry
+    let r_func = wasm_reloc_new(2, 64, 10, 0); // FUNCTION_INDEX_LEB
+    assert(wasm_reloc_is_func(r_func));
+    let r_func_b = wasm_reloc_new(2, 64, 10, 0);
+    assert(!wasm_reloc_is_mem(r_func_b));
+    let r_func_c = wasm_reloc_new(2, 64, 10, 0);
+    assert(wasm_reloc_offset(r_func_c) == 64);
+    print("wasm_reloc ok");
+
+    // 3. Wasm Shadow Stack Frame
+    // 26 bytes spill with 16-byte alignment -> 32 bytes
+    let frame = wasm_frame_new(26, 16);
+    assert(wasm_frame_aligned_size(frame) == 32);
+    print("wasm_frame ok");
+
+    // 4. Wasm Features
+    // flags: 7 = 1 (bulk_memory) + 2 (simd128) + 4 (multi_value)
+    let feat = wasm_features_new(7);
+    assert(wasm_has_bulk_memory(feat));
+    let feat_b = wasm_features_new(7);
+    assert(wasm_has_simd128(feat_b));
+    let feat_c = wasm_features_new(7);
+    assert(wasm_has_multi_value(feat_c));
+
+    let feat_no_simd = wasm_features_new(5); // 1 + 4 (no simd)
+    assert(!wasm_has_simd128(feat_no_simd));
+    print("wasm_features ok");
+
+    print("--- batch_core_compiler_wasm4 test end ---");
+}

@@ -1,0 +1,6 @@
+--- batch_core_compiler_wasm4 test start ---
+wasm_custom ok
+wasm_reloc ok
+wasm_frame ok
+wasm_features ok
+--- batch_core_compiler_wasm4 test end ---
