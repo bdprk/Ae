@@ -1,0 +1,48 @@
+// std/core/strview.ae
+// String slice view state primitives for AE core.
+
+pub struct StrView {
+    start: i64,
+    len: i64,
+}
+
+pub fn strview_new(start: i64, total_len: i64) -> StrView {
+    var valid_start = start;
+    if valid_start < 0 {
+        valid_start = 0;
+    }
+    var valid_len = total_len;
+    if valid_len < 0 {
+        valid_len = 0;
+    }
+    return StrView {
+        start: valid_start,
+        len: valid_len,
+    };
+}
+
+pub fn strview_start(v: StrView) -> i64 {
+    return v.start;
+}
+
+pub fn strview_len(v: StrView) -> i64 {
+    return v.len;
+}
+
+pub fn strview_is_empty(v: StrView) -> bool {
+    return v.len == 0;
+}
+
+pub fn strview_subview(v: StrView, offset: i64, sub_len: i64) -> StrView {
+    if offset < 0 || offset > v.len {
+        return StrView { start: v.start, len: 0 };
+    }
+    var actual_len = sub_len;
+    if actual_len < 0 || offset + actual_len > v.len {
+        actual_len = v.len - offset;
+    }
+    return StrView {
+        start: v.start + offset,
+        len: actual_len,
+    };
+}

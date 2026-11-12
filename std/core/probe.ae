@@ -1,0 +1,18 @@
+// std/core/probe.ae
+// Hash table open addressing probing primitives for AE core.
+
+pub fn linear_probe(hash_val: i64, step: i64, capacity: i64) -> i64 {
+    if capacity <= 0 {
+        return 0;
+    }
+    return (hash_val + step) % capacity;
+}
+
+pub fn quadratic_probe(hash_val: i64, step: i64, capacity: i64) -> i64 {
+    if capacity <= 0 {
+        return 0;
+    }
+    // (hash + (step + step^2)/2) % capacity
+    let offset = (step + step * step) / 2;
+    return (hash_val + offset) % capacity;
+}

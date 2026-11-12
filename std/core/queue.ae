@@ -1,0 +1,50 @@
+// std/core/queue.ae
+// Fixed-capacity Queue state primitives for AE core.
+
+pub struct QueueState8 {
+    head: i64,
+    tail: i64,
+    count: i64,
+}
+
+pub fn queue_state8_new() -> QueueState8 {
+    return QueueState8 {
+        head: 0,
+        tail: 0,
+        count: 0,
+    };
+}
+
+pub fn queue_state8_len(q: QueueState8) -> i64 {
+    return q.count;
+}
+
+pub fn queue_state8_is_empty(q: QueueState8) -> bool {
+    return q.count == 0;
+}
+
+pub fn queue_state8_is_full(q: QueueState8) -> bool {
+    return q.count >= 8;
+}
+
+pub fn queue_state8_enqueue(q: QueueState8) -> QueueState8 {
+    if q.count < 8 {
+        return QueueState8 {
+            head: q.head,
+            tail: (q.tail + 1) % 8,
+            count: q.count + 1,
+        };
+    }
+    return q;
+}
+
+pub fn queue_state8_dequeue(q: QueueState8) -> QueueState8 {
+    if q.count > 0 {
+        return QueueState8 {
+            head: (q.head + 1) % 8,
+            tail: q.tail,
+            count: q.count - 1,
+        };
+    }
+    return q;
+}

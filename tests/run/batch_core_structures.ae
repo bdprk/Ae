@@ -1,0 +1,46 @@
+use "../../std/core/stack.ae";
+use "../../std/core/queue.ae";
+use "../../std/core/probe.ae";
+use "../../std/core/strview.ae";
+
+fn main() {
+    let s0 = stack8_new();
+    assert(stack8_is_empty(s0));
+    let s0_check = stack8_new();
+    assert(!stack8_is_full(s0_check));
+
+    let s1 = stack8_push(stack8_new());
+    assert(stack8_len(s1) == 1);
+    let s2 = stack8_push(stack8_push(stack8_new()));
+    assert(stack8_len(s2) == 2);
+    let s_pop = stack8_pop(stack8_push(stack8_new()));
+    assert(stack8_is_empty(s_pop));
+
+    let q0 = queue_state8_new();
+    assert(queue_state8_is_empty(q0));
+    let q1 = queue_state8_enqueue(queue_state8_new());
+    assert(queue_state8_len(q1) == 1);
+    let q_deq = queue_state8_dequeue(queue_state8_enqueue(queue_state8_new()));
+    assert(queue_state8_is_empty(q_deq));
+
+    let lp0 = linear_probe(15, 0, 16);
+    assert(lp0 == 15);
+    let lp1 = linear_probe(15, 1, 16);
+    assert(lp1 == 0);
+    let qp2 = quadratic_probe(10, 2, 16);
+    assert(qp2 == 13); // (10 + (2 + 4)/2) % 16 = 13
+
+    let view = strview_new(10, 20);
+    assert(strview_start(view) == 10);
+    let view2 = strview_new(10, 20);
+    assert(strview_len(view2) == 20);
+    let view3 = strview_new(10, 20);
+    assert(!strview_is_empty(view3));
+
+    let sub = strview_subview(strview_new(10, 20), 5, 8);
+    assert(strview_start(sub) == 15);
+    let sub2 = strview_subview(strview_new(10, 20), 5, 8);
+    assert(strview_len(sub2) == 8);
+
+    print("STACK QUEUE PROBE STRVIEW OPERATIONAL");
+}
