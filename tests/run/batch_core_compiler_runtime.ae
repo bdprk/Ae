@@ -1,0 +1,58 @@
+// tests/run/batch_core_compiler_runtime.ae
+// Verification of TLS descriptor, SafepointPoll, LandingPad, and CallGraphEdge primitives.
+
+use "../../std/core/ir_thread_local.ae";
+use "../../std/core/ir_safepoint.ae";
+use "../../std/core/ir_landing_pad.ae";
+use "../../std/core/ir_call_graph.ae";
+
+fn main() {
+    print("--- batch_core_compiler_runtime test start ---");
+
+    // 1. TLS Descriptor
+    let tls_le = tls_descriptor_new(100, 4, 32); // LocalExec at offset +32
+    assert(tls_is_local_exec(tls_le));
+    let tls_le_b = tls_descriptor_new(100, 4, 32);
+    assert(!tls_is_initial_exec(tls_le_b));
+    let tls_le_c = tls_descriptor_new(100, 4, 32);
+    assert(tls_offset(tls_le_c) == 32);
+
+    let tls_ie = tls_descriptor_new(101, 3, 64);
+    assert(tls_is_initial_exec(tls_ie));
+    print("tls ok");
+
+    // 2. Safepoint Poll
+    let sp_loop = safepoint_poll_new(120, true, false, 15); // R15 as poll reg
+    assert(safepoint_is_backedge(sp_loop));
+    let sp_loop_b = safepoint_poll_new(120, true, false, 15);
+    assert(!safepoint_is_prologue(sp_loop_b));
+    let sp_loop_c = safepoint_poll_new(120, true, false, 15);
+    assert(safepoint_poll_reg(sp_loop_c) == 15);
+    print("safepoint ok");
+
+    // 3. Landing Pad
+    let lp = landing_pad_new(256, 1, true); // Catch type 1 + Cleanup
+    assert(landing_pad_has_catch(lp));
+    let lp_b = landing_pad_new(256, 1, true);
+    assert(landing_pad_has_cleanup(lp_b));
+    let lp_c = landing_pad_new(256, 1, true);
+    assert(landing_pad_action_offset(lp_c) == 256);
+
+    let lp_cleanup_only = landing_pad_new(0, 0, true);
+    assert(!landing_pad_has_catch(lp_cleanup_only));
+    print("landing_pad ok");
+
+    // 4. Call Graph Edge
+    let edge_rec = call_graph_edge_new(42, 42, 1000, true);
+    assert(call_graph_is_recursive(edge_rec));
+    let edge_rec_b = call_graph_edge_new(42, 42, 1000, true);
+    assert(call_graph_is_hot(edge_rec_b, 500));
+
+    let edge_call = call_graph_edge_new(42, 43, 10, true);
+    assert(!call_graph_is_recursive(edge_call));
+    let edge_call_b = call_graph_edge_new(42, 43, 10, true);
+    assert(!call_graph_is_hot(edge_call_b, 500));
+    print("call_graph ok");
+
+    print("--- batch_core_compiler_runtime test end ---");
+}
