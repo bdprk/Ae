@@ -1,0 +1,54 @@
+// tests/run/batch_core_compiler_debug.ae
+// Verification of ULEB128 encoding, DWARF Line, StackMap, and DebugLoc primitives.
+
+use "../../std/core/ir_leb128.ae";
+use "../../std/core/ir_dwarf_line.ae";
+use "../../std/core/ir_stack_map.ae";
+use "../../std/core/ir_debug_loc.ae";
+
+fn main() {
+    print("--- batch_core_compiler_debug test start ---");
+
+    // 1. ULEB128
+    assert(uleb128_encoded_len(0) == 1);
+    assert(uleb128_encoded_len(127) == 1);
+    assert(uleb128_encoded_len(128) == 2);
+    assert(uleb128_encoded_len(624485) == 3);
+
+    // 624485 in LEB128 is [0xE5, 0x8E, 0x26] -> [229, 142, 38]
+    assert(uleb128_extract_byte(624485, 0) == 229);
+    assert(uleb128_extract_byte(624485, 1) == 142);
+    assert(uleb128_extract_byte(624485, 2) == 38);
+    print("uleb128 ok");
+
+    // 2. DWARF Line Entry
+    let line1 = dwarf_line_new(1024, 15, 4, 1);
+    assert(dwarf_line_addr_delta(line1, 1000) == 24);
+    let line1_b = dwarf_line_new(1024, 15, 4, 1);
+    assert(dwarf_line_num_delta(line1_b, 10) == 5);
+    let line1_c = dwarf_line_new(1024, 15, 4, 1);
+    assert(dwarf_line_is_same_file(line1_c, 1));
+    print("dwarf_line ok");
+
+    // 3. StackMap Frame
+    // Mask = 5 (binary 0101: slot 0 is live, slot 1 is dead, slot 2 is live)
+    let sm = stack_map_frame_new(256, 5, 4);
+    assert(stack_map_is_live(sm, 0));
+    let sm_b = stack_map_frame_new(256, 5, 4);
+    assert(!stack_map_is_live(sm_b, 1));
+    let sm_c = stack_map_frame_new(256, 5, 4);
+    assert(stack_map_is_live(sm_c, 2));
+    let sm_d = stack_map_frame_new(256, 5, 4);
+    assert(!stack_map_is_live(sm_d, 3));
+    print("stack_map ok");
+
+    // 4. DebugLoc
+    let loc1 = debug_loc_new(1, 42, 8, false);
+    assert(!debug_loc_is_synthetic(loc1));
+    let loc1_b = debug_loc_new(1, 42, 8, false);
+    let loc2 = debug_loc_new(1, 42, 8, true);
+    assert(debug_loc_same_point(loc1_b, loc2));
+    print("debug_loc ok");
+
+    print("--- batch_core_compiler_debug test end ---");
+}
