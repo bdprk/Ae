@@ -3256,6 +3256,41 @@ fn run_command_reports_status_and_output() {
 }
 
 #[test]
+fn emit_cfg_shapes_loops_branches_and_switches() {
+    // The CFG layer (M2.2 slice 2): control flow lowers into blocks with
+    // terminators, break/continue become explicit edges, and `match` becomes
+    // a switch. The statement contents ride along verbatim.
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("ae-emit-cfg-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, "enum E { A(i64), B }
+fn pick(e: E) -> i64 { match e { E::A(x) => { return x; } E::B => { return 0; } } }
+fn main() { let r = pick(E::A(7)); print(r); }
+").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-cfg").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let cfg = String::from_utf8_lossy(&output.stdout);
+    assert!(cfg.contains("switch v0"), "match lowers to a switch: {cfg}");
+    assert!(cfg.contains("return"), "arms terminate: {cfg}");
+}
+
+#[test]
+fn emit_cfg_runs_clean_on_the_run_suite() {
+    // Every construct the run suite uses must lower into a validated graph.
+    let suite = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run");
+    let mut checked = 0;
+    for entry in fs::read_dir(&suite).unwrap() {
+        let entry = entry.unwrap();
+        if entry.path().extension().and_then(|e| e.to_str()) != Some("ae") { continue; }
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-cfg").arg(entry.path()).output().unwrap();
+        assert!(output.status.success(), "emit-cfg failed on {}: {}", entry.path().display(), String::from_utf8_lossy(&output.stderr));
+        assert!(!output.stdout.is_empty(), "emit-cfg printed nothing for {}", entry.path().display());
+        checked += 1;
+    }
+    assert!(checked > 50, "the run suite shrank: {checked} files");
+}
+
+#[test]
 fn emit_tree_dumps_the_lowered_statement_tree() {
     // `emit-tree` is the inspectable layer above the parser (M2.2 slice 1):
     // it prints declarations and every statement with its expression, and it

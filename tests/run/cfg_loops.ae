@@ -1,0 +1,13 @@
+fn main() {
+    var i = 0;
+    while i < 5 {
+        if i == 3 { break; }
+        print(i);
+        i = i + 1;
+    }
+    var items = vec[1, 2, 3];
+    for x in items {
+        if x == 2 { continue; }
+        print(x);
+    }
+}

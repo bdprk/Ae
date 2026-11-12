@@ -16,6 +16,27 @@ pub(super) fn tree_path(path: &Path) -> Result<String, String> {
     Ok(out)
 }
 
+// One statement's text, for consumers that print trees inside other
+// structures (the CFG printer quotes block contents this way).
+pub(super) fn statement_text(statement: &Statement) -> String {
+    let mut out = String::new();
+    let mut printer = TreePrinter { out: &mut out, indent: 0 };
+    printer.statement(statement);
+    let mut text = out;
+    while text.ends_with(char::is_whitespace) { text.pop(); }
+    text
+}
+
+// One expression's text, same contract. The printer composes into its own
+// parameter string; the holder keeps the borrow checker satisfied.
+pub(super) fn expression_text(expr: &Expr) -> String {
+    let mut buf = String::new();
+    let mut holder = String::new();
+    let mut printer = TreePrinter { out: &mut holder, indent: 0 };
+    printer.expression(expr, &mut buf);
+    buf
+}
+
 struct TreePrinter<'a> {
     out: &'a mut String,
     indent: usize,
