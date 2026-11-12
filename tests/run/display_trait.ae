@@ -1,0 +1,25 @@
+use "../../std/core/fmt.ae";
+
+pub struct Point {
+    x: i64,
+    y: i64,
+}
+
+impl Display for Point {
+    fn display(p: Point) -> string {
+        return "(" + to_string(p.x) + ", " + to_string(p.y) + ")";
+    }
+}
+
+fn format_value[T: Display](item: T) -> string {
+    return display(item);
+}
+
+fn main() {
+    let pt = Point { x: 12, y: 34 };
+    let s = format_value[Point](pt);
+    assert(s == "(12, 34)");
+    assert(format_value[i64](99) == "99");
+    assert(format_value[bool](true) == "true");
+    print("DISPLAY TRAIT OPERATIONAL\n");
+}
