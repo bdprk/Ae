@@ -1,0 +1,58 @@
+// tests/run/batch_core_compiler_elf2.ae
+// Verification of ElfSymEntry, ElfRelaEntry, ShstrtabBuilder, and ElfHash primitives.
+
+use "../../std/core/ir_elf_symtab.ae";
+use "../../std/core/ir_elf_reloc_rela.ae";
+use "../../std/core/ir_elf_shstrtab.ae";
+use "../../std/core/ir_elf_hash.ae";
+
+fn main() {
+    print("--- batch_core_compiler_elf2 test start ---");
+
+    // 1. ELF Symbol Entry
+    // binding=1 (GLOBAL), type=2 (FUNC), section=1 (.text), value=0, size=128
+    let sym = elf_sym_new(10, 1, 2, 1, 0, 128);
+    assert(elf_sym_is_function(sym));
+    let sym_b = elf_sym_new(10, 1, 2, 1, 0, 128);
+    assert(elf_sym_is_global(sym_b));
+    let sym_c = elf_sym_new(10, 1, 2, 1, 0, 128);
+    assert(!elf_sym_is_local(sym_c));
+    let sym_d = elf_sym_new(10, 1, 2, 1, 0, 128);
+    // st_info: 1 * 16 + 2 = 18
+    assert(elf_sym_st_info(sym_d) == 18);
+    print("elf_sym ok");
+
+    // 2. ELF RELA Entry
+    // offset=64, sym_idx=5, type=4 (PLT32), addend=-4
+    let rela = elf_rela_new(64, 5, 4, -4);
+    assert(elf_rela_r_info_type(rela) == 4);
+    let rela_b = elf_rela_new(64, 5, 4, -4);
+    assert(elf_rela_r_info_sym(rela_b) == 5);
+    let rela_c = elf_rela_new(64, 5, 4, -4);
+    assert(elf_rela_addend(rela_c) == -4);
+    print("elf_rela ok");
+
+    // 3. Shstrtab Builder
+    let sh0 = shstrtab_new();
+    assert(shstrtab_offset(sh0) == 1);
+
+    // Append ".shstrtab" (length 9 -> 9 + 1 = 10)
+    let sh1 = shstrtab_append(shstrtab_new(), 9);
+    assert(shstrtab_offset(sh1) == 11);
+    let sh1_b = shstrtab_append(shstrtab_new(), 9);
+    assert(shstrtab_count(sh1_b) == 1);
+    print("shstrtab ok");
+
+    // 4. ELF Hash
+    // Hash sequence of 'm', 'a', 'i', 'n' (109, 97, 105, 110)
+    let h_gnu0 = 5381; // standard GNU hash initial seed
+    let h_gnu1 = elf_gnu_hash_byte(h_gnu0, 109);
+    let h_gnu2 = elf_gnu_hash_byte(h_gnu1, 97);
+    assert(h_gnu2 > 0);
+
+    let bucket = elf_hash_bucket(h_gnu2, 16);
+    assert(bucket >= 0 && bucket < 16);
+    print("elf_hash ok");
+
+    print("--- batch_core_compiler_elf2 test end ---");
+}

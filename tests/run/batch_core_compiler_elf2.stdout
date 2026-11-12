@@ -1,0 +1,6 @@
+--- batch_core_compiler_elf2 test start ---
+elf_sym ok
+elf_rela ok
+shstrtab ok
+elf_hash ok
+--- batch_core_compiler_elf2 test end ---
