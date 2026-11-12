@@ -123,11 +123,11 @@ impl RecoveryState {
                             Ok(_) => break,
                             Err(diagnostic) => diagnostic,
                         };
-                        let replacement = independent_unknown_print(&replay_tokens, &diagnostic);
+                        let replacement = independent_unknown_expression(&replay_tokens, &diagnostic);
                         if !result.contains(&diagnostic) { result.push(diagnostic); }
                         if result.len() == 32 { break; }
-                        let Some(replacement) = replacement else { break };
-                        Rc::make_mut(&mut replay_tokens)[replacement].kind = Kind::Number(0);
+                        let Some((replacement, literal)) = replacement else { break };
+                        Rc::make_mut(&mut replay_tokens)[replacement].kind = literal;
                     }
                     if result.len() == 32 { break; }
                 }
@@ -139,18 +139,28 @@ impl RecoveryState {
     }
 }
 
-// Replaying an invalid standalone print with an integer placeholder has no
-// binding, move, borrow, or control-flow effects. Do not infer a replacement
-// for more complex expressions or for diagnostics without an exact token span.
-fn independent_unknown_print(tokens: &[Token], diagnostic: &ae_span::Diagnostic) -> Option<usize> {
+// Replaying these bare unknown expressions with a literal adds no bindings,
+// moves, or borrows. The parser checks both branches regardless of the literal.
+// Complex expressions and diagnostics without exact token spans are not altered.
+fn independent_unknown_expression(tokens: &[Token], diagnostic: &ae_span::Diagnostic) -> Option<(usize, Kind)> {
     if diagnostic.code.as_deref() != Some("E0101") { return None; }
     let range = &diagnostic.primary.as_ref()?.span.range;
     let index = tokens.iter().position(|token| token.offset == range.start && token.end == range.end)?;
-    if index < 2 || !matches!(tokens[index].kind, Kind::Ident(_)) { return None; }
-    if !matches!(tokens[index - 2].kind, Kind::Print) || !matches!(tokens[index - 1].kind, Kind::LParen)
-        || !matches!(tokens.get(index + 1).map(|token| &token.kind), Some(Kind::RParen))
-        || !matches!(tokens.get(index + 2).map(|token| &token.kind), Some(Kind::Semi)) { return None; }
-    Some(index)
+    if !matches!(tokens[index].kind, Kind::Ident(_)) { return None; }
+    if index >= 2 && matches!(tokens[index - 1].kind, Kind::LParen)
+        && matches!(tokens.get(index + 1).map(|token| &token.kind), Some(Kind::RParen))
+        && matches!(tokens.get(index + 2).map(|token| &token.kind), Some(Kind::Semi)) {
+        return match tokens[index - 2].kind {
+            Kind::Print => Some((index, Kind::Number(0))),
+            Kind::Assert => Some((index, Kind::True)),
+            _ => None,
+        };
+    }
+    if index >= 1 && matches!(tokens[index - 1].kind, Kind::If | Kind::While)
+        && matches!(tokens.get(index + 1).map(|token| &token.kind), Some(Kind::LBrace)) {
+        return Some((index, Kind::True));
+    }
+    None
 }
 
 struct LoadingFile {

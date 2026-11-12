@@ -4235,3 +4235,22 @@ fn check_json_recovers_independent_unknown_prints_in_one_body() {
     assert!(!json.contains("missing_32"), "{json}");
     fs::remove_dir_all(dir).unwrap();
 }
+
+
+#[test]
+fn check_json_recovers_independent_unknown_conditions() {
+    let dir = unique_temp_dir("json-multiple-conditions");
+    let path = dir.join("bad.ae");
+    fs::write(&path, "fn main() { assert(first_missing); if second_missing { print(third_missing); } while fourth_missing { assert(fifth_missing); } }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    let json = String::from_utf8(output.stdout).unwrap();
+    let positions: Vec<_> = ["first_missing", "second_missing", "third_missing", "fourth_missing", "fifth_missing"].iter().map(|name| json.find(name).unwrap()).collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{json}");
+    assert_eq!(json.matches("\"code\":\"E0101\"").count(), 5, "{json}");
+    fs::write(&path, "fn main() { assert(first_missing && true); print(second_missing); }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert!(json.contains("first_missing") && !json.contains("second_missing"), "{json}");
+    fs::remove_dir_all(dir).unwrap();
+}
