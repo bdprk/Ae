@@ -3,6 +3,7 @@ use std::path::Path;
 use std::rc::Rc;
 mod parser;
 mod closures;
+mod tree;
 mod expression;
 mod types;
 mod declarations;
@@ -465,6 +466,11 @@ pub fn compile_path_parts(path: &Path) -> Result<(String, String), String> {
 /// The driver caches `runtime + user` and later re-checks every unit's digest;
 /// nothing here decides whether the output is current.
 pub struct TrackedC { pub runtime: String, pub user: String, pub units: Vec<SourceUnit> }
+
+/// The lowered statement tree, printed as text: `ae emit-tree`.
+pub fn tree_path(path: &Path) -> Result<String, String> {
+    tree::tree_path(path)
+}
 
 /// Compile a file and report what the output depends on, in one pass. This is
 /// the only entry point that exposes the unit list; the plain `compile_path`

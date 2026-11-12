@@ -4,7 +4,7 @@ use ae_compiler::{fmt, frontend, harness, sha256};
 use frontend::compile_path;
 mod frontend_cache;
 
-const USAGE: &str = "usage: ae <check|emit-c> <source.ae>\n       ae check --json <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae> [filter]\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c|emit-tree> <source.ae>\n       ae check --json <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae> [filter]\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -445,14 +445,22 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         _ => level.unwrap_or(false),
     };
     let output = match cmd.as_str() {
-        "check" | "emit-c" | "run" if args.len() == 2 => None,
+        "check" | "emit-c" | "emit-tree" | "run" if args.len() == 2 => None,
         "run" if level.is_some() => None,
         "build" if (args.len() == 4 || level.is_some()) && args[2] == "-o" => Some(PathBuf::from(&args[3])),
-        "check" | "emit-c" | "run" | "build" => return Err(USAGE.into()),
+        "check" | "emit-c" | "emit-tree" | "run" | "build" => return Err(USAGE.into()),
         _ => return Err(format!("unknown command: {cmd}\n{USAGE}")),
     };
     let input = Path::new(&args[1]);
     let started = Instant::now();
+    if cmd == "emit-tree" {
+        // The tree always comes from a fresh frontend pass: like `emit-c`,
+        // its output IS the frontend's answer, so the reuse cache never
+        // stands in for it.
+        let tree = frontend::tree_path(input)?;
+        print!("{tree}");
+        return Ok(0);
+    }
     if cmd == "check" {
         frontend::check_path(input)?;
         if timings_enabled() {

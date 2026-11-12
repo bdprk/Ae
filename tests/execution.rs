@@ -3256,6 +3256,43 @@ fn run_command_reports_status_and_output() {
 }
 
 #[test]
+fn emit_tree_dumps_the_lowered_statement_tree() {
+    // `emit-tree` is the inspectable layer above the parser (M2.2 slice 1):
+    // it prints declarations and every statement with its expression, and it
+    // must run clean over the whole suite's constructs.
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("ae-emit-tree-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, "struct P { x: i64 }
+fn main() { let p = P { x: 1 }; print(p.x); }
+").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-tree").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(output.status.success());
+    let tree = String::from_utf8_lossy(&output.stdout);
+    assert!(tree.contains("struct #"), "struct declarations print: {tree}");
+    assert!(tree.contains("fn main() -> i64 {"), "main prints: {tree}");
+    assert!(tree.contains("v0: owned = struct #0 {"), "literal prints: {tree}");
+    assert!(tree.contains("print v0 (struct #0) @ 2:39.x"), "field read prints: {tree}");
+}
+
+#[test]
+fn emit_tree_runs_clean_on_the_run_suite() {
+    // Every construct the run suite uses must lower and print without a
+    // panic or a missing printer arm.
+    let suite = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run");
+    let mut checked = 0;
+    for entry in fs::read_dir(&suite).unwrap() {
+        let entry = entry.unwrap();
+        if entry.path().extension().and_then(|e| e.to_str()) != Some("ae") { continue; }
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-tree").arg(entry.path()).output().unwrap();
+        assert!(output.status.success(), "emit-tree failed on {}: {}", entry.path().display(), String::from_utf8_lossy(&output.stderr));
+        assert!(!output.stdout.is_empty(), "emit-tree printed nothing for {}", entry.path().display());
+        checked += 1;
+    }
+    assert!(checked > 50, "the run suite shrank: {checked} files");
+}
+
+#[test]
 fn concat_reads_fields_and_equality_does_not_consume() {
     // ADR-0184 follow-up: a binary operator changes what the postfix chain
     // means, so the move check must not decide before the operator is seen.

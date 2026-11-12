@@ -1,0 +1,401 @@
+//! The lowered statement tree, printed as text (`ae emit-tree`).
+//!
+//! A readable dump of exactly what the front end lowers before code
+//! generation: declarations, then each function's statements with their
+//! expressions. It is the first inspectable layer above the parser — the
+//! stepping stone to the MIR construction of plan M2.2, and a stable fixture
+//! format for tooling and tests. Every variant of the statement tree has a
+//! form here; a new variant without a form fails the build.
+use super::*;
+
+pub(super) fn tree_path(path: &Path) -> Result<String, String> {
+    let program = loader::load_program(path)?;
+    let mut out = String::new();
+    let mut printer = TreePrinter { out: &mut out, indent: 0 };
+    printer.program(&program);
+    Ok(out)
+}
+
+struct TreePrinter<'a> {
+    out: &'a mut String,
+    indent: usize,
+}
+
+impl<'a> TreePrinter<'a> {
+    fn line(&mut self, text: &str) {
+        for _ in 0..self.indent { self.out.push_str("  "); }
+        self.out.push_str(text);
+        self.out.push('\n');
+    }
+    fn nested<T>(&mut self, f: impl FnOnce(&mut TreePrinter) -> T) -> T {
+        self.indent += 1;
+        let value = f(self);
+        self.indent -= 1;
+        value
+    }
+
+    fn program(&mut self, program: &Program) {
+        for (sid, def) in program.structs.iter().enumerate() {
+            let fields = def.fields.iter().map(|(n, t)| format!("{}: {}", n, t.name())).collect::<Vec<_>>().join(", ");
+            let visibility = if def.public { "pub " } else { "" };
+            self.line(&format!("{}struct #{} {} {{ {} }}", visibility, sid, def.name, fields));
+        }
+        for (eid, def) in program.enums.iter().enumerate() {
+            let variants = def.variants.iter().map(|(n, fields)| {
+                let payloads = fields.iter().map(|t| t.name()).collect::<Vec<_>>().join(", ");
+                if payloads.is_empty() { n.clone() } else { format!("{}({})", n, payloads) }
+            }).collect::<Vec<_>>().join(", ");
+            self.line(&format!("enum #{} {} {{ {} }}", eid, def.name, variants));
+        }
+        for file in &program.files {
+            for function in file {
+                self.function(function);
+            }
+        }
+    }
+
+    fn function(&mut self, function: &Function) {
+        let params = function.params.iter().map(|(id, t)| format!("v{}: {}", id, t.name())).collect::<Vec<_>>().join(", ");
+        let name = if function.is_main { "main" } else { &format!("#{}", function.id) };
+        self.line(&format!("fn {}({}) -> {} {{", name, params, function.returns.name()));
+        self.nested(|this| this.statements(&function.body));
+        self.line("}");
+    }
+
+    fn statements(&mut self, statements: &[Statement]) {
+        for statement in statements {
+            self.statement(statement);
+        }
+    }
+
+    fn statement(&mut self, statement: &Statement) {
+        match statement {
+            Statement::Return(expr, frees) => {
+                let value = self.expression_text(expr);
+                let drops = self.frees_text(frees);
+                self.line(&format!("return {}{}", value, drops));
+            }
+            Statement::Declare(id, expr) => {
+                let ty = expr_type_name(expr);
+                let value = self.expression_text(expr);
+                self.line(&format!("v{}: {} = {}", id, ty, value));
+            }
+            Statement::Array(id, values) => {
+                let items = self.expressions_text(values);
+                self.line(&format!("v{}: &[i64; {}] = [{}]", id, values.len(), items));
+            }
+            Statement::Assign(id, expr, releases) => {
+                let value = self.expression_text(expr);
+                let drops = if *releases { " (releases old)" } else { "" };
+                self.line(&format!("v{} = {}{}", id, value, drops));
+            }
+            Statement::Store(id, len, index, value, ..) => {
+                let index_text = self.expression_text(index);
+                let value_text = self.expression_text(value);
+                self.line(&format!("v{}[{}] = {} (len {})", id, index_text, value_text, len));
+            }
+            Statement::VecPush(id, value, line, col) => {
+                let value_text = self.expression_text(value);
+                self.line(&format!("push v{} <- {} @ {}:{}", id, value_text, line, col));
+            }
+            Statement::StrVecPush(id, value, line, col, is_view) => {
+                let value_text = self.expression_text(value);
+                self.line(&format!("push v{} <- {}{} @ {}:{}", id, if *is_view { "view " } else { "" }, value_text, line, col));
+            }
+            Statement::VecFPush(id, value, line, col) => {
+                let value_text = self.expression_text(value);
+                self.line(&format!("push v{} <- {} @ {}:{}", id, value_text, line, col));
+            }
+            Statement::VecPop(id, line, col) | Statement::StrVecPop(id, line, col) | Statement::VecFPop(id, line, col) => {
+                self.line(&format!("pop v{} @ {}:{}", id, line, col));
+            }
+            Statement::VecStore(id, index, value, line, col) | Statement::StrVecStore(id, index, value, line, col, _) | Statement::VecFStore(id, index, value, line, col) => {
+                let index_text = self.expression_text(index);
+                let value_text = self.expression_text(value);
+                self.line(&format!("v{}[{}] = {} @ {}:{}", id, index_text, value_text, line, col));
+            }
+            Statement::FieldStore(id, fname, fty, value, through_pointer) => {
+                let value_text = self.expression_text(value);
+                let access = if *through_pointer { "->" } else { "." };
+                self.line(&format!("v{}{}{} = {} (field {})", id, access, fname, value_text, fty.name()));
+            }
+            Statement::Sort(id, ascending, line, col) => {
+                self.line(&format!("sort v{} {} @ {}:{}", id, if *ascending { "asc" } else { "desc" }, line, col));
+            }
+            Statement::Reverse(id, flag, line, col) => {
+                self.line(&format!("reverse v{} (flag {}) @ {}:{}", id, flag, line, col));
+            }
+            Statement::Print(printed) => {
+                let text = match printed {
+                    Printed::Expr(e) => self.expression_text(e),
+                    Printed::Text(t) => format!("{:?}", t),
+                };
+                self.line(&format!("print {}", text));
+            }
+            Statement::Assert(cond, line, col) => {
+                let cond_text = self.expression_text(cond);
+                self.line(&format!("assert {} @ {}:{}", cond_text, line, col));
+            }
+            Statement::If(cond, yes, no) => {
+                let cond_text = self.expression_text(cond);
+                self.line(&format!("if {} {{", cond_text));
+                self.nested(|this| this.statements(yes));
+                self.line("} else {");
+                self.nested(|this| this.statements(no));
+                self.line("}");
+            }
+            Statement::While(cond, body) => {
+                let cond_text = self.expression_text(cond);
+                self.line(&format!("while {} {{", cond_text));
+                self.nested(|this| this.statements(body));
+                self.line("}");
+            }
+            Statement::For(var, container, body, line, col, label) => {
+                self.line(&format!("for v{} in v{} @ {}:{} (label #{}) {{", var, container, line, col, label));
+                self.nested(|this| this.statements(body));
+                self.line("}");
+            }
+            Statement::ForTokens(var, base, body, line, col, label) => {
+                self.line(&format!("for v{} in tokens of v{} @ {}:{} (label #{}) {{", var, base, line, col, label));
+                self.nested(|this| this.statements(body));
+                self.line("}");
+            }
+            Statement::Match(subject, ty, arms) => {
+                self.line(&format!("match v{} ({}) {{", subject, ty.name()));
+                self.nested(|this| {
+                    for arm in arms {
+                        let bindings = arm.bindings.iter().map(|(id, t, idx)| format!("v{}: {}#{}", id, t.name(), idx)).collect::<Vec<_>>().join(", ");
+                        this.line(&format!("variant #{} ({}) => {{", arm.variant, bindings));
+                        this.nested(|inner| inner.statements(&arm.body));
+                        this.line("}");
+                    }
+                });
+                self.line("}");
+            }
+            Statement::MapPut(place, key, value, line, col) => {
+                let place_text = self.map_place_text(place);
+                let key_text = self.expression_text(key);
+                let value_text = self.expression_text(value);
+                self.line(&format!("{}[{}] = {} @ {}:{}", place_text, key_text, value_text, line, col));
+            }
+            Statement::Propagate(expr, ty, ok_types, binding, frees) => {
+                let expr_text = self.expression_text(expr);
+                let bound = match binding {
+                    Some((id, t)) => format!(" bind v{}: {}", id, t.name()),
+                    None => String::new(),
+                };
+                let oks = ok_types.iter().map(|t| t.name()).collect::<Vec<_>>().join(", ");
+                let drops = self.frees_text(frees);
+                self.line(&format!("propagate {} ({}) -> {}{}{}", expr_text, oks, ty.name(), bound, drops));
+            }
+            Statement::Break => self.line("break"),
+            Statement::Continue(depth) => self.line(&format!("continue (depth {})", depth.unwrap_or(0))),
+            Statement::Exit(code, frees) => {
+                let code_text = self.expression_text(code);
+                let drops = self.frees_text(frees);
+                self.line(&format!("exit {}{}", code_text, drops));
+            }
+            Statement::Frees(owned) => {
+                // The lowering can attach an empty release list on paths with
+                // nothing owned; printing it would be noise. The list is the
+                // content itself — `frees_text` is for annotations.
+                if owned.is_empty() { return; }
+                let list = owned.iter().map(|(id, t)| format!("v{}: {}", id, t.name())).collect::<Vec<_>>().join(", ");
+                self.line(&format!("release {}", list));
+            }
+        }
+    }
+
+    fn expressions_text(&mut self, values: &[Expr]) -> String {
+        let pieces: Vec<String> = values.iter().map(|v| self.expression_text(v)).collect();
+        pieces.join(", ")
+    }
+
+    fn frees_text(&self, frees: &[(usize, Type)]) -> String {
+        if frees.is_empty() { return String::new(); }
+        let list = frees.iter().map(|(id, t)| format!("v{}: {}", id, t.name())).collect::<Vec<_>>().join(", ");
+        format!(" (release {})", list)
+    }
+
+    fn map_place_text(&self, place: &MapPlace) -> String {
+        match place {
+            MapPlace::Var(id, kind) => format!("v{}[{}]", id, if *kind == MapKind::Float { "f64" } else { "i64" }),
+            MapPlace::Field(id, fname, kind) => format!("v{}.{}[{}]", id, fname, if *kind == MapKind::Float { "f64" } else { "i64" }),
+        }
+    }
+
+    fn expression_text(&mut self, expr: &Expr) -> String {
+        let mut text = String::new();
+        self.expression(expr, &mut text);
+        text
+    }
+
+    fn expression(&mut self, expr: &Expr, out: &mut String) {
+        match expr {
+            Expr::Number(n) => out.push_str(&n.to_string()),
+            Expr::FloatLit(x) => out.push_str(&x.to_string()),
+            Expr::BoolLit(b) => out.push_str(if *b { "true" } else { "false" }),
+            Expr::StrLit(text, line, col) => out.push_str(&format!("{:?} @ {}:{}", text, line, col)),
+            Expr::Variable(id, ty, line, col) => out.push_str(&format!("v{} ({}) @ {}:{}", id, ty.name(), line, col)),
+            Expr::Field(base, fname, fty) => {
+                self.expression(base, out);
+                out.push_str(&format!(".{} ({})", fname, fty.name()));
+            }
+            Expr::Call(id, args, ret) => {
+                out.push_str(&format!("fn#{}(", id));
+                self.arguments(args, out);
+                out.push_str(&format!(") -> {}", ret.name()));
+            }
+            Expr::FnCall(id, args, ret) => {
+                out.push_str(&format!("v{}(", id));
+                self.arguments(args, out);
+                out.push_str(&format!(") -> {}", ret.name()));
+            }
+            Expr::ClosureLit(cid) => out.push_str(&format!("closure#{}", cid)),
+            Expr::Binary(a, op, b, line, col, ty) => {
+                self.expression(a, out);
+                out.push_str(&format!(" {} ", operator_text(op)));
+                self.expression(b, out);
+                out.push_str(&format!(" ({} @ {}:{})", ty.name(), line, col));
+            }
+            Expr::Neg(a, line, col) => {
+                out.push('-');
+                self.expression(a, out);
+                out.push_str(&format!(" @ {}:{}", line, col));
+            }
+            Expr::Not(a) => {
+                out.push('!');
+                self.expression(a, out);
+            }
+            Expr::StrEq(a, b, negated) => {
+                self.expression(a, out);
+                out.push_str(if *negated { " !=s " } else { " ==s " });
+                self.expression(b, out);
+            }
+            Expr::Len(a, line, col) => {
+                out.push_str("len(");
+                self.expression(a, out);
+                out.push_str(&format!(") @ {}:{}", line, col));
+            }
+            Expr::StructLit(sid, values) => {
+                out.push_str(&format!("struct #{} {{ ", sid));
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 { out.push_str(", "); }
+                    self.expression(value, out);
+                }
+                out.push_str(" }");
+            }
+            Expr::EnumLit(name, eid, vidx, values) => {
+                out.push_str(&format!("{}#{}::variant#{}(", name, eid, vidx));
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 { out.push_str(", "); }
+                    self.expression(value, out);
+                }
+                out.push(')');
+            }
+            Expr::VecLit(values, ty, line, col) => {
+                out.push('[');
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 { out.push_str(", "); }
+                    self.expression(value, out);
+                }
+                out.push_str(&format!("] ({}) @ {}:{}", ty.name(), line, col));
+            }
+            Expr::Index(id, len, index, line, col) => {
+                out.push_str(&format!("v{}[", id));
+                self.expression(index, out);
+                out.push_str(&format!("] (len {} @ {}:{})", len, line, col));
+            }
+            Expr::VecIndex(id, index, line, col, borrowed, elem) => {
+                out.push_str(&format!("v{}{}[", id, if *borrowed { "&" } else { "" }));
+                self.expression(index, out);
+                out.push_str(&format!("] ({}) @ {}:{}", elem.name(), line, col));
+            }
+            Expr::StrVecIndex(id, index, line, col, borrowed) => {
+                out.push_str(&format!("v{}{}[", id, if *borrowed { "&" } else { "" }));
+                self.expression(index, out);
+                out.push_str(&format!("] (view) @ {}:{}", line, col));
+            }
+            Expr::SliceView(id, field, start, end, line, col) => {
+                out.push_str(&format!("slice_view(v{}", id));
+                if let Some(fname) = field { out.push_str(&format!(".{}", fname)); }
+                out.push_str(", ");
+                self.expression(start, out);
+                out.push_str(", ");
+                self.expression(end, out);
+                out.push_str(&format!(") @ {}:{}", line, col));
+            }
+            Expr::Tokens(id, field, sep, line, col) => {
+                out.push_str(&format!("tokens(v{}", id));
+                if let Some(fname) = field { out.push_str(&format!(".{}", fname)); }
+                out.push_str(", ");
+                self.expression(sep, out);
+                out.push_str(&format!(") @ {}:{}", line, col));
+            }
+            Expr::MapNew(line, col, kind) => out.push_str(&format!("map_new({}) @ {}:{}", if *kind == MapKind::Float { "f64" } else { "i64" }, line, col)),
+            Expr::MapGet(place, key, ret, line, col) => {
+                out.push_str(&format!("map_get({}, ", self.map_place_text(place)));
+                self.expression(key, out);
+                out.push_str(&format!(") -> {} @ {}:{}", ret.name(), line, col));
+            }
+            Expr::MapHas(place, key, line, col) | Expr::MapRemove(place, key, line, col) => {
+                out.push_str(if matches!(expr, Expr::MapHas(..)) { "map_has(" } else { "map_remove(" });
+                out.push_str(&self.map_place_text(place));
+                out.push_str(", ");
+                self.expression(key, out);
+                out.push_str(&format!(") @ {}:{}", line, col));
+            }
+            Expr::MapInc(place, key, delta, line, col) => {
+                out.push_str(&format!("map_inc({}, ", self.map_place_text(place)));
+                self.expression(key, out);
+                out.push_str(", ");
+                self.expression(delta, out);
+                out.push_str(&format!(") @ {}:{}", line, col));
+            }
+            Expr::MapKeys(place, line, col) => out.push_str(&format!("keys({}) @ {}:{}", self.map_place_text(place), line, col)),
+            Expr::MathCall(index, args, line, col) => {
+                let (name, _, _) = MATH_FNS[*index as usize];
+                out.push_str(&format!("{}(", name));
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 { out.push_str(", "); }
+                    self.expression(arg, out);
+                }
+                out.push_str(&format!(") @ {}:{}", line, col));
+            }
+            other => out.push_str(&format!("<expr {:?}>", std::mem::discriminant(other))),
+        }
+    }
+
+    fn arguments(&mut self, args: &[Argument], out: &mut String) {
+        for (index, arg) in args.iter().enumerate() {
+            if index > 0 { out.push_str(", "); }
+            match arg {
+                Argument::Value(e) => self.expression(e, out),
+                Argument::View(e) => {
+                    out.push_str("view ");
+                    self.expression(e, out);
+                }
+                Argument::Borrow(id, takes_address) => out.push_str(&format!("{}v{}", if *takes_address { "&" } else { "" }, id)),
+                Argument::FnPtr(cid) => out.push_str(&format!("closure#{}", cid)),
+            }
+        }
+    }
+}
+
+fn operator_text(op: &Kind) -> &'static str {
+    match op {
+        Kind::Plus => "+", Kind::Minus => "-", Kind::Star => "*", Kind::Slash => "/", Kind::Percent => "%",
+        Kind::EqEq => "==", Kind::NotEq => "!=", Kind::Less => "<", Kind::LessEq => "<=",
+        Kind::Greater => ">", Kind::GreaterEq => ">=", Kind::And => "&&", Kind::Or => "||",
+        _ => "?",
+    }
+}
+
+fn expr_type_name(expr: &Expr) -> &'static str {
+    match expr {
+        Expr::Number(..) | Expr::Binary(..) => "i64",
+        Expr::FloatLit(..) | Expr::ToF64(..) => "f64",
+        Expr::BoolLit(..) | Expr::StrEq(..) | Expr::Contains(..) | Expr::StartsWith(..) | Expr::EndsWith(..) => "bool",
+        _ => "owned",
+    }
+}

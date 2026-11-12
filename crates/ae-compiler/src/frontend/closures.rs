@@ -387,11 +387,6 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
     }
 }
 
-#[allow(static_mut_refs)]
-fn self_closures_fn_id(cid: usize) -> usize {
-    closure_fn_id(cid)
-}
-
 fn record_place(place: &MapPlace, used: &mut std::collections::HashSet<usize>, mutated: &mut std::collections::HashSet<usize>) {
     let id = place.slot();
     used.insert(id);
