@@ -1,0 +1,44 @@
+// std/core/simd_shuffle.ae
+// Conceptual 4-lane SIMD lane rotation and reversal primitives for AE core.
+
+pub struct Lane4Shuffle {
+    v0: i64,
+    v1: i64,
+    v2: i64,
+    v3: i64,
+}
+
+pub fn lane4_shuffle_new(a: i64, b: i64, c: i64, d: i64) -> Lane4Shuffle {
+    return Lane4Shuffle {
+        v0: a,
+        v1: b,
+        v2: c,
+        v3: d,
+    };
+}
+
+pub fn lane4_shuffle_v0(l: Lane4Shuffle) -> i64 {
+    return l.v0;
+}
+
+pub fn lane4_shuffle_v3(l: Lane4Shuffle) -> i64 {
+    return l.v3;
+}
+
+pub fn lane4_shuffle_reverse(l: Lane4Shuffle) -> Lane4Shuffle {
+    return Lane4Shuffle {
+        v0: l.v3,
+        v1: l.v2,
+        v2: l.v1,
+        v3: l.v0,
+    };
+}
+
+pub fn lane4_shuffle_rotate_left(l: Lane4Shuffle) -> Lane4Shuffle {
+    return Lane4Shuffle {
+        v0: l.v1,
+        v1: l.v2,
+        v2: l.v3,
+        v3: l.v0,
+    };
+}

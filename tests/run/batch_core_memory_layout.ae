@@ -1,0 +1,59 @@
+use "../../std/core/arena_slab.ae";
+use "../../std/core/simd_shuffle.ae";
+use "../../std/core/hex_printer.ae";
+use "../../std/core/alignment_mask.ae";
+
+fn main() {
+    let sb0 = slab_bin_new(32, 4);
+    assert(slab_bin_slot_size(sb0) == 32);
+    let sb0_b = slab_bin_new(32, 4);
+    assert(slab_bin_capacity(sb0_b) == 4);
+    let sb0_c = slab_bin_new(32, 4);
+    assert(slab_bin_allocated(sb0_c) == 0);
+    let sb0_d = slab_bin_new(32, 4);
+    assert(!slab_bin_is_full(sb0_d));
+
+    let sb1 = slab_bin_alloc_slot(slab_bin_new(32, 4));
+    assert(slab_bin_allocated(sb1) == 1);
+    let sb_freed = slab_bin_free_slot(slab_bin_alloc_slot(slab_bin_new(32, 4)));
+    assert(slab_bin_allocated(sb_freed) == 0);
+
+    let l = lane4_shuffle_new(1, 2, 3, 4);
+    assert(lane4_shuffle_v0(l) == 1);
+    let l_rev = lane4_shuffle_reverse(lane4_shuffle_new(1, 2, 3, 4));
+    assert(lane4_shuffle_v0(l_rev) == 4);
+    let l_rev_b = lane4_shuffle_reverse(lane4_shuffle_new(1, 2, 3, 4));
+    assert(lane4_shuffle_v3(l_rev_b) == 1);
+
+    let l_rot = lane4_shuffle_rotate_left(lane4_shuffle_new(1, 2, 3, 4));
+    assert(lane4_shuffle_v0(l_rot) == 2);
+    let l_rot_b = lane4_shuffle_rotate_left(lane4_shuffle_new(1, 2, 3, 4));
+    assert(lane4_shuffle_v3(l_rot_b) == 1);
+
+    // 0x2A = 42 -> "2a" ('2'=50, 'a'=97)
+    let hb = hex_byte2_new(42);
+    assert(hex_byte2_h0(hb) == 50); // '2'
+    let hb_b = hex_byte2_new(42);
+    assert(hex_byte2_h1(hb_b) == 97); // 'a'
+
+    // 0xFF = 255 -> "ff" ('f'=102)
+    let hb_ff = hex_byte2_new(255);
+    assert(hex_byte2_h0(hb_ff) == 102);
+    let hb_ff_b = hex_byte2_new(255);
+    assert(hex_byte2_h1(hb_ff_b) == 102);
+
+    assert(is_power_of_two(1));
+    assert(is_power_of_two(2));
+    assert(is_power_of_two(16));
+    assert(is_power_of_two(64));
+    assert(!is_power_of_two(0));
+    assert(!is_power_of_two(3));
+    assert(!is_power_of_two(15));
+
+    assert(alignment_padding_needed(0, 8) == 0);
+    assert(alignment_padding_needed(8, 8) == 0);
+    assert(alignment_padding_needed(1, 8) == 7);
+    assert(alignment_padding_needed(6, 8) == 2);
+
+    print("SLAB SHUFFLE HEXPRINT ALIGNPAD OPERATIONAL");
+}

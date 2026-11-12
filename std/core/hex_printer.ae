@@ -1,0 +1,37 @@
+// std/core/hex_printer.ae
+// 2-digit byte to hexadecimal ASCII code writer primitive for AE core.
+
+use "ascii_table.ae";
+
+pub struct HexByte2 {
+    h0: i64,
+    h1: i64,
+}
+
+pub fn hex_byte2_new(b: i64) -> HexByte2 {
+    let high = (b / 16) % 16;
+    let low = b % 16;
+
+    var c0 = high + 48;
+    if high >= 10 {
+        c0 = high - 10 + 97; // 'a'..'f'
+    }
+
+    var c1 = low + 48;
+    if low >= 10 {
+        c1 = low - 10 + 97;
+    }
+
+    return HexByte2 {
+        h0: c0,
+        h1: c1,
+    };
+}
+
+pub fn hex_byte2_h0(hb: HexByte2) -> i64 {
+    return hb.h0;
+}
+
+pub fn hex_byte2_h1(hb: HexByte2) -> i64 {
+    return hb.h1;
+}

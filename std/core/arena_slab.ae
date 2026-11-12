@@ -1,0 +1,54 @@
+// std/core/arena_slab.ae
+// Conceptual slab allocation bin sizing state primitives for AE core.
+
+pub struct SlabBin {
+    slot_size: i64,
+    capacity: i64,
+    allocated: i64,
+}
+
+pub fn slab_bin_new(size: i64, cap: i64) -> SlabBin {
+    return SlabBin {
+        slot_size: size,
+        capacity: cap,
+        allocated: 0,
+    };
+}
+
+pub fn slab_bin_slot_size(sb: SlabBin) -> i64 {
+    return sb.slot_size;
+}
+
+pub fn slab_bin_capacity(sb: SlabBin) -> i64 {
+    return sb.capacity;
+}
+
+pub fn slab_bin_allocated(sb: SlabBin) -> i64 {
+    return sb.allocated;
+}
+
+pub fn slab_bin_is_full(sb: SlabBin) -> bool {
+    return sb.allocated >= sb.capacity;
+}
+
+pub fn slab_bin_alloc_slot(sb: SlabBin) -> SlabBin {
+    if sb.allocated < sb.capacity {
+        return SlabBin {
+            slot_size: sb.slot_size,
+            capacity: sb.capacity,
+            allocated: sb.allocated + 1,
+        };
+    }
+    return sb;
+}
+
+pub fn slab_bin_free_slot(sb: SlabBin) -> SlabBin {
+    if sb.allocated > 0 {
+        return SlabBin {
+            slot_size: sb.slot_size,
+            capacity: sb.capacity,
+            allocated: sb.allocated - 1,
+        };
+    }
+    return sb;
+}
