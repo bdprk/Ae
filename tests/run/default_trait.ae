@@ -1,0 +1,30 @@
+use "../../std/core/default.ae";
+
+pub struct Settings {
+    timeout: i64,
+    enabled: bool,
+}
+
+impl Reset for Settings {
+    fn reset(s: Settings) -> Settings {
+        return Settings {
+            timeout: 30,
+            enabled: true,
+        };
+    }
+}
+
+fn reset_value[T: Reset](val: T) -> T {
+    return reset(val);
+}
+
+fn main() {
+    let dummy = Settings { timeout: 999, enabled: false };
+    let s = reset_value[Settings](dummy);
+    assert(s.timeout == 30);
+    assert(s.enabled == true);
+    assert(reset_value[i64](123) == 0);
+    assert(reset_value[bool](true) == false);
+    assert(reset_value[string]("dirty") == "");
+    print("RESET TRAIT OPERATIONAL\n");
+}
