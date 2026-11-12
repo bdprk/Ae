@@ -1,0 +1,41 @@
+use "../../std/core/char_escape.ae";
+use "../../std/core/literal_num.ae";
+use "../../std/core/keyword_matcher.ae";
+use "../../std/core/operator_kind.ae";
+
+fn main() {
+    assert(escape_char_to_byte(110) == 10); // 'n' -> '\n'
+    assert(escape_char_to_byte(114) == 13); // 'r' -> '\r'
+    assert(escape_char_to_byte(116) == 9);  // 't' -> '\t'
+    assert(escape_char_to_byte(92) == 92);  // '\\' -> '\\'
+    assert(escape_char_to_byte(34) == 34);  // '"' -> '"'
+    assert(escape_char_to_byte(48) == 0);   // '0' -> '\0'
+    assert(is_valid_escape_char(110));
+    assert(!is_valid_escape_char(120)); // 'x' not handled here
+
+    assert(num_radix_base(NumRadix::Decimal) == 10);
+    assert(num_radix_base(NumRadix::Hexadecimal) == 16);
+    assert(num_radix_base(NumRadix::Binary) == 2);
+    assert(num_radix_base(NumRadix::Octal) == 8);
+
+    assert(is_binary_digit(48)); // '0'
+    assert(is_binary_digit(49)); // '1'
+    assert(!is_binary_digit(50)); // '2'
+
+    assert(is_octal_digit(48)); // '0'
+    assert(is_octal_digit(55)); // '7'
+    assert(!is_octal_digit(56)); // '8'
+
+    assert(keyword_len_fn() == 2);
+    assert(keyword_len_let() == 3);
+    assert(keyword_len_struct() == 6);
+    assert(keyword_len_match() == 5);
+    assert(is_keyword_byte_match(102, 102)); // 'f' == 'f'
+
+    assert(operator_precedence_rank(OperatorPrecedence::Additive) == 6);
+    assert(operator_precedence_rank(OperatorPrecedence::Multiplicative) == 7);
+    assert(operator_is_higher(OperatorPrecedence::Multiplicative, OperatorPrecedence::Additive));
+    assert(!operator_is_higher(OperatorPrecedence::LogicalOr, OperatorPrecedence::Comparison));
+
+    print("LEXING RADIX KEYWORDS PRECEDENCE OPERATIONAL");
+}
