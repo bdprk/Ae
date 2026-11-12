@@ -1,0 +1,59 @@
+// tests/run/batch_core_compiler_opt3.ae
+// Verification of GVN canonicalization, LICM hoist check, StrengthReduction, and SIMD vector packing.
+
+use "../../std/core/ir_gvn.ae";
+use "../../std/core/ir_licm.ae";
+use "../../std/core/ir_strength_reduce.ae";
+use "../../std/core/ir_vector_pack.ae";
+
+fn main() {
+    print("--- batch_core_compiler_opt3 test start ---");
+
+    // 1. GVN Canonicalization
+    // op=1 (ADD) is commutative: (10, 5) normalizes to (5, 10)
+    let k1 = gvn_key_new(1, 10, 5);
+    assert(gvn_key_lhs(k1) == 5);
+    let k1_b = gvn_key_new(1, 10, 5);
+    assert(gvn_key_rhs(k1_b) == 10);
+
+    let k2 = gvn_key_new(1, 5, 10);
+    let k1_c = gvn_key_new(1, 10, 5);
+    assert(gvn_keys_equal(k1_c, k2));
+    print("gvn ok");
+
+    // 2. LICM Hoisting
+    let c_valid = licm_candidate_new(1, true, true, false);
+    assert(licm_can_hoist(c_valid));
+
+    let c_side_effects = licm_candidate_new(2, true, true, true);
+    assert(!licm_can_hoist(c_side_effects));
+
+    let c_not_invariant = licm_candidate_new(3, true, false, false);
+    assert(!licm_can_hoist(c_not_invariant));
+    print("licm ok");
+
+    // 3. Strength Reduction
+    assert(strength_reduce_is_power_of_two(8));
+    assert(!strength_reduce_is_power_of_two(7));
+    assert(strength_reduce_log2(16) == 4);
+
+    let cand_mul8 = strength_reduce_new(1, 8); // x * 8 -> x << 3
+    assert(strength_reduce_can_shift(cand_mul8));
+
+    let cand_mul7 = strength_reduce_new(1, 7);
+    assert(!strength_reduce_can_shift(cand_mul7));
+    print("strength_reduce ok");
+
+    // 4. SIMD Pack Group
+    // 128-bit vector with 64-bit i64 -> 16 / 8 = 2 lanes
+    let g1 = simd_pack_new(8, 16, true, false);
+    assert(simd_pack_lane_count(g1) == 2);
+    let g1_b = simd_pack_new(8, 16, true, false);
+    assert(simd_pack_can_vectorize(g1_b));
+
+    let g_conflict = simd_pack_new(8, 16, true, true);
+    assert(!simd_pack_can_vectorize(g_conflict));
+    print("simd_pack ok");
+
+    print("--- batch_core_compiler_opt3 test end ---");
+}

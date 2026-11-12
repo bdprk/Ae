@@ -1,0 +1,6 @@
+--- batch_core_compiler_opt3 test start ---
+gvn ok
+licm ok
+strength_reduce ok
+simd_pack ok
+--- batch_core_compiler_opt3 test end ---
