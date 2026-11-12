@@ -6,6 +6,7 @@ mod closures;
 mod tree;
 mod cfg;
 mod movewalk;
+mod borrowscope;
 mod expression;
 mod types;
 mod declarations;
