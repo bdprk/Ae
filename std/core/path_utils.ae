@@ -1,0 +1,10 @@
+// std/core/path_utils.ae
+// Core Path Separator & Extension Utilities (M1.4 / M3.2)
+
+pub fn path_is_sep(b: i64) -> bool {
+    return b == 47 || b == 92; // '/' or '\\'
+}
+
+pub fn path_has_extension(total_len: i64, dot_pos: i64) -> bool {
+    return dot_pos > 0 && dot_pos < total_len - 1;
+}

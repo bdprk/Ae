@@ -1,0 +1,21 @@
+// std/core/ip.ae
+// Core IPv4 & Port Layout Primitives (M1.4 / M4.6)
+
+pub struct Ipv4Addr {
+    a: i64,
+    b: i64,
+    c: i64,
+    d: i64,
+}
+
+pub fn ipv4_new(a: i64, b: i64, c: i64, d: i64) -> Ipv4Addr {
+    return Ipv4Addr { a: a, b: b, c: c, d: d };
+}
+
+pub fn ipv4_is_loopback(ip: Ipv4Addr) -> bool {
+    return ip.a == 127;
+}
+
+pub fn ipv4_to_u32(ip: Ipv4Addr) -> i64 {
+    return ip.a * 16777216 + ip.b * 65536 + ip.c * 256 + ip.d;
+}

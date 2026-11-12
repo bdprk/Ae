@@ -1,0 +1,37 @@
+use "../../std/core/ip.ae";
+use "../../std/core/socket.ae";
+use "../../std/core/path_utils.ae";
+use "../../std/core/env_utils.ae";
+
+fn main() {
+    let local = ipv4_new(127, 0, 0, 1);
+    assert(ipv4_is_loopback(local));
+
+    let remote = ipv4_new(192, 168, 1, 1);
+    assert(!ipv4_is_loopback(remote));
+
+    let remote_b = ipv4_new(192, 168, 1, 1);
+    assert(ipv4_to_u32(remote_b) > 0);
+
+    let sock = socket_new(ipv4_new(0, 0, 0, 0), 80);
+    assert(socket_port(sock) == 80);
+
+    let sock_priv = socket_new(ipv4_new(0, 0, 0, 0), 80);
+    assert(socket_is_privileged(sock_priv));
+
+    let sock_user = socket_new(ipv4_new(0, 0, 0, 0), 8080);
+    assert(!socket_is_privileged(sock_user));
+
+    assert(path_is_sep(47));  // '/'
+    assert(path_is_sep(92));  // '\\'
+    assert(!path_is_sep(65)); // 'A'
+    assert(path_has_extension(10, 6)); // "file.txt" -> len 8, dot 4
+    assert(!path_has_extension(10, 9));
+
+    assert(env_is_valid_key_char(65)); // 'A'
+    assert(env_is_valid_key_char(95)); // '_'
+    assert(env_is_valid_key_char(50)); // '2'
+    assert(!env_is_valid_key_char(36)); // '$'
+
+    print("NET AND PATH PRIMITIVES OPERATIONAL\n");
+}
