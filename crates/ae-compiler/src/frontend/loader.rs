@@ -170,12 +170,16 @@ struct LoadingFile {
     path: std::path::PathBuf,
     source: String,
     file: String,
+    // Lexical diagnostics the lexer repaired before producing its stream:
+    // empty for a clean file. Only the entry file parses through them;
+    // imports keep the verified-prefix behavior.
+    lex_diagnostics: Vec<ae_span::Diagnostic>,
     tokens: Rc<Vec<Token>>,
     uses: Vec<String>,
     next_import: usize,
 }
 
-fn begin_file(path: &Path, visited: &mut HashMap<std::path::PathBuf, ModuleState>) -> Result<Option<LoadingFile>, FrontendError> {
+fn begin_file(path: &Path, visited: &mut HashMap<std::path::PathBuf, ModuleState>, entry: bool) -> Result<Option<LoadingFile>, FrontendError> {
     let canonical = std::fs::canonicalize(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
     match visited.get(&canonical) {
         Some(ModuleState::Loading) => return Err(format!("circular import of {}", path.display()).into()),
@@ -184,26 +188,47 @@ fn begin_file(path: &Path, visited: &mut HashMap<std::path::PathBuf, ModuleState
     }
     let source = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let file = path.display().to_string();
-    let tokens = Rc::new(ae_syntax::lex_with_diagnostics(&source).map_err(|mut diagnostics| {
+    let spell = |mut diagnostics: Vec<ae_span::Diagnostic>| {
         for diagnostic in &mut diagnostics {
             if let Some(label) = &mut diagnostic.primary { label.span.file = Some(file.clone()); }
         }
-        FrontendError::LexDiagnostics(diagnostics)
-    })?);
+        diagnostics
+    };
+    // A lexical error does not end checking: when the lexer *repaired* the
+    // stream (skipped characters, capped diagnostics) and the entry file has
+    // no imports, it parses through so body errors in other functions are
+    // reported beside the lexical ones. An import-bearing file keeps the
+    // verified-prefix behavior — sibling modules are still checked even
+    // though this file's stream is damaged — and a partial stream, or any
+    // lexical error in an imported file, ends the pass here.
+    let mut lex_diagnostics = Vec::new();
+    let outcome = ae_syntax::lex_recovered(&source);
+    let owned_tokens = match &outcome {
+        ae_syntax::LexOutcome::Clean(tokens) | ae_syntax::LexOutcome::Recovered(tokens, _) => tokens.clone(),
+        ae_syntax::LexOutcome::Fatal(diagnostics) => return Err(FrontendError::LexDiagnostics(spell(diagnostics.clone()))),
+    };
+    let tokens = Rc::new(owned_tokens);
     let uses = scan_uses(&file, &source, tokens.as_ref()).map_err(FrontendError::Diagnostic)?;
-    Ok(Some(LoadingFile { canonical, path: path.to_owned(), source, file, tokens, uses, next_import: 0 }))
+    if let ae_syntax::LexOutcome::Recovered(_, diagnostics) = outcome {
+        if entry && uses.is_empty() {
+            lex_diagnostics = spell(diagnostics);
+        } else {
+            return Err(FrontendError::LexDiagnostics(spell(diagnostics)));
+        }
+    }
+    Ok(Some(LoadingFile { canonical, path: path.to_owned(), source, file, lex_diagnostics, tokens, uses, next_import: 0 }))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn load_file(path: &Path, root: &Path, visited: &mut HashMap<std::path::PathBuf, ModuleState>, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, generics: &mut Generics, next_id: &mut usize, out: &mut Vec<Vec<Function>>, mains: &mut usize, modules: &mut Vec<ModuleInfo>, recover: bool) -> Result<(), FrontendError> {
-    let Some(first) = begin_file(path, visited)? else { return Ok(()) };
+    let Some(first) = begin_file(path, visited, true)? else { return Ok(()) };
     let mut stack = vec![first];
     while let Some(frame) = stack.last_mut() {
         if let Some(import) = frame.uses.get(frame.next_import) {
             frame.next_import += 1;
             let parent = frame.path.parent().unwrap_or(Path::new("."));
             let child = parent.join(import);
-            if let Some(next) = begin_file(&child, visited)? { stack.push(next); }
+            if let Some(next) = begin_file(&child, visited, false)? { stack.push(next); }
             continue;
         }
         let frame = stack.pop().expect("stack is nonempty");
@@ -214,15 +239,27 @@ fn load_file(path: &Path, root: &Path, visited: &mut HashMap<std::path::PathBuf,
         let functions = match parser.program() {
             Ok(functions) => functions,
             Err(first) => {
+                let mut diagnostics = Vec::new();
+                diagnostics.extend(frame.lex_diagnostics.clone());
                 if let Some(snapshot) = snapshot {
-                    let diagnostics = snapshot.check_bodies(&frame.file, &frame.source, Rc::clone(&frame.tokens));
-                    if diagnostics.first() == Some(&first) && diagnostics.len() > 1 {
+                    let bodies = snapshot.check_bodies(&frame.file, &frame.source, Rc::clone(&frame.tokens));
+                    if bodies.first() == Some(&first) && bodies.len() > 1 {
+                        diagnostics.extend(bodies);
                         return Err(FrontendError::Diagnostics(diagnostics));
                     }
+                }
+                if !diagnostics.is_empty() {
+                    diagnostics.push(first);
+                    return Err(FrontendError::Diagnostics(diagnostics));
                 }
                 return Err(FrontendError::Diagnostic(first));
             }
         };
+        // A repaired lexical error is still an error: the program never
+        // checks clean while a character was skipped.
+        if !frame.lex_diagnostics.is_empty() {
+            return Err(FrontendError::Diagnostics(frame.lex_diagnostics.clone()));
+        }
         *mains += functions.iter().filter(|f| f.is_main).count();
         out.push(functions);
         modules.push(ModuleInfo {
@@ -314,7 +351,7 @@ fn verified_import_prefix(path: &Path, errors: &[ae_span::Diagnostic]) -> Option
     let tokens = Rc::new(tokens);
     let uses = scan_uses(&file, prefix, tokens.as_ref()).ok()?;
     if uses.is_empty() { return None; }
-    Some(LoadingFile { canonical: std::fs::canonicalize(path).ok()?, path: path.to_owned(), source, file, tokens, uses, next_import: 0 })
+    Some(LoadingFile { canonical: std::fs::canonicalize(path).ok()?, path: path.to_owned(), source, file, lex_diagnostics: Vec::new(), tokens, uses, next_import: 0 })
 }
 
 // Read-only supplemental traversal after an initial lexical error. A failed
@@ -323,7 +360,7 @@ fn collect_import_lex_errors(entry: &Path) -> Vec<ae_span::Diagnostic> {
     const LIMIT: usize = 32;
     let mut visited = HashMap::new();
     let mut diagnostics = Vec::new();
-    let mut stack = match begin_file(entry, &mut visited) {
+    let mut stack = match begin_file(entry, &mut visited, false) {
         Ok(Some(frame)) => vec![frame],
         Err(FrontendError::LexDiagnostics(errors)) => {
             let frame = verified_import_prefix(entry, &errors);
@@ -338,7 +375,7 @@ fn collect_import_lex_errors(entry: &Path) -> Vec<ae_span::Diagnostic> {
             let child = frame.path.parent().unwrap_or(Path::new(".")).join(import);
             let canonical = std::fs::canonicalize(&child).ok();
             let was_visited = canonical.as_ref().is_some_and(|path| visited.contains_key(path));
-            match begin_file(&child, &mut visited) {
+            match begin_file(&child, &mut visited, false) {
                 Ok(Some(next)) => stack.push(next),
                 Ok(None) => {},
                 Err(error) => {

@@ -4306,9 +4306,12 @@ fn numeric_lexical_errors_recover_in_json_without_accepting_program() {
     assert!(!json.status.success());
     assert!(json.stderr.is_empty());
     let text = String::from_utf8(json.stdout).unwrap();
-    let positions: Vec<_> = ["E0005", "E0001", "E0007", "E0008"].iter().map(|code| text.find(code).unwrap()).collect();
+    // The repaired body's own parse error trails the lexical diagnostics:
+    // the `@` left an empty argument position in `print(, ...)`, which the
+    // body replay reports after the lexical chain (M0.5 completion).
+    let positions: Vec<_> = ["E0005", "E0001", "E0007", "E0008", "expected expression"].iter().map(|code| text.find(code).unwrap()).collect();
     assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{text}");
-    assert_eq!(text.matches("\"code\":").count(), 4, "{text}");
+    assert_eq!(text.matches("\"code\":").count(), 5, "{text}");
     let plain = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
     assert!(!plain.status.success());
     let stderr = String::from_utf8_lossy(&plain.stderr);

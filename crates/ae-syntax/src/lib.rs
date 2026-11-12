@@ -73,18 +73,38 @@ const MAX_LEX_DIAGNOSTICS: usize = 32;
 /// and complete invalid numeric literals,
 /// never returning tokens for an invalid source. All positions are calculated against the original input.
 pub fn lex_with_diagnostics(source: &str) -> Result<Vec<Token>, Vec<Diagnostic>> {
+    match lex_recovered(source) {
+        LexOutcome::Clean(tokens) => Ok(tokens),
+        LexOutcome::Recovered(_, diagnostics) | LexOutcome::Fatal(diagnostics) => Err(diagnostics),
+    }
+}
+
+// The full picture of a lexical pass: the token stream it produced, the
+// diagnostics it raised, and whether the stream is trustworthy. `Clean` is
+// the only all-clear outcome; `Recovered` means the stream is complete but
+// some characters were skipped or repaired; `Fatal` means the stream is
+// partial and callers must not parse it.
+pub enum LexOutcome {
+    Clean(Vec<Token>),
+    Recovered(Vec<Token>, Vec<Diagnostic>),
+    Fatal(Vec<Diagnostic>),
+}
+
+pub fn lex_recovered(source: &str) -> LexOutcome {
     let mut diagnostics = Vec::new();
-    let tokens = match lex_inner(source, Some(&mut diagnostics)) {
-        Ok(tokens) => tokens,
-        Err(LexFailure::Unexpected(diagnostic) | LexFailure::Fatal(diagnostic)) => {
+    match lex_inner(source, Some(&mut diagnostics)) {
+        Ok(tokens) if diagnostics.is_empty() => LexOutcome::Clean(tokens),
+        Ok(tokens) => LexOutcome::Recovered(tokens, diagnostics),
+        Err(LexFailure::Fatal(diagnostic)) => {
             diagnostics.push(diagnostic);
-            return Err(diagnostics);
+            LexOutcome::Fatal(diagnostics)
         }
-    };
-    if diagnostics.is_empty() {
-        Ok(tokens)
-    } else {
-        Err(diagnostics)
+        Err(LexFailure::Unexpected(diagnostic)) => {
+            // With a recovery sink, unexpected characters are repaired, so
+            // this arm means a caller reached lex_inner without one.
+            diagnostics.push(diagnostic);
+            LexOutcome::Fatal(diagnostics)
+        }
     }
 }
 /// Lex with a structured diagnostic, preserving byte offset and location.

@@ -1,0 +1,3 @@
+fn main() { print(@); }
+fn other() -> i64 { let x = 1; x = true; return x; }
+fn third() -> i64 { let y = ; return y; }
