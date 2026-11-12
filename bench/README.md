@@ -17,3 +17,6 @@ The latest round of results is indexed in `bench/results/<date>-<machine>/PLATFO
 Future requirements: longer and more diverse real-world workloads (the `map` count is added, but file organization workflows are still missing), refinement of repetition/randomization strategies, and recording of environmental factors like temperature; build peak memory needs to cover the entire process tree (job object / cgroup); and maintain reproducible definitions for cold/hot caches. Record the full environment and raw results. Run output can be redirected outside the project or to a user-selected file to avoid accidentally committing machine environment data to the repository.
 
 `python bench/phases.py` compiles the generated C into object files separately, then links them separately, running each five times and verifying the output. This experiment uses two GCC invocations, which is not strictly equivalent to a normal full build in a single invocation; results include process startup time and uncontrolled cache states.
+M0 report format: see `bench/reports/TEMPLATE.md`. A first single-platform sum
+baseline and its raw samples are in `bench/reports/2026-11-12-windows-sum-baseline.md`.
+Historical measurements remain under `bench/results/`.
