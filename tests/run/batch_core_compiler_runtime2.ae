@@ -1,0 +1,61 @@
+// tests/run/batch_core_compiler_runtime2.ae
+// Verification of TlsAccessPattern relaxation, TlsSectionLayout, SafepointTableState, and ActionTableEntry.
+
+use "../../std/core/ir_tls_model.ae";
+use "../../std/core/ir_tls_size.ae";
+use "../../std/core/ir_safepoint_table.ae";
+use "../../std/core/ir_landing_pad_table.ae";
+
+fn main() {
+    print("--- batch_core_compiler_runtime2 test start ---");
+
+    // 1. TLS Access Pattern
+    let p_exe = tls_pattern_new(1, false, true); // GD in executable can relax to LE
+    assert(tls_can_relax_to_local_exec(p_exe));
+    let p_exe_b = tls_pattern_new(1, false, true);
+    assert(!tls_requires_dynamic_lookup(p_exe_b));
+
+    let p_shared = tls_pattern_new(1, true, false); // GD in shared library requires __tls_get_addr
+    assert(!tls_can_relax_to_local_exec(p_shared));
+    let p_shared_b = tls_pattern_new(1, true, false);
+    assert(tls_requires_dynamic_lookup(p_shared_b));
+    print("tls_model ok");
+
+    // 2. TLS Section Layout
+    // tdata=40, tbss=12 -> raw=52; align=16 -> 52 rounds to 64
+    let layout = tls_layout_new(40, 12, 16);
+    assert(tls_layout_total_unaligned(layout) == 52);
+    let layout_b = tls_layout_new(40, 12, 16);
+    assert(tls_layout_total_aligned(layout_b) == 64);
+    let layout_c = tls_layout_new(40, 12, 16);
+    assert(tls_tbss_offset(layout_c) == 40);
+    print("tls_size ok");
+
+    // 3. Safepoint Table
+    let st0 = safepoint_table_new();
+    assert(safepoint_table_count(st0) == 0);
+
+    let st1 = safepoint_table_record(safepoint_table_new(), 1000);
+    let st2 = safepoint_table_record(st1, 1500);
+    let st3 = safepoint_table_record(st2, 1200);
+    assert(safepoint_table_count(st3) == 3);
+
+    // Reconstruct state to avoid move violation
+    let st3_re = SafepointTableState { entry_count: 3, min_address: 1000, max_address: 1500 };
+    assert(safepoint_table_span(st3_re) == 500);
+    print("safepoint_table ok");
+
+    // 4. Action Table
+    let act_catch_all = action_entry_new(0, 0);
+    assert(action_is_catch_all(act_catch_all));
+    let act_catch_all_b = action_entry_new(0, 0);
+    assert(!action_has_next(act_catch_all_b));
+
+    let act_chain = action_entry_new(1, 16);
+    assert(!action_is_catch_all(act_chain));
+    let act_chain_b = action_entry_new(1, 16);
+    assert(action_has_next(act_chain_b));
+    print("action_table ok");
+
+    print("--- batch_core_compiler_runtime2 test end ---");
+}

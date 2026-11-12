@@ -1,0 +1,6 @@
+--- batch_core_compiler_runtime2 test start ---
+tls_model ok
+tls_size ok
+safepoint_table ok
+action_table ok
+--- batch_core_compiler_runtime2 test end ---
