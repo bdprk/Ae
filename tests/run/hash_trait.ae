@@ -1,0 +1,29 @@
+use "../../std/core/hash.ae";
+
+pub struct Key {
+    id: i64,
+}
+
+impl Hash for Key {
+    fn hash(k: Key) -> i64 {
+        return k.id * 31 + 17;
+    }
+}
+
+fn compute_hash[T: Hash](item: T) -> i64 {
+    return hash(item);
+}
+
+fn main() {
+    let k1 = Key { id: 101 };
+    let k2 = Key { id: 101 };
+    let k3 = Key { id: 202 };
+    let h1 = compute_hash[Key](k1);
+    let h2 = compute_hash[Key](k2);
+    let h3 = compute_hash[Key](k3);
+    assert(h1 == h2);
+    assert(h1 != h3);
+    assert(compute_hash[bool](true) == 1);
+    assert(compute_hash[bool](false) == 0);
+    print("HASH TRAIT OPERATIONAL\n");
+}

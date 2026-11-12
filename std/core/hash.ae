@@ -1,0 +1,21 @@
+// std/core/hash.ae
+// Core Hash Trait Specification (M1.7 / M1.10)
+
+pub trait Hash {
+    fn hash(x: T) -> i64;
+}
+
+impl Hash for i64 {
+    fn hash(x: i64) -> i64 {
+        return x * 31 + 17;
+    }
+}
+
+impl Hash for bool {
+    fn hash(x: bool) -> i64 {
+        if x {
+            return 1;
+        }
+        return 0;
+    }
+}
