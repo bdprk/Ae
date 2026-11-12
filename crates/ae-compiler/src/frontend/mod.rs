@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 mod parser;
+mod expression;
 mod loader;
 use loader::{load_program, parse_source};
 pub use loader::{check_path, check_path_diagnostic, describe_path, FrontendDiagnostic, FrontendError};
