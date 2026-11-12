@@ -1,0 +1,6 @@
+--- batch_core_compiler_regalloc2 test start ---
+coalesce ok
+remat ok
+live_split ok
+call_clobber ok
+--- batch_core_compiler_regalloc2 test end ---

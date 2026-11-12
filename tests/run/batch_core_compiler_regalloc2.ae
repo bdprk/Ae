@@ -1,0 +1,61 @@
+// tests/run/batch_core_compiler_regalloc2.ae
+// Verification of Coalescing, Rematerialization, LiveRangeSplitting, and CallClobber masking.
+
+use "../../std/core/ir_coalesce.ae";
+use "../../std/core/ir_remat.ae";
+use "../../std/core/ir_live_split.ae";
+use "../../std/core/ir_call_clobber.ae";
+
+fn main() {
+    print("--- batch_core_compiler_regalloc2 test start ---");
+
+    // 1. Coalesce Candidate
+    let c_merge = coalesce_candidate_new(10, 20, false, 8);
+    assert(coalesce_can_merge(c_merge));
+    let c_merge_b = coalesce_candidate_new(10, 20, false, 8);
+    assert(coalesce_weight(c_merge_b) == 8);
+
+    let c_interfere = coalesce_candidate_new(10, 20, true, 8);
+    assert(!coalesce_can_merge(c_interfere));
+    print("coalesce ok");
+
+    // 2. Rematerialization
+    let r_cheap = remat_candidate_new(5, true, 1); // Cost 1 vs reload cost 4 -> remat
+    assert(remat_should_rematerialize(r_cheap, 4));
+
+    let r_expensive = remat_candidate_new(6, false, 10);
+    assert(!remat_should_rematerialize(r_expensive, 4));
+    print("remat ok");
+
+    // 3. Live Range Split
+    let sp = live_range_split_new(7, 10, 50, 30);
+    assert(live_range_split_is_valid(sp));
+    let sp_b = live_range_split_new(7, 10, 50, 30);
+    assert(live_range_first_half_len(sp_b) == 20);
+    let sp_c = live_range_split_new(7, 10, 50, 30);
+    assert(live_range_second_half_len(sp_c) == 20);
+
+    let sp_invalid = live_range_split_new(7, 10, 50, 60);
+    assert(!live_range_split_is_valid(sp_invalid));
+    print("live_split ok");
+
+    // 4. RegClobberMask
+    // caller_mask: 7 (binary 0111: regs 0, 1, 2 clobbered)
+    // callee_mask: 24 (binary 11000: regs 3, 4 preserved)
+    let mask = reg_clobber_mask_new(7, 24);
+    assert(reg_is_clobbered(mask, 0));
+    let mask_b = reg_clobber_mask_new(7, 24);
+    assert(reg_is_clobbered(mask_b, 1));
+    let mask_c = reg_clobber_mask_new(7, 24);
+    assert(!reg_is_clobbered(mask_c, 3));
+
+    let mask_d = reg_clobber_mask_new(7, 24);
+    assert(reg_is_preserved(mask_d, 3));
+    let mask_e = reg_clobber_mask_new(7, 24);
+    assert(reg_is_preserved(mask_e, 4));
+    let mask_f = reg_clobber_mask_new(7, 24);
+    assert(!reg_is_preserved(mask_f, 0));
+    print("call_clobber ok");
+
+    print("--- batch_core_compiler_regalloc2 test end ---");
+}
