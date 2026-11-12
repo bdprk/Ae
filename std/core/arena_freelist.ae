@@ -1,0 +1,39 @@
+// std/core/arena_freelist.ae
+// Conceptual segregation free-list node tracking primitive for arena allocators.
+
+pub struct FreeListNode {
+    block_offset: i64,
+    size: i64,
+}
+
+pub fn free_list_node_new(offset: i64, size: i64) -> FreeListNode {
+    return FreeListNode {
+        block_offset: offset,
+        size: size,
+    };
+}
+
+pub fn free_list_node_offset(node: FreeListNode) -> i64 {
+    return node.block_offset;
+}
+
+pub fn free_list_node_size(node: FreeListNode) -> i64 {
+    return node.size;
+}
+
+pub fn free_list_node_can_fit(node: FreeListNode, req_size: i64) -> bool {
+    return node.size >= req_size;
+}
+
+pub fn free_list_node_split(node: FreeListNode, alloc_size: i64) -> FreeListNode {
+    if node.size > alloc_size {
+        return FreeListNode {
+            block_offset: node.block_offset + alloc_size,
+            size: node.size - alloc_size,
+        };
+    }
+    return FreeListNode {
+        block_offset: node.block_offset,
+        size: 0,
+    };
+}

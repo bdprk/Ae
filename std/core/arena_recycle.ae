@@ -1,0 +1,36 @@
+// std/core/arena_recycle.ae
+// Chunk recycling and generation tracking primitive for Arena allocators.
+
+pub struct ChunkHeader {
+    chunk_id: i64,
+    generation: i64,
+    capacity: i64,
+}
+
+pub fn chunk_header_new(id: i64, cap: i64) -> ChunkHeader {
+    return ChunkHeader {
+        chunk_id: id,
+        generation: 1,
+        capacity: cap,
+    };
+}
+
+pub fn chunk_header_id(ch: ChunkHeader) -> i64 {
+    return ch.chunk_id;
+}
+
+pub fn chunk_header_generation(ch: ChunkHeader) -> i64 {
+    return ch.generation;
+}
+
+pub fn chunk_header_capacity(ch: ChunkHeader) -> i64 {
+    return ch.capacity;
+}
+
+pub fn chunk_header_recycle(ch: ChunkHeader) -> ChunkHeader {
+    return ChunkHeader {
+        chunk_id: ch.chunk_id,
+        generation: ch.generation + 1,
+        capacity: ch.capacity,
+    };
+}

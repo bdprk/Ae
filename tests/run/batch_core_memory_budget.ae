@@ -1,0 +1,58 @@
+use "../../std/core/arena_freelist.ae";
+use "../../std/core/arena_budget.ae";
+use "../../std/core/arena_recycle.ae";
+use "../../std/core/arena_guard.ae";
+
+fn main() {
+    let fl0 = free_list_node_new(100, 256);
+    assert(free_list_node_offset(fl0) == 100);
+    let fl0_b = free_list_node_new(100, 256);
+    assert(free_list_node_size(fl0_b) == 256);
+    let fl0_c = free_list_node_new(100, 256);
+    assert(free_list_node_can_fit(fl0_c, 128));
+    let fl0_d = free_list_node_new(100, 256);
+    assert(!free_list_node_can_fit(fl0_d, 512));
+
+    let fl_split = free_list_node_split(free_list_node_new(100, 256), 64);
+    assert(free_list_node_offset(fl_split) == 164);
+    let fl_split_b = free_list_node_split(free_list_node_new(100, 256), 64);
+    assert(free_list_node_size(fl_split_b) == 192);
+
+    let mb0 = memory_budget_new(1024);
+    assert(memory_budget_limit(mb0) == 1024);
+    let mb0_b = memory_budget_new(1024);
+    assert(memory_budget_allocated(mb0_b) == 0);
+    let mb0_c = memory_budget_new(1024);
+    assert(memory_budget_remaining(mb0_c) == 1024);
+    let mb0_d = memory_budget_new(1024);
+    assert(memory_budget_can_allocate(mb0_d, 512));
+
+    let mb1 = memory_budget_record_alloc(memory_budget_new(1024), 512);
+    assert(memory_budget_allocated(mb1) == 512);
+    let mb1_b = memory_budget_record_alloc(memory_budget_new(1024), 512);
+    assert(memory_budget_remaining(mb1_b) == 512);
+
+    let mb2 = memory_budget_record_free(memory_budget_record_alloc(memory_budget_new(1024), 512), 256);
+    assert(memory_budget_allocated(mb2) == 256);
+
+    let ch0 = chunk_header_new(1, 4096);
+    assert(chunk_header_id(ch0) == 1);
+    let ch0_b = chunk_header_new(1, 4096);
+    assert(chunk_header_generation(ch0_b) == 1);
+    let ch0_c = chunk_header_new(1, 4096);
+    assert(chunk_header_capacity(ch0_c) == 4096);
+
+    let ch1 = chunk_header_recycle(chunk_header_new(1, 4096));
+    assert(chunk_header_generation(ch1) == 2);
+
+    let canary = arena_guard_canary_value();
+    assert(arena_guard_is_valid_canary(canary));
+    assert(!arena_guard_is_valid_canary(12345));
+
+    assert(arena_guard_check_bounds(0, 100, 200));
+    assert(arena_guard_check_bounds(100, 100, 200));
+    assert(!arena_guard_check_bounds(150, 100, 200));
+    assert(!arena_guard_check_bounds(-1, 50, 200));
+
+    print("FREELIST BUDGET RECYCLE GUARD OPERATIONAL");
+}

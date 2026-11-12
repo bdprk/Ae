@@ -1,0 +1,18 @@
+// std/core/arena_guard.ae
+// Memory poison value and boundary guard primitives for allocators.
+
+pub fn arena_guard_canary_value() -> i64 {
+    // 0xDEADBEEF (3735928559 % 2147483647) = 1588444912
+    return 1588444912;
+}
+
+pub fn arena_guard_is_valid_canary(val: i64) -> bool {
+    return val == arena_guard_canary_value();
+}
+
+pub fn arena_guard_check_bounds(offset: i64, size: i64, capacity: i64) -> bool {
+    if offset < 0 || size < 0 {
+        return false;
+    }
+    return offset + size <= capacity;
+}

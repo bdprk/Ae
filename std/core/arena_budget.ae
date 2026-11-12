@@ -1,0 +1,51 @@
+// std/core/arena_budget.ae
+// Memory allocation quota and budget accounting primitive for AE core.
+
+pub struct MemoryBudget {
+    limit_bytes: i64,
+    allocated_bytes: i64,
+}
+
+pub fn memory_budget_new(limit: i64) -> MemoryBudget {
+    return MemoryBudget {
+        limit_bytes: limit,
+        allocated_bytes: 0,
+    };
+}
+
+pub fn memory_budget_limit(mb: MemoryBudget) -> i64 {
+    return mb.limit_bytes;
+}
+
+pub fn memory_budget_allocated(mb: MemoryBudget) -> i64 {
+    return mb.allocated_bytes;
+}
+
+pub fn memory_budget_remaining(mb: MemoryBudget) -> i64 {
+    if mb.limit_bytes >= mb.allocated_bytes {
+        return mb.limit_bytes - mb.allocated_bytes;
+    }
+    return 0;
+}
+
+pub fn memory_budget_can_allocate(mb: MemoryBudget, bytes_needed: i64) -> bool {
+    return mb.allocated_bytes + bytes_needed <= mb.limit_bytes;
+}
+
+pub fn memory_budget_record_alloc(mb: MemoryBudget, bytes_to_add: i64) -> MemoryBudget {
+    return MemoryBudget {
+        limit_bytes: mb.limit_bytes,
+        allocated_bytes: mb.allocated_bytes + bytes_to_add,
+    };
+}
+
+pub fn memory_budget_record_free(mb: MemoryBudget, bytes_to_remove: i64) -> MemoryBudget {
+    var next_alloc = mb.allocated_bytes - bytes_to_remove;
+    if next_alloc < 0 {
+        next_alloc = 0;
+    }
+    return MemoryBudget {
+        limit_bytes: mb.limit_bytes,
+        allocated_bytes: next_alloc,
+    };
+}
