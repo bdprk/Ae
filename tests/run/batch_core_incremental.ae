@@ -1,0 +1,91 @@
+use "../../std/core/ir_query_key.ae";
+use "../../std/core/ir_dep_graph.ae";
+use "../../std/core/ir_crate_interface.ae";
+use "../../std/core/ir_query_stats.ae";
+
+fn sample_stats() -> QueryStats {
+    // 3 recomputed, 7 reused: the shape of a session that changed one item.
+    let s0 = make_query_stats();
+    let s1 = stats_note_recompute(s0);
+    let s2 = stats_note_recompute(s1);
+    let s3 = stats_note_recompute(s2);
+    let s4 = stats_note_reuse(s3);
+    let s5 = stats_note_reuse(s4);
+    let s6 = stats_note_reuse(s5);
+    let s7 = stats_note_reuse(s6);
+    let s8 = stats_note_reuse(s7);
+    let s9 = stats_note_reuse(s8);
+    let s10 = stats_note_reuse(s9);
+    return s10;
+}
+
+fn main() {
+    // Query identity: kind, target and input fingerprint all take part.
+    assert(query_kind_is_known(query_kind_parse()));
+    assert(query_kind_is_known(query_kind_codegen()));
+    assert(!query_kind_is_known(0));
+    assert(!query_kind_is_known(6));
+    assert(query_key_matches(make_query_key(3, 42, 99), make_query_key(3, 42, 99)));
+    assert(!query_key_matches(make_query_key(3, 42, 99), make_query_key(3, 42, 100)));
+    assert(!query_key_matches(make_query_key(3, 42, 99), make_query_key(4, 42, 99)));
+    assert(!query_key_stale(make_query_key(3, 42, 99), 99));
+    assert(query_key_stale(make_query_key(3, 42, 99), 100));
+    assert(query_key_same_target(make_query_key(3, 42, 99), make_query_key(3, 42, 100)));
+    assert(!query_key_same_target(make_query_key(3, 42, 99), make_query_key(4, 42, 99)));
+    assert(query_key_digest(make_query_key(3, 42, 99)) == 25345393);
+    assert(query_key_digest(make_query_key(3, 42, 100)) == 25345394);
+    assert(query_key_digest(make_query_key(4, 42, 99)) == 1451449547);
+    assert(query_key_chain_digest(4, query_key_digest(make_query_key(3, 42, 99))) == 29345405);
+    assert(query_key_chain_digest(5, query_key_digest(make_query_key(3, 42, 99))) == 30345408);
+
+    // Dependency state: dirty marking, red/green reuse, invalidation counts.
+    assert(!dep_node_needs_recompute(make_dep_node(11, 8, 3), false));
+    assert(dep_node_needs_recompute(make_dep_node(11, 8, 3), true));
+    assert(dep_node_needs_recompute(dep_node_mark_dirty(make_dep_node(11, 8, 3)), false));
+    assert(!dep_node_needs_recompute(dep_node_mark_clean(dep_node_mark_dirty(make_dep_node(11, 8, 3))), false));
+    assert(dep_body_dependents(make_dep_node(11, 8, 3)) == 5);
+    assert(dep_invalidated_count(make_dep_node(11, 8, 3), false) == 5);
+    assert(dep_invalidated_count(make_dep_node(11, 8, 3), true) == 3);
+    assert(!dep_node_overcounts(make_dep_node(11, 8, 3)));
+    assert(dep_node_overcounts(make_dep_node(11, 2, 3)));
+    assert(dep_edge_is_self_loop(make_dep_edge(9, 9, false)));
+    assert(!dep_edge_is_self_loop(make_dep_edge(9, 10, true)));
+    assert(dep_edge_requires_interface_hash(make_dep_edge(9, 10, true)));
+    assert(!dep_edge_requires_interface_hash(make_dep_edge(9, 10, false)));
+    assert(dep_cycle_guard(5, 5));
+    assert(!dep_cycle_guard(4, 5));
+    assert(!dep_cycle_guard(0, 0));
+
+    // Crate interface summary: body edits are invisible, interface edits are not.
+    assert(crate_interface_summary_hash(make_crate_interface(7, 12, 5555, 1)) == 2100885371);
+    assert(crate_interface_summary_hash(make_crate_interface(7, 13, 5555, 1)) == 2101885374);
+    assert(crate_interface_summary_hash(make_crate_interface(7, 12, 5556, 1)) == 1379505878);
+    assert(crate_interface_summary_hash(make_crate_interface(7, 12, 5555, 2)) == 2100885372);
+    assert(crate_interface_unchanged(make_crate_interface(7, 12, 5555, 1), make_crate_interface(7, 12, 5555, 1)));
+    assert(!crate_interface_unchanged(make_crate_interface(7, 12, 5555, 1), make_crate_interface(7, 13, 5555, 1)));
+    assert(!crate_interface_unchanged(make_crate_interface(7, 12, 5555, 1), make_crate_interface(7, 12, 5556, 1)));
+    assert(!crate_interface_unchanged(make_crate_interface(7, 12, 5555, 1), make_crate_interface(7, 12, 5555, 2)));
+    assert(!crate_interface_unchanged(make_crate_interface(7, 12, 5555, 1), make_crate_interface(8, 12, 5555, 1)));
+    assert(crate_affected_crates(make_crate_interface(7, 12, 5555, 1), make_crate_interface(7, 12, 5555, 1), 5) == 0);
+    assert(crate_affected_crates(make_crate_interface(7, 12, 5555, 1), make_crate_interface(7, 13, 5555, 1), 5) == 6);
+    assert(crate_affected_crates(make_crate_interface(7, 12, 5555, 1), make_crate_interface(7, 13, 5555, 1), -1) == 0);
+    assert(crate_interface_abi_moved(make_crate_interface(7, 12, 5555, 1), make_crate_interface(7, 12, 5555, 2)));
+    assert(!crate_interface_abi_moved(make_crate_interface(7, 12, 5555, 1), make_crate_interface(7, 12, 5556, 1)));
+    assert(crate_interface_items_moved(make_crate_interface(7, 12, 5555, 1), make_crate_interface(7, 13, 5555, 1)));
+
+    // Session accounting.
+    assert(stats_total(sample_stats()) == 10);
+    assert(stats_reuse_permille(sample_stats()) == 700);
+    assert(stats_recompute_permille(sample_stats()) == 300);
+    assert(stats_exceeds_budget(sample_stats(), 200));
+    assert(!stats_exceeds_budget(sample_stats(), 300));
+    assert(stats_exceeds_budget(sample_stats(), -1));
+    assert(stats_total(make_query_stats()) == 0);
+    assert(stats_reuse_permille(make_query_stats()) == 0);
+    assert(stats_recompute_permille(make_query_stats()) == 0);
+    assert(!stats_exceeds_budget(make_query_stats(), 0));
+    assert(stats_total(stats_merge(sample_stats(), sample_stats())) == 20);
+    assert(stats_reuse_permille(stats_merge(sample_stats(), sample_stats())) == 700);
+
+    print("batch_core_incremental_all_passed");
+}
