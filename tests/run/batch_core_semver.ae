@@ -1,0 +1,107 @@
+use "../../std/core/ir_semver_order.ae";
+use "../../std/core/ir_version_req.ae";
+use "../../std/core/ir_mvs.ae";
+use "../../std/core/ir_lockfile.ae";
+
+fn v(major: i64, minor: i64, patch: i64) -> SemVerOrder {
+    return semver_release(major, minor, patch);
+}
+
+fn vp(major: i64, minor: i64, patch: i64, pre: i64) -> SemVerOrder {
+    return semver_order(major, minor, patch, pre);
+}
+
+fn pick(f: MvsFloor) -> MvsPick {
+    return mvs_resolve(f);
+}
+
+fn main() {
+    // Ordering: numeric fields left to right, then prerelease below release.
+    assert(semver_lt(v(1, 0, 0), v(2, 0, 0)));
+    assert(semver_gt(v(1, 10, 0), v(1, 2, 0)));
+    assert(semver_lt(vp(1, 0, 0, 1), v(1, 0, 0)));
+    assert(semver_gt(vp(1, 0, 0, 2), vp(1, 0, 0, 1)));
+    assert(semver_same(vp(1, 0, 0, 5), vp(1, 0, 0, 5)));
+    assert(semver_cmp(v(1, 2, 3), v(1, 2, 3)) == 0);
+    assert(semver_cmp(v(2, 0, 0), v(1, 9, 9)) == 1);
+    assert(semver_cmp(v(1, 9, 9), v(2, 0, 0)) == -1);
+    assert(semver_is_prerelease(vp(1, 0, 0, 1)));
+    assert(!semver_is_prerelease(v(1, 0, 0)));
+    assert(semver_same(semver_max(v(1, 0, 0), v(2, 0, 0)), v(2, 0, 0)));
+    assert(semver_same(semver_max(v(2, 0, 0), v(2, 0, 0)), v(2, 0, 0)));
+    assert(semver_compatible_major(v(1, 2, 3), v(1, 9, 0)));
+    assert(!semver_compatible_major(v(0, 2, 3), v(0, 3, 0)));
+    assert(semver_compatible_major(v(0, 2, 3), v(0, 2, 3)));
+    assert(!semver_compatible_major(v(2, 0, 0), v(1, 0, 0)));
+
+    // Caret: the pre-1.0 special cases are the ones that bite.
+    assert(req_caret_allows(v(1, 2, 3), v(1, 2, 3)));
+    assert(req_caret_allows(v(1, 2, 3), v(1, 9, 0)));
+    assert(!req_caret_allows(v(1, 2, 3), v(2, 0, 0)));
+    assert(!req_caret_allows(v(1, 2, 3), v(1, 2, 2)));
+    assert(req_caret_allows(v(0, 2, 3), v(0, 2, 9)));
+    assert(!req_caret_allows(v(0, 2, 3), v(0, 3, 0)));
+    assert(!req_caret_allows(v(0, 2, 3), v(0, 2, 2)));
+    assert(req_caret_allows(v(0, 0, 3), v(0, 0, 3)));
+    assert(!req_caret_allows(v(0, 0, 3), v(0, 0, 4)));
+    assert(!req_caret_allows(v(0, 0, 3), v(0, 1, 0)));
+
+    // Tilde and exact.
+    assert(req_tilde_allows(v(1, 2, 3), v(1, 2, 9)));
+    assert(!req_tilde_allows(v(1, 2, 3), v(1, 3, 0)));
+    assert(!req_tilde_allows(v(1, 2, 3), v(1, 2, 2)));
+    assert(req_exact_allows(v(1, 2, 3), v(1, 2, 3)));
+    assert(!req_exact_allows(v(1, 2, 3), v(1, 2, 4)));
+
+    // Dispatch fails closed on an unknown kind.
+    assert(req_kind_is_known(req_kind_exact()));
+    assert(req_kind_is_known(req_kind_tilde()));
+    assert(!req_kind_is_known(0));
+    assert(!req_kind_is_known(9));
+    assert(req_matches(req_kind_caret(), v(1, 2, 3), v(1, 5, 0)));
+    assert(!req_matches(req_kind_caret(), v(1, 2, 3), v(2, 0, 0)));
+    assert(!req_matches(9, v(1, 2, 3), v(1, 2, 3)));
+
+    // A prerelease never satisfies a release requirement.
+    assert(!req_allows_prerelease(v(1, 0, 0), vp(1, 0, 0, 1)));
+    assert(req_allows_prerelease(vp(1, 0, 0, 1), vp(1, 1, 0, 1)));
+    assert(req_allows_prerelease(v(1, 0, 0), v(1, 0, 1)));
+
+    assert(req_caret_upper_bound_ok(v(1, 2, 3), v(1, 9, 9)));
+    assert(!req_caret_upper_bound_ok(v(1, 2, 3), v(2, 0, 0)));
+    assert(req_caret_upper_bound_ok(v(0, 2, 3), v(0, 2, 9)));
+    assert(!req_caret_upper_bound_ok(v(0, 2, 3), v(0, 3, 0)));
+
+    // MVS: the floor only rises, so requirement order cannot matter.
+    assert(!mvs_floor_has_requirements(mvs_new_floor(7)));
+    assert(mvs_pick_matches(pick(mvs_require(mvs_new_floor(7), 1, 2, 3)), 7, 1, 2, 3));
+    assert(mvs_pick_matches(pick(mvs_require(mvs_require(mvs_new_floor(7), 1, 2, 3), 1, 3, 0)), 7, 1, 3, 0));
+    // A lower requirement after a higher one leaves the floor where it was.
+    assert(mvs_pick_matches(pick(mvs_require(mvs_require(mvs_require(mvs_new_floor(7), 1, 2, 3), 1, 3, 0), 1, 2, 9)), 7, 1, 3, 0));
+    assert(mvs_same_pick(
+        pick(mvs_require(mvs_require(mvs_require(mvs_new_floor(7), 1, 2, 3), 1, 3, 0), 1, 2, 9)),
+        pick(mvs_require(mvs_require(mvs_require(mvs_new_floor(7), 1, 3, 0), 1, 2, 9), 1, 2, 3))));
+    assert(mvs_would_raise(mvs_require(mvs_new_floor(7), 1, 2, 3), 1, 4, 0));
+    assert(!mvs_would_raise(mvs_require(mvs_new_floor(7), 1, 2, 3), 1, 1, 0));
+    assert(mvs_pick_is_exact(pick(mvs_require(mvs_require(mvs_new_floor(7), 1, 2, 3), 1, 3, 0)), 1, 3, 0));
+    assert(!mvs_pick_is_exact(pick(mvs_require(mvs_require(mvs_new_floor(7), 1, 2, 3), 1, 3, 0)), 1, 2, 3));
+
+    // Lock entries: a version mismatch or an unverified checksum forces a rewrite.
+    assert(lock_source_is_known(lock_source_registry()));
+    assert(lock_source_is_known(lock_source_path()));
+    assert(!lock_source_is_known(0));
+    assert(lock_entry_matches_pick(lock_entry(7, 1, 3, 0, lock_source_registry(), true), 7, 1, 3, 0));
+    assert(!lock_entry_matches_pick(lock_entry(7, 1, 3, 0, lock_source_registry(), true), 8, 1, 3, 0));
+    assert(!lock_entry_needs_update(lock_entry(7, 1, 3, 0, lock_source_registry(), true), 7, 1, 3, 0));
+    assert(lock_entry_needs_update(lock_entry(7, 1, 3, 0, lock_source_registry(), true), 7, 1, 4, 0));
+    assert(lock_entry_is_trusted(lock_entry(7, 1, 3, 0, lock_source_registry(), true)));
+    assert(!lock_entry_is_trusted(lock_entry(7, 1, 3, 0, lock_source_registry(), false)));
+    assert(lock_entry_is_trusted(lock_entry(7, 1, 3, 0, lock_source_path(), false)));
+    assert(lock_entry_requires_checksum(lock_entry(7, 1, 3, 0, lock_source_git(), true)));
+    assert(!lock_entry_requires_checksum(lock_entry(7, 1, 3, 0, lock_source_path(), true)));
+    assert(!lockfile_needs_rewrite(lock_entry(7, 1, 3, 0, lock_source_registry(), true), 7, 1, 3, 0));
+    assert(lockfile_needs_rewrite(lock_entry(7, 1, 3, 0, lock_source_registry(), false), 7, 1, 3, 0));
+    assert(lock_entry_same_package(lock_entry(7, 1, 3, 0, lock_source_git(), true), lock_entry(7, 2, 0, 0, lock_source_git(), false)));
+
+    print("batch_core_semver_all_passed");
+}
