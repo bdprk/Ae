@@ -1,0 +1,14 @@
+// std/core/ascii.ae
+// Core ASCII Classification Primitives (M1.4)
+
+pub fn ascii_is_digit(b: i64) -> bool {
+    return b >= 48 && b <= 57; // '0'..'9'
+}
+
+pub fn ascii_is_alpha(b: i64) -> bool {
+    return (b >= 65 && b <= 90) || (b >= 97 && b <= 122); // 'A'..'Z' or 'a'..'z'
+}
+
+pub fn ascii_is_whitespace(b: i64) -> bool {
+    return b == 32 || b == 9 || b == 10 || b == 13; // ' ', '\t', '\n', '\r'
+}

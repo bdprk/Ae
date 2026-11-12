@@ -1,0 +1,22 @@
+// std/core/atomic.ae
+// Core Atomic Word & Ordering Markers (M1.4 / M4.1)
+
+pub struct AtomicI64 {
+    val: i64,
+}
+
+pub fn atomic_new(init: i64) -> AtomicI64 {
+    return AtomicI64 { val: init };
+}
+
+pub fn atomic_load_relaxed(a: AtomicI64) -> i64 {
+    return a.val;
+}
+
+pub fn atomic_store_relaxed(a: AtomicI64, new_val: i64) -> AtomicI64 {
+    return AtomicI64 { val: new_val };
+}
+
+pub fn atomic_add_relaxed(a: AtomicI64, delta: i64) -> AtomicI64 {
+    return AtomicI64 { val: a.val + delta };
+}

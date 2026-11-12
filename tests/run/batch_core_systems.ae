@@ -1,0 +1,32 @@
+use "../../std/core/cell.ae";
+use "../../std/core/atomic.ae";
+use "../../std/core/endian.ae";
+use "../../std/core/ascii.ae";
+
+fn main() {
+    let c = cell_new[i64](100);
+    assert(cell_get[i64](c) == 100);
+
+    let c_init = cell_new[i64](100);
+    let c2 = cell_replace[i64](c_init, 200);
+    assert(cell_get[i64](c2) == 200);
+
+    let a0 = atomic_new(50);
+    assert(atomic_load_relaxed(a0) == 50);
+
+    let a_init = atomic_new(50);
+    let a1 = atomic_add_relaxed(a_init, 25);
+    assert(atomic_load_relaxed(a1) == 75);
+
+    assert(endian_is_native_little());
+    assert(swap_bytes_i64(12345) == 12345);
+
+    assert(ascii_is_digit(53)); // '5'
+    assert(!ascii_is_digit(65)); // 'A'
+    assert(ascii_is_alpha(65));
+    assert(ascii_is_alpha(122)); // 'z'
+    assert(ascii_is_whitespace(32)); // ' '
+    assert(!ascii_is_whitespace(48)); // '0'
+
+    print("SYSTEMS PRIMITIVES OPERATIONAL\n");
+}

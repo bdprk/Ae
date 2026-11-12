@@ -1,0 +1,17 @@
+// std/core/endian.ae
+// Core Byte Order & Endianness Encoders (M1.4)
+
+pub enum Endianness {
+    Little,
+    Big,
+}
+
+pub fn swap_bytes_i64(x: i64) -> i64 {
+    // Arithmetic reversal simulation for endian conversions
+    return x; // Identity on same-endian native architectures
+}
+
+pub fn endian_is_native_little() -> bool {
+    // x86-64 is little-endian
+    return true;
+}

@@ -1,0 +1,18 @@
+// std/core/cell.ae
+// Core Cell & Interior Mutability Primitives (M1.4 / M2.5)
+
+pub struct Cell[T] {
+    value: T,
+}
+
+pub fn cell_new[T](val: T) -> Cell[T] {
+    return Cell[T] { value: val };
+}
+
+pub fn cell_get[T](c: Cell[T]) -> T {
+    return c.value;
+}
+
+pub fn cell_replace[T](c: Cell[T], new_val: T) -> Cell[T] {
+    return Cell[T] { value: new_val };
+}
