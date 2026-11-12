@@ -1,0 +1,19 @@
+use "../../std/core/iter.ae";
+
+fn step_iter[T: Iterator](it: T) -> Option[i64] {
+    return next(it);
+}
+
+fn main() {
+    let r = Range { current: 5, end: 10 };
+    let first = step_iter[Range](r);
+    match first {
+        Option::Some(val) => {
+            assert(val == 5);
+            print("ITERATOR TRAIT SUCCEEDED\n");
+        }
+        Option::None => {
+            assert(false);
+        }
+    }
+}
