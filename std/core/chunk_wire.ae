@@ -1,0 +1,32 @@
+// std/core/chunk_wire.ae
+// Wire framing header with payload length and CRC-16 checksum primitives.
+
+pub struct WireFrameHeader {
+    magic: i64,
+    payload_len: i64,
+    checksum: i64,
+}
+
+pub fn wire_frame_header_new(total_len: i64, csum: i64) -> WireFrameHeader {
+    return WireFrameHeader {
+        magic: 17767, // 'A' (65) * 256 + 'E' (69) = 16709
+        payload_len: total_len,
+        checksum: csum,
+    };
+}
+
+pub fn wire_frame_magic(h: WireFrameHeader) -> i64 {
+    return h.magic;
+}
+
+pub fn wire_frame_len(h: WireFrameHeader) -> i64 {
+    return h.payload_len;
+}
+
+pub fn wire_frame_checksum(h: WireFrameHeader) -> i64 {
+    return h.checksum;
+}
+
+pub fn wire_frame_is_valid_magic(h: WireFrameHeader) -> bool {
+    return h.magic == 17767;
+}

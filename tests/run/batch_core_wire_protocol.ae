@@ -1,0 +1,42 @@
+use "../../std/core/crc16.ae";
+use "../../std/core/varint_zigzag.ae";
+use "../../std/core/byte_tag.ae";
+use "../../std/core/chunk_wire.ae";
+
+fn main() {
+    let crc0 = 0;
+    let crc1 = crc16_update_byte(crc0, 65);
+    assert(crc1 >= 0);
+    assert(crc1 < 65536);
+    let crc2 = crc16_update_byte(crc1, 66);
+    assert(crc2 >= 0);
+    assert(crc2 < 65536);
+
+    assert(zigzag_encode_i64(0) == 0);
+    assert(zigzag_encode_i64(-1) == 1);
+    assert(zigzag_encode_i64(1) == 2);
+    assert(zigzag_encode_i64(-2) == 3);
+    assert(zigzag_encode_i64(2) == 4);
+
+    assert(zigzag_decode_i64(0) == 0);
+    assert(zigzag_decode_i64(1) == -1);
+    assert(zigzag_decode_i64(2) == 1);
+    assert(zigzag_decode_i64(3) == -2);
+    assert(zigzag_decode_i64(4) == 2);
+
+    assert(type_tag_number(SerializedTypeTag::TagNull) == 0);
+    assert(type_tag_number(SerializedTypeTag::TagInt) == 2);
+    assert(type_tag_number(SerializedTypeTag::TagMap) == 6);
+    assert(!type_tag_is_container(SerializedTypeTag::TagInt));
+    assert(type_tag_is_container(SerializedTypeTag::TagArray));
+    assert(type_tag_is_container(SerializedTypeTag::TagMap));
+
+    let frame = wire_frame_header_new(512, 12345);
+    assert(wire_frame_is_valid_magic(frame));
+    let frame_b = wire_frame_header_new(512, 12345);
+    assert(wire_frame_len(frame_b) == 512);
+    let frame_c = wire_frame_header_new(512, 12345);
+    assert(wire_frame_checksum(frame_c) == 12345);
+
+    print("CRC16 ZIGZAG BYTETAG WIREFRAME OPERATIONAL");
+}

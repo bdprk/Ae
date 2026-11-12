@@ -1,0 +1,40 @@
+// std/core/byte_tag.ae
+// Serialized type tag marker classification primitives for AE core.
+
+pub enum SerializedTypeTag {
+    TagNull,
+    TagBool,
+    TagInt,
+    TagFloat,
+    TagString,
+    TagArray,
+    TagMap,
+}
+
+pub fn type_tag_number(tag: SerializedTypeTag) -> i64 {
+    var num = 0;
+    match tag {
+        SerializedTypeTag::TagNull => { num = 0; }
+        SerializedTypeTag::TagBool => { num = 1; }
+        SerializedTypeTag::TagInt => { num = 2; }
+        SerializedTypeTag::TagFloat => { num = 3; }
+        SerializedTypeTag::TagString => { num = 4; }
+        SerializedTypeTag::TagArray => { num = 5; }
+        SerializedTypeTag::TagMap => { num = 6; }
+    }
+    return num;
+}
+
+pub fn type_tag_is_container(tag: SerializedTypeTag) -> bool {
+    var r = false;
+    match tag {
+        SerializedTypeTag::TagNull => {}
+        SerializedTypeTag::TagBool => {}
+        SerializedTypeTag::TagInt => {}
+        SerializedTypeTag::TagFloat => {}
+        SerializedTypeTag::TagString => {}
+        SerializedTypeTag::TagArray => { r = true; }
+        SerializedTypeTag::TagMap => { r = true; }
+    }
+    return r;
+}

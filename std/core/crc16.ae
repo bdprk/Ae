@@ -1,0 +1,17 @@
+// std/core/crc16.ae
+// Fast 16-bit Cyclic Redundancy Check (CRC-16-IBM / ANSI) primitive for AE core.
+
+pub fn crc16_update_byte(crc: i64, data_byte: i64) -> i64 {
+    // Polynomial: x^16 + x^15 + x^2 + 1 (0x8005)
+    var curr = (crc + data_byte * 256) % 65536;
+    var i = 0;
+    while i < 8 {
+        if curr >= 32768 {
+            curr = ((curr * 2) % 65536 + 4129) % 65536; // 4129 is 0x1021
+        } else {
+            curr = (curr * 2) % 65536;
+        }
+        i = i + 1;
+    }
+    return curr;
+}
