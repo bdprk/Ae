@@ -1,0 +1,58 @@
+// tests/run/batch_core_compiler_cfg2.ae
+// Verification of Dominator tree, NaturalLoop, CriticalEdge splitting, and PostDominator tree.
+
+use "../../std/core/ir_cfg_dom.ae";
+use "../../std/core/ir_cfg_loop.ae";
+use "../../std/core/ir_cfg_critical.ae";
+use "../../std/core/ir_cfg_postdom.ae";
+
+fn main() {
+    print("--- batch_core_compiler_cfg2 test start ---");
+
+    // 1. Dominator Tree Node
+    let root = dom_node_new(0, 0, 0);
+    assert(dom_is_root(root));
+    let child = dom_node_new(1, 0, 1);
+    assert(!dom_is_root(child));
+    let child_b = dom_node_new(1, 0, 1);
+    assert(dom_idom(child_b) == 0);
+    let child_c = dom_node_new(1, 0, 1);
+    assert(dom_depth(child_c) == 1);
+    print("dom_tree ok");
+
+    // 2. Natural Loop
+    let loop1 = natural_loop_new(1, 3, 0, true);
+    assert(loop_is_reducible(loop1));
+    let loop1_b = natural_loop_new(1, 3, 0, true);
+    assert(loop_header(loop1_b) == 1);
+    let loop1_c = natural_loop_new(1, 3, 0, true);
+    assert(loop_latch(loop1_c) == 3);
+    let loop1_d = natural_loop_new(1, 3, 0, true);
+    assert(loop_preheader(loop1_d) == 0);
+    print("natural_loop ok");
+
+    // 3. Critical Edge
+    // src has 2 succs, dst has 2 preds -> critical edge
+    let crit = critical_edge_new(1, 4, 2, 2);
+    assert(critical_edge_is_critical(crit));
+    let crit_b = critical_edge_new(1, 4, 2, 2);
+    assert(critical_edge_needs_split(crit_b));
+
+    // src has 1 succ, dst has 2 preds -> not critical
+    let non_crit = critical_edge_new(2, 4, 1, 2);
+    assert(!critical_edge_is_critical(non_crit));
+    print("critical_edge ok");
+
+    // 4. Post-Dominator Tree Node
+    let exit_node = postdom_node_new(5, 5, 0);
+    assert(postdom_is_exit(exit_node));
+    let p_child = postdom_node_new(4, 5, 1);
+    assert(!postdom_is_exit(p_child));
+    let p_child_b = postdom_node_new(4, 5, 1);
+    assert(postdom_ipostdom(p_child_b) == 5);
+    let p_child_c = postdom_node_new(4, 5, 1);
+    assert(postdom_depth(p_child_c) == 1);
+    print("postdom ok");
+
+    print("--- batch_core_compiler_cfg2 test end ---");
+}

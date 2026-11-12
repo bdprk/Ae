@@ -1,0 +1,6 @@
+--- batch_core_compiler_cfg2 test start ---
+dom_tree ok
+natural_loop ok
+critical_edge ok
+postdom ok
+--- batch_core_compiler_cfg2 test end ---
