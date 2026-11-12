@@ -30,3 +30,13 @@ module example entry point. Any failed compilation or byte difference fails
 the comparison. Run it on each platform being verified, using binaries built
 for that platform. Comparing a binary with itself is only a tool smoke test;
 it does not establish equivalence across a refactor.
+
+
+### Snapshot tests
+
+Run `python scripts/snapshots.py` to check UI, JSON diagnostics, and execution
+snapshots. Select one with `--suite ui`, `--suite json`, or `--suite run`.
+Add `--bless` only when intentionally updating expected output, then review
+the diff; exit-code expectations are maintained separately. The command without
+`--bless` ignores any inherited `AE_BLESS` setting and does not rewrite
+snapshots.
