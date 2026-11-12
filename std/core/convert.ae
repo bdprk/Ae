@@ -1,0 +1,21 @@
+// std/core/convert.ae
+// Core Conversion and Identity Traits (M1.4 / M1.7)
+
+pub trait IntoI64 {
+    fn into_i64(x: T) -> i64;
+}
+
+impl IntoI64 for i64 {
+    fn into_i64(x: i64) -> i64 {
+        return x;
+    }
+}
+
+impl IntoI64 for bool {
+    fn into_i64(x: bool) -> i64 {
+        if x {
+            return 1;
+        }
+        return 0;
+    }
+}

@@ -1,0 +1,24 @@
+use "../../std/core/convert.ae";
+
+pub struct Counter {
+    ticks: i64,
+}
+
+impl IntoI64 for Counter {
+    fn into_i64(c: Counter) -> i64 {
+        return c.ticks;
+    }
+}
+
+fn convert_to_i64[T: IntoI64](val: T) -> i64 {
+    return into_i64(val);
+}
+
+fn main() {
+    let c = Counter { ticks: 4096 };
+    assert(convert_to_i64[Counter](c) == 4096);
+    assert(convert_to_i64[i64](500) == 500);
+    assert(convert_to_i64[bool](true) == 1);
+    assert(convert_to_i64[bool](false) == 0);
+    print("CONVERSION TRAITS OPERATIONAL\n");
+}
