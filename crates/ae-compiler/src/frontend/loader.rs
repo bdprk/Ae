@@ -113,14 +113,23 @@ impl RecoveryState {
                     if !matches!(tokens.get(index + 2).map(|t| &t.kind), Some(Kind::LParen)) { return Vec::new(); }
                     let Some(&id) = self.ids.get(id_index) else { return Vec::new() };
                     id_index += 1;
-                    let (mut functions, mut structs, mut struct_names, mut enums, mut enum_names, mut generics) =
-                        (self.functions.clone(), self.structs.clone(), self.struct_names.clone(), self.enums.clone(), self.enum_names.clone(), self.generics.clone());
-                    let mut parser = make_parser(file, source, Rc::clone(&tokens), &mut functions, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut generics);
-                    parser.pos = index + 2;
-                    if let Err(diagnostic) = parser.function_rest(depth == 0 && name == "main", id) {
+                    let mut replay_tokens = Rc::clone(&tokens);
+                    loop {
+                        let (mut functions, mut structs, mut struct_names, mut enums, mut enum_names, mut generics) =
+                            (self.functions.clone(), self.structs.clone(), self.struct_names.clone(), self.enums.clone(), self.enum_names.clone(), self.generics.clone());
+                        let mut parser = make_parser(file, source, Rc::clone(&replay_tokens), &mut functions, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut generics);
+                        parser.pos = index + 2;
+                        let diagnostic = match parser.function_rest(depth == 0 && name == "main", id) {
+                            Ok(_) => break,
+                            Err(diagnostic) => diagnostic,
+                        };
+                        let replacement = independent_unknown_print(&replay_tokens, &diagnostic);
                         if !result.contains(&diagnostic) { result.push(diagnostic); }
                         if result.len() == 32 { break; }
+                        let Some(replacement) = replacement else { break };
+                        Rc::make_mut(&mut replay_tokens)[replacement].kind = Kind::Number(0);
                     }
+                    if result.len() == 32 { break; }
                 }
                 _ => {}
             }
@@ -128,6 +137,20 @@ impl RecoveryState {
         if id_index != self.ids.len() && result.len() < 32 { return Vec::new(); }
         result
     }
+}
+
+// Replaying an invalid standalone print with an integer placeholder has no
+// binding, move, borrow, or control-flow effects. Do not infer a replacement
+// for more complex expressions or for diagnostics without an exact token span.
+fn independent_unknown_print(tokens: &[Token], diagnostic: &ae_span::Diagnostic) -> Option<usize> {
+    if diagnostic.code.as_deref() != Some("E0101") { return None; }
+    let range = &diagnostic.primary.as_ref()?.span.range;
+    let index = tokens.iter().position(|token| token.offset == range.start && token.end == range.end)?;
+    if index < 2 || !matches!(tokens[index].kind, Kind::Ident(_)) { return None; }
+    if !matches!(tokens[index - 2].kind, Kind::Print) || !matches!(tokens[index - 1].kind, Kind::LParen)
+        || !matches!(tokens.get(index + 1).map(|token| &token.kind), Some(Kind::RParen))
+        || !matches!(tokens.get(index + 2).map(|token| &token.kind), Some(Kind::Semi)) { return None; }
+    Some(index)
 }
 
 struct LoadingFile {

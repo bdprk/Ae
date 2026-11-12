@@ -4204,3 +4204,34 @@ fn invalid_escapes_in_closed_strings_allow_json_lexical_recovery() {
     assert!(generated.stdout.is_empty());
     fs::remove_dir_all(dir).unwrap();
 }
+
+
+#[test]
+fn check_json_recovers_independent_unknown_prints_in_one_body() {
+    let dir = unique_temp_dir("json-multiple-prints");
+    let path = dir.join("bad.ae");
+    fs::write(&path, "fn main() { print(first_missing); print(second_missing); print(third_missing); }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    let json = String::from_utf8(output.stdout).unwrap();
+    let positions: Vec<_> = ["first_missing", "second_missing", "third_missing"].iter().map(|name| json.find(name).unwrap()).collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{json}");
+    assert_eq!(json.matches("\"code\":\"E0101\"").count(), 3, "{json}");
+    let plain = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+    assert!(!plain.status.success());
+    let stderr = String::from_utf8_lossy(&plain.stderr);
+    assert!(stderr.contains("first_missing") && !stderr.contains("second_missing"), "{stderr}");
+    let generated = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-c").arg(&path).output().unwrap();
+    assert!(!generated.status.success() && generated.stdout.is_empty());
+    fs::write(&path, "fn main() { print(first_missing + 1); print(second_missing); }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert!(json.contains("first_missing") && !json.contains("second_missing"), "{json}");
+    let many = (0..40).map(|i| format!("print(missing_{i}); ")).collect::<String>();
+    fs::write(&path, format!("fn main() {{ {many} }}\n")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&path).output().unwrap();
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(json.matches("\"code\":\"E0101\"").count(), 32, "{json}");
+    assert!(!json.contains("missing_32"), "{json}");
+    fs::remove_dir_all(dir).unwrap();
+}
