@@ -122,22 +122,23 @@ def peak_mb(args, env=None):
     and the bias hit the fastest program hardest (ADR-53). Wall time and peak
     memory are now separate passes.
     """
-    process = subprocess.Popen([str(x) for x in args], stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL, env=env)
-    peak = None
-    while process.poll() is None:
-        value = peak_bytes(process.pid)
-        if value is not None and (peak is None or value > peak):
-            peak = value
-        time.sleep(0.001)
-    process.wait()
-    if process.returncode != 0:
-        # The timed pass already reported the failure with its stderr.
-        return None
-    return None if peak is None else peak / (1024 * 1024)
+    with tempfile.TemporaryFile() as stderr:
+        process = subprocess.Popen([str(x) for x in args], stdout=subprocess.DEVNULL,
+                                   stderr=stderr, env=env)
+        peak = None
+        while process.poll() is None:
+            value = peak_bytes(process.pid)
+            if value is not None and (peak is None or value > peak):
+                peak = value
+            time.sleep(0.001)
+        process.wait()
+        if process.returncode != 0:
+            stderr.seek(0)
+            raise subprocess.CalledProcessError(process.returncode, args, stderr=stderr.read())
+        return None if peak is None else peak / (1024 * 1024)
 
 
-def timed(args, env=None):
+def timed(args, env=None, peak_args=None, peak_env=None):
     cpu_before = child_cpu_ms()
     start = time.perf_counter_ns()
     result = subprocess.run([str(x) for x in args], capture_output=True, env=env)
@@ -146,7 +147,9 @@ def timed(args, env=None):
     if result.returncode != 0:
         raise subprocess.CalledProcessError(result.returncode, args, result.stdout, result.stderr)
     cpu_ms = None if cpu_before is None or cpu_after is None else max(0.0, cpu_after - cpu_before)
-    return {"wall_ms": wall_ms, "cpu_ms": cpu_ms, "peak_mb": peak_mb(args, env)}
+    peak = peak_mb(peak_args if peak_args is not None else args,
+                   peak_env if peak_env is not None else env)
+    return {"wall_ms": wall_ms, "cpu_ms": cpu_ms, "peak_mb": peak, "stdout": result.stdout}
 
 
 def _median(values):
@@ -195,7 +198,8 @@ def main():
                  "of the direct child, sampled every millisecond while it runs, so a child that exits between samples "
                  "reports nothing and a build that spawns grandchildren (gcc, rustc codegen) reports only the driver's "
                  "peak. AE builds reuse its content-addressed cache unless --cold gives every build a fresh empty "
-                 "cache dir."),
+                 "cache dir. Every timed run's output is checked against the workload expectation or its round's AE output. "
+                 "Build peak memory uses a separate output path and, for cold AE builds, a separate empty cache."),
         "cpu_method": cpu_method,
         "peak_method": ("Windows GetProcessMemoryInfo PeakWorkingSetSize" if os.name == "nt"
                         else "Linux /proc/<pid>/status VmHWM") + " sampled in a separate run from the timed one",
@@ -245,9 +249,25 @@ def run_workload(workload, tmp, compiler, options):
                 env = {**os.environ, "AE_CACHE": str(cold)}
             if exe[lang].exists():
                 exe[lang].unlink()
-            builds[lang].append(timed(build_args[lang], env=env))
+            peak_exe = tmp / (workload + "-" + lang + "-peak" + suffix)
+            if peak_exe.exists():
+                peak_exe.unlink()
+            peak_env = env
+            if options.cold and lang == "ae":
+                peak_cold = tmp / f"cold-{workload}-{lang}-peak"
+                shutil.rmtree(peak_cold, ignore_errors=True)
+                peak_env = {**os.environ, "AE_CACHE": str(peak_cold)}
+            peak_build = build_commands(workload, lang, peak_exe, compiler, options)
+            builds[lang].append(timed(build_args[lang], env=env, peak_args=peak_build, peak_env=peak_env))
+        round_expected = expected
         for lang in langs:
-            runs[lang].append(timed(run_args[lang]))
+            sample = timed(run_args[lang])
+            output = sample["stdout"].replace(b"\r\n", b"\n").strip()
+            if round_expected is None:
+                round_expected = output
+            if output != round_expected:
+                raise RuntimeError(f"{lang} timed output disagreed: {output!r} vs {round_expected!r}")
+            runs[lang].append(sample)
     outputs = {}
     for lang in langs:
         # Normalize line endings: AE's stdout is opened in text mode on

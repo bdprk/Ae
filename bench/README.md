@@ -1,6 +1,6 @@
 # Exploratory Benchmarking
 
-`python bench/run.py` tests development mode, `python bench/run.py --release` tests optimized mode, and adding `--cold` forces each AE build to use a fresh, empty cache directory (measuring a clean compilation). `--workload sum|text|map|all` selects the workload (defaulting to all three). The script utilizes native Python, Rust, GCC, and Go, first compiling the AE compiler, then compiling/running each implementation while verifying consistent output. It records wall-clock time, executable size, direct child process CPU time (on platforms supporting `getrusage`), and peak memory for every build and run. Repetitions are interleaved across languages within each round. The process uses the system temporary directory, and results are output as JSON.
+`python bench/run.py` tests development mode, `python bench/run.py --release` tests optimized mode, and adding `--cold` forces each AE build to use a fresh, empty cache directory (measuring a clean compilation). `--workload sum|text|map|all` selects the workload (defaulting to all three). The script utilizes native Python, Rust, GCC, and Go, first compiling the AE compiler, then compiling/running each implementation while checking every timed run output and a separate final run. It records wall-clock time, executable size, direct child process CPU time (on platforms supporting `getrusage`), and peak memory for every build and run. Repetitions are interleaved across languages within each round. The process uses the system temporary directory, and results are output as JSON.
 
 Three workloads:
 
@@ -20,3 +20,10 @@ Future requirements: longer and more diverse real-world workloads (the `map` cou
 M0 report format: see `bench/reports/TEMPLATE.md`. A first single-platform sum
 baseline and its raw samples are in `bench/reports/2026-11-12-windows-sum-baseline.md`.
 Historical measurements remain under `bench/results/`.
+
+The runner validates each timed run against the fixed `sum` result or the
+AE result for the same round. The separate memory pass is not output
+validated. Build memory passes use separate executable paths, and cold AE
+measurements use separate empty caches for timing and memory. Memory-pass failures
+abort the run rather than being reported as unavailable samples. Reports
+created before this change retain their original measurement limitations.
