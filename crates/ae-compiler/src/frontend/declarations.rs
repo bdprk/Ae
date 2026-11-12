@@ -18,7 +18,7 @@ impl Parser<'_> {
     pub(super) fn check_export_types(&self, name: &str, params: &[Type], ret: Type) -> Result<(), ae_span::Diagnostic> {
         for ty in params.iter().copied().chain(std::iter::once(ret)) {
             let (kind, type_name, public) = match ty {
-                Type::Struct(id) => ("struct", self.structs[id].name.clone(), self.structs[id].public),
+                Type::Struct(id) | Type::StructRef(id) => ("struct", self.structs[id].name.clone(), self.structs[id].public),
                 Type::Enum(_, id) => ("enum", self.enums[id].name.to_owned(), self.enums[id].public),
                 _ => continue,
             };
@@ -341,24 +341,43 @@ impl Parser<'_> {
             if self.generics.inherent.len() >= 256 { return Err(self.fail("method limit exceeded (256 per program)")); }
             self.take(Kind::LParen)?;
             let mut types: Vec<Type> = Vec::new();
-            let mut receiver = false;
+            let mut receiver: Option<Type> = None;
             if *self.current() != Kind::RParen {
                 loop {
                     if types.len() >= 8 { return Err(self.fail("method parameter limit exceeded (8)")); }
                     // A leading `self` is the receiver; everything else is an
                     // ordinary `name: Type` parameter. An impl block may hold
                     // both, and `self` only counts in first position.
+                    // `&self` borrows the receiver read-only (ADR-0184): the
+                    // body reads fields through a pointer and the caller keeps
+                    // ownership, so calling the method no longer moves.
+                    let mut borrowed = false;
                     if types.is_empty() && *self.current() == Kind::Amp {
-                        return Err(self.fail("'&self' is not supported: borrows exist only for string, vec, and map, so a method takes its receiver by value as 'self'"));
-                    }
-                    let is_receiver = types.is_empty() && matches!(self.current(), Kind::Ident(text) if text.as_str() == "self");
-                    if is_receiver {
+                        self.pos += 1;
+                        if matches!(self.current(), Kind::Ident(text) if text.as_str() == "mut") {
+                            return Err(self.fail("'&mut self' does not exist yet: struct borrows are read-only, so a method that needs to mutate takes 'self' by value"));
+                        }
+                        if !matches!(self.current(), Kind::Ident(text) if text.as_str() == "self") {
+                            return Err(self.fail("write '&self' to borrow the receiver read-only; any other borrowed parameter is written 'name: &Type'"));
+                        }
                         self.pos += 1;
                         if *self.current() == Kind::Colon {
-                            return Err(self.fail(&format!("write the receiver as 'self'; it already has type '{type_name}'")));
+                            return Err(self.fail("write the receiver as '&self'; it already has the borrowed receiver type"));
                         }
-                        types.push(Type::Struct(sid));
-                        receiver = true;
+                        borrowed = true;
+                    }
+                    let is_receiver = types.is_empty() && (borrowed || matches!(self.current(), Kind::Ident(text) if text.as_str() == "self"));
+                    if is_receiver {
+                        if !borrowed {
+                            self.pos += 1;
+                            if *self.current() == Kind::Colon {
+                                return Err(self.fail(&format!("write the receiver as 'self'; it already has type '{}'", self.structs[sid].name)));
+                            }
+                            receiver = Some(Type::Struct(sid));
+                        } else {
+                            receiver = Some(Type::StructRef(sid));
+                        }
+                        types.push(receiver.unwrap());
                     } else {
                         let _param = self.identifier()?;
                         self.take(Kind::Colon)?;
@@ -371,6 +390,12 @@ impl Parser<'_> {
             self.take(Kind::RParen)?;
             self.take(Kind::Arrow)?;
             let ret = self.parameter_type()?;
+            // A borrow may not be returned: the receiver's borrow ends with the
+            // call, so anything it points at would be owned by the caller's
+            // stack frame and dangle.
+            if matches!(ret, Type::StructRef(_)) {
+                return Err(self.fail("a method cannot return a borrow; return a value that outlives the borrow instead, or take the borrow again at the call site"));
+            }
             self.generics.next_fn_id = self.generics.next_fn_id.max(*next_id);
             let id = self.generics.next_fn_id;
             self.generics.next_fn_id += 1;
@@ -482,24 +507,28 @@ impl Parser<'_> {
         let first = self.identifier()?;
         // The same shape decision the signature pass made, asked again from the
         // tokens: `for` means a trait impl, its absence an inherent one.
-        let receiver = if *self.current() == Kind::For {
+        let inherent_type = if *self.current() == Kind::For {
             self.take(Kind::For)?;
             self.parameter_type()?;
             None
         } else {
-            let sid = *self.struct_names.get(&first).ok_or_else(|| self.fail(&format!("unknown struct '{first}'")))?;
-            Some(Type::Struct(sid))
+            if !self.struct_names.contains_key(&first) { return Err(self.fail(&format!("unknown struct '{first}'"))); }
+            Some(first.clone())
         };
         self.take(Kind::LBrace)?;
         while *self.current() != Kind::RBrace {
             if *self.current() == Kind::Eof { return Err(self.fail("expected '}' before end of file")); }
             self.take_pub();
             self.take(Kind::Fn)?;
-            let _method = self.identifier()?;
+            let method = self.identifier()?;
             let id = self.id_order[result.len()];
-            // The body pass knows the receiver's type; the parameter list does
-            // not repeat it, so it is carried in the parser state instead.
-            self.receiver = receiver;
+            // The body pass binds `self` to the type the signature pass gave
+            // THIS method — by value or as a read-only borrow — so an impl
+            // block can mix `self` and `&self` methods. A trait impl has no
+            // inherent entry, and its bodies never see `self`.
+            self.receiver = inherent_type.as_ref()
+                .and_then(|type_name| self.generics.inherent.get(&format!("{type_name}#{method}")))
+                .and_then(|def| def.receiver);
             let parsed = self.function_rest(false, id);
             self.receiver = None;
             result.push(parsed?);
@@ -567,11 +596,21 @@ impl Parser<'_> {
     pub(super) fn function_rest(&mut self, is_main: bool, id: usize) -> Result<Function, ae_span::Diagnostic> {
         self.take(Kind::LParen)?;
         // Variable ids restart per function, so move tracking must too.
-        self.names.clear(); self.binding_ranges.clear(); self.next_var = 0; self.moved.clear(); self.scopes.clear(); self.borrows.clear();
+        self.names.clear(); self.binding_ranges.clear(); self.next_var = 0; self.moved.clear(); self.scopes.clear(); self.borrows.clear(); self.call_borrows.clear();
         let mut params = Vec::new();
         if *self.current() != Kind::RParen {
             loop {
                 if params.len() >= 64 { return Err(self.fail("function parameter limit exceeded (64)")); }
+                // A borrowed receiver is spelled `&self` in the source. The
+                // signature pass already recorded the borrow in the receiver
+                // type, so the `&` here is only spelling and is skipped before
+                // the name is read (ADR-0184).
+                if params.is_empty() && *self.current() == Kind::Amp {
+                    self.pos += 1;
+                    if !matches!(self.current(), Kind::Ident(text) if text.as_str() == "self") {
+                        return Err(self.fail("write '&self' to borrow the receiver; any other borrowed parameter is written 'name: &Type'"));
+                    }
+                }
                 // `var` marks the parameter slot writable. The value was moved
                 // in at the call site, so mutating this copy cannot be seen by
                 // the caller; that difference is what keeps it safe.
@@ -679,7 +718,7 @@ impl Parser<'_> {
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
-            borrows: Vec::new(), scopes: Vec::new(), subst, trait_bounds, receiver: None, pending: Vec::new(),
+            borrows: Vec::new(), call_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst, trait_bounds, receiver: None, pending: Vec::new(),
         };
         let parsed = sub.function_rest(false, id);
         let mut nested = std::mem::take(&mut sub.pending);
@@ -735,6 +774,33 @@ impl Parser<'_> {
                     let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown array '{arg}'")))?;
                     if actual != Type::Array(len) { return Err(self.fail(&format!("argument requires array of length {len}"))); }
                     args.push(Argument::Borrow(var, false));
+                } else if let Type::StructRef(sid) = expected {
+                    // `&Struct` (ADR-0184) borrows a bare struct variable for
+                    // the duration of the call, exactly like the container
+                    // borrows: no move, no copy, and the caller may not write
+                    // or move the struct while the borrow can be read.
+                    self.take(Kind::Amp)?;
+                    let arg = self.identifier()?;
+                    let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown variable '{arg}'")).with_code("E0101"))?;
+                    match actual {
+                        Type::Struct(owned_sid) if owned_sid == sid => {
+                            if self.moved.contains(&var) { return Err(moved_value_hint(self.binding_label(self.fail(&format!("cannot borrow '{arg}' because it was moved")).with_code("E0102"), var))); }
+                            // The borrow lives only as long as this call, so it
+                            // goes on the statement-scoped register: the next
+                            // statement may write the struct again.
+                            if !self.is_borrowed(var) {
+                                self.call_borrows.push((var, self.scopes.len()));
+                            }
+                            args.push(Argument::Borrow(var, true));
+                        }
+                        // A borrow parameter forwards its pointer unchanged:
+                        // the callee's reads are already covered by the borrow
+                        // the caller received.
+                        Type::StructRef(forwarded_sid) if forwarded_sid == sid => {
+                            args.push(Argument::Borrow(var, false));
+                        }
+                        other => return Err(self.fail(&format!("argument must be {}, found {}", expected.name(), other.name()))),
+                    }
                 } else {
                     // By-value arguments always consume their value:
                     // the callee releases the parameter, so the caller

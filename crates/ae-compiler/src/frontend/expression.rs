@@ -19,7 +19,7 @@ impl Parser<'_> {
         let Some(def) = self.generics.inherent.get(&key).cloned() else {
             return Err(self.no_such_method(type_name, &method, "associated function"));
         };
-        if def.receiver {
+        if def.receiver.is_some() {
             return Err(self.error_at(offset, &format!("'{type_name}::{method}' takes a receiver; call it as 'value.{method}(...)' instead")));
         }
         if !def.signature.public {
@@ -772,7 +772,10 @@ impl Parser<'_> {
             self.pos += 1;
             let fname = self.identifier()?;
             let (base, base_ty) = lhs;
-            let sid = match base_ty { Type::Struct(sid) => sid, other => return Err(self.fail(&format!("type {} has no fields", other.name()))) };
+            // Field access works on owned structs and on read-only borrows of
+            // them (ADR-0184): the borrowed form reads through the pointer and
+            // emits the same `Expr::Field`, whose C emission is member access.
+            let sid = match base_ty { Type::Struct(sid) | Type::StructRef(sid) => sid, other => return Err(self.fail(&format!("type {} has no fields", other.name()))) };
             // `value.method(args)` resolves to the method's ordinary function,
             // with the receiver as argument 0 (M1.2). Nothing is added to the
             // backend: the call it builds is the one a hand-written call builds.
@@ -782,16 +785,49 @@ impl Parser<'_> {
                 let Some(method) = self.generics.inherent.get(&key).cloned() else {
                     return Err(self.no_such_method(&struct_name, &fname, "method"));
                 };
-                if !method.receiver {
+                let Some(receiver_ty) = method.receiver else {
                     return Err(self.fail(&format!("'{struct_name}::{fname}' is an associated function, so it takes no receiver; call it as '{struct_name}::{fname}(...)'")));
-                }
+                };
                 let signature = method.signature;
+                // A borrowed receiver (ADR-0184) auto-borrows at the call
+                // site: the caller keeps ownership and only a bare struct
+                // variable (or a borrow itself) can be lent, since the borrow
+                // must be covered by storage that outlives the call.
+                if matches!(receiver_ty, Type::StructRef(_)) {
+                    let params = signature.params[1..].to_vec();
+                    let mut args = self.call_arguments(&format!("{struct_name}.{fname}"), &params)?;
+                    match (&base, base_ty) {
+                        (Expr::Variable(id, ..), Type::Struct(_)) => {
+                            let id = *id;
+                            if self.moved.contains(&id) {
+                                return Err(moved_value_hint(self.binding_label(self.fail(&format!("cannot borrow the receiver of '{fname}' because it was moved")).with_code("E0102"), id)));
+                            }
+                            if !self.is_borrowed(id) {
+                                self.call_borrows.push((id, self.scopes.len()));
+                            }
+                            args.insert(0, Argument::Borrow(id, true));
+                        }
+                        (Expr::Variable(id, ..), Type::StructRef(_)) => {
+                            // A borrow parameter forwards its pointer; the
+                            // caller's own borrow already covers the reads.
+                            args.insert(0, Argument::Borrow(*id, false));
+                        }
+                        _ => return Err(self.fail(&format!("'{fname}' borrows its receiver, so the receiver must be a bare struct variable; bind the value to a variable first"))),
+                    }
+                    lhs = (Expr::Call(signature.id, args, signature.ret), signature.ret);
+                    continue;
+                }
                 // The receiver is a by-value parameter, so an owned receiver
-                // moves here exactly as it would in a plain call.
+                // moves here exactly as it would in a plain call. A borrowed
+                // struct has no value to move: its storage belongs to the
+                // lender, so a by-value method is simply out of reach.
+                if matches!(base_ty, Type::StructRef(_)) {
+                    return Err(self.fail(&format!("'{fname}' takes its receiver by value, but the receiver is a borrow with no value to move; call it on the owned variable")));
+                }
                 match &base {
                     Expr::Variable(id, ty, _, _) if ty.owned() => {
                         let id = *id;
-                        if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                        if self.is_borrowed(id) {
                             return Err(self.fail(&format!("cannot move the receiver of '{fname}' while it is borrowed")));
                         }
                         if self.moved.contains(&id) {
@@ -820,18 +856,31 @@ impl Parser<'_> {
         }
         // Move bookkeeping happens once the full postfix chain is known:
         // bare owned variables move; owned fields are borrows and can never
-        // be moved out of their struct.
+        // be moved out of their struct. A binary operator changes what the
+        // chain means: a string `+` consumes its left operand (so an owned
+        // variable is marked here, before the right side can read it again),
+        // while every other operator — and the `+` itself when the operand
+        // is a field or element view — only reads.
+        let operator_follows = matches!(self.current(),
+            Kind::Plus | Kind::Minus | Kind::Star | Kind::Slash | Kind::Percent
+            | Kind::EqEq | Kind::NotEq | Kind::Less | Kind::LessEq
+            | Kind::Greater | Kind::GreaterEq | Kind::And | Kind::Or);
+        let plus_follows = *self.current() == Kind::Plus;
+        // Inside a string `+` the operands are read, so a field or an
+        // element view is copied instead of rejected (concat.ae rule); an
+        // owned variable is still consumed, checked and marked.
+        let read_only_operand = self.plus_operand_depth > 0;
         if moving {
             let move_target = match (&lhs.0, lhs.1) {
                 (_, ty) if !ty.owned() => None,
-                (Expr::Variable(id, _, _, _), _) => {
-                    if self.borrows.iter().any(|&(bid, _)| bid == *id) {
+                (Expr::Variable(id, _, _, _), _) if !operator_follows || plus_follows => {
+                    if self.is_borrowed(*id) {
                         return Err(self.fail("cannot move a value while it is borrowed"));
                     }
                     Some(MoveKind::Var(*id))
                 }
-                (Expr::Field(_, _, fty), _) if fty.owned() => Some(MoveKind::Field),
-                (Expr::StrVecIndex(_, _, _, _, _), _) => Some(MoveKind::StrVecElement),
+                (Expr::Field(_, _, fty), _) if fty.owned() && !operator_follows && !read_only_operand => Some(MoveKind::Field),
+                (Expr::StrVecIndex(_, _, _, _, _), _) if !operator_follows && !read_only_operand => Some(MoveKind::StrVecElement),
                 _ => None,
             };
             match move_target {
@@ -855,7 +904,14 @@ impl Parser<'_> {
             let (line, column) = self.position();
             self.pos += 1;
             // `+` always consumes its string operands, even in borrow contexts.
-            let (rhs, rhs_ty) = self.expression(prec + 1, op == Kind::Plus)?;
+            // A string `+` reads fields and vector elements rather than
+            // rejecting them, so the right-hand side is parsed with the
+            // plus-operand flag raised: variables are still move-checked,
+            // but borrow-shaped operands are copied by the emitter.
+            self.plus_operand_depth += 1;
+            let parsed = self.expression(prec + 1, op == Kind::Plus);
+            self.plus_operand_depth -= 1;
+            let (rhs, rhs_ty) = parsed?;
             let (lhs_expr, lhs_ty) = lhs;
             let ty = match op {
                 Kind::And | Kind::Or => {
@@ -889,7 +945,8 @@ impl Parser<'_> {
                     // The left operand was parsed in the caller's mode; using it
                     // here consumes it, so retroactively record the move. Only a
                     // plain owned variable is consumed: fields, vector elements
-                    // and views are borrowed and get copied by the emitter.
+                    // and views are borrowed and get copied by the emitter. The
+                    // right operand follows the same rule.
                     if lhs_ty == Type::String {
                         if let Expr::Variable(id, ty, _, _) = &lhs_expr {
                             if ty.owned() && !self.moved.contains(id) { self.moved.insert(*id); }

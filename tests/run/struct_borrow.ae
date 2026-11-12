@@ -1,0 +1,66 @@
+// ADR-0184: structs can be borrowed read-only.
+// `&Rect` parameters and `&self` methods read through a pointer without
+// moving the receiver, and the caller keeps every right the borrow's end
+// restores: writing fields, reassigning, and moving after the call.
+struct Point { x: i64, y: i64 }
+struct Rect { origin: Point, w: i64, h: i64, label: string }
+
+impl Point {
+    fn manhattan(self) -> i64 {
+        if self.x < 0 { return 0 - self.x + self.y; }
+        return self.x + self.y;
+    }
+}
+
+impl Rect {
+    fn area(&self) -> i64 {
+        return self.w * self.h;
+    }
+    fn wide(&self, least: i64) -> bool {
+        return self.w >= least;
+    }
+    fn origin_sum(&self) -> i64 {
+        // A shared method may call another shared method on the borrow.
+        return self.origin_sum_inner();
+    }
+    fn origin_sum_inner(&self) -> i64 {
+        return self.origin.x + self.origin.y;
+    }
+}
+
+fn area_of(r: &Rect) -> i64 {
+    return r.w * r.h;
+}
+
+fn label_lines(r: &Rect) -> i64 {
+    // A string field read through the borrow works wherever a view works.
+    return count_lines_with(r.label, "e");
+}
+
+fn inner_area(r: &Rect) -> i64 {
+    return r.area();
+}
+
+fn outer_area(r: &Rect) -> i64 {
+    // A borrow parameter forwards as a borrow, not as a copy.
+    return inner_area(&r);
+}
+
+fn main() {
+    var r = Rect { origin: Point { x: 3, y: 4 }, w: 10, h: 3, label: "the plot" };
+    print(area_of(&r));
+    print(r.area());
+    print(r.wide(5));
+    print(r.wide(50));
+    print(r.origin_sum());
+    print(outer_area(&r));
+    print(label_lines(&r));
+    // The borrow ended with each call, so the struct is writable again.
+    r.w = 20;
+    r.label = "wide field";
+    print(r.area());
+    print(label_lines(&r));
+    // A method with a by-value receiver still moves: order it last.
+    let p = Point { x: 7, y: 8 };
+    print(p.manhattan());
+}

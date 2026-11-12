@@ -1,0 +1,11 @@
+struct Rect { w: i64, h: i64 }
+
+fn peek(r: &Rect) -> i64 {
+    let alias = r;
+    return r.w;
+}
+
+fn main() {
+    let r = Rect { w: 2, h: 3 };
+    print(peek(&r));
+}

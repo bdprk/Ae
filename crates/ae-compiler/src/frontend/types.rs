@@ -440,9 +440,47 @@ impl Parser<'_> {
                 }
                 return Ok(Type::VecRef);
             }
-            if matches!(self.current(), Kind::Ident(_)) {
+            if matches!(self.current(), Kind::Ident(name) if name == "mut") {
                 return Err(self.error_at(amp_offset,
-                    "unsupported borrow type; write &string, &vec, &vec[string], &vec[f64], &[i64; N], or &T inside a generic function"));
+                    "'&mut' does not exist yet: struct borrows are read-only, so a method that needs to mutate takes 'self' by value"));
+            }
+            if matches!(self.current(), Kind::Ident(_)) {
+                // `&Struct` (ADR-0184) borrows a user struct read-only: the
+                // callee reads fields through a pointer and the borrow's
+                // lifetime is the call, the same contract the container
+                // borrows already give. A generic instantiation borrows its
+                // own instantiation, e.g. `&Pair[string, i64]`.
+                let borrowed = match self.current() {
+                    Kind::Ident(text) => text.clone(),
+                    _ => unreachable!("the enclosing guard checked for an identifier"),
+                };
+                if let Some(&sid) = self.struct_names.get(borrowed.as_str()) {
+                    let def = &self.structs[sid];
+                    self.require_public("struct", &def.name.clone(), &def.file.clone(), def.public)?;
+                    self.pos += 1;
+                    return Ok(Type::StructRef(sid));
+                }
+                if let Some(&gid) = self.generics.struct_names.get(borrowed.as_str()) {
+                    let offset = self.tokens[self.pos].offset;
+                    self.pos += 1;
+                    if *self.current() != Kind::LBracket {
+                        return Err(self.fail(&format!("'&{borrowed}' is a generic struct; write its type arguments, e.g. &{borrowed}[string]")));
+                    }
+                    self.pos += 1;
+                    let mut args = Vec::new();
+                    loop {
+                        args.push(self.named_type()?);
+                        if *self.current() != Kind::Comma { break; }
+                        self.pos += 1;
+                    }
+                    self.take(Kind::RBracket)?;
+                    let sid = self.instantiate_struct(gid, args, offset)?;
+                    let def = &self.structs[sid];
+                    self.require_public("struct", &def.name.clone(), &def.file.clone(), def.public)?;
+                    return Ok(Type::StructRef(sid));
+                }
+                return Err(self.error_at(amp_offset,
+                    "unsupported borrow type; write &string, &vec, &vec[string], &vec[f64], &Struct, &[i64; N], or &T inside a generic function"));
             }
             self.take(Kind::LBracket)?;
             if self.identifier()? != "i64" { return Err(self.fail("array element type must be i64")); }
@@ -458,6 +496,12 @@ impl Parser<'_> {
         }
     }
     pub(super) fn return_annotation(&mut self) -> Result<Type, ae_span::Diagnostic> {
+        // No borrow can be returned: a borrow of a parameter would outlive the
+        // callee's frame, and a borrow of a local would outlive the local.
+        // (ADR-0184) Returning a value is always sound, and callers re-borrow.
+        if *self.current() == Kind::Amp {
+            return Err(self.fail("a function cannot return a borrow; return an owned value and let callers borrow it themselves"));
+        }
         self.named_type()
     }
     // First pass collects only signatures. Bodies are checked in the second pass.

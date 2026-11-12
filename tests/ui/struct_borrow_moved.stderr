@@ -1,0 +1,1 @@
+ae: $DIR/struct_borrow_moved.ae:10:12: cannot borrow 'r' because it was moved

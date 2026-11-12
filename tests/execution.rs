@@ -3256,6 +3256,35 @@ fn run_command_reports_status_and_output() {
 }
 
 #[test]
+fn concat_reads_fields_and_equality_does_not_consume() {
+    // ADR-0184 follow-up: a binary operator changes what the postfix chain
+    // means, so the move check must not decide before the operator is seen.
+    // A string `+` copies field and element views, comparisons copy nothing,
+    // and an owned variable is consumed exactly once even as `s + s`.
+    let source = concat!(
+        "struct Label { text: string }\n",
+        "fn tag(l: Label) -> string {\n",
+        "    return l.text + \"/x\";\n",
+        "}\n",
+        "fn main() {\n",
+        "    let l = Label { text: \"field\" };\n",
+        "    print(tag(l));\n",
+        "    let s = \"abc\";\n",
+        "    let t = \"abd\";\n",
+        "    let b = s == t;\n",
+        "    print(b);\n",
+        "    print(s);\n",
+        "    let parts = split(\"a-b-c\", \"-\");\n",
+        "    let joined = parts[0] + \"!\" + parts[2];\n",
+        "    print(joined);\n",
+        "}\n",
+    );
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "field/x\nfalse\nabc\na!c\n");
+}
+
+#[test]
 fn generic_borrow_parameters_resolve_at_each_call_site() {
     // `&T` is not a new borrow kind: after substitution it is one of the three
     // read-only borrows the language already has, with the same call syntax.
@@ -3289,7 +3318,7 @@ fn main() {
         ("fn f[T](x: &T) -> i64 { return len(x); } fn main() { print(f[i64](1)); }", "has no read-only borrow"),
         ("fn f[T](x: &T) -> i64 { return len(x); } fn main() { print(f[bool](true)); }", "has no read-only borrow"),
         ("fn f(x: &T) -> i64 { return len(x); } fn main() { print(1); }", "unsupported borrow type"),
-        ("fn f[T](x: T) -> &T { return x; } fn main() { print(f[i64](1)); }", "expected identifier"),
+        ("fn f[T](x: T) -> &T { return x; } fn main() { print(f[i64](1)); }", "cannot return a borrow"),
         ("struct B[T] { v: &T } fn main() { print(1); }", "expected identifier"),
         // A borrowed string vector is not a borrowed i64 vector.
         ("fn inner(v: &vec) -> i64 { return len(v); } fn outer(v: &vec[string]) -> i64 { return inner(&v); } fn main() { print(1); }", "argument must be vec"),

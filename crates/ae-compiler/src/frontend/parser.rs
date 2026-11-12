@@ -83,7 +83,19 @@ impl<'a> Parser<'a> {
         self.moved.retain(|id| live.contains(id));
         let depth_now = self.scopes.len();
         self.borrows.retain(|&(_, depth)| depth <= depth_now);
+        self.call_borrows.retain(|&(_, depth)| depth <= depth_now);
         Ok(result)
+    }
+    // Is any borrow of this slot live? Two registers feed the answer:
+    // `borrows` holds the persistent borrows (views, token cursors, the
+    // containers of for-in loops, match subjects) that last until their
+    // scope or loop ends, and `call_borrows` holds the borrows a call
+    // argument created, which die when the statement that made the call
+    // ends -- the callee has returned by then and nothing retains the
+    // pointer (ADR-0184).
+    pub(super) fn is_borrowed(&self, id: usize) -> bool {
+        self.borrows.iter().any(|&(bid, _)| bid == id)
+            || self.call_borrows.iter().any(|&(bid, _)| bid == id)
     }
     // Views borrow their base: element reads and slice_views of variable
     // bases register the owner so it cannot be modified or moved while a
@@ -91,7 +103,7 @@ impl<'a> Parser<'a> {
     pub(super) fn record_borrow_bases(&mut self, e: &Expr) {
         match e {
             Expr::StrVecIndex(id, idx, _, _, _) => {
-                if !self.borrows.iter().any(|&(bid, _)| bid == *id) {
+                if !self.is_borrowed(*id) {
                     self.borrows.push((*id, self.scopes.len()));
                 }
                 self.record_borrow_bases(idx);
@@ -149,6 +161,9 @@ impl<'a> Parser<'a> {
         let mut declared = Vec::new();
         let mut result = Vec::new();
         while *self.current() != Kind::RBrace {
+            // A call argument's borrow covered only the statement that made
+            // the call; the next statement may write the struct again.
+            self.call_borrows.clear();
             match self.current().clone() {
                 Kind::Let | Kind::Var => {
                     let mutable = *self.current() == Kind::Var; self.pos += 1;
@@ -197,6 +212,9 @@ impl<'a> Parser<'a> {
                         if matches!(ty, Type::VecRef | Type::StrVecRef) {
                             return Err(self.fail("cannot store a borrowed vector in a variable; pass it directly to a parameter that borrows"));
                         }
+                        if matches!(ty, Type::StructRef(_)) {
+                            return Err(self.fail("cannot store a borrowed struct in a variable; pass it directly to a parameter that borrows"));
+                        }
                         (Statement::Declare(id, value), ty)
                     };
                     self.names.insert(name.clone(), (id, mutable, ty));
@@ -231,7 +249,7 @@ impl<'a> Parser<'a> {
                         if self.moved.contains(&id) { return Err(moved_value_hint(self.binding_label(self.fail(&format!("cannot use '{target}' because it was moved")).with_code("E0102"), id))); }
                         if !matches!(ty, Type::Vec | Type::StrVec | Type::VecF) { return Err(self.fail(&format!("{name} expects a vec, found {}", ty.name()))); }
                         if !mutable { return Err(self.immutable_binding_error(self.fail(&format!("cannot modify immutable variable '{target}'")).with_code("E0103"), id)); }
-                        if self.borrows.iter().any(|&(bid, _)| bid == id) { return Err(self.fail(&format!("cannot modify '{target}' while it is borrowed"))); }
+                        if self.is_borrowed(id) { return Err(self.fail(&format!("cannot modify '{target}' while it is borrowed"))); }
                         // Ordering in place: qsort for i64, byte order for
                         // strings, so sorted output is identical on both
                         // platforms. The vector keeps its length.
@@ -292,7 +310,7 @@ impl<'a> Parser<'a> {
                     if (ty == Type::Map || ty == Type::MapF) && *self.current() == Kind::LBracket {
                         // `m[key] = value;` inserts or overwrites. The key is
                         // copied by the runtime, so a view or temporary is fine.
-                        if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                        if self.is_borrowed(id) {
                             return Err(self.fail(&format!("cannot modify '{name}' while it is borrowed")));
                         }
                         let (line, col) = self.position();
@@ -314,7 +332,7 @@ impl<'a> Parser<'a> {
                     } else if ty == Type::StrVec && *self.current() == Kind::LBracket {
                         // Overwriting an element releases the old string, so a
                         // live borrow of any element blocks it.
-                        if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                        if self.is_borrowed(id) {
                             return Err(self.fail(&format!("cannot modify '{name}' while it is borrowed")));
                         }
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
@@ -325,7 +343,7 @@ impl<'a> Parser<'a> {
                         if !matches!(value_ty, Type::String | Type::StrView) { return Err(self.fail("vector elements must be string")); }
                         result.push(Statement::StrVecStore(id, index, value, line, col, value_ty == Type::StrView));
                     } else if (ty == Type::Vec || ty == Type::VecF) && *self.current() == Kind::LBracket {
-                        if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                        if self.is_borrowed(id) {
                             return Err(self.fail(&format!("cannot modify '{name}' while it is borrowed")));
                         }
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
@@ -342,7 +360,7 @@ impl<'a> Parser<'a> {
                         }
                     } else if let Type::Enum(_, _) = ty {
                         // Assigning an enum releases the old payload first.
-                        if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                        if self.is_borrowed(id) {
                             return Err(self.fail(&format!("cannot assign to '{name}' while it is borrowed")));
                         }
                         self.take(Kind::Equal)?;
@@ -354,6 +372,15 @@ impl<'a> Parser<'a> {
                         }
                         self.moved.remove(&id);
                         result.push(Statement::Assign(id, value, true));
+                    } else if let Type::StructRef(_) = ty {
+                        // A struct borrow is read-only (ADR-0184): neither the
+                        // pointer nor anything behind it may be written, so
+                        // both spellings get their own diagnostic instead of
+                        // falling into the scalar-assignment path.
+                        if *self.current() == Kind::Dot {
+                            return Err(self.fail(&format!("cannot write through '{name}': struct borrows are read-only in this version")));
+                        }
+                        return Err(self.fail(&format!("cannot assign to '{name}': struct borrows are read-only in this version")));
                     } else if let Type::Struct(sid) = ty {
                         if *self.current() == Kind::Dot {
                             self.take(Kind::Dot)?;
@@ -367,7 +394,7 @@ impl<'a> Parser<'a> {
                             if (fty == Type::Map || fty == Type::MapF) && *self.current() == Kind::LBracket {
                                 // `s.counts[key] = n;` writes through the field,
                                 // so the record itself stays in place.
-                                if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                                if self.is_borrowed(id) {
                                     return Err(self.fail(&format!("cannot modify '{name}' while it is borrowed")));
                                 }
                                 let (line, col) = self.position();
@@ -383,7 +410,7 @@ impl<'a> Parser<'a> {
                             // A view into one of the fields points at the bytes
                             // this write would release, so the write is only
                             // allowed once the view is gone (ADR-52).
-                            if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                            if self.is_borrowed(id) {
                                 return Err(self.fail(&format!("cannot modify '{name}' while it is borrowed")));
                             }
                             self.take(Kind::Equal)?;
@@ -393,7 +420,7 @@ impl<'a> Parser<'a> {
                             continue;
                         }
                         // Whole-struct assignment moves a fresh value in.
-                        if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                        if self.is_borrowed(id) {
                             return Err(self.fail(&format!("cannot assign to '{name}' while it is borrowed")));
                         }
                         self.take(Kind::Equal)?;
@@ -406,7 +433,7 @@ impl<'a> Parser<'a> {
                         self.moved.remove(&id);
                         result.push(Statement::Assign(id, value, true));
                     } else {
-                        if self.borrows.iter().any(|&(bid, _)| bid == id) {
+                        if self.is_borrowed(id) {
                             return Err(self.fail(&format!("cannot assign to '{name}' while it is borrowed")));
                         }
                         self.take(Kind::Equal)?;

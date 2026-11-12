@@ -1,0 +1,15 @@
+struct Rect { w: i64, h: i64 }
+
+impl Rect {
+    fn area(&self) -> i64 {
+        return self.w * self.h;
+    }
+}
+
+fn make() -> Rect {
+    return Rect { w: 2, h: 3 };
+}
+
+fn main() {
+    print(make().area());
+}

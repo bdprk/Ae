@@ -72,6 +72,13 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             } else if *ty == Type::VecFRef {
                 out.push_str(&format!("    if (!v{id}->data) ae_fail(\"use of moved vector\", {line}, {column});\n"));
                 Emitted { text: format!("(*v{id})"), ty: Type::VecF, owned: false, moves: Vec::new(), materialized: true }
+            } else if let Type::StructRef(sid) = *ty {
+                // A struct borrow reads through the pointer (ADR-0184). The
+                // dereferenced shape is the owned struct, so every consumer
+                // downstream — field access, views of string fields — works
+                // unchanged. There is no sentinel to check: the pointer is
+                // never null, because only an address can create the borrow.
+                Emitted { text: format!("(*v{id})"), ty: Type::Struct(sid), owned: false, moves: Vec::new(), materialized: true }
             } else if ty.owned() {
                 // Runtime backstop: a moved value's slot is empty.
                 match ty {

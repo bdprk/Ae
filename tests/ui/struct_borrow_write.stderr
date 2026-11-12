@@ -1,0 +1,1 @@
+ae: $DIR/struct_borrow_write.ae:4:6: cannot write through 'r': struct borrows are read-only in this version

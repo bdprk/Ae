@@ -244,6 +244,7 @@ A custom native machine code backend/linker will only be considered as a separat
 
 ### 5.1 Existing Features (To be preserved and migrated)
 
+- Inherent methods with `&self` auto-borrow over read-only struct borrows (ADR-0184); by-value receivers and associated functions (ADR-0182/0183).
 - Frontend in Rust, split across three workspace crates — `ae-span`, `ae-syntax`, and `ae-compiler` (11 frontend modules, ~340 KB total) — plus a strict C11 backend; runtime trimmed by reachability, `<windows.h>` included on-demand.
 - Primitive types, structs, enums, `match`, generic functions/structs/enums, trait v1 static dispatch, modules and `pub`, `?` propagation.
 - Built-ins for file/path/directory/process/env/time/JSON query; `check --json`, `fmt`, `test`, `cache`, `deps`.
@@ -280,6 +281,7 @@ Landed since the 0.3 revision:
 
 - **Workspace split** (M0.3, partial): `ae-span`, `ae-syntax`, and `ae-compiler` exist; `ae-hir`, `ae-ty`, `ae-mir`, the three backend crates, `ae-driver`, and `ae-lsp` do not.
 - **Diagnostics** (M0.4–0.5, partial): structured spans, error codes, primary/secondary labels, and `check --json`; parser recovery collects several errors within one body.
+- **Method syntax** (M1.5, partial): ADR-0182/0183 landed inherent methods, associated functions, and `Type::name(...)`; ADR-0184 landed struct borrows — `&Type` parameters, `&self` receivers with auto-borrow, statement-scoped call borrows — plus two operator-aware fixes to the move check (`return l.text + "/x"` and `let b = s == t` no longer false-reject). Still open: `&mut self`, methods on enums, generic impl blocks, `Self`.
 - **Test frameworks** (M0.6–0.7): `tests/ui` with `.stderr` snapshots, `tests/run` with `.stdout` snapshots, driven by `scripts/snapshots.py`.
 - **CI** (M0.8, partial): dual-platform matrix and script unit tests; no dependency caching.
 - **Frontend reuse cache** (new beyond 0.3): ADR-0177, with a single-platform measurement.
@@ -499,6 +501,6 @@ Legend: ☑ done, ◐ partial (see note), ☐ not started.
 5. ☑ UI/execution snapshot testing framework and migration of legacy tests (M0.6–0.7) — `scripts/snapshots.py`, `tests/ui`, `tests/run`.
 6. ◐ Repository cleanup, dual-platform CI, baseline reports (M0.8–0.9) — CI matrix and script unit tests exist; no dependency caching, and only one baseline report.
 7. ◐ Begin M1.1: Type system specification — `spec/types.md`, `spec/methods_and_traits.md`, `spec/modules.md`, and `spec/diagnostics.md` exist; they describe the current language, not the M1 target.
-8. ◐ M1.2 first slice: inherent `impl` blocks with `value.method(...)` (ADR-0182) and associated functions with `Type::name(...)` (ADR-0183) are implemented — `tests/run/methods.ae`, `examples/methods.ae`. Receiver by value only; implicit `&self`, auto-borrow, receiver resolution order, methods and associated functions on enums, generic impl blocks, and `Self` from `spec/methods_and_traits.md` are still unimplemented.
+8. ◐ M1.2/M1.5: inherent `impl` blocks with `value.method(...)` (ADR-0182), associated functions with `Type::name(...)` (ADR-0183), and `&self` receivers with auto-borrow over new struct borrows (ADR-0184) are implemented — `tests/run/methods.ae`, `tests/run/struct_borrow.ae`, `examples/methods.ae`, `examples/struct_borrow.ae`. Still unimplemented from `spec/methods_and_traits.md`: `&mut self`, methods and associated functions on enums, generic impl blocks, and `Self`.
 
 Note: This document serves as a design and implementation plan and does not imply that the listed capabilities are already implemented. Actual progress is governed by the §9 status table and individual reports; the roadmap may be adjusted based on evidence, but modifications to §1.1 priorities and §2.2 hard rules must be approved via ADR.

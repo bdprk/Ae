@@ -21,7 +21,7 @@ use c_output::*;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), Enum(&'static str, usize), Tokens }
+enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), StructRef(usize), Enum(&'static str, usize), Tokens }
 impl Type {
     fn name(self) -> String {
         match self {
@@ -41,6 +41,9 @@ impl Type {
             Type::MapF => "map[string, f64]".to_owned(),
             Type::Array(n) => format!("&[i64; {n}]"),
             Type::Struct(id) => format!("struct #{}", id),
+            // A read-only borrow of a struct (ADR-0184). It names the same
+            // layout as `Struct(id)`; the `&` is what keeps it from moving.
+            Type::StructRef(id) => format!("&struct #{}", id),
             Type::Enum(name, _) => name.to_owned(),
             // A single-pass cursor over a string; it owns no memory and only
             // `for` consumes it (ADR-53).
@@ -59,6 +62,10 @@ impl Type {
             Type::Map => "ae_map ".to_owned(),
             Type::MapF => "ae_mapf ".to_owned(),
             Type::Struct(k) => format!("ae_t{k} "),
+            // A borrow has no storage of its own, so a temporary of this type
+            // is never declared; the arm exists so a stray use fails the build
+            // instead of formatting a bad C type.
+            Type::StructRef(k) => format!("ae_t{k}* "),
             Type::Enum(_, k) => format!("ae_e{k} "),
             Type::Tokens => "ae_tokens ".to_owned(),
             _ => "int64_t ".to_owned(),
@@ -269,7 +276,7 @@ impl Bound {
 const AUDIT_TYPES: &[Type] = &[
     Type::Int, Type::Bool, Type::F64, Type::String, Type::StrView,
     Type::Vec, Type::StrVec, Type::VecF, Type::VecRef, Type::StrVecRef, Type::VecFRef, Type::Map, Type::MapF,
-    Type::Array(0), Type::Struct(0), Type::Enum("audit", 0),
+    Type::Array(0), Type::Struct(0), Type::StructRef(0), Type::Enum("audit", 0),
 ];
 
 // Capabilities mirror the binary-operator rules in `expression`. They live
@@ -339,20 +346,22 @@ struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec
 #[derive(Debug, Clone)]
 struct Signature { id: usize, params: Vec<Type>, ret: Type, file: String, public: bool }
 
-// One entry of an inherent `impl` block. `receiver` records whether the first
-// parameter was spelled `self`, which is what decides the call form: a method is
-// reached through a value, an associated function through the type name.
+// One entry of an inherent `impl` block. `receiver` records the type the first
+// parameter was bound to — the struct by value for `self`, a read-only borrow
+// for `&self` — and `None` marks an associated function. The call form follows
+// from it: a method is reached through a value, an associated function through
+// the type name, and a borrowed receiver is auto-borrowed at the call site.
 #[derive(Debug, Clone)]
-struct MethodDef { signature: Signature, receiver: bool }
+struct MethodDef { signature: Signature, receiver: Option<Type> }
 
 type SharedFunctions = HashMap<String, Signature>;
 
-struct Parser<'a> { file: String, source: &'a str, tokens: Rc<Vec<Token>>, shared_source: Rc<str>, pos: usize, names: HashMap<String, (usize, bool, Type)>, binding_ranges: HashMap<usize, std::ops::Range<usize>>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, scopes: Vec<Vec<(usize, Type)>>, subst: HashMap<String, Type>, trait_bounds: HashMap<String, Vec<usize>>, receiver: Option<Type>, pending: Vec<Function> }
+struct Parser<'a> { file: String, source: &'a str, tokens: Rc<Vec<Token>>, shared_source: Rc<str>, pos: usize, names: HashMap<String, (usize, bool, Type)>, binding_ranges: HashMap<usize, std::ops::Range<usize>>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize)>, call_borrows: Vec<(usize, usize)>, plus_operand_depth: usize, scopes: Vec<Vec<(usize, Type)>>, subst: HashMap<String, Type>, trait_bounds: HashMap<String, Vec<usize>>, receiver: Option<Type>, pending: Vec<Function> }
 #[derive(Debug, Default)]
 struct Program { files: Vec<Vec<Function>>, structs: Vec<StructDef>, enums: Vec<EnumDef> }
 
 fn make_parser<'a>(file: &str, source: &'a str, tokens: Rc<Vec<Token>>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics) -> Parser<'a> {
-    Parser { file: file.to_owned(), source, tokens, shared_source: Rc::from(source), pos: 0, names: HashMap::new(), binding_ranges: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), scopes: Vec::new(), subst: HashMap::new(), trait_bounds: HashMap::new(), receiver: None, pending: Vec::new() }
+    Parser { file: file.to_owned(), source, tokens, shared_source: Rc::from(source), pos: 0, names: HashMap::new(), binding_ranges: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), call_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst: HashMap::new(), trait_bounds: HashMap::new(), receiver: None, pending: Vec::new() }
 }
 
 #[allow(dead_code)] // exercised by in-memory unit tests

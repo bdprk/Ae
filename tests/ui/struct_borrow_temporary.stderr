@@ -1,0 +1,1 @@
+ae: $DIR/struct_borrow_temporary.ae:14:24: 'area' borrows its receiver, so the receiver must be a bare struct variable; bind the value to a variable first

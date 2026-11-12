@@ -1,0 +1,11 @@
+struct Rect { w: i64, h: i64 }
+
+fn stretch(var r: &Rect) -> i64 {
+    r.w = 10;
+    return r.w * r.h;
+}
+
+fn main() {
+    let r = Rect { w: 2, h: 3 };
+    print(stretch(&r));
+}

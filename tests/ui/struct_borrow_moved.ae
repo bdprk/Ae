@@ -1,0 +1,11 @@
+struct Rect { w: i64, h: i64 }
+
+fn area(r: &Rect) -> i64 {
+    return r.w * r.h;
+}
+
+fn main() {
+    var r = Rect { w: 2, h: 3 };
+    let s = r;
+    area(&r);
+}

@@ -1,0 +1,69 @@
+// Struct borrows: `&Rect` parameters and `&self` methods (ADR-0184).
+//
+// A user struct can now be borrowed read-only. The callee reads fields
+// through a pointer; the caller keeps ownership and regains every right
+// (writing fields, reassigning, moving) the moment the call returns. A
+// method declared with `&self` is auto-borrowed at the call site, so
+// calling it no longer moves the receiver.
+
+struct Point {
+    x: i64,
+    y: i64,
+}
+
+struct Rect {
+    origin: Point,
+    w: i64,
+    h: i64,
+    label: string,
+}
+
+impl Point {
+    fn distance(self) -> i64 {
+        return abs_i64(self.x) + abs_i64(self.y);
+    }
+}
+
+impl Rect {
+    // `&self` borrows the receiver for the call: no move, so the same
+    // rectangle can be called on again.
+    fn area(&self) -> i64 {
+        return self.w * self.h;
+    }
+    fn wide(&self, least: i64) -> bool {
+        return self.w >= least;
+    }
+    // A shared method calls another shared method through the borrow: the
+    // receiver is a variable of the impl's type, so forwarding is free.
+    fn perimeter(&self) -> i64 {
+        return self.side_sum() * 2;
+    }
+    fn side_sum(&self) -> i64 {
+        return self.w + self.h;
+    }
+    fn describe(&self) -> string {
+        return self.label + ": " + to_string(self.area()) + " sq units";
+    }
+}
+
+fn main() {
+    var plot = Rect { origin: Point { x: 3, y: 4 }, w: 12, h: 5, label: "plot" };
+    print(plot.area());
+    print(plot.wide(10));
+    print(plot.wide(100));
+    print(plot.perimeter());
+    print(plot.describe());
+
+    // Each borrow ends with its statement, so the struct is writable again.
+    plot.w = 40;
+    print(plot.area());
+    plot.label = "field";
+    print(plot.describe());
+}
+
+fn abs_i64(value: i64) -> i64 {
+    if value < 0 {
+        return -value;
+    }
+    return value;
+}

@@ -1,0 +1,1 @@
+ae: $DIR/struct_borrow_store.ae:5:5: cannot store a borrowed struct in a variable; pass it directly to a parameter that borrows
