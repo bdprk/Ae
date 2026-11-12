@@ -1,0 +1,6 @@
+--- batch_core_compiler_wasm3 test start ---
+wasm_table ok
+wasm_global ok
+wasm_data ok
+wasm_call_indirect ok
+--- batch_core_compiler_wasm3 test end ---

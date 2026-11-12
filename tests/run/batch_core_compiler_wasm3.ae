@@ -1,0 +1,50 @@
+// tests/run/batch_core_compiler_wasm3.ae
+// Verification of WasmTableDescriptor, WasmGlobal, WasmDataSegment, and WasmCallIndirect.
+
+use "../../std/core/ir_wasm_table.ae";
+use "../../std/core/ir_wasm_global.ae";
+use "../../std/core/ir_wasm_data.ae";
+use "../../std/core/ir_wasm_call_indirect.ae";
+
+fn main() {
+    print("--- batch_core_compiler_wasm3 test start ---");
+
+    // 1. Wasm Table Descriptor
+    // elem=112 (0x70 funcref), initial=10, max=100
+    let tbl = wasm_table_new(112, 10, 100, true);
+    assert(wasm_table_is_funcref(tbl));
+    let tbl_b = wasm_table_new(112, 10, 100, true);
+    assert(wasm_table_has_max(tbl_b));
+    let tbl_c = wasm_table_new(112, 10, 100, true);
+    assert(wasm_table_initial(tbl_c) == 10);
+    print("wasm_table ok");
+
+    // 2. Wasm Global
+    // i64 (126), mutable, initialized to 0 (e.g. shadow stack pointer)
+    let g_sp = wasm_global_new(126, true, 1048576);
+    assert(wasm_global_is_mutable(g_sp));
+    let g_sp_b = wasm_global_new(126, true, 1048576);
+    assert(wasm_global_type(g_sp_b) == 126);
+    let g_sp_c = wasm_global_new(126, true, 1048576);
+    assert(wasm_global_init(g_sp_c) == 1048576);
+    print("wasm_global ok");
+
+    // 3. Wasm Data Segment
+    // Active segment at offset 1024, length 256
+    let data = wasm_data_new(0, 1024, 256, false);
+    assert(!wasm_data_is_passive(data));
+    let data_b = wasm_data_new(0, 1024, 256, false);
+    assert(wasm_data_offset(data_b) == 1024);
+    let data_c = wasm_data_new(0, 1024, 256, false);
+    assert(wasm_data_end_offset(data_c) == 1280);
+    print("wasm_data ok");
+
+    // 4. Wasm Call Indirect
+    let ci = wasm_call_indirect_new(5, 0); // type 5, table 0
+    assert(wasm_call_indirect_type(ci) == 5);
+    let ci_b = wasm_call_indirect_new(5, 0);
+    assert(wasm_call_indirect_table(ci_b) == 0);
+    print("wasm_call_indirect ok");
+
+    print("--- batch_core_compiler_wasm3 test end ---");
+}
