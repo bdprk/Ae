@@ -1,0 +1,26 @@
+// std/core/clock_ticks.ae
+// Monotonic clock tick difference and elapsed duration primitives for Tier 3 std.
+
+pub struct MonotonicInstant {
+    ticks_ms: i64,
+}
+
+pub fn monotonic_instant_from_ms(ms: i64) -> MonotonicInstant {
+    return MonotonicInstant { ticks_ms: ms };
+}
+
+pub fn monotonic_instant_ticks(inst: MonotonicInstant) -> i64 {
+    return inst.ticks_ms;
+}
+
+pub fn monotonic_instant_elapsed(start: MonotonicInstant, now: MonotonicInstant) -> i64 {
+    if now.ticks_ms >= start.ticks_ms {
+        return now.ticks_ms - start.ticks_ms;
+    }
+    return 0;
+}
+
+pub fn monotonic_instant_has_elapsed(start: MonotonicInstant, now: MonotonicInstant, timeout_ms: i64) -> bool {
+    let diff = monotonic_instant_elapsed(start, now);
+    return diff >= timeout_ms;
+}

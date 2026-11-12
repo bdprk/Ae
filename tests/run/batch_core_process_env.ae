@@ -1,0 +1,45 @@
+use "../../std/core/env_var.ae";
+use "../../std/core/exit_code.ae";
+use "../../std/core/clock_ticks.ae";
+use "../../std/core/pipe_state.ae";
+
+fn main() {
+    assert(is_valid_env_key_char(65)); // 'A'
+    assert(is_valid_env_key_char(95)); // '_'
+    assert(is_valid_env_key_char(50)); // '2'
+    assert(!is_valid_env_key_char(61)); // '=' not allowed in key
+    assert(env_key_len_is_valid(10));
+    assert(!env_key_len_is_valid(0));
+    assert(!env_key_len_is_valid(300));
+
+    assert(exit_status_code(ExitStatus::Success) == 0);
+    assert(exit_status_code(ExitStatus::GeneralFailure) == 1);
+    assert(exit_status_code(ExitStatus::InvalidUsage) == 2);
+    assert(exit_status_code(ExitStatus::NotFound) == 127);
+    assert(exit_status_code(ExitStatus::SignalKilled(9)) == 137); // SIGKILL
+    assert(exit_status_is_success(ExitStatus::Success));
+    assert(!exit_status_is_success(ExitStatus::GeneralFailure));
+
+    let t0 = monotonic_instant_from_ms(1000);
+    assert(monotonic_instant_ticks(t0) == 1000);
+
+    let t_start = monotonic_instant_from_ms(1000);
+    let t_end = monotonic_instant_from_ms(1500);
+    assert(monotonic_instant_elapsed(t_start, t_end) == 500);
+
+    let t_start2 = monotonic_instant_from_ms(1000);
+    let t_end2 = monotonic_instant_from_ms(1500);
+    assert(monotonic_instant_has_elapsed(t_start2, t_end2, 400));
+
+    let t_start3 = monotonic_instant_from_ms(1000);
+    let t_end3 = monotonic_instant_from_ms(1500);
+    assert(!monotonic_instant_has_elapsed(t_start3, t_end3, 600));
+
+    assert(pipe_state_can_write(PipeChannelState::Open));
+    assert(!pipe_state_can_write(PipeChannelState::Broken));
+    assert(!pipe_state_can_write(PipeChannelState::Closed));
+    assert(pipe_state_can_read(PipeChannelState::Open));
+    assert(!pipe_state_can_read(PipeChannelState::Closed));
+
+    print("ENV EXIT CLOCK PIPE OPERATIONAL");
+}
