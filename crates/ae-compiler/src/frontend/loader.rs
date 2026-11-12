@@ -266,15 +266,39 @@ pub fn check_path(path: &Path) -> Result<(), String> {
     load_program(path).map(|_| ())
 }
 
+// A lexically invalid file can still expose imports that precede the first
+// error. Only use a complete prefix that independently lexes and whose use
+// headers parse successfully. This frame is used solely for diagnostics.
+fn verified_import_prefix(path: &Path, errors: &[ae_span::Diagnostic]) -> Option<LoadingFile> {
+    let source = std::fs::read_to_string(path).ok()?;
+    let file = path.display().to_string();
+    let mut current = ae_syntax::lex_with_diagnostics(&source).err()?;
+    for diagnostic in &mut current {
+        if let Some(label) = &mut diagnostic.primary { label.span.file = Some(file.clone()); }
+    }
+    if current != errors { return None; }
+    let first_offset = errors.first()?.primary.as_ref()?.span.range.start;
+    let prefix_end = source.get(..first_offset)?.rfind(';')? + 1;
+    let prefix = source.get(..prefix_end)?;
+    let tokens = Rc::new(lex(prefix).ok()?);
+    let uses = scan_uses(&file, prefix, tokens.as_ref()).ok()?;
+    if uses.is_empty() { return None; }
+    Some(LoadingFile { canonical: std::fs::canonicalize(path).ok()?, path: path.to_owned(), source, file, tokens, uses, next_import: 0 })
+}
+
 // Read-only supplemental traversal after an initial lexical error. A failed
-// file cannot expose imports, but sibling branches can still be scanned.
+// file may expose verified imports before its first error; siblings can still be scanned.
 fn collect_import_lex_errors(entry: &Path) -> Vec<ae_span::Diagnostic> {
     const LIMIT: usize = 32;
     let mut visited = HashMap::new();
     let mut diagnostics = Vec::new();
     let mut stack = match begin_file(entry, &mut visited) {
         Ok(Some(frame)) => vec![frame],
-        Err(FrontendError::LexDiagnostics(errors)) => return errors,
+        Err(FrontendError::LexDiagnostics(errors)) => {
+            let frame = verified_import_prefix(entry, &errors);
+            diagnostics.extend(errors);
+            match frame { Some(frame) if diagnostics.len() < LIMIT => vec![frame], _ => return diagnostics }
+        }
         _ => return diagnostics,
     };
     while let Some(frame) = stack.last_mut() {
@@ -287,6 +311,10 @@ fn collect_import_lex_errors(entry: &Path) -> Vec<ae_span::Diagnostic> {
                 Ok(Some(next)) => stack.push(next),
                 Ok(None) => {},
                 Err(error) => {
+                    let partial = match &error {
+                        FrontendError::LexDiagnostics(errors) => verified_import_prefix(&child, errors),
+                        _ => None,
+                    };
                     let errors = match error {
                         FrontendError::LexDiagnostics(errors) | FrontendError::Diagnostics(errors) => errors,
                         FrontendError::Diagnostic(error) => vec![error],
@@ -296,6 +324,10 @@ fn collect_import_lex_errors(entry: &Path) -> Vec<ae_span::Diagnostic> {
                     };
                     diagnostics.extend(errors.into_iter().take(LIMIT - diagnostics.len()));
                     if diagnostics.len() == LIMIT { break; }
+                    if let Some(frame) = partial {
+                        stack.push(frame);
+                        continue;
+                    }
                     // Only mark a newly encountered failed file. A cycle points to
                     // an active frame and must not change that frame's state.
                     if !was_visited {

@@ -4254,3 +4254,26 @@ fn check_json_recovers_independent_unknown_conditions() {
     assert!(json.contains("first_missing") && !json.contains("second_missing"), "{json}");
     fs::remove_dir_all(dir).unwrap();
 }
+
+
+#[test]
+fn json_lexical_recovery_follows_verified_import_prefixes() {
+    let dir = unique_temp_dir("json-lex-prefix");
+    let entry = dir.join("main.ae");
+    fs::write(&entry, "use \"child.ae\";\nfn main() { print(\"bad\\q\"); }\n").unwrap();
+    fs::write(dir.join("child.ae"), "use \"nested.ae\";\n@\n").unwrap();
+    fs::write(dir.join("nested.ae"), "#\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&entry).output().unwrap();
+    assert!(!output.status.success());
+    let json = String::from_utf8(output.stdout).unwrap();
+    let positions: Vec<_> = ["E0002", "E0001", "nested.ae"].iter().map(|item| json.find(item).unwrap()).collect();
+    assert!(positions.windows(2).all(|pair| pair[0] < pair[1]), "{json}");
+    assert_eq!(json.matches("\"code\":").count(), 3, "{json}");
+    // A malformed import before the lexical error is not guessed or traversed.
+    fs::write(&entry, "use nope;\n@\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&entry).output().unwrap();
+    let json = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(json.matches("\"code\":").count(), 1, "{json}");
+    assert!(!json.contains("child.ae"), "{json}");
+    fs::remove_dir_all(dir).unwrap();
+}
