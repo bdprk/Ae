@@ -3408,8 +3408,30 @@ fn mir_constant_propagation_folds_checked_arithmetic_and_branches() {
     assert!(mir.contains("v0 (i64) = 14"), "2 + 3 * 4 folds to 14: {mir}");
     assert!(mir.contains("v1 (i64) = 10"), "a - 4 propagates and folds to 10: {mir}");
     assert!(mir.contains("v2 (bool) = true"), "b == 10 folds to true: {mir}");
-    assert!(mir.contains("goto block 1"), "constant true branch folds to goto block 1: {mir}");
+    assert!(!mir.contains("branch "), "the constant branch folds away: {mir}");
+    assert!(mir.contains("fn main() -> i64 (1 blocks)"), "the folded arm and its continuation fuse into the entry: {mir}");
     assert!(mir.contains("1 / 0 -> i64"), "division by zero stays unfolded to preserve runtime trap: {mir}");
+}
+
+#[test]
+fn mir_linear_block_merging_fuses_single_predecessor_successors() {
+    // M2.10: a block reachable only by one unconditional jump is fused into
+    // its predecessor — bindings in order, the successor's terminator last —
+    // so straight-line control flow costs no blocks and no edges. A loop's
+    // conditional arm is never fused, and back edges keep pointing at the
+    // block that holds the condition.
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("ae-mir-merge-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, "fn f(c: bool) -> i64 {\n  var x = 0;\n  if c { x = 1; } else { return 9; }\n  print(x);\n  return x;\n}\nfn sum(n: i64) -> i64 {\n  var total = 0;\n  var i = 0;\n  while i < n { total = total + i; i = i + 1; }\n  return total;\n}\nfn main() { print(f(true)); print(sum(5)); }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-mir").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let mir = String::from_utf8_lossy(&output.stdout);
+    assert!(mir.contains("fn #0(v0: bool) -> i64 (3 blocks)"), "the returning else arm, the then arm, and the fused continuation survive: {mir}");
+    assert!(!mir.contains("goto block 3"), "the continuation fuses into the then arm instead of being jumped to: {mir}");
+    assert!(mir.contains("  block 1:\n    v1 (i64) = 1\n    t0 (i64) = v1 (i64)\n    return v1 (i64) @ 5:10"), "the fused block keeps binding order and takes the successor's terminator: {mir}");
+    assert!(mir.contains("fn #1(v0: i64) -> i64 (3 blocks)"), "a loop keeps its condition, body, and exit blocks: {mir}");
+    assert!(mir.contains("goto block 0"), "the loop back edge is untouched: {mir}");
 }
 
 #[test]

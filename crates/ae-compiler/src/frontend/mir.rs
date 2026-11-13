@@ -256,8 +256,9 @@ pub(super) fn optimize_function(function: &mut MirFunction) {
 // pending tail of a function that always returns. Constant branch folding
 // (above) orphans more of them. This pass threads edges through empty
 // trampoline blocks, collapses a branch whose resolved targets coincide
-// (only when the condition is side-effect free), and drops every block that
-// is unreachable from the entry.
+// (only when the condition is side-effect free), drops every block that is
+// unreachable from the entry, and fuses a block into the one block that
+// unconditionally jumps to it.
 //
 // Block ids stay stable — nothing is renumbered — so printed MIR keeps its
 // block names and every surviving edge keeps pointing at the same block.
@@ -271,7 +272,8 @@ fn simplify_cfg(function: &mut MirFunction) {
     for _ in 0..rounds {
         let threaded = thread_edges(&mut function.blocks);
         let pruned = retain_reachable(&mut function.blocks);
-        if !threaded && !pruned {
+        let merged = merge_linear_blocks(&mut function.blocks);
+        if !threaded && !pruned && !merged {
             return;
         }
     }
@@ -365,6 +367,52 @@ fn retain_reachable(blocks: &mut Vec<MirBlock>) -> bool {
     let before = blocks.len();
     blocks.retain(|block| reachable.contains(&block.id));
     blocks.len() != before
+}
+
+// Fuse a block into the block that unconditionally jumps to it.
+//
+// `A --goto--> B` where B's only incoming edge is A's: every execution of B's
+// bindings is immediately preceded by all of A's, so concatenating the binding
+// lists into A and taking B's terminator preserves order, temporaries (ids are
+// unique per function), and control flow, while removing one block and one
+// edge. The entry block is never fused away because control also arrives there
+// implicitly, and a self-loop is left alone.
+//
+// Only unconditional edges qualify. A branch's arm executes conditionally, so
+// folding its bindings into the branch block would run them on the other path
+// as well.
+fn merge_linear_blocks(blocks: &mut Vec<MirBlock>) -> bool {
+    let Some(entry) = blocks.first().map(|block| block.id) else { return false };
+    let mut merged_any = false;
+    loop {
+        // Edge counts: a block is a fusion target only when exactly one edge
+        // reaches it, and that edge is the unconditional jump we fuse over.
+        let mut incoming: HashMap<usize, usize> = HashMap::new();
+        for block in blocks.iter() {
+            for target in terminator_targets(&block.terminator) {
+                *incoming.entry(target).or_insert(0) += 1;
+            }
+        }
+        let mut candidate = None;
+        for block in blocks.iter() {
+            let target = match block.terminator {
+                CfgTerminator::Goto(target) => target,
+                _ => continue,
+            };
+            if target == block.id || target == entry { continue; }
+            if incoming.get(&target).copied().unwrap_or(0) != 1 { continue; }
+            candidate = Some((block.id, target));
+            break;
+        }
+        let Some((head_id, tail_id)) = candidate else { return merged_any };
+        let Some(tail_index) = blocks.iter().position(|block| block.id == tail_id) else { return merged_any };
+        let tail = blocks.remove(tail_index);
+        let head_index = blocks.iter().position(|block| block.id == head_id).expect("fusing block present");
+        let head = &mut blocks[head_index];
+        head.bindings.extend(tail.bindings);
+        head.terminator = tail.terminator;
+        merged_any = true;
+    }
 }
 
 fn terminator_targets(terminator: &CfgTerminator) -> Vec<usize> {
