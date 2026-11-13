@@ -17,6 +17,7 @@
 - [x] 5. 推进 M2.11 MIR 解释器（`ae test --interp` / `ae run --interp` 基础执行引擎与 UB/除零/溢出检测 + ADR-0199）
 - [x] 6. 推进 M2.10/M2.11 三方差分模糊测试（扩展 `scripts/diff_fuzz.py` 对齐 `--debug` / `--release` / `--interp` 三路输出 + 集成测试与 ADR-0200）
 - [x] 7. 推进 M2.10 MIR 不可达基本块消除（Unreachable Block Elimination / CFG 简化 pass + 回归测试与 ADR-0201）
+- [x] 8. 推进 M2.10 MIR 线性基本块合并（单前驱融合 `mir::merge_linear_blocks` + 回归测试与 ADR-0202）
 
 ## 日志
 - 2026-11-13 15:57 初始化 AGENT_PROGRESS.md，定位到 4 个失败的 execution 测试均由 enum_generic_impls.ae 的 receiver move 引起。
@@ -26,4 +27,5 @@
 - 2026-11-13 17:25 完成 M2.10 `mir::optimize_function`（块内常量传播、带溢出/除零保护的受检常量折叠、常量分支折叠为 Goto、无用临时变量消除），新增 `mir_constant_propagation_folds_checked_arithmetic_and_branches` 测试与 ADR-0198。
 - 2026-11-13 17:58 完成 M2.11 进程内解释器 `crates/ae-compiler/src/frontend/interp.rs` 并接入 `ae run --interp` 与 `ae test --interp`，新增 `mir_interpreter_executes_programs_and_tests_with_ub_detection` 测试、ADR-0199 及失败日志第 9 条，提交 8c9f033 并推送到 origin/master。
 - 2026-11-13 18:02 完成 M2.10/M2.11 三方差分测试（扩展 `scripts/diff_fuzz.py` 同时校验 `--debug`/`--release`/`--interp` 15 seeds 全过，新增 `three_way_differential_agreement_between_debug_release_and_interp` 测试与 ADR-0200）。
+- 2026-11-13 22:35 完成 M2.10 线性基本块合并：`mir::merge_linear_blocks`（仅融合"前驱以 `Goto` 跳转、后继只有这一个前驱、目标非入口块"的边，保留前驱块 id、按序拼接绑定并继承后继终结符，循环至不动点），接入 `simplify_cfg` 的 thread→prune→merge 固定点；常量传播用例的 main 由多块 `goto` 链降为 1 块，循环形状不变，新增 `mir_linear_block_merging_fuses_single_predecessor_successors` 测试与 ADR-0202、失败日志第 10 条；`cargo test --workspace --locked` 269 项全绿。
 - 2026-11-13 22:03 完成 M2.10 不可达基本块消除：`mir::simplify_cfg`（入口可达性裁剪 + 空 `Goto` 跳板线程化含环保护 + 同目标分支折叠且要求条件无副作用 + 块 id 不重编号，`validate` 改为按 id 集合校验），新增 `mir_unreachable_block_elimination_prunes_abandoned_continuations` 测试与 ADR-0201；两臂 return 的函数从 6 块降到 3 块，`cargo test --workspace --locked` 268 项全绿。
