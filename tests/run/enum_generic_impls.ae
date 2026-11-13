@@ -1,0 +1,46 @@
+// Methods on generic enums (ADR-0196): an inherent impl on `Opt[T]` makes
+// each instantiation carry its own methods, resolved per argument list like
+// generic struct impls. Enum receivers are by value — one binding per call.
+enum Opt[T] {
+    Some(T),
+    None,
+}
+
+impl Opt[T] {
+    fn is_some(self) -> bool {
+        match self {
+            Opt::Some(_) => { return true; }
+            Opt::None => { return false; }
+        }
+    }
+    // `unwrap_or`-shaped: the fallback makes every arm return T.
+    fn unwrap_or(self, fallback: T) -> T {
+        match self {
+            Opt::Some(v) => { return v; }
+            Opt::None => { return fallback; }
+        }
+    }
+    // `Self` names the instantiation in bodies (ADR-0186); the variant
+    // `Self::None` shares that resolution through the template's own enum.
+    fn absent() -> Self {
+        return Self::None;
+    }
+}
+
+fn main() {
+    let a = Opt[i64]::Some(3);
+    print(a.is_some());
+    let b = Opt[i64]::Some(3);
+    print(b.unwrap_or(0));
+    let c = Opt[i64]::None;
+    print(c.is_some());
+    let d = Opt[i64]::None;
+    print(d.unwrap_or(7));
+    let absent = Opt[i64]::absent();
+    print(absent.unwrap_or(9));
+    let e = Opt[string]::Some("hi");
+    print(e.is_some());
+    print(e.unwrap_or("none"));
+    let f = Opt[string]::None;
+    print(f.unwrap_or("none"));
+}

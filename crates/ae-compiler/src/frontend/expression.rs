@@ -168,7 +168,46 @@ impl Parser<'_> {
                             Type::Enum(ename, _) => ename.to_owned(),
                             other => return Err(self.error_at(name_offset, &format!("'Self' is {} here and has no associated functions", other.name()))),
                         };
-                        self.associated_call(&type_name, name_offset)?
+                        // For an enum Self, a variant name after `::` is a
+                        // variant path, exactly like a bare enum name; an
+                        // associated function resolves through the template.
+                        if let Type::Enum(ename, eid) = target {
+                            let def = &self.enums[eid];
+                            let next_is_variant = match self.tokens.get(self.pos + 1).map(|t| &t.kind) {
+                                Some(Kind::Ident(v)) => def.variants.iter().any(|(vn, _)| vn == v),
+                                _ => false,
+                            };
+                            if next_is_variant {
+                                self.enum_literal(eid, name_offset)?
+                            } else {
+                                // `Self::assoc(...)` on a generic enum:
+                                // resolve through the declaration's template
+                                // with the instantiation's own arguments.
+                                self.take(Kind::ColonColon)?;
+                                let method = self.identifier()?;
+                                let Some(&(gid, ref origin_args)) = self.generics.enum_origin.get(&eid) else {
+                                    return Err(self.error_at(name_offset, &format!("'{}' has no generic impl block", ename)));
+                                };
+                                let template = self.generics.defs[gid].name.clone();
+                                let origin: Vec<Type> = origin_args.clone();
+                                let Some(gimpl) = self.generics.generic_impls.get(&template).cloned() else {
+                                    return Err(self.error_at(name_offset, &format!("'{}' has no generic impl block", template)));
+                                };
+                                let Some(mdef) = gimpl.methods.iter().find(|m| m.name == method).cloned() else {
+                                    let mut names: Vec<String> = gimpl.methods.iter().map(|m| m.name.clone()).collect();
+                                    names.sort();
+                                    return Err(self.error_at(name_offset, &format!("the impl for '{template}' has no associated function '{method}'; it has {}", names.join(", "))));
+                                };
+                                let has_receiver = mdef.receiver.is_some();
+                                let instance = self.instantiate_impl_method(&template, &method, eid, gid, &origin, name_offset)?;
+                                let (id, params, ret) = instance;
+                                let call_params = if has_receiver { params[1..].to_vec() } else { params.clone() };
+                                let call_args = self.call_arguments(&format!("{ename}::{method}"), &call_params)?;
+                                (Expr::Call(id, call_args, ret), ret)
+                            }
+                        } else {
+                            self.associated_call(&type_name, name_offset)?
+                        }
                     } else if let Some(&eid) = self.enum_names.get(&name) {
                         let def = &self.enums[eid];
                         let next_is_variant = match self.tokens.get(self.pos + 1).map(|t| &t.kind) {
@@ -198,8 +237,46 @@ impl Parser<'_> {
                         self.pos += 1;
                     }
                     self.take(Kind::RBracket)?;
-                    let eid = self.instantiate_enum(gid, args, name_offset)?;
-                    self.enum_literal(eid, name_offset)?
+                    let eid = self.instantiate_enum(gid, args.clone(), name_offset)?;
+                    // `::` after the arguments: a variant name stays a variant
+                    // path (enum_literal consumes `::` itself); anything else
+                    // resolves through the template's associated functions
+                    // (ADR-0196).
+                    let next_ident = match self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) {
+                        Some(Kind::Ident(v)) => Some(v),
+                        _ => None,
+                    };
+                    let next_is_variant = next_ident.as_deref()
+                        .map(|v| self.generics.defs[gid].variants.iter().any(|(vn, _)| vn == v))
+                        .unwrap_or(false);
+                    if *self.current() == Kind::ColonColon && !next_is_variant {
+                        self.pos += 1; // consume `::`
+                            self.pos += 1; // skip the method name
+                        let method = next_ident.unwrap_or_default();
+                        let display = self.enums[eid].name;
+                        let template = self.generics.defs[gid].name.clone();
+                        let origin: Vec<Type> = args.clone();
+                        let Some(gimpl) = self.generics.generic_impls.get(&template).cloned() else {
+                            return Err(self.error_at(name_offset, &format!("'{}' has no generic impl block, so it has no associated functions", template)));
+                        };
+                        let Some(mdef) = gimpl.methods.iter().find(|m| m.name == method).cloned() else {
+                            let mut names: Vec<String> = gimpl.methods.iter().map(|m| m.name.clone()).collect();
+                            names.sort();
+                            return Err(self.error_at(name_offset, &format!("the impl for '{template}' has no associated function '{method}'; it has {}", names.join(", "))));
+                        };
+                        let has_receiver = mdef.receiver.is_some();
+                        let instance = self.instantiate_impl_method(&template, &method, eid, gid, &origin, name_offset)?;
+                        let (id, params, ret) = instance;
+                        // `call_arguments` starts at '('; assert the shape.
+                        if *self.current() != Kind::LParen {
+                            return Err(self.error_at(name_offset, &format!("'{method}' expects an argument list")));
+                        }
+                        let call_params = if has_receiver { params[1..].to_vec() } else { params.clone() };
+                        let call_args = self.call_arguments(&format!("{display}::{method}"), &call_params)?;
+                        (Expr::Call(id, call_args, ret), ret)
+                    } else {
+                        self.enum_literal(eid, name_offset)?
+                    }
                 } else if self.generics.struct_names.contains_key(&name) && *self.current() == Kind::LBracket {
                     // Generic struct literal: the arguments pick the layout, so
                     // Pair[string, i64] and Pair[i64, i64] are different types.
@@ -898,7 +975,10 @@ impl Parser<'_> {
             let (type_name, sid) = match base_ty {
                 Type::Struct(sid) => (self.structs[sid].name.clone(), Some(sid)),
                 Type::StructRef(sid) | Type::StructMut(sid) => (self.structs[sid].name.clone(), Some(sid)),
-                Type::Enum(name, _) => (name.to_owned(), None),
+                // The enum's id flows to the generic-impl resolution below:
+                // enum instantiations resolve methods through their
+                // declaration's template, same as structs (ADR-0196).
+                Type::Enum(name, eid) => (name.to_owned(), Some(eid)),
                 other => return Err(self.fail(&format!("type {} has no fields or methods", other.name()))),
             };
             // `value.method(args)` resolves to the method's ordinary function,
@@ -914,11 +994,21 @@ impl Parser<'_> {
                 let generic = if self.generics.inherent.contains_key(&key) {
                     None
                 } else if let Some(struct_sid) = sid {
-                    if let Some(&(gid, ref origin_args)) = self.generics.struct_origin.get(&struct_sid) {
-                        let def_name = self.generics.struct_defs[gid].name.clone();
-                        let origin: Vec<Type> = origin_args.clone();
+                    // Struct instantiations and enum instantiations both
+                    // resolve methods through their declaration's template.
+                    let origin: Option<(usize, Vec<Type>)> = match base_ty {
+                        Type::Struct(_) => self.generics.struct_origin.get(&struct_sid).cloned(),
+                        Type::Enum(_, _) => self.generics.enum_origin.get(&struct_sid).cloned(),
+                        _ => None,
+                    };
+                    if let Some((gid, origin_args)) = origin {
+                        // The gid indexes the table the origin came from.
+                        let def_name = match base_ty {
+                            Type::Enum(..) => self.generics.defs[gid].name.clone(),
+                            _ => self.generics.struct_defs[gid].name.clone(),
+                        };
                         if self.generics.generic_impls.contains_key(&def_name) {
-                            Some(self.instantiate_impl_method(&def_name, &fname, struct_sid, gid, &origin, call_offset)?)
+                            Some(self.instantiate_impl_method(&def_name, &fname, struct_sid, gid, &origin_args, call_offset)?)
                         } else { None }
                     } else { None }
                 } else { None };
@@ -926,9 +1016,12 @@ impl Parser<'_> {
                     (method.signature.id, method.receiver, method.signature.ret, method.signature.params.clone())
                 } else if let Some(instance) = generic {
                     let (id, params, ret) = instance;
-                    let def_name = match sid.map(|struct_sid| self.generics.struct_origin.get(&struct_sid)) {
-                        Some(Some(&(gid, _))) => self.generics.struct_defs[gid].name.clone(),
-                        _ => struct_name.clone(),
+                    let def_name = match sid {
+                        Some(struct_sid) => match base_ty {
+                            Type::Enum(..) => self.generics.enum_origin.get(&struct_sid).map(|&(gid, _)| self.generics.defs[gid].name.clone()),
+                            _ => self.generics.struct_origin.get(&struct_sid).map(|&(gid, _)| self.generics.struct_defs[gid].name.clone()),
+                        }.unwrap_or_else(|| struct_name.clone()),
+                        None => struct_name.clone(),
                     };
                     let has_receiver = self.generics.generic_impls.get(&def_name)
                         .and_then(|def| def.methods.iter().find(|m| m.name == fname))

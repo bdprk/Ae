@@ -442,8 +442,20 @@ impl Parser<'_> {
     // each (method, argument list) pair gets its function id and body parse
     // at the call site that first needs it, exactly like a generic function.
     fn collect_generic_impl(&mut self, type_name: String) -> Result<(), ae_span::Diagnostic> {
-        let gid = self.generics.struct_names[&type_name];
-        let def_file = self.generics.struct_defs[gid].file.clone();
+        // Both declaration kinds take the same template shape; the receiver's
+        // concrete type comes from the instantiation (enum receivers are by
+        // value, so the enum path only ever builds ByValue receivers).
+        let is_struct = self.generics.struct_names.contains_key(&type_name);
+        // `struct_defs` holds the file for struct declarations; enum
+        // declarations record theirs in `defs`, so the lookup follows the
+        // kind instead of assuming one table.
+        let (gid, def_file) = if is_struct {
+            let gid = self.generics.struct_names[&type_name];
+            (gid, self.generics.struct_defs[gid].file.clone())
+        } else {
+            let gid = self.generics.names[&type_name];
+            (gid, self.generics.defs[gid].file.clone())
+        };
         // Coherence: the impl lives with the declaration, one per type.
         if def_file != self.file {
             return Err(self.fail(&format!("a generic impl for '{type_name}' must be in the file that declares it ({def_file})")));
@@ -468,7 +480,7 @@ impl Parser<'_> {
             }
             // Field collisions: `value.name` must mean one thing, and for an
             // instantiation the fields are exactly the declaration's fields.
-            if self.generics.struct_defs[gid].fields.iter().any(|(name, _)| *name == method) {
+            if is_struct && self.generics.struct_defs[gid].fields.iter().any(|(name, _)| *name == method) {
                 return Err(self.fail(&format!("method '{method}' collides with the field of the same name on '{type_name}'; 'value.{method}' has to mean one thing, so rename one")));
             }
             // Only the receiver spelling is read here; the rest of the
@@ -519,7 +531,8 @@ impl Parser<'_> {
         // `impl Type { ... }` carries no `for`, so that name is the type itself.
         // A generic struct instantiates its methods per argument list, so its
         // impl is collected as a template instead of signatures (ADR-0187).
-        if *self.current() == Kind::LBracket && self.generics.struct_names.contains_key(&first) {
+        if *self.current() == Kind::LBracket
+            && (self.generics.struct_names.contains_key(&first) || self.generics.names.contains_key(&first)) {
             return self.collect_generic_impl(first);
         }
         if *self.current() != Kind::For { return self.collect_inherent_impl(first, next_id); }
@@ -621,7 +634,8 @@ impl Parser<'_> {
         // A generic impl's methods are templates: their bodies were stored as
         // token ranges in the signature pass and are parsed per instantiation,
         // so this pass steps over the whole block (ADR-0187).
-        if *self.current() == Kind::LBracket && self.generics.struct_names.contains_key(&first) {
+        if *self.current() == Kind::LBracket
+            && (self.generics.struct_names.contains_key(&first) || self.generics.names.contains_key(&first)) {
             self.skip_type_params();
             return self.skip_balanced_braces();
         }
@@ -875,6 +889,7 @@ impl Parser<'_> {
         let Some(def) = self.generics.generic_impls.get(impl_name).cloned() else {
             return Err(self.error_at(offset, &format!("'{impl_name}' has no generic impl block")));
         };
+        let is_enum_target = self.generics.names.contains_key(impl_name);
         if args.len() != def.params.len() {
             return Err(self.error_at(offset, &format!("'{impl_name}' takes {} type argument(s), found {}", def.params.len(), args.len())));
         }
@@ -884,6 +899,9 @@ impl Parser<'_> {
             return Err(self.error_at(offset, &format!("the impl for '{impl_name}' has no method '{method}'; it has {}", names.join(", "))));
         };
         let key = format!("{gid}#{method}#{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
+        if std::env::var_os("AE_DEBUG_MOVE").is_some() {
+            eprintln!("inst debug: {}#{} sid {} enum_target {} args {:?}", impl_name, method, sid, is_enum_target, args.iter().map(|t| t.name()).collect::<Vec<_>>());
+        }
         if let Some(instance) = self.generics.generic_impl_done.get(&key) { return Ok(instance.clone()); }
         if self.generics.impl_in_progress.contains(&key) {
             return Err(self.error_at(offset, &format!("'{impl_name}#{method}' is already being instantiated with these type arguments; the expansion would never finish")));
@@ -891,11 +909,25 @@ impl Parser<'_> {
         self.generics.impl_in_progress.insert(key.clone());
         let id = self.generics.next_fn_id;
         self.generics.next_fn_id += 1;
-        let receiver_ty = mdef.receiver.map(|kind| match kind {
-            ReceiverKind::ByValue => Type::Struct(sid),
-            ReceiverKind::Shared => Type::StructRef(sid),
-            ReceiverKind::Mutable => Type::StructMut(sid),
+        // Enum receivers are by value only (ADR-0196): the Shared/Mutable
+        // arms cannot arise for an enum target, and the guard makes that
+        // explicit rather than silently building a struct-shaped receiver.
+        let receiver_ty = mdef.receiver.map(|kind| match (kind, is_enum_target) {
+            (ReceiverKind::ByValue, false) => Type::Struct(sid),
+            (ReceiverKind::Shared, false) => Type::StructRef(sid),
+            (ReceiverKind::Mutable, false) => Type::StructMut(sid),
+            (ReceiverKind::ByValue, true) => Type::Enum(self.enums[sid].name, sid),
+            (ReceiverKind::Shared, true) | (ReceiverKind::Mutable, true) => unreachable!("enum receivers are by value only"),
         });
+        // `Self` inside the body is the instantiation's type: an enum's
+        // display name is interned, so the borrow of self.enums ends before
+        // the sub-parser takes the shared maps mutably.
+        let impl_self_ty = if is_enum_target {
+            let display = self.enums[sid].name;
+            Type::Enum(display, sid)
+        } else {
+            Type::Struct(sid)
+        };
         let mut subst = HashMap::new();
         for (index, param) in def.params.iter().enumerate() {
             subst.insert(param.clone(), args[index]);
@@ -908,7 +940,8 @@ impl Parser<'_> {
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
             borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(),
-            subst, trait_bounds: HashMap::new(), receiver: receiver_ty, impl_self: Some(Type::Struct(sid)), shadow_ok: false, pending: Vec::new(),
+            subst, trait_bounds: HashMap::new(), receiver: receiver_ty,
+            impl_self: Some(impl_self_ty), shadow_ok: false, pending: Vec::new(),
         };
         let parsed = sub.function_rest(false, id);
         let mut nested = std::mem::take(&mut sub.pending);
