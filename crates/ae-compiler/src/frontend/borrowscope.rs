@@ -140,6 +140,9 @@ fn introduce_borrows(statement: &Statement, live: &mut std::collections::HashSet
         Statement::For(_, container, ..) => { live.insert(*container); }
         Statement::ForTokens(_, base, ..) => { live.insert(*base); }
         Statement::Match(subject, ..) => { live.insert(*subject); }
+        // A payload binding (M2.3) borrows from the subject: views and
+        // borrows read the enum, so its region covers the arm's block.
+        Statement::BindPayload(_, subject, ..) => { live.insert(*subject); }
         _ => {}
     }
 }

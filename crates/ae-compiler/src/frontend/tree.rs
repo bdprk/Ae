@@ -199,6 +199,11 @@ impl<'a> TreePrinter<'a> {
                 let value_text = self.expression_text(value);
                 self.line(&format!("{}[{}] = {} @ {}:{}", place_text, key_text, value_text, line, col));
             }
+            // CFG-only (M2.3): a match arm's payload binding, printed where
+            // the lowering placed it — the top of the arm's block.
+            Statement::BindPayload(bid, subject, variant, index, ty) => {
+                self.line(&format!("bind v{bid} = payload #{index} of v{subject}::#{variant} ({})", ty.name()));
+            }
             Statement::Propagate(expr, ty, ok_types, binding, frees) => {
                 let expr_text = self.expression_text(expr);
                 let bound = match binding {

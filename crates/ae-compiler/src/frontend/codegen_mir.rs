@@ -11,11 +11,14 @@
 //! Two lowering slices are not yet complete enough to drive codegen, and a
 //! function that contains one stays on the tree backend:
 //!
-//! - `for` / `for ... in tokens(...)`: the tree statement carries the hidden
-//!   counter increment and the `continue` landing label; the CFG slice
-//!   branches on the counter without them.
-//! - `match`: the arms' payload bindings are annotations of the switch edge,
-//!   not statements, so the arm bodies would read undeclared slots.
+//! - `for ... in tokens(...)`: the tree statement carries the cursor reset,
+//!   the per-iteration element binding, and the advance check; the CFG slice
+//!   branches on the cursor variable without them.
+//!
+//! `for` over a vector or a range and `match` are fully lowered (M2.3): the
+//! loop's head condition, hidden increment, and `continue` landing live in
+//! the graph as a real branch and a step block, and a match's payload
+//! bindings sit at the top of each arm block as `BindPayload` statements.
 //!
 //! Everything else — `if`, `while`, `break`, `continue`, early `return`,
 //! `exit`, `?` propagation, `assert`, containers, strings, structs, enums,
@@ -45,7 +48,10 @@ fn statements_supported(statements: &[Statement]) -> bool {
 
 fn statement_supported(statement: &Statement) -> bool {
     match statement {
-        Statement::For(..) | Statement::ForTokens(..) | Statement::Match(..) => false,
+        // The only tree statement the CFG slice cannot lower completely: the
+        // cursor reset, the per-iteration element binding, and the advance
+        // check have no block-graph form yet.
+        Statement::ForTokens(..) => false,
         Statement::If(_, yes, no) => statements_supported(yes) && statements_supported(no),
         Statement::While(_, body) => statements_supported(body),
         _ => true,
@@ -61,13 +67,23 @@ pub(super) fn emit_function_body(function: &Function, out: &mut String) {
     // unreachable, so not emitting it changes nothing.
     mir::optimize_function(&mut mir);
     let mut next = 0usize;
+    let mut needs_tail = false;
     for block in &mir.blocks {
         out.push_str(&format!("  block_{}: ;\n", block.id));
-        emit_block(&mir, block, out, &mut next);
+        emit_block(&mir, block, out, &mut next, &mut needs_tail);
+    }
+    // `main`'s pending tail is not necessarily the last block created — a
+    // loop's exit block is created while the loop lowers, but any arm or join
+    // block can come after it in the vector. Fallthrough in C goes to the
+    // next label in *emission* order, so the implicit exit must be an
+    // explicit jump to a label placed just before the caller's flush-and-
+    // return, not a reliance on block order.
+    if needs_tail {
+        out.push_str("  block_tail: ;\n");
     }
 }
 
-fn emit_block(function: &MirFunction, block: &MirBlock, out: &mut String, next: &mut usize) {
+fn emit_block(function: &MirFunction, block: &MirBlock, out: &mut String, next: &mut usize, needs_tail: &mut bool) {
     let mut statements: &[Statement] = &block.statements;
     // A `return`/`exit` carries the scope's releases as a trailing `Frees`
     // statement (the CFG lowering puts them in the block, before the
@@ -104,12 +120,25 @@ fn emit_block(function: &MirFunction, block: &MirBlock, out: &mut String, next: 
             for &(id, ty) in frees { release_var(out, id, ty); }
             out.push_str(&format!("    ae_exit({});\n", value.text));
         }
-        // `supported` rejects every `match`, so a switch never reaches here.
-        CfgTerminator::Switch(..) => unreachable!("a function with a match stays on the tree backend"),
-        // `main` falls through to the caller's flush-and-return; any other
-        // function reaching its tail failed to return a value.
+        // Enum dispatch: one arm block per variant, in variant order, so each
+        // case maps onto the layout's 0-based tag constants. A `match` is
+        // exhaustive, so every variant has a target and no default is
+        // needed; the arm bodies are other blocks, so the switch contains
+        // only gotos and nothing inside it can `break` an enclosing loop.
+        CfgTerminator::Switch(subject, eid, targets) => {
+            out.push_str(&format!("    switch (v{subject}.tag) {{\n"));
+            for (variant, target) in targets.iter().enumerate() {
+                out.push_str(&format!("    case AE_E{eid}_{variant}: goto block_{target};\n"));
+            }
+            out.push_str("    }\n");
+        }
+        // `main`'s implicit exit jumps to the tail label; any other function
+        // reaching its tail failed to return a value.
         CfgTerminator::Unreachable => {
-            if !function.is_main {
+            if function.is_main {
+                out.push_str("    goto block_tail;\n");
+                *needs_tail = true;
+            } else {
                 out.push_str("    ae_fail(\"function exited without return\", 0, 0);\n");
             }
         }

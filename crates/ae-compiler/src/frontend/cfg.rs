@@ -70,9 +70,11 @@ pub(super) enum CfgTerminator {
 struct Lowering {
     blocks: Vec<CfgBlock>,
     next_block: usize,
-    // Loop stacks: break and continue target the exit and the head.
+    // Loop stacks: break targets the exit; continue targets the block that
+    // re-enters the loop's check — the head for `while`/`for .. in tokens`,
+    // the step block (hidden increment) for a counted `for` (M2.3).
     loop_exits: Vec<usize>,
-    loop_heads: Vec<usize>,
+    loop_continues: Vec<usize>,
 }
 
 impl Lowering {
@@ -132,31 +134,54 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             let exit = lowering.new_block();
             lowering.block(current).terminator = CfgTerminator::Branch((*cond).clone(), body_block, exit);
             lowering.loop_exits.push(exit);
-            lowering.loop_heads.push(current);
+            lowering.loop_continues.push(current);
             let (after_body, _) = lower_statements(body, body_block, lowering);
             lowering.loop_exits.pop();
-            lowering.loop_heads.pop();
+            lowering.loop_continues.pop();
             redirect(after_body, current, lowering);
             // The exit is a continuation whatever the body did.
             (exit, false)
         }
-        Statement::For(var, container, body, ..) => {
-            // The for-in loop borrows its container for the whole body and
-            // snapshots the length once, which the loop head covers.
+        Statement::For(var, end_var, body, _label, line, col) => {
+            // A counted loop lowers into its full shape (M2.3): a head whose
+            // branch is the real `counter < limit` test, a body, and a step
+            // block that carries the hidden checked increment — the landing
+            // `continue` targets, matching the tree's `ae_next_{label}`.
+            // The parser declares both slots as i64 and bounds evaluate once
+            // before the loop, so the head re-reads them each iteration.
             let head = lowering.new_block();
             lowering.block(current).terminator = CfgTerminator::Goto(head);
             let body_block = lowering.new_block();
+            let step = lowering.new_block();
             let exit = lowering.new_block();
-            // The head re-checks the snapshot counter each iteration.
-            let counter = Expr::Variable(*var, Type::Int, 0, 0);
-            lowering.block(head).terminator = CfgTerminator::Branch(counter, body_block, exit);
-            let _ = container;
+            let condition = Expr::Binary(
+                Box::new(Expr::Variable(*var, Type::Int, *line, *col)),
+                Kind::Less,
+                Box::new(Expr::Variable(*end_var, Type::Int, *line, *col)),
+                *line,
+                *col,
+                Type::Bool,
+            );
+            lowering.block(head).terminator = CfgTerminator::Branch(condition, body_block, exit);
             lowering.loop_exits.push(exit);
-            lowering.loop_heads.push(head);
+            lowering.loop_continues.push(step);
             let (after_body, _) = lower_statements(body, body_block, lowering);
             lowering.loop_exits.pop();
-            lowering.loop_heads.pop();
-            redirect(after_body, head, lowering);
+            lowering.loop_continues.pop();
+            redirect(after_body, step, lowering);
+            // The increment is the tree's own statement shape: an Assign of
+            // `counter + 1` at the For's position, so the checked-add
+            // diagnostic points at the loop header like the tree backend's.
+            let increment = Expr::Binary(
+                Box::new(Expr::Variable(*var, Type::Int, *line, *col)),
+                Kind::Plus,
+                Box::new(Expr::Number(1)),
+                *line,
+                *col,
+                Type::Int,
+            );
+            lowering.block(step).statements.push(Statement::Assign(*var, increment, false));
+            lowering.block(step).terminator = CfgTerminator::Goto(head);
             (exit, false)
         }
         Statement::ForTokens(var, base, body, ..) => {
@@ -168,10 +193,10 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             let _ = base;
             lowering.block(head).terminator = CfgTerminator::Branch(counter, body_block, exit);
             lowering.loop_exits.push(exit);
-            lowering.loop_heads.push(head);
+            lowering.loop_continues.push(head);
             let (after_body, _) = lower_statements(body, body_block, lowering);
             lowering.loop_exits.pop();
-            lowering.loop_heads.pop();
+            lowering.loop_continues.pop();
             redirect(after_body, head, lowering);
             (exit, false)
         }
@@ -181,24 +206,34 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
                 // defensive default that the validator would flag.
                 return (current, false);
             };
-            let mut targets = Vec::new();
-            for _ in arms { targets.push(lowering.new_block()); }
+            // One target per variant, in variant order — the terminator's
+            // contract. The parser enforces exhaustive unique coverage, so
+            // indexing by each arm's own variant fills every slot no matter
+            // what order the source wrote the arms in.
+            let variant_count = arms.iter().map(|arm| arm.variant).max().map(|max| max + 1).unwrap_or(0);
+            let mut targets = vec![usize::MAX; variant_count];
+            for arm in arms { targets[arm.variant] = lowering.new_block(); }
             lowering.block(current).terminator = CfgTerminator::Switch(*subject, eid, targets.clone());
             let mut joins = Vec::new();
             let mut all_ended = true;
-            for (arm, block) in arms.iter().zip(targets.iter()) {
-                // Payload bindings stay annotations of the switch edge in this
-                // slice: the tree binds them as reads, and the MIR
-                // construction turns them into explicit assignments.
-                let _ = &arm.bindings;
-                let (after, ended) = lower_statements(&arm.body, *block, lowering);
+            for arm in arms {
+                let block = targets[arm.variant];
+                // Payload bindings become explicit statements at the top of
+                // the arm's block: the switch dispatches, then the block binds
+                // its payloads as the views/borrows/copies the tree backend's
+                // match arm emits, in the same order (M2.3).
+                for &(bid, pty, index) in &arm.bindings {
+                    lowering.block(block).statements.push(Statement::BindPayload(bid, *subject, arm.variant, index, pty));
+                }
+                let (after, ended) = lower_statements(&arm.body, block, lowering);
                 joins.push((after, ended));
                 all_ended = all_ended && ended;
             }
-            join_all(&joins, lowering);
-            // The match's continuation is alive only when some arm continues.
-            let continuation = alive_target(&joins, lowering);
-            (continuation, all_ended)
+            // Every continuing arm converges here, like an `if`'s join: code
+            // after the match — and the enclosing loop's back edge — lives in
+            // the join block, not in whichever arm happened to be first.
+            let joined = join_all(&joins, lowering);
+            (joined, all_ended)
         }
         Statement::Return(expr, frees) => {
             // The release annotations ride the return: they are statements
@@ -226,8 +261,8 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             (lowering.new_block(), true)
         }
         Statement::Continue(depth) => {
-            let index = match depth { Some(d) if *d > 0 && *d <= lowering.loop_heads.len() => lowering.loop_heads.len() - *d, _ => lowering.loop_heads.len().saturating_sub(1) };
-            let Some(head) = lowering.loop_heads.get(index).copied() else {
+            let index = match depth { Some(d) if *d > 0 && *d <= lowering.loop_continues.len() => lowering.loop_continues.len() - *d, _ => lowering.loop_continues.len().saturating_sub(1) };
+            let Some(head) = lowering.loop_continues.get(index).copied() else {
                 lowering.block(current).terminator = CfgTerminator::Unreachable;
                 return (lowering.new_block(), true);
             };
@@ -263,16 +298,6 @@ fn join_all(joins: &[(usize, bool)], lowering: &mut Lowering) -> usize {
         joined = join(joined, next, lowering);
     }
     joined
-}
-
-// The block the flow continues in after a set of paths: the first path that
-// did not end unconditionally, or — when every path ended — the merged tail,
-// which is then unreachable by construction.
-fn alive_target(joins: &[(usize, bool)], lowering: &mut Lowering) -> usize {
-    for (block, ended) in joins {
-        if !ended { return *block; }
-    }
-    join_all(joins, lowering)
 }
 
 // Point a block's fall-through at `target`; terminated blocks keep theirs.

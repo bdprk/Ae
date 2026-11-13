@@ -1134,21 +1134,18 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                     if first { out.push_str(&format!("    if ({test}) {{\n")); } else { out.push_str(&format!("    }} else if ({test}) {{\n")); }
                     first = false;
                     for &(bid, pty, index) in &arm.bindings {
-                        let member = format!("v{subject}.u.v{}.p{index}", arm.variant);
-                        match pty {
-                            Type::String => out.push_str(&format!("    ae_strview v{bid} = AE_VIEW({member});\n")),
-                            Type::Bool => out.push_str(&format!("    bool v{bid} = {member};\n")),
-                            Type::F64 => out.push_str(&format!("    double v{bid} = {member};\n")),
-                            // Vector payloads bind as read-only borrows of the slot.
-                            Type::Vec => out.push_str(&format!("    const ae_vec *v{bid} = &{member};\n")),
-                            Type::VecF => out.push_str(&format!("    const ae_f64vec *v{bid} = &{member};\n")),
-                            Type::StrVec => out.push_str(&format!("    const ae_strvec *v{bid} = &{member};\n")),
-                            _ => out.push_str(&format!("    int64_t v{bid} = {member};\n")),
-                        }
+                        emit_payload_binding(out, bid, *subject, arm.variant, index, pty.clone());
                     }
                     emit_statements(&arm.body, out, next);
                 }
                 out.push_str("    }\n");
+            }
+            // CFG-only (M2.3): the match lowering puts a variant's payload
+            // bindings at the top of the arm's block. The parser never emits
+            // one into the tree, so this arm runs only when the MIR backend
+            // emits a match's arm blocks.
+            Statement::BindPayload(bid, subject, variant, index, pty) => {
+                emit_payload_binding(out, *bid, *subject, *variant, *index, pty.clone());
             }
             Statement::For(var, end_var, body, label, line, col) => {
                 out.push_str("    while (1) {\n");
@@ -1172,5 +1169,22 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
             }
             Statement::Frees(ids) => { for &(id, ty) in ids { release_var(out, id, ty); } }
         }
+    }
+}
+
+// One match arm's payload binding, as both backends emit it (M2.3): a
+// view/borrow/copy read of the matched variant's payload slot. String
+// payloads bind as read-only views, vector payloads as read-only borrows,
+// and scalars as plain copies — nothing is ever moved out of a matched enum.
+fn emit_payload_binding(out: &mut String, bid: usize, subject: usize, variant: usize, index: usize, pty: Type) {
+    let member = format!("v{subject}.u.v{variant}.p{index}");
+    match pty {
+        Type::String => out.push_str(&format!("    ae_strview v{bid} = AE_VIEW({member});\n")),
+        Type::Bool => out.push_str(&format!("    bool v{bid} = {member};\n")),
+        Type::F64 => out.push_str(&format!("    double v{bid} = {member};\n")),
+        Type::Vec => out.push_str(&format!("    const ae_vec *v{bid} = &{member};\n")),
+        Type::VecF => out.push_str(&format!("    const ae_f64vec *v{bid} = &{member};\n")),
+        Type::StrVec => out.push_str(&format!("    const ae_strvec *v{bid} = &{member};\n")),
+        _ => out.push_str(&format!("    int64_t v{bid} = {member};\n")),
     }
 }

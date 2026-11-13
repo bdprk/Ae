@@ -4655,3 +4655,83 @@ fn three_way_differential_agreement_between_debug_release_and_interp() {
 }
 
 
+
+#[test]
+fn mir_backend_matches_tree_backend_on_matches_and_counted_loops() {
+    // The MIR backend is the default for every function the CFG lowers
+    // completely (M2.3): matches with payload bindings and counted loops
+    // included. The same program through both backends must agree byte for
+    // byte — this pins the shapes the per-function fallback freed.
+    let dir = unique_temp_dir("codegen_modes");
+    let source = dir.join("flow.ae");
+    fs::write(&source, r#"enum Op { Add(i64, i64), Neg(i64), Id(string), Halt }
+
+fn eval(op: Op) -> i64 {
+    match op {
+        Op::Add(a, b) => { return a + b; }
+        Op::Neg(a) => { return 0 - a; }
+        Op::Id(name) => {
+            if name == "seven" { return 7; }
+            return 1;
+        }
+        Op::Halt => { return 0; }
+    }
+}
+
+fn main() {
+    var items = vec[1, 2, 3, 4, 5, 6];
+    for x in items {
+        if x == 3 { continue; }
+        if x == 6 { break; }
+        print(x);
+    }
+    var total = 0;
+    for k in 0..4 {
+        total = total + k;
+    }
+    print(total);
+    print(eval(Op::Add(2, 3)));
+    print(eval(Op::Neg(9)));
+    print(eval(Op::Id("seven")));
+    print(eval(Op::Halt));
+    var seen = 0;
+    for i in 0..3 {
+        for j in 0..4 {
+            if j == 2 { continue; }
+            if i == 2 && j == 1 { break; }
+            seen = seen + 1;
+        }
+    }
+    print(seen);
+    // A match over a payload the body mutates around: the subject stays
+    // borrowed for the arm, and the join after the arms keeps flowing.
+    var codes = vec[1, 2, 1];
+    for c in codes {
+        var op = Op::Neg(c);
+        match op {
+            Op::Neg(v) => { print(0 - v); }
+            Op::Halt => { print(-999); }
+            Op::Add(a, b) => { print(a + b); }
+            Op::Id(text) => { print(len(text)); }
+        }
+    }
+}
+"#).unwrap();
+    let run = |mode: &str| Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", source.to_str().unwrap()])
+        .env("AE_CODEGEN", mode)
+        .output()
+        .unwrap();
+    let mir = run("mir");
+    let tree = run("tree");
+    assert!(mir.status.success(), "mir failed: {}", String::from_utf8_lossy(&mir.stderr));
+    assert!(tree.status.success(), "tree failed: {}", String::from_utf8_lossy(&tree.stderr));
+    let mir_out = String::from_utf8_lossy(&mir.stdout).replace("\r\n", "\n");
+    let tree_out = String::from_utf8_lossy(&tree.stdout).replace("\r\n", "\n");
+    assert_eq!(mir_out, tree_out, "backends disagree");
+    // 1,2,4,5 (skip 3, break at 6); 6 (0+1+2+3); 5; -9; 7; 0; 7 (nested
+    // continue lands on the inner step, break leaves the inner loop);
+    // -1,-2,-1 (match inside a loop, one arm per variant).
+    assert_eq!(mir_out, "1\n2\n4\n5\n6\n5\n-9\n7\n0\n7\n-1\n-2\n-1\n");
+    fs::remove_dir_all(dir).unwrap();
+}
