@@ -510,6 +510,8 @@ impl Parser<'_> {
                             return Err(self.fail(&format!("write the receiver as 'self'; it already has type '{}'", type_name)));
                         }
                         receiver = Some(ReceiverKind::ByValue);
+                    } else if !is_struct {
+                        return Err(self.fail(&format!("enum methods take their receiver by value in this version; write 'self', not '{}'", if mutable_borrow { "&mut self" } else { "&self" })));
                     } else if mutable_borrow {
                         receiver = Some(ReceiverKind::Mutable);
                     } else {
@@ -899,9 +901,6 @@ impl Parser<'_> {
             return Err(self.error_at(offset, &format!("the impl for '{impl_name}' has no method '{method}'; it has {}", names.join(", "))));
         };
         let key = format!("{gid}#{method}#{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
-        if std::env::var_os("AE_DEBUG_MOVE").is_some() {
-            eprintln!("inst debug: {}#{} sid {} enum_target {} args {:?}", impl_name, method, sid, is_enum_target, args.iter().map(|t| t.name()).collect::<Vec<_>>());
-        }
         if let Some(instance) = self.generics.generic_impl_done.get(&key) { return Ok(instance.clone()); }
         if self.generics.impl_in_progress.contains(&key) {
             return Err(self.error_at(offset, &format!("'{impl_name}#{method}' is already being instantiated with these type arguments; the expansion would never finish")));

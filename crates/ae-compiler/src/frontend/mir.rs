@@ -15,7 +15,7 @@
 //! block/terminator shape (already computed by `cfg::build_cfg`), and the
 //! statements inside each block decompose into bindings.
 use super::*;
-use super::cfg::{build_cfg, CfgBlock, CfgFunction, CfgTerminator};
+use super::cfg::{build_cfg, CfgBlock, CfgTerminator};
 
 pub(super) fn mir_path(path: &Path) -> Result<String, String> {
     let program = loader::load_program(path)?;
@@ -178,7 +178,7 @@ fn lower_expr(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut MirLow
         other => {
             let rvalue = MirRvalue::Intrinsic("expr", vec![], expr_type(other));
             let temp = lowering.fresh(expr_type(other));
-            bindings.push(MirBinding { target: temp.clone(), rvalue: MirRvalue::Use(MirOperand::Place(temp.clone())) });
+            bindings.push(MirBinding { target: temp.clone(), rvalue });
             MirRvalue::Use(MirOperand::Place(temp))
         }
     }
