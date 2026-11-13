@@ -128,17 +128,22 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             (joined, ended_then && ended_else)
         }
         Statement::While(cond, body) => {
-            // The head is `current`: the condition lives in its terminator,
-            // the body loops back to it, and the exit continues on.
+            // The head is a dedicated block holding only the condition's
+            // branch. Making `current` the head would send every `continue`
+            // — and the body's back edge — through the statements *before*
+            // the loop, re-running them each iteration (a `var i = 0` in the
+            // same block would reset the counter forever).
+            let head = lowering.new_block();
+            lowering.block(current).terminator = CfgTerminator::Goto(head);
             let body_block = lowering.new_block();
             let exit = lowering.new_block();
-            lowering.block(current).terminator = CfgTerminator::Branch((*cond).clone(), body_block, exit);
+            lowering.block(head).terminator = CfgTerminator::Branch((*cond).clone(), body_block, exit);
             lowering.loop_exits.push(exit);
-            lowering.loop_continues.push(current);
+            lowering.loop_continues.push(head);
             let (after_body, _) = lower_statements(body, body_block, lowering);
             lowering.loop_exits.pop();
             lowering.loop_continues.pop();
-            redirect(after_body, current, lowering);
+            redirect(after_body, head, lowering);
             // The exit is a continuation whatever the body did.
             (exit, false)
         }

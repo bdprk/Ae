@@ -325,22 +325,34 @@ fn eval_stmts(
                     }
                 }
             }
-            Statement::For(var, container, body, line, col, _) => {
-                let items: Vec<Val> = match read_var(locals, caller_locals, *container, *line, *col) {
-                    Ok(Val::VecI(v)) => v.into_iter().map(Val::Int).collect(),
-                    Ok(Val::VecS(v)) => v.into_iter().map(Val::Str).collect(),
-                    Ok(Val::VecF(v)) => v.into_iter().map(Val::Float).collect(),
-                    Ok(Val::Array(v)) => v.into_iter().map(Val::Int).collect(),
-                    Ok(_) => return Flow::Trap("internal: for container".to_owned()),
-                    Err(f) => return f,
-                };
-                for item in items {
-                    locals.insert(*var, item);
+            Statement::For(var, end_var, body, _label, line, col) => {
+                // The tree's counted loop: `counter` and `limit` are i64 slots
+                // the parser declared before the loop, and a vec loop's
+                // element binding sits at the top of the body, reading the
+                // counter — so re-reading both slots each iteration is the
+                // whole semantics. The hidden increment is the checked add at
+                // the loop's position, exactly what the C backend emits.
+                loop {
+                    let counter = match read_var(locals, caller_locals, *var, *line, *col) {
+                        Ok(Val::Int(n)) => n,
+                        Ok(_) => return Flow::Trap("internal: for counter non-int".to_owned()),
+                        Err(f) => return f,
+                    };
+                    let limit = match read_var(locals, caller_locals, *end_var, *line, *col) {
+                        Ok(Val::Int(n)) => n,
+                        Ok(_) => return Flow::Trap("internal: for limit non-int".to_owned()),
+                        Err(f) => return f,
+                    };
+                    if counter >= limit { break; }
                     match eval_stmts(env, body, locals, caller_locals) {
-                        Flow::Next | Flow::Continue(0) => continue,
+                        Flow::Next | Flow::Continue(0) => {}
                         Flow::Continue(d) => return Flow::Continue(d - 1),
                         Flow::Break => break,
                         other => return other,
+                    }
+                    match counter.checked_add(1) {
+                        Some(n) => { locals.insert(*var, Val::Int(n)); }
+                        None => return trap("integer overflow", *line, *col),
                     }
                 }
             }

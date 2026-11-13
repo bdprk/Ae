@@ -2,14 +2,15 @@
 """Differential fuzzing for the AE compiler (plan M2.10, C-backend slice).
 
 Generates random *well-typed* programs from a grammar of arithmetic,
-comparisons, control flow, strings, vectors, structs, and enums; compiles each
-source with every backend and optimization level — the MIR block-graph
-backend (the -O0 default, M2.3) and the structured tree emitter
-(`AE_CODEGEN=tree`), both at -O0, plus the optimized build; runs every
-binary; and asserts that all runs produce identical output. The parser's own
-move/borrow/type rules gate generation (a generated program the compiler
-rejects is a generator bug and fails the run), so each seed doubles as a
-regression test of compile-or-die determinism.
+comparisons, control flow, strings, vectors, structs, enums, matches with
+payload bindings, and counted loops with `continue`; compiles each source
+with every backend and optimization level — the MIR block-graph backend (the
+-O0 default, M2.3) and the structured tree emitter (`AE_CODEGEN=tree`),
+both at -O0, plus the optimized build; runs every binary; and asserts that
+all runs produce identical output. The parser's own move/borrow/type rules
+gate generation (a generated program the compiler rejects is a generator bug
+and fails the run), so each seed doubles as a regression test of
+compile-or-die determinism.
 
 Usage: python scripts/diff_fuzz.py [--seeds N] [--start SEED]
 """
@@ -70,7 +71,42 @@ class Gen:
         """One statement, possibly introducing new variables. Returns lines."""
         if depth >= 3:
             return [f"print({self.int_expr(vars)});"]
-        kind = self.rnd() % 9
+        kind = self.rnd() % 11
+        if kind == 9:
+            # A match over a generated enum value: every variant is covered,
+            # arms carry payload bindings, and each arm prints one line.
+            name = f"op{self.rnd() % 1000}"
+            value = self.int_expr(vars)
+            shape = self.rnd() % 3
+            if shape == 0:
+                init = f"Op::Wrap({value})"
+            elif shape == 1:
+                init = f"Op::Pair({value}, {self.int_expr(vars)})"
+            else:
+                init = "Op::Flat"
+            return [
+                f"var {name} = {init};",
+                f"match {name} {{",
+                f"    Op::Wrap(w) => {{ print(w); }}",
+                f"    Op::Pair(a, b) => {{ print(a + b); }}",
+                f"    Op::Flat => {{ print(42); }}",
+                f"}}",
+                *self.statement(vars, depth + 1),
+            ]
+        if kind == 10:
+            # A counted loop with a continue landing on the hidden increment.
+            # The bound is a constant, so the iteration count is fixed and the
+            # output is deterministic whichever backend emits the loop.
+            bound = (self.rnd() % 4) + 1
+            skip = self.rnd() % bound
+            name = f"i{self.rnd() % 1000}"
+            return [
+                f"for {name} in 0..{bound} {{",
+                f"    if {name} == {skip} {{ continue; }}",
+                f"    print({name});",
+                f"}}",
+                *self.statement(vars, depth + 1),
+            ]
         if kind == 6:
             # A string built from two literals; reads are borrows.
             name = f"str{self.rnd() % 1000}"
@@ -136,7 +172,8 @@ class Gen:
     def program(self) -> str:
         # `main` cannot `return` in this language; its exit is implicit. The
         # struct Pt and its two scalar fields are fixed: field reads borrow.
-        lines = ["struct Pt { a: i64, b: i64 }", "fn main() {"]
+        # The Op enum exercises match dispatch and payload bindings.
+        lines = ["struct Pt { a: i64, b: i64 }", "enum Op { Wrap(i64), Pair(i64, i64), Flat }", "fn main() {"]
         vars = ["seed0"]
         lines.append("    var seed0 = 7;")
         body = self.statement(vars, 0)

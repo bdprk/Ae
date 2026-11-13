@@ -302,9 +302,13 @@ fn resolve_target(target: usize, trampolines: &HashMap<usize, usize>) -> usize {
 }
 
 fn thread_edges(blocks: &mut [MirBlock]) -> bool {
+    // A trampoline is empty in BOTH views: a block can carry statements but
+    // no bindings (a literal `print` binds nothing), and threading an edge
+    // around it would delete the print. Only a block with neither
+    // statements nor bindings may vanish under an edge.
     let trampolines: HashMap<usize, usize> = blocks
         .iter()
-        .filter(|block| block.bindings.is_empty())
+        .filter(|block| block.bindings.is_empty() && block.statements.is_empty())
         .filter_map(|block| match block.terminator {
             CfgTerminator::Goto(next) => Some((block.id, next)),
             _ => None,
