@@ -180,6 +180,11 @@ fn walk_statement(statement: &Statement, moved: &mut std::collections::HashSet<u
             for arm in arms { walk_statements_reads(&arm.body, moved)?; }
             None
         }
+        // CFG-only (M2.3): a payload binding reads the subject it binds from.
+        Statement::BindPayload(_, subject, ..) => {
+            if moved.contains(subject) { return Some(*subject); }
+            None
+        }
         Statement::MapPut(_, key, value, ..) => { walk_expr(key, moved)?; walk_expr(value, moved)?; None }
         Statement::Propagate(expr, ..) => walk_expr(expr, moved),
         Statement::Exit(code, _) => walk_expr(code, moved),

@@ -3,11 +3,13 @@
 
 Generates random *well-typed* programs from a grammar of arithmetic,
 comparisons, control flow, strings, vectors, structs, and enums; compiles each
-source at multiple optimization levels; runs every binary; and asserts that
-all levels produce identical output. The parser's own move/borrow/type rules
-gate generation (a generated program the compiler rejects is a generator bug
-and fails the run), so each seed doubles as a regression test of
-compile-or-die determinism.
+source with every backend and optimization level — the MIR block-graph
+backend (the -O0 default, M2.3) and the structured tree emitter
+(`AE_CODEGEN=tree`), both at -O0, plus the optimized build; runs every
+binary; and asserts that all runs produce identical output. The parser's own
+move/borrow/type rules gate generation (a generated program the compiler
+rejects is a generator bug and fails the run), so each seed doubles as a
+regression test of compile-or-die determinism.
 
 Usage: python scripts/diff_fuzz.py [--seeds N] [--start SEED]
 """
@@ -143,14 +145,18 @@ class Gen:
         return "\n".join(lines)
 
 
-def compile_at(source: str, workdir: Path, tag: str, opt: bool) -> Path:
+def compile_at(source: str, workdir: Path, tag: str, opt: bool, tree: bool = False) -> Path:
     src = workdir / f"prog_{tag}.ae"
     src.write_text(source, encoding="utf-8")
     # `build` optimizes by default; --debug compiles the same source at -O0.
+    # AE_CODEGEN=tree switches that one compile to the structured tree
+    # emitter, so the MIR backend's C is differentiated against it (M2.3).
+    env = {**os.environ, "AE_CODEGEN": "tree"} if tree else None
     result = subprocess.run(
         [str(EXE), "build", str(src), "-o", str(workdir / f"prog_{tag}")] + ([] if opt else ["--debug"]),
         capture_output=True,
         text=True,
+        env=env,
     )
     if result.returncode != 0:
         raise RuntimeError(f"compile ({tag}) failed: {result.stderr}")
@@ -184,9 +190,10 @@ def main() -> int:
             source = gen.program()
             try:
                 debug_bin = compile_at(source, workdir, "d", opt=False)
+                tree_bin = compile_at(source, workdir, "t", opt=False, tree=True)
                 release_bin = compile_at(source, workdir, "r", opt=True)
                 outputs = []
-                for bin_path in (debug_bin, release_bin):
+                for bin_path in (debug_bin, tree_bin, release_bin):
                     run = subprocess.run([str(bin_path)], capture_output=True, text=True, timeout=30)
                     if run.returncode != 0:
                         raise RuntimeError(f"run ({bin_path.name}) failed: {run.stderr}")
@@ -200,10 +207,14 @@ def main() -> int:
                 if interp_run.returncode != 0:
                     raise RuntimeError(f"run (--interp) failed: {interp_run.stderr}")
                 outputs.append(interp_run.stdout)
-                if outputs[0] != outputs[1] or outputs[0] != outputs[2]:
+                if len(set(outputs)) != 1:
                     failures += 1
                     print(
-                        f"seed {seed}: OUTPUT MISMATCH\n{source}\n--- debug ---\n{outputs[0]}\n--- release ---\n{outputs[1]}\n--- interp ---\n{outputs[2]}"
+                        f"seed {seed}: OUTPUT MISMATCH\n{source}"
+                        f"\n--- debug (mir) ---\n{outputs[0]}"
+                        f"\n--- debug (tree) ---\n{outputs[1]}"
+                        f"\n--- release ---\n{outputs[2]}"
+                        f"\n--- interp ---\n{outputs[3]}"
                     )
                 else:
                     print(f"seed {seed}: ok ({len(outputs[0].splitlines())} lines)")
