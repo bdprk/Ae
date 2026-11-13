@@ -304,10 +304,11 @@ fn load_program_full(entry: &Path, recover: bool) -> Result<Loaded, FrontendErro
     if let Err(disagreement) = movewalk::verify_program_moves(&program) {
         return Err(disagreement.into());
     }
-    // The borrow-region walk computes persistent-borrow liveness per block.
-    // It is verification only in this slice: the parser's registers enforce,
-    // and any panic here is a lowering bug the tests must catch.
-    borrowscope::verify_program_borrows(&program);
+    // The borrow-region walk computes persistent-borrow liveness per block
+    // and verifies no write occurs while a borrow region is live (ADR-0193).
+    if let Err(disagreement) = borrowscope::verify_program_borrows(&program) {
+        return Err(disagreement.into());
+    }
     Ok(Loaded { program, shared, generics, modules })
 }
 
