@@ -8,6 +8,7 @@ mod cfg;
 mod movewalk;
 mod borrowscope;
 mod mir;
+pub mod interp;
 mod expression;
 mod types;
 mod declarations;
@@ -492,6 +493,12 @@ pub fn cfg_path(path: &Path) -> Result<String, String> {
 /// as text (`ae emit-mir`).
 pub fn mir_path(path: &Path) -> Result<String, String> {
     mir::mir_path(path)
+}
+
+/// Execute a program directly inside the compiler's MIR/CFG interpreter
+/// (`ae test --interp` / `ae run --interp`).
+pub fn interpret_path(path: &Path) -> Result<(String, u8), String> {
+    interp::interpret_path(path)
 }
 
 /// Compile a file and report what the output depends on, in one pass. This is

@@ -4,7 +4,7 @@ use ae_compiler::{fmt, frontend, harness, sha256};
 use frontend::compile_path;
 mod frontend_cache;
 
-const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> <source.ae>\n       ae check --json <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae> [filter]\n       ae run <source.ae> [--release] [-- <program args>]\n       ae build <source.ae> -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> <source.ae>\n       ae check --json <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae> [filter] [--interp]\n       ae run <source.ae> [--release|--interp] [-- <program args>]\n       ae build <source.ae> -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -358,17 +358,34 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         return Ok(0);
     }
     if cmd == "test" {
-        if args.len() != 2 && args.len() != 3 { return Err(USAGE.into()); }
-        let filter = match args.get(2).and_then(|a| a.to_str()) {
+        let mut use_interp = false;
+        let mut rest: Vec<&OsString> = Vec::new();
+        for arg in args.iter().skip(1) {
+            if arg.to_str() == Some("--interp") {
+                use_interp = true;
+            } else {
+                rest.push(arg);
+            }
+        }
+        if rest.is_empty() || rest.len() > 2 { return Err(USAGE.into()); }
+        let filter = match rest.get(1).and_then(|a| a.to_str()) {
             Some(filter) => Some(filter.to_owned()),
             // A non-UTF-8 filter cannot match any UTF-8 test name; say so
             // instead of silently running everything.
-            None if args.len() == 3 => return Err("test filter must be valid UTF-8".into()),
+            None if rest.len() == 2 => return Err("test filter must be valid UTF-8".into()),
             None => None,
         };
         let started = Instant::now();
         // The staged copy is dropped (and deleted) on every path below.
-        let program = harness::prepare(Path::new(&args[1]), filter.as_deref())?;
+        let program = harness::prepare(Path::new(rest[0]), filter.as_deref())?;
+        if use_interp {
+            let (out, code) = frontend::interpret_path(&program.staging)?;
+            print!("{out}");
+            if timings_enabled() {
+                eprintln!("ae timing: test_interp_ms={:.3} tests={}", started.elapsed().as_secs_f64() * 1000.0, program.tests.len());
+            }
+            return Ok(code);
+        }
         let c = compile_path(&program.staging)?;
         let dir = TempDir::create(&env::temp_dir())?;
         let exe = build_c(&c, &dir.0, false, true)?;
@@ -435,6 +452,13 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
     // generated C, with slightly smaller executables (ADR-59). `build
     // --release` is still accepted: the flag now names the default, and
     // existing scripts pass it.
+    let interp_run = cmd == "run" && args.len() == 3 && args.last().and_then(|a| a.to_str()) == Some("--interp");
+    if interp_run {
+        let input = Path::new(&args[1]);
+        let (out, code) = frontend::interpret_path(input)?;
+        print!("{out}");
+        return Ok(code);
+    }
     let level = match args.last().and_then(|a| a.to_str()) {
         Some("--release") => Some(true),
         Some("--debug") => Some(false),
