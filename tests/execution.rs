@@ -4540,3 +4540,55 @@ fn json_lexical_recovery_follows_verified_import_prefixes() {
     assert!(!json.contains("child.ae"), "{json}");
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn mir_interpreter_executes_programs_and_tests_with_ub_detection() {
+    let dir = unique_temp_dir("mir-interp");
+    let prog = dir.join("prog.ae");
+    fs::write(
+        &prog,
+        "struct Acc { n: i64 }\nimpl Acc {\n  fn add(&mut self, d: i64) -> i64 { self.n = self.n + d; return self.n; }\n  fn get(&self) -> i64 { return self.n; }\n}\nenum Choice { Val(i64), Empty }\nfn apply(f: fn(i64) -> i64, x: i64) -> i64 { return f(x); }\nfn main() {\n  var a = Acc { n: 10 };\n  let ignored = a.add(5);\n  assert(ignored == 15);\n  let c = Choice::Val(a.get());\n  match c {\n    Choice::Val(v) => {\n      let inc = |z: i64| -> i64 { return z + 1; };\n      print(apply(|z: i64| -> i64 { return z + 1; }, inc(v)));\n    }\n    Choice::Empty => { print(0); }\n  }\n}\n",
+    ).unwrap();
+    let interp_out = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", prog.to_str().unwrap(), "--interp"])
+        .output()
+        .unwrap();
+    assert!(interp_out.status.success(), "{}", String::from_utf8_lossy(&interp_out.stderr));
+    assert_eq!(String::from_utf8_lossy(&interp_out.stdout).replace("\r\n", "\n"), "17\n");
+
+    let c_out = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", prog.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(c_out.status.success(), "{}", String::from_utf8_lossy(&c_out.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&interp_out.stdout).replace("\r\n", "\n"),
+        String::from_utf8_lossy(&c_out.stdout).replace("\r\n", "\n")
+    );
+
+    let tests_file = dir.join("suite.ae");
+    fs::write(
+        &tests_file,
+        "fn test_pass_arith() -> i64 {\n  var v = vec[1, 2, 3];\n  push(v, 4);\n  assert(len(v) == 4 && v[3] == 4);\n  return 0;\n}\nfn test_fail_overflow() -> i64 {\n  let x = 9223372036854775807;\n  let y = x + 1;\n  assert(y > 0);\n  return 0;\n}\n",
+    ).unwrap();
+    let pass_only = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["test", tests_file.to_str().unwrap(), "pass_arith", "--interp"])
+        .output()
+        .unwrap();
+    assert!(pass_only.status.success(), "{}", String::from_utf8_lossy(&pass_only.stderr));
+    let pass_stdout = String::from_utf8_lossy(&pass_only.stdout);
+    assert!(pass_stdout.contains("PASS test_pass_arith"), "{pass_stdout}");
+    assert!(pass_stdout.contains("ok: 1 passed"), "{pass_stdout}");
+
+    let all_tests = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["test", tests_file.to_str().unwrap(), "--interp"])
+        .output()
+        .unwrap();
+    assert!(!all_tests.status.success());
+    let stdout = String::from_utf8_lossy(&all_tests.stdout);
+    let stderr = String::from_utf8_lossy(&all_tests.stderr);
+    assert!(stdout.contains("RUN test_fail_overflow"), "{stdout}");
+    assert!(stderr.contains("integer overflow"), "{stderr}");
+    fs::remove_dir_all(dir).unwrap();
+}
+

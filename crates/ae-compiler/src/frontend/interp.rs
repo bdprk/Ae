@@ -19,8 +19,8 @@ enum Val {
     VecI(Vec<i64>),
     VecS(Vec<String>),
     VecF(Vec<f64>),
-    Struct(usize, HashMap<String, Val>),
-    Enum(usize, usize, Vec<Val>),
+    Struct(#[allow(dead_code)] usize, HashMap<String, Val>),
+    Enum(#[allow(dead_code)] usize, usize, Vec<Val>),
     Closure(usize),
     FnPtr(usize),
     Ref(usize),
@@ -45,8 +45,8 @@ struct Env<'a> {
 
 const MAX_STEPS: usize = 5_000_000;
 
-pub fn interpret_path(path: &Path) -> Result<(String, u8), String> {
-    let program = loader::load_program(path)?;
+pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
+    let program = loader::load_program(path).map_err(|e| (String::new(), e))?;
     let mut fns = HashMap::new();
     let mut main_fn = None;
     for file in &program.files {
@@ -57,14 +57,14 @@ pub fn interpret_path(path: &Path) -> Result<(String, u8), String> {
             }
         }
     }
-    let main_fn = main_fn.ok_or_else(|| "program must define a main function".to_owned())?;
+    let main_fn = main_fn.ok_or_else(|| (String::new(), "program must define a main function".to_owned()))?;
     let mut env = Env { program: &program, fns, out: String::new(), steps: 0 };
     let mut locals: HashMap<usize, Val> = HashMap::new();
     match eval_stmts(&mut env, &main_fn.body, &mut locals, &mut None) {
         Flow::Next | Flow::Return(_) => Ok((env.out, 0)),
         Flow::Exit(code) => Ok((env.out, code)),
-        Flow::Trap(msg) => Err(msg),
-        Flow::Break | Flow::Continue(_) => Err("internal: unwound loop control in main".to_owned()),
+        Flow::Trap(msg) => Err((env.out, msg)),
+        Flow::Break | Flow::Continue(_) => Err((env.out, "internal: unwound loop control in main".to_owned())),
     }
 }
 
