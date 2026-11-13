@@ -324,6 +324,9 @@ impl Parser<'_> {
         let eid = self.enums.len();
         self.enums.push(EnumDef { name: interned, variants, file: def.file, public: def.public, pattern: def.name });
         self.generics.done.insert(key, eid);
+        // Method calls on the instantiation resolve through its generic impl
+        // block (same machinery as generic structs, ADR-0187/0196).
+        self.generics.enum_origin.insert(eid, (gid, args));
         Ok(eid)
     }
     // A concrete type argument. Structs and enums are rejected for the same
