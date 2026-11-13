@@ -69,7 +69,7 @@ pub(super) enum MirRvalue {
     Binary(MirOperand, Kind, MirOperand, Type),
     Call(usize, Vec<MirOperand>, Type),
     FnCall(usize, Vec<MirOperand>, Type),
-    ClosureCall(usize, Vec<MirOperand>, Type),
+    ClosureLit(usize),
     Intrinsic(&'static str, Vec<MirOperand>, Type),
     Aggregate(usize, Vec<MirRvalue>),
     AdtAggregate(&'static str, usize, usize, Vec<MirRvalue>),
@@ -172,6 +172,7 @@ fn lower_expr(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut MirLow
         }
         Expr::Call(id, args, ret) => MirRvalue::Call(*id, lower_args(args, bindings, lowering), *ret),
         Expr::FnCall(id, args, ret) => MirRvalue::FnCall(*id, lower_args(args, bindings, lowering), *ret),
+        Expr::ClosureLit(cid) => MirRvalue::ClosureLit(*cid),
         Expr::StructLit(sid, values) => MirRvalue::Aggregate(*sid, values.iter().map(|v| lower_expr(v, bindings, lowering)).collect()),
         Expr::EnumLit(name, eid, vidx, values) => MirRvalue::AdtAggregate(name, *eid, *vidx, values.iter().map(|v| lower_expr(v, bindings, lowering)).collect()),
         Expr::VecLit(values, ty, ..) => MirRvalue::VecNew(values.iter().map(|v| lower_expr(v, bindings, lowering)).collect(), *ty),
@@ -297,19 +298,20 @@ fn print_operand(operand: &MirOperand, out: &mut String) {
         MirOperand::Int(n) => out.push_str(&n.to_string()),
         MirOperand::Float(x) => out.push_str(&x.to_string()),
         MirOperand::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-        MirOperand::Str(text, ..) => out.push_str(&format!("{:?}", text)),
+        MirOperand::Str(text, line, col) => out.push_str(&format!("{:?} @{}:{}", text, line, col)),
     }
 }
 
 fn print_rvalue(rvalue: &MirRvalue, out: &mut String) {
     match rvalue {
         MirRvalue::Use(operand) => print_operand(operand, out),
-        MirRvalue::Binary(a, op, b, ..) => {
+        MirRvalue::Binary(a, op, b, ty) => {
             print_operand(a, out);
             out.push(' ');
             out.push_str(crate::frontend::tree::operator_text(op));
             out.push(' ');
             print_operand(b, out);
+            out.push_str(&format!(" -> {}", ty.name()));
         }
         MirRvalue::Call(id, args, ret) => {
             out.push_str(&format!("fn#{}(", id));
@@ -321,10 +323,8 @@ fn print_rvalue(rvalue: &MirRvalue, out: &mut String) {
             print_operands(args, out);
             out.push_str(&format!(") -> {}", ret.name()));
         }
-        MirRvalue::ClosureCall(id, args, ret) => {
-            out.push_str(&format!("closure#{}(", id));
-            print_operands(args, out);
-            out.push_str(&format!(") -> {}", ret.name()));
+        MirRvalue::ClosureLit(id) => {
+            out.push_str(&format!("closure#{}", id));
         }
         MirRvalue::Intrinsic(name, args, ret) => {
             out.push_str(&format!("{}(", name));
