@@ -4592,3 +4592,24 @@ fn mir_interpreter_executes_programs_and_tests_with_ub_detection() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn three_way_differential_agreement_between_debug_release_and_interp() {
+    let suite = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run");
+    for name in ["closures.ae", "methods.ae", "enum_generic_impls.ae"] {
+        let path = suite.join(name);
+        let p = path.to_str().unwrap();
+        let debug_out = Command::new(env!("CARGO_BIN_EXE_ae")).args(["run", p]).output().unwrap();
+        let release_out = Command::new(env!("CARGO_BIN_EXE_ae")).args(["run", p, "--release"]).output().unwrap();
+        let interp_out = Command::new(env!("CARGO_BIN_EXE_ae")).args(["run", p, "--interp"]).output().unwrap();
+        assert!(debug_out.status.success(), "{name} debug failed: {}", String::from_utf8_lossy(&debug_out.stderr));
+        assert!(release_out.status.success(), "{name} release failed: {}", String::from_utf8_lossy(&release_out.stderr));
+        assert!(interp_out.status.success(), "{name} interp failed: {}", String::from_utf8_lossy(&interp_out.stderr));
+        let d = String::from_utf8_lossy(&debug_out.stdout).replace("\r\n", "\n");
+        let r = String::from_utf8_lossy(&release_out.stdout).replace("\r\n", "\n");
+        let i = String::from_utf8_lossy(&interp_out.stdout).replace("\r\n", "\n");
+        assert_eq!(d, r, "{name}: debug vs release mismatch");
+        assert_eq!(d, i, "{name}: debug vs interp mismatch");
+    }
+}
+
+

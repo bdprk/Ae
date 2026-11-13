@@ -191,9 +191,20 @@ def main() -> int:
                     if run.returncode != 0:
                         raise RuntimeError(f"run ({bin_path.name}) failed: {run.stderr}")
                     outputs.append(run.stdout)
-                if outputs[0] != outputs[1]:
+                interp_run = subprocess.run(
+                    [str(EXE), "run", str(workdir / "prog_d.ae"), "--interp"],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if interp_run.returncode != 0:
+                    raise RuntimeError(f"run (--interp) failed: {interp_run.stderr}")
+                outputs.append(interp_run.stdout)
+                if outputs[0] != outputs[1] or outputs[0] != outputs[2]:
                     failures += 1
-                    print(f"seed {seed}: OUTPUT MISMATCH\n{source}\n--- debug ---\n{outputs[0]}\n--- release ---\n{outputs[1]}")
+                    print(
+                        f"seed {seed}: OUTPUT MISMATCH\n{source}\n--- debug ---\n{outputs[0]}\n--- release ---\n{outputs[1]}\n--- interp ---\n{outputs[2]}"
+                    )
                 else:
                     print(f"seed {seed}: ok ({len(outputs[0].splitlines())} lines)")
             except RuntimeError as error:
