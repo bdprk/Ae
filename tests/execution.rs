@@ -3413,6 +3413,26 @@ fn mir_constant_propagation_folds_checked_arithmetic_and_branches() {
 }
 
 #[test]
+fn mir_unreachable_block_elimination_prunes_abandoned_continuations() {
+    // M2.10: lowering creates blocks for continuations no path reaches (the
+    // join after two returning arms, the fall-through past a return), and
+    // constant branch folding orphans the untaken arm. Optimization must
+    // prune those blocks while keeping every reachable edge, loop back edges
+    // included.
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("ae-mir-unreachable-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, "fn pick(n: i64) -> i64 {\n  if n > 0 { return 1; } else { return 2; }\n}\nfn main() {\n  var i = 0;\n  while i < 2 { i = i + 1; }\n  print(pick(i));\n}\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-mir").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let mir = String::from_utf8_lossy(&output.stdout);
+    assert!(mir.contains("fn #0(v0: i64) -> i64 (3 blocks)"), "only entry and the two returning arms survive: {mir}");
+    assert!(mir.contains("fn main() -> i64 (3 blocks)"), "entry, loop body, and loop exit survive: {mir}");
+    assert!(!mir.contains("unreachable"), "abandoned continuations are pruned: {mir}");
+    assert!(mir.contains("goto block 0"), "the loop back edge is kept: {mir}");
+}
+
+#[test]
 fn concat_reads_fields_and_equality_does_not_consume() {
     // ADR-0184 follow-up: a binary operator changes what the postfix chain
     // means, so the move check must not decide before the operator is seen.

@@ -246,6 +246,134 @@ pub(super) fn optimize_function(function: &mut MirFunction) {
     for block in &mut function.blocks {
         optimize_block(block);
     }
+    simplify_cfg(function);
+}
+
+// M2.10 MIR Unreachable Block Elimination and CFG simplification.
+//
+// Control-flow lowering creates blocks no path reaches: the continuation a
+// fully-returning arm abandoned, the join every arm returned past, the
+// pending tail of a function that always returns. Constant branch folding
+// (above) orphans more of them. This pass threads edges through empty
+// trampoline blocks, collapses a branch whose resolved targets coincide
+// (only when the condition is side-effect free), and drops every block that
+// is unreachable from the entry.
+//
+// Block ids stay stable — nothing is renumbered — so printed MIR keeps its
+// block names and every surviving edge keeps pointing at the same block.
+// `validate` therefore checks id membership rather than a dense range.
+// Dropping a block no terminator points at, and retargeting an edge through a
+// block that carries no bindings and only a `Goto`, cannot change behavior.
+fn simplify_cfg(function: &mut MirFunction) {
+    // Each round either retargets an edge or removes a block; both are finite,
+    // but pruning can expose a new trampoline, so iterate to a fixed point.
+    let rounds = function.blocks.len() + 1;
+    for _ in 0..rounds {
+        let threaded = thread_edges(&mut function.blocks);
+        let pruned = retain_reachable(&mut function.blocks);
+        if !threaded && !pruned {
+            return;
+        }
+    }
+}
+
+// Resolve an edge target through a chain of empty `Goto` blocks. A cycle of
+// empty blocks resolves to the first block already visited, so threading
+// never loops forever and never rewrites an infinite loop into a different
+// one.
+fn resolve_target(target: usize, trampolines: &HashMap<usize, usize>) -> usize {
+    let mut current = target;
+    let mut seen = HashSet::new();
+    while let Some(next) = trampolines.get(&current) {
+        if !seen.insert(current) {
+            return current;
+        }
+        current = *next;
+    }
+    current
+}
+
+fn thread_edges(blocks: &mut [MirBlock]) -> bool {
+    let trampolines: HashMap<usize, usize> = blocks
+        .iter()
+        .filter(|block| block.bindings.is_empty())
+        .filter_map(|block| match block.terminator {
+            CfgTerminator::Goto(next) => Some((block.id, next)),
+            _ => None,
+        })
+        .collect();
+    let mut changed = false;
+    for block in blocks.iter_mut() {
+        let replacement = match &block.terminator {
+            CfgTerminator::Goto(target) => {
+                let resolved = resolve_target(*target, &trampolines);
+                (resolved != *target).then(|| CfgTerminator::Goto(resolved))
+            }
+            CfgTerminator::Branch(cond, then_target, else_target) => {
+                let then_target_now = resolve_target(*then_target, &trampolines);
+                let else_target_now = resolve_target(*else_target, &trampolines);
+                if then_target_now == else_target_now && condition_is_pure(cond) {
+                    Some(CfgTerminator::Goto(then_target_now))
+                } else if then_target_now != *then_target || else_target_now != *else_target {
+                    Some(CfgTerminator::Branch(cond.clone(), then_target_now, else_target_now))
+                } else {
+                    None
+                }
+            }
+            CfgTerminator::Switch(subject, layout, targets) => {
+                let resolved: Vec<usize> = targets.iter().map(|t| resolve_target(*t, &trampolines)).collect();
+                (resolved != *targets).then(|| CfgTerminator::Switch(*subject, *layout, resolved))
+            }
+            _ => None,
+        };
+        if let Some(terminator) = replacement {
+            block.terminator = terminator;
+            changed = true;
+        }
+    }
+    changed
+}
+
+// A condition may be dropped only when evaluating it cannot be observed.
+// Conditions keep their whole source form in the CFG, so a call in one is a
+// real side effect (§2.2 Rule 7: optimizations must not change behavior).
+fn condition_is_pure(expr: &Expr) -> bool {
+    match expr {
+        Expr::Number(..) | Expr::FloatLit(..) | Expr::BoolLit(..) | Expr::StrLit(..) => true,
+        Expr::Variable(..) | Expr::Field(..) => true,
+        Expr::Binary(a, _, b, ..) => condition_is_pure(a) && condition_is_pure(b),
+        _ => false,
+    }
+}
+
+fn retain_reachable(blocks: &mut Vec<MirBlock>) -> bool {
+    let Some(entry) = blocks.first().map(|block| block.id) else { return false };
+    let successors: HashMap<usize, Vec<usize>> = blocks
+        .iter()
+        .map(|block| (block.id, terminator_targets(&block.terminator)))
+        .collect();
+    let mut reachable: HashSet<usize> = HashSet::new();
+    let mut pending = vec![entry];
+    while let Some(id) = pending.pop() {
+        if !reachable.insert(id) {
+            continue;
+        }
+        if let Some(next) = successors.get(&id) {
+            pending.extend(next.iter().copied());
+        }
+    }
+    let before = blocks.len();
+    blocks.retain(|block| reachable.contains(&block.id));
+    blocks.len() != before
+}
+
+fn terminator_targets(terminator: &CfgTerminator) -> Vec<usize> {
+    match terminator {
+        CfgTerminator::Goto(target) => vec![*target],
+        CfgTerminator::Branch(_, a, b) => vec![*a, *b],
+        CfgTerminator::Switch(_, _, targets) => targets.clone(),
+        CfgTerminator::Return(_) | CfgTerminator::Exit(_) | CfgTerminator::Unreachable => Vec::new(),
+    }
 }
 
 fn optimize_block(block: &mut MirBlock) {
@@ -430,12 +558,15 @@ fn collect_place_temps(place: &MirPlace, used: &mut HashSet<usize>) {
 // every block's terminator carries valid targets. A violation is a lowering
 // bug (the printer is the reference consumer).
 fn validate(function: &MirFunction) -> Result<(), String> {
-    let count = function.blocks.len();
+    // Unreachable-block elimination leaves the surviving ids sparse, so a
+    // target is valid when it names a surviving block, not when it indexes
+    // the block vector.
+    let ids: HashSet<usize> = function.blocks.iter().map(|block| block.id).collect();
     for block in &function.blocks {
         match &block.terminator {
-            CfgTerminator::Goto(target) => if *target >= count { return Err(format!("internal: fn #{} block {} branches to missing block {}", function.id, block.id, target)); },
-            CfgTerminator::Branch(_, a, b) => if *a >= count || *b >= count { return Err(format!("internal: fn #{} block {} branches to missing blocks", function.id, block.id)); },
-            CfgTerminator::Switch(_, _, targets) => for t in targets { if *t >= count { return Err(format!("internal: fn #{} switch target missing", function.id)); } },
+            CfgTerminator::Goto(target) => if !ids.contains(target) { return Err(format!("internal: fn #{} block {} branches to missing block {}", function.id, block.id, target)); },
+            CfgTerminator::Branch(_, a, b) => if !ids.contains(a) || !ids.contains(b) { return Err(format!("internal: fn #{} block {} branches to missing blocks", function.id, block.id)); },
+            CfgTerminator::Switch(_, _, targets) => for t in targets { if !ids.contains(t) { return Err(format!("internal: fn #{} switch target missing", function.id)); } },
             CfgTerminator::Return(_) | CfgTerminator::Exit(_) | CfgTerminator::Unreachable => {}
         }
     }
