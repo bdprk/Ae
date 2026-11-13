@@ -36,7 +36,7 @@ fn tool_identity() -> String {
         ),
         None => (0, 0),
     };
-    format!("{} {len} {stamp}", env!("CARGO_PKG_VERSION"))
+    format!("{} {len} {stamp} codegen:{}", env!("CARGO_PKG_VERSION"), frontend::codegen_mode())
 }
 
 /// Canonical form of the entry file, used both to name the entry directory and
