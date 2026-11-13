@@ -15,6 +15,12 @@ Two lowering slices could not yet drive code emission, and a function containing
 
 The counted `for` loop had a related gap in the graph itself: the CFG slice branched the loop head on the bare counter variable and gave `continue` the head as its target, so neither the `counter < limit` test, the hidden checked increment, nor the tree's `ae_next_{label}` landing existed in the graph.
 
+Making the graph executable exposed three latent lowering bugs that printing never could — each shipped C that looped forever, dispatched arms to wrong bodies, or silently dropped statements:
+
+1. **`while` shared its head with the enclosing block.** `continue` — and the body's back edge — re-ran every statement *before* the loop in the same block, so `var i = 0;` reset the counter forever. The head is now a dedicated block holding only the condition's branch.
+2. **`match` targets were paired by arm position.** The terminator's contract says one target per variant in variant order, but the lowering zipped arms (source order) with targets, so arms written out of variant order dispatched to wrong bodies. Targets are now indexed by each arm's own variant.
+3. **`thread_edges` treated statement-carrying blocks as empty.** A trampoline was any block with no *bindings* — but after blocks gained statements, a literal `print` binds nothing, so such blocks were threaded around and pruned, deleting their prints. A trampoline must be empty in both views.
+
 ## Decision
 
 1. **Blocks carry their statements.** `MirBlock` keeps the block's statements verbatim alongside the decomposed bindings. A statement form whose decomposition is not complete yet keeps its whole shape, so the C backend emits from the block graph without losing an effect.
@@ -26,9 +32,9 @@ The counted `for` loop had a related gap in the graph itself: the CFG slice bran
 
 ## Evidence
 
-- `cargo test --workspace --locked` — N tests, 0 failures, with the MIR backend as the default for every supported function (the `tests/run` corpus, the UI suites, and the integration tests all exercise it).
-- `python scripts/diff_fuzz.py` — now four-way: `--debug` (MIR backend), `--debug` with `AE_CODEGEN=tree`, `--release`, and `--interp` must produce byte-identical stdout on every seed. (The generator produces no `for`/`match` yet; extending its grammar is the next slice.)
-- `tests/execution.rs` — a backend-equivalence test compiles one `match`/`for`-heavy program through both backends and asserts identical stdout.
+- `cargo test --workspace --locked` — 270 tests, 0 failures on Windows, with the MIR backend as the default for every supported function (the `tests/run` corpus, the UI suites, and the integration tests all exercise it).
+- `python scripts/diff_fuzz.py` — four-way: `--debug` (MIR backend), `--debug` with `AE_CODEGEN=tree`, `--release`, and `--interp` must produce byte-identical stdout on every seed. 25 seeds, 0 failures with matches with payload bindings and counted loops with `continue` in the grammar. The same run pushed the interpreter to support counted `for` (it previously trapped on every loop; its container-based arm predated the tree's counter/limit desugaring).
+- `tests/execution.rs` — `mir_backend_matches_tree_backend_on_matches_and_counted_loops` compiles one `match`/`for`-heavy program through both backends and asserts identical stdout; the two MIR-shape tests were updated for the dedicated loop head.
 - `ae emit-mir` on a match/for program shows the `Switch` terminator, per-arm `BindPayload` statements, and the loop's head/body/step blocks.
 
 ## Consequences

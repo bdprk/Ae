@@ -3430,8 +3430,11 @@ fn mir_linear_block_merging_fuses_single_predecessor_successors() {
     assert!(mir.contains("fn #0(v0: bool) -> i64 (3 blocks)"), "the returning else arm, the then arm, and the fused continuation survive: {mir}");
     assert!(!mir.contains("goto block 3"), "the continuation fuses into the then arm instead of being jumped to: {mir}");
     assert!(mir.contains("  block 1:\n    v1 (i64) = 1\n    t0 (i64) = v1 (i64)\n    return v1 (i64) @ 5:10"), "the fused block keeps binding order and takes the successor's terminator: {mir}");
-    assert!(mir.contains("fn #1(v0: i64) -> i64 (3 blocks)"), "a loop keeps its condition, body, and exit blocks: {mir}");
-    assert!(mir.contains("goto block 0"), "the loop back edge is untouched: {mir}");
+    // The while's head is a dedicated block holding only the condition, so a
+    // `continue` and the back edge re-check it without re-running the
+    // declarations that precede the loop (M2.3).
+    assert!(mir.contains("fn #1(v0: i64) -> i64 (4 blocks)"), "declarations, condition, body, and exit blocks survive: {mir}");
+    assert!(mir.contains("goto block 1"), "the loop back edge targets the condition block: {mir}");
 }
 
 #[test]
@@ -3449,9 +3452,11 @@ fn mir_unreachable_block_elimination_prunes_abandoned_continuations() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     let mir = String::from_utf8_lossy(&output.stdout);
     assert!(mir.contains("fn #0(v0: i64) -> i64 (3 blocks)"), "only entry and the two returning arms survive: {mir}");
-    assert!(mir.contains("fn main() -> i64 (3 blocks)"), "entry, loop body, and loop exit survive: {mir}");
+    // The while's head is a dedicated block (M2.3), so main lowers to
+    // declarations, condition, body, and exit.
+    assert!(mir.contains("fn main() -> i64 (4 blocks)"), "entry, loop condition, body, and exit survive: {mir}");
     assert!(!mir.contains("unreachable"), "abandoned continuations are pruned: {mir}");
-    assert!(mir.contains("goto block 0"), "the loop back edge is kept: {mir}");
+    assert!(mir.contains("goto block 1"), "the loop back edge targets the condition block: {mir}");
 }
 
 #[test]
