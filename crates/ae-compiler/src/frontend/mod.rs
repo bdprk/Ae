@@ -497,7 +497,7 @@ pub fn mir_path(path: &Path) -> Result<String, String> {
 
 /// Execute a program directly inside the compiler's MIR/CFG interpreter
 /// (`ae test --interp` / `ae run --interp`).
-pub fn interpret_path(path: &Path) -> Result<(String, u8), String> {
+pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
     interp::interpret_path(path)
 }
 

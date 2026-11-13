@@ -379,12 +379,19 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         // The staged copy is dropped (and deleted) on every path below.
         let program = harness::prepare(Path::new(rest[0]), filter.as_deref())?;
         if use_interp {
-            let (out, code) = frontend::interpret_path(&program.staging)?;
-            print!("{out}");
-            if timings_enabled() {
-                eprintln!("ae timing: test_interp_ms={:.3} tests={}", started.elapsed().as_secs_f64() * 1000.0, program.tests.len());
+            match frontend::interpret_path(&program.staging) {
+                Ok((out, code)) => {
+                    print!("{out}");
+                    if timings_enabled() {
+                        eprintln!("ae timing: test_interp_ms={:.3} tests={}", started.elapsed().as_secs_f64() * 1000.0, program.tests.len());
+                    }
+                    return Ok(code);
+                }
+                Err((out, msg)) => {
+                    print!("{out}");
+                    return Err(msg);
+                }
             }
-            return Ok(code);
         }
         let c = compile_path(&program.staging)?;
         let dir = TempDir::create(&env::temp_dir())?;
@@ -455,9 +462,16 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
     let interp_run = cmd == "run" && args.len() == 3 && args.last().and_then(|a| a.to_str()) == Some("--interp");
     if interp_run {
         let input = Path::new(&args[1]);
-        let (out, code) = frontend::interpret_path(input)?;
-        print!("{out}");
-        return Ok(code);
+        match frontend::interpret_path(input) {
+            Ok((out, code)) => {
+                print!("{out}");
+                return Ok(code);
+            }
+            Err((out, msg)) => {
+                print!("{out}");
+                return Err(msg);
+            }
+        }
     }
     let level = match args.last().and_then(|a| a.to_str()) {
         Some("--release") => Some(true),
