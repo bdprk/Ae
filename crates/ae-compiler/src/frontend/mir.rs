@@ -43,6 +43,12 @@ pub(super) struct MirFunction {
 #[derive(Debug)]
 pub(super) struct MirBlock {
     pub(super) id: usize,
+    // The block's statements, verbatim from the CFG. The bindings above are
+    // the decomposed view optimizers and the printer consume; a statement
+    // form whose decomposition is not complete yet keeps its whole shape
+    // here, so the C backend can emit from this block graph without losing
+    // an effect (M2.3).
+    pub(super) statements: Vec<Statement>,
     pub(super) bindings: Vec<MirBinding>,
     pub(super) terminator: CfgTerminator,
 }
@@ -112,7 +118,7 @@ fn lower_block(block: &CfgBlock, lowering: &mut MirLowering) -> MirBlock {
     for statement in &block.statements {
         lower_statement(statement, &mut bindings, lowering);
     }
-    MirBlock { id: block.id, bindings, terminator: block.terminator.clone() }
+    MirBlock { id: block.id, statements: block.statements.clone(), bindings, terminator: block.terminator.clone() }
 }
 
 fn lower_statement(statement: &Statement, bindings: &mut Vec<MirBinding>, lowering: &mut MirLowering) {
@@ -409,6 +415,7 @@ fn merge_linear_blocks(blocks: &mut Vec<MirBlock>) -> bool {
         let tail = blocks.remove(tail_index);
         let head_index = blocks.iter().position(|block| block.id == head_id).expect("fusing block present");
         let head = &mut blocks[head_index];
+        head.statements.extend(tail.statements);
         head.bindings.extend(tail.bindings);
         head.terminator = tail.terminator;
         merged_any = true;

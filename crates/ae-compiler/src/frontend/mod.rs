@@ -18,6 +18,7 @@ pub use loader::{check_path, check_path_diagnostic, describe_path, FrontendDiagn
 mod capability_audit;
 use capability_audit::audit_generic_fn;
 mod codegen;
+mod codegen_mir;
 mod c_output;
 pub(crate) use ae_syntax::{Kind, Token, lex};
 use ae_syntax::error;
@@ -493,6 +494,12 @@ pub fn cfg_path(path: &Path) -> Result<String, String> {
 /// as text (`ae emit-mir`).
 pub fn mir_path(path: &Path) -> Result<String, String> {
     mir::mir_path(path)
+}
+
+/// Which C backend the driver will pick (M2.3). Part of the frontend cache's
+/// query key: the two backends produce different C for the same sources.
+pub fn codegen_mode() -> &'static str {
+    if codegen_mir::enabled() { "mir" } else { "tree" }
 }
 
 /// Execute a program directly inside the compiler's MIR/CFG interpreter

@@ -6,7 +6,13 @@ use super::*;
 // temporaries are consumed or freed by their statement, and releases are
 // idempotent even if analysis and emission ever disagree.
 #[derive(Debug)]
-pub(super) struct Emitted { text: String, ty: Type, owned: bool, moves: Vec<(usize, Type)>, materialized: bool }
+pub(super) struct Emitted {
+    pub(super) text: String,
+    pub(super) ty: Type,
+    pub(super) owned: bool,
+    pub(super) moves: Vec<(usize, Type)>,
+    pub(super) materialized: bool,
+}
 impl Emitted {
     fn value(text: String, ty: Type) -> Self { Emitted { text, ty, owned: false, moves: Vec::new(), materialized: true } }
     fn moved(id: usize, ty: Type, text: String) -> Self { Emitted { text, ty, owned: true, moves: vec![(id, ty)], materialized: true } }
