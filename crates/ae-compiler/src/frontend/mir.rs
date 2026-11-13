@@ -22,7 +22,8 @@ pub(super) fn mir_path(path: &Path) -> Result<String, String> {
     let mut out = String::new();
     for file in &program.files {
         for function in file {
-            let mir = lower_function(function);
+            let mut mir = lower_function(function);
+            optimize_function(&mut mir);
             validate(&mir)?;
             print_function(&mir, &mut out);
         }
@@ -224,13 +225,203 @@ fn lower_args(args: &[Argument], bindings: &mut Vec<MirBinding>, lowering: &mut 
 
 fn expr_type(expr: &Expr) -> Type {
     match expr {
-        Expr::Number(..) | Expr::Binary(..) | Expr::Index(..) | Expr::VecIndex(..) => Type::Int,
+        Expr::Number(..) | Expr::Index(..) | Expr::VecIndex(..) => Type::Int,
+        Expr::Binary(_, _, _, _, _, ty) => *ty,
         Expr::FloatLit(..) | Expr::ToF64(..) => Type::F64,
         Expr::BoolLit(..) | Expr::StrEq(..) => Type::Bool,
         Expr::Variable(_, ty, ..) | Expr::Field(_, _, ty) | Expr::VecLit(_, ty, ..) => *ty,
         Expr::StructLit(sid, _) => Type::Struct(*sid),
         Expr::EnumLit(name, ..) => Type::Enum(name, 0),
         _ => Type::Int,
+    }
+}
+
+// M2.10 MIR Constant Propagation and Folding + Dead Temporary Elimination.
+// Performs block-local constant propagation and checked integer/boolean
+// constant folding, preserves checked overflow/division-by-zero semantics
+// by leaving trapping operations unfolded, folds constant Branch conditions
+// into unconditional Goto terminators, and eliminates unreferenced pure
+// temporaries.
+pub(super) fn optimize_function(function: &mut MirFunction) {
+    for block in &mut function.blocks {
+        optimize_block(block);
+    }
+}
+
+fn optimize_block(block: &mut MirBlock) {
+    let mut local_consts: HashMap<usize, MirOperand> = HashMap::new();
+    let mut temp_consts: HashMap<usize, MirOperand> = HashMap::new();
+
+    for binding in &mut block.bindings {
+        binding.rvalue = fold_rvalue(&binding.rvalue, &local_consts, &temp_consts);
+        match &binding.target {
+            MirPlace::Local(id, _) => {
+                if let MirRvalue::Use(op) = &binding.rvalue {
+                    if is_scalar_const(op) {
+                        local_consts.insert(*id, op.clone());
+                    } else {
+                        local_consts.remove(id);
+                    }
+                } else {
+                    local_consts.remove(id);
+                }
+            }
+            MirPlace::Temp(id, _) => {
+                if let MirRvalue::Use(op) = &binding.rvalue {
+                    if is_scalar_const(op) {
+                        temp_consts.insert(*id, op.clone());
+                    }
+                }
+            }
+            MirPlace::Field(base, _, _) => {
+                if let Some(root) = root_local(base) {
+                    local_consts.remove(&root);
+                }
+            }
+        }
+    }
+
+    // Fold constant branch terminators into unconditional Goto edges when the
+    // condition is a known boolean constant or a local known to hold one.
+    if let CfgTerminator::Branch(cond, then_target, else_target) = &block.terminator {
+        let known_bool = match cond {
+            Expr::BoolLit(b) => Some(*b),
+            Expr::Variable(id, Type::Bool, ..) => match local_consts.get(id) {
+                Some(MirOperand::Bool(b)) => Some(*b),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(branch_taken) = known_bool {
+            block.terminator = CfgTerminator::Goto(if branch_taken { *then_target } else { *else_target });
+        }
+    }
+
+    // Dead temporary elimination: remove `Temp` bindings that are pure (`Use`
+    // or `Binary` that already folded to `Use`) and never referenced by any
+    // subsequent binding in the block. (The last binding of a statement may
+    // represent a statement-level effect like `Return` or `Print`, so only
+    // intermediate temporaries produced during expression decomposition that
+    // become unused after folding are removed.)
+    let mut used_temps: HashSet<usize> = HashSet::new();
+    for binding in &block.bindings {
+        collect_rvalue_temps(&binding.rvalue, &mut used_temps);
+        if let MirPlace::Field(base, _, _) = &binding.target {
+            collect_place_temps(base, &mut used_temps);
+        }
+    }
+    // Keep the final binding if it targets a Temp (statement effect sink), and
+    // any Temp that holds a side-effecting rvalue (Call, FnCall, Intrinsic).
+    let last_idx = block.bindings.len().saturating_sub(1);
+    let mut retained = Vec::with_capacity(block.bindings.len());
+    for (idx, binding) in block.bindings.drain(..).enumerate() {
+        if let MirPlace::Temp(tid, _) = &binding.target {
+            let is_pure = matches!(binding.rvalue, MirRvalue::Use(_));
+            if idx < last_idx && is_pure && !used_temps.contains(tid) {
+                continue;
+            }
+        }
+        retained.push(binding);
+    }
+    block.bindings = retained;
+}
+
+fn is_scalar_const(op: &MirOperand) -> bool {
+    matches!(op, MirOperand::Int(_) | MirOperand::Bool(_))
+}
+
+fn root_local(place: &MirPlace) -> Option<usize> {
+    match place {
+        MirPlace::Local(id, _) => Some(*id),
+        MirPlace::Field(base, _, _) => root_local(base),
+        MirPlace::Temp(_, _) => None,
+    }
+}
+
+fn subst_operand(op: &MirOperand, locals: &HashMap<usize, MirOperand>, temps: &HashMap<usize, MirOperand>) -> MirOperand {
+    match op {
+        MirOperand::Place(MirPlace::Local(id, _)) => locals.get(id).cloned().unwrap_or_else(|| op.clone()),
+        MirOperand::Place(MirPlace::Temp(id, _)) => temps.get(id).cloned().unwrap_or_else(|| op.clone()),
+        _ => op.clone(),
+    }
+}
+
+fn fold_rvalue(rvalue: &MirRvalue, locals: &HashMap<usize, MirOperand>, temps: &HashMap<usize, MirOperand>) -> MirRvalue {
+    match rvalue {
+        MirRvalue::Use(op) => MirRvalue::Use(subst_operand(op, locals, temps)),
+        MirRvalue::Binary(lhs, op, rhs, ty) => {
+            let l = subst_operand(lhs, locals, temps);
+            let r = subst_operand(rhs, locals, temps);
+            if let Some(folded) = eval_binary(&l, op, &r) {
+                MirRvalue::Use(folded)
+            } else {
+                MirRvalue::Binary(l, op.clone(), r, *ty)
+            }
+        }
+        MirRvalue::Call(id, args, ret) => MirRvalue::Call(*id, args.iter().map(|a| subst_operand(a, locals, temps)).collect(), *ret),
+        MirRvalue::FnCall(id, args, ret) => MirRvalue::FnCall(*id, args.iter().map(|a| subst_operand(a, locals, temps)).collect(), *ret),
+        MirRvalue::ClosureLit(id) => MirRvalue::ClosureLit(*id),
+        MirRvalue::Intrinsic(name, args, ret) => MirRvalue::Intrinsic(name, args.iter().map(|a| subst_operand(a, locals, temps)).collect(), *ret),
+        MirRvalue::Aggregate(sid, vals) => MirRvalue::Aggregate(*sid, vals.iter().map(|v| fold_rvalue(v, locals, temps)).collect()),
+        MirRvalue::AdtAggregate(name, eid, vidx, vals) => MirRvalue::AdtAggregate(name, *eid, *vidx, vals.iter().map(|v| fold_rvalue(v, locals, temps)).collect()),
+        MirRvalue::VecNew(vals, ty) => MirRvalue::VecNew(vals.iter().map(|v| fold_rvalue(v, locals, temps)).collect(), *ty),
+    }
+}
+
+// Checked constant evaluation (§2.2 Rule 7: optimizations must not change
+// observable behavior; overflow and division/modulo by zero stay unfolded).
+fn eval_binary(lhs: &MirOperand, op: &Kind, rhs: &MirOperand) -> Option<MirOperand> {
+    match (lhs, rhs) {
+        (MirOperand::Int(a), MirOperand::Int(b)) => match op {
+            Kind::Plus => a.checked_add(*b).map(MirOperand::Int),
+            Kind::Minus => a.checked_sub(*b).map(MirOperand::Int),
+            Kind::Star => a.checked_mul(*b).map(MirOperand::Int),
+            Kind::Slash => if *b != 0 { a.checked_div(*b).map(MirOperand::Int) } else { None },
+            Kind::Percent => if *b != 0 { a.checked_rem(*b).map(MirOperand::Int) } else { None },
+            Kind::EqEq => Some(MirOperand::Bool(a == b)),
+            Kind::NotEq => Some(MirOperand::Bool(a != b)),
+            Kind::Less => Some(MirOperand::Bool(a < b)),
+            Kind::LessEq => Some(MirOperand::Bool(a <= b)),
+            Kind::Greater => Some(MirOperand::Bool(a > b)),
+            Kind::GreaterEq => Some(MirOperand::Bool(a >= b)),
+            _ => None,
+        },
+        (MirOperand::Bool(a), MirOperand::Bool(b)) => match op {
+            Kind::And => Some(MirOperand::Bool(*a && *b)),
+            Kind::Or => Some(MirOperand::Bool(*a || *b)),
+            Kind::EqEq => Some(MirOperand::Bool(a == b)),
+            Kind::NotEq => Some(MirOperand::Bool(a != b)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn collect_rvalue_temps(rvalue: &MirRvalue, used: &mut HashSet<usize>) {
+    match rvalue {
+        MirRvalue::Use(op) => collect_operand_temps(op, used),
+        MirRvalue::Binary(a, _, b, _) => { collect_operand_temps(a, used); collect_operand_temps(b, used); }
+        MirRvalue::Call(_, args, _) | MirRvalue::FnCall(_, args, _) | MirRvalue::Intrinsic(_, args, _) => {
+            for a in args { collect_operand_temps(a, used); }
+        }
+        MirRvalue::Aggregate(_, vals) | MirRvalue::AdtAggregate(_, _, _, vals) | MirRvalue::VecNew(vals, _) => {
+            for v in vals { collect_rvalue_temps(v, used); }
+        }
+        MirRvalue::ClosureLit(_) => {}
+    }
+}
+
+fn collect_operand_temps(op: &MirOperand, used: &mut HashSet<usize>) {
+    if let MirOperand::Place(place) = op {
+        collect_place_temps(place, used);
+    }
+}
+
+fn collect_place_temps(place: &MirPlace, used: &mut HashSet<usize>) {
+    match place {
+        MirPlace::Temp(id, _) => { used.insert(*id); }
+        MirPlace::Field(base, _, _) => collect_place_temps(base, used),
+        MirPlace::Local(_, _) => {}
     }
 }
 

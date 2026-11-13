@@ -3397,6 +3397,22 @@ fn emit_mir_lowers_closures_and_aggregates() {
 }
 
 #[test]
+fn mir_constant_propagation_folds_checked_arithmetic_and_branches() {
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("ae-mir-constprop-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, "fn main() {\n  let a = 2 + 3 * 4;\n  let b = a - 4;\n  let cond = b == 10;\n  if cond { print(b); } else { print(0); }\n  let div_zero = 1 / 0;\n  print(div_zero);\n}\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-mir").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let mir = String::from_utf8_lossy(&output.stdout);
+    assert!(mir.contains("v0 (i64) = 14"), "2 + 3 * 4 folds to 14: {mir}");
+    assert!(mir.contains("v1 (i64) = 10"), "a - 4 propagates and folds to 10: {mir}");
+    assert!(mir.contains("v2 (bool) = true"), "b == 10 folds to true: {mir}");
+    assert!(mir.contains("goto block 1"), "constant true branch folds to goto block 1: {mir}");
+    assert!(mir.contains("1 / 0 -> i64"), "division by zero stays unfolded to preserve runtime trap: {mir}");
+}
+
+#[test]
 fn concat_reads_fields_and_equality_does_not_consume() {
     // ADR-0184 follow-up: a binary operator changes what the postfix chain
     // means, so the move check must not decide before the operator is seen.
