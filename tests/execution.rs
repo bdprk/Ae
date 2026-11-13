@@ -3383,6 +3383,20 @@ fn emit_tree_runs_clean_on_the_run_suite() {
 }
 
 #[test]
+fn emit_mir_lowers_closures_and_aggregates() {
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("ae-emit-mir-closures-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, "struct Pair { a: i64, b: i64 }\nfn add(p: Pair) -> i64 { return p.a + p.b; }\nfn main() { let f = |x: i64| -> i64 { return x + 1; }; let p = Pair { a: f(2), b: 4 }; print(add(p)); }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-mir").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let mir = String::from_utf8_lossy(&output.stdout);
+    assert!(mir.contains("closure#0"), "closure literal lowers to ClosureLit: {mir}");
+    assert!(mir.contains("struct #0 {"), "struct aggregate lowers: {mir}");
+    assert!(mir.contains("-> i64"), "binary rvalue includes result type: {mir}");
+}
+
+#[test]
 fn concat_reads_fields_and_equality_does_not_consume() {
     // ADR-0184 follow-up: a binary operator changes what the postfix chain
     // means, so the move check must not decide before the operator is seen.

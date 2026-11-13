@@ -331,7 +331,7 @@ fn print_function(function: &CfgFunction, out: &mut String) {
         let tail = match &block.terminator {
             CfgTerminator::Goto(target) => format!("goto block {}", target),
             CfgTerminator::Branch(cond, a, b) => format!("branch on {} -> then block {} else block {}", crate::frontend::tree::expression_text(cond), a, b),
-            CfgTerminator::Switch(subject, _, targets) => format!("switch v{} -> {}", subject, targets.iter().map(|t| format!("block {}", t)).collect::<Vec<_>>().join(", ")),
+            CfgTerminator::Switch(subject, eid, targets) => format!("switch v{} (enum #{}) -> {}", subject, eid, targets.iter().map(|t| format!("block {}", t)).collect::<Vec<_>>().join(", ")),
             CfgTerminator::Return(expr) => format!("return {}", crate::frontend::tree::expression_text(expr)),
             CfgTerminator::Exit(code) => format!("exit {}", crate::frontend::tree::expression_text(code)),
             // Only main can end this way: the implicit exit-0.
