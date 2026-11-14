@@ -164,14 +164,15 @@ fn lower_statement(statement: &Statement, bindings: &mut Vec<MirBinding>, loweri
             bindings.push(MirBinding { target: temp, rvalue: MirRvalue::Intrinsic("releases", operands, Type::Int) });
         }
         other => {
-            // Container updates, asserts, and the remaining statement
-            // shapes keep their whole form as an intrinsic rvalue bound to
-            // a fresh throwaway temporary: the MIR shows the operation
-            // without inventing semantics the C backend already owns.
-            let rvalue = MirRvalue::Intrinsic("stmt", vec![], Type::Int);
+            // Container updates, asserts, and the remaining statement shapes
+            // render as named intrinsics with their slot and operands: the
+            // MIR shows the operation the C backend owns end to end, without
+            // inventing semantics for it. Control shapes (the CFG lowered
+            // them into blocks and edges) keep the bare placeholder as a
+            // tripwire: one should never reach a MIR block.
+            let (name, operands) = statement_intrinsic(other, bindings, lowering);
             let temp = lowering.fresh(Type::Int);
-            bindings.push(MirBinding { target: temp, rvalue });
-            let _ = other;
+            bindings.push(MirBinding { target: temp, rvalue: MirRvalue::Intrinsic(name, operands, Type::Int) });
         }
     }
 }
@@ -196,9 +197,13 @@ fn lower_expr(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut MirLow
         Expr::EnumLit(name, eid, vidx, values) => MirRvalue::AdtAggregate(name, *eid, *vidx, values.iter().map(|v| lower_expr(v, bindings, lowering)).collect()),
         Expr::VecLit(values, ty, ..) => MirRvalue::VecNew(values.iter().map(|v| lower_expr(v, bindings, lowering)).collect(), *ty),
         other => {
-            let rvalue = MirRvalue::Intrinsic("expr", vec![], expr_type(other));
-            let temp = lowering.fresh(expr_type(other));
-            bindings.push(MirBinding { target: temp.clone(), rvalue });
+            // Built-in reads and conversions render as named intrinsics
+            // with their operands; an unhandled shape keeps the bare
+            // placeholder so a missing arm is visible, not silent.
+            let (name, operands) = expr_intrinsic(other, bindings, lowering);
+            let ty = expr_type(other);
+            let temp = lowering.fresh(ty.clone());
+            bindings.push(MirBinding { target: temp.clone(), rvalue: MirRvalue::Intrinsic(name, operands, ty) });
             MirRvalue::Use(MirOperand::Place(temp))
         }
     }
@@ -241,6 +246,163 @@ fn lower_args(args: &[Argument], bindings: &mut Vec<MirBinding>, lowering: &mut 
     }).collect()
 }
 
+// The named intrinsic for a statement the C backend owns end to end, with
+// one operand per slot and sub-expression. Sub-expressions decompose through
+// the same helpers the structured statements use, so the operands are the
+// rvalues the program computes.
+fn statement_intrinsic(statement: &Statement, bindings: &mut Vec<MirBinding>, lowering: &mut MirLowering) -> (&'static str, Vec<MirOperand>) {
+    match statement {
+        Statement::Array(id, values) => {
+            let mut operands = vec![MirOperand::Place(MirPlace::Local(*id, Type::Array(values.len())))];
+            operands.extend(values.iter().map(|v| lower_operand(v, bindings, lowering)));
+            ("array", operands)
+        }
+        Statement::Store(id, len, index, value, ..) => ("store", vec![
+            MirOperand::Place(MirPlace::Local(*id, Type::Array(*len))),
+            lower_operand(index, bindings, lowering),
+            lower_operand(value, bindings, lowering),
+        ]),
+        Statement::VecPush(id, value, ..) => ("push", vec![MirOperand::Place(MirPlace::Local(*id, Type::Vec)), lower_operand(value, bindings, lowering)]),
+        Statement::StrVecPush(id, value, ..) => ("push", vec![MirOperand::Place(MirPlace::Local(*id, Type::StrVec)), lower_operand(value, bindings, lowering)]),
+        Statement::VecFPush(id, value, ..) => ("push", vec![MirOperand::Place(MirPlace::Local(*id, Type::VecF)), lower_operand(value, bindings, lowering)]),
+        Statement::VecPop(id, ..) => ("pop", vec![MirOperand::Place(MirPlace::Local(*id, Type::Vec))]),
+        Statement::StrVecPop(id, ..) => ("pop", vec![MirOperand::Place(MirPlace::Local(*id, Type::StrVec))]),
+        Statement::VecFPop(id, ..) => ("pop", vec![MirOperand::Place(MirPlace::Local(*id, Type::VecF))]),
+        Statement::VecStore(id, index, value, ..) => ("store", vec![MirOperand::Place(MirPlace::Local(*id, Type::Vec)), lower_operand(index, bindings, lowering), lower_operand(value, bindings, lowering)]),
+        Statement::StrVecStore(id, index, value, ..) => ("store", vec![MirOperand::Place(MirPlace::Local(*id, Type::StrVec)), lower_operand(index, bindings, lowering), lower_operand(value, bindings, lowering)]),
+        Statement::VecFStore(id, index, value, ..) => ("store", vec![MirOperand::Place(MirPlace::Local(*id, Type::VecF)), lower_operand(index, bindings, lowering), lower_operand(value, bindings, lowering)]),
+        // The flag is the parser's sort-as-strings bit (vec[string] sorts by
+        // bytes), so it names the intrinsic instead of posing as a direction.
+        Statement::Sort(id, strings, ..) => (if *strings { "sort_strings" } else { "sort" }, vec![MirOperand::Place(MirPlace::Local(*id, if *strings { Type::StrVec } else { Type::Vec }))]),
+        Statement::Reverse(id, strings, ..) => (if *strings { "reverse_strings" } else { "reverse" }, vec![MirOperand::Place(MirPlace::Local(*id, if *strings { Type::StrVec } else { Type::Vec }))]),
+        Statement::MapPut(place, key, value, ..) => ("put", vec![map_place_operand(place), lower_operand(key, bindings, lowering), lower_operand(value, bindings, lowering)]),
+        Statement::Assert(condition, ..) => ("assert", vec![lower_operand(condition, bindings, lowering)]),
+        Statement::Print(Printed::Text(text)) => ("print", vec![MirOperand::Str(Box::leak(text.clone().into_boxed_str()), 0, 0)]),
+        // The match subject rides the switch terminator, so the payload
+        // binding's operands are the binding itself and the variant indices.
+        Statement::BindPayload(bid, _, variant, index, ty) => ("bind_payload", vec![
+            MirOperand::Place(MirPlace::Local(*bid, ty.clone())),
+            MirOperand::Int(*variant as i64),
+            MirOperand::Int(*index as i64),
+        ]),
+        // The `?`'s error-path releases ride inside the statement (the C
+        // backend emits them where the error path exits); the continuing
+        // path's operand is the unwrapped expression.
+        Statement::Propagate(expr, ..) => ("propagate", vec![lower_operand(expr, bindings, lowering)]),
+        Statement::Break => ("break", vec![]),
+        Statement::Continue(label) => ("continue", label.iter().map(|l| MirOperand::Int(*l as i64)).collect()),
+        // Control shapes never survive into a MIR block; a bare placeholder
+        // here is a tripwire, not a rendering.
+        _ => ("stmt", vec![]),
+    }
+}
+
+fn map_kind_type(kind: &MapKind) -> Type {
+    match kind {
+        MapKind::Int => Type::Map,
+        MapKind::Float => Type::MapF,
+    }
+}
+
+fn map_place_operand(place: &MapPlace) -> MirOperand {
+    match place {
+        MapPlace::Var(id, kind) => MirOperand::Place(MirPlace::Local(*id, map_kind_type(kind))),
+        MapPlace::Field(id, name, kind) => MirOperand::Place(MirPlace::Field(Box::new(MirPlace::Local(*id, map_kind_type(kind))), name.clone(), map_kind_type(kind))),
+    }
+}
+
+// The named intrinsic for a built-in read or conversion, with one operand
+// per input. Every arm mirrors what the C backend computes for the shape.
+fn expr_intrinsic(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut MirLowering) -> (&'static str, Vec<MirOperand>) {
+    match expr {
+        Expr::Len(e, ..) => ("len", vec![lower_operand(e, bindings, lowering)]),
+        Expr::Index(id, len, index, ..) => ("index", vec![
+            MirOperand::Place(MirPlace::Local(*id, Type::Array(*len))),
+            lower_operand(index, bindings, lowering),
+        ]),
+        Expr::VecIndex(id, index, ..) => ("index", vec![MirOperand::Place(MirPlace::Local(*id, Type::Vec)), lower_operand(index, bindings, lowering)]),
+        Expr::StrVecIndex(id, index, ..) => ("index", vec![MirOperand::Place(MirPlace::Local(*id, Type::StrVec)), lower_operand(index, bindings, lowering)]),
+        Expr::Join(id, sep, ..) => ("join", vec![MirOperand::Place(MirPlace::Local(*id, Type::StrVec)), lower_operand(sep, bindings, lowering)]),
+        Expr::Split(base, sep, ..) => ("split", vec![lower_operand(base, bindings, lowering), lower_operand(sep, bindings, lowering)]),
+        Expr::Args(..) => ("args", vec![]),
+        Expr::ReadFile(path, ..) => ("read_file", vec![lower_operand(path, bindings, lowering)]),
+        Expr::WriteFile(path, text, ..) => ("write_file", vec![lower_operand(path, bindings, lowering), lower_operand(text, bindings, lowering)]),
+        Expr::Bytes(e, ..) => ("bytes", vec![lower_operand(e, bindings, lowering)]),
+        Expr::Contains(haystack, needle, ..) => ("contains", vec![lower_operand(haystack, bindings, lowering), lower_operand(needle, bindings, lowering)]),
+        Expr::Slice(base, start, end, ..) => ("slice", vec![lower_operand(base, bindings, lowering), lower_operand(start, bindings, lowering), lower_operand(end, bindings, lowering)]),
+        Expr::SliceView(id, field, start, end, ..) => ("slice_view", vec![string_base_operand(*id, field), lower_operand(start, bindings, lowering), lower_operand(end, bindings, lowering)]),
+        Expr::Tokens(id, field, sep, ..) => ("tokens", vec![string_base_operand(*id, field), lower_operand(sep, bindings, lowering)]),
+        Expr::ToF64(e, ..) => ("to_f64", vec![lower_operand(e, bindings, lowering)]),
+        Expr::ToI64(e, ..) => ("to_i64", vec![lower_operand(e, bindings, lowering)]),
+        Expr::FloatToString(e, ..) => ("float_to_string", vec![lower_operand(e, bindings, lowering)]),
+        Expr::StrEq(a, b, ..) => ("str_eq", vec![lower_operand(a, bindings, lowering), lower_operand(b, bindings, lowering)]),
+        Expr::MapKeys(place, ..) => ("keys", vec![map_place_operand(place)]),
+        Expr::RunCommand(program, vid, ..) => ("run_command", vec![lower_operand(program, bindings, lowering), MirOperand::Place(MirPlace::Local(*vid, Type::StrVec))]),
+        Expr::ToString(e, ..) => ("to_string", vec![lower_operand(e, bindings, lowering)]),
+        Expr::Lines(e, ..) => ("lines", vec![lower_operand(e, bindings, lowering)]),
+        Expr::CountLinesWith(text, pattern, ..) => ("count_lines_with", vec![lower_operand(text, bindings, lowering), lower_operand(pattern, bindings, lowering)]),
+        Expr::TryReadFile(path, ..) => ("read_file", vec![lower_operand(path, bindings, lowering)]),
+        Expr::TryListDir(path, ..) => ("list_dir", vec![lower_operand(path, bindings, lowering)]),
+        Expr::PathExists(path, ..) => ("path_exists", vec![lower_operand(path, bindings, lowering)]),
+        Expr::PathIsDir(path, ..) => ("path_is_dir", vec![lower_operand(path, bindings, lowering)]),
+        Expr::TryWriteFile(path, text, ..) => ("write_file", vec![lower_operand(path, bindings, lowering), lower_operand(text, bindings, lowering)]),
+        Expr::ParseInt(text, ..) => ("parse_int", vec![lower_operand(text, bindings, lowering)]),
+        Expr::PathJoin(a, b, ..) => ("path_join", vec![lower_operand(a, bindings, lowering), lower_operand(b, bindings, lowering)]),
+        Expr::PathName(path, ..) => ("path_name", vec![lower_operand(path, bindings, lowering)]),
+        Expr::PathParent(path, ..) => ("path_parent", vec![lower_operand(path, bindings, lowering)]),
+        Expr::TryFileInfo(path, ..) => ("file_info", vec![lower_operand(path, bindings, lowering)]),
+        Expr::TryCopyFile(a, b, ..) => ("copy_file", vec![lower_operand(a, bindings, lowering), lower_operand(b, bindings, lowering)]),
+        Expr::TryRenamePath(a, b, ..) => ("rename_path", vec![lower_operand(a, bindings, lowering), lower_operand(b, bindings, lowering)]),
+        Expr::TryRemoveFile(path, ..) => ("remove_file", vec![lower_operand(path, bindings, lowering)]),
+        Expr::TryRemoveDir(path, ..) => ("remove_dir", vec![lower_operand(path, bindings, lowering)]),
+        Expr::TryCreateDir(path, ..) => ("create_dir", vec![lower_operand(path, bindings, lowering)]),
+        Expr::SetCwd(path, ..) => ("set_cwd", vec![lower_operand(path, bindings, lowering)]),
+        Expr::MapNew(..) => ("map_new", vec![]),
+        Expr::MapGet(place, key, ..) => ("map_get", vec![map_place_operand(place), lower_operand(key, bindings, lowering)]),
+        Expr::MapHas(place, key, ..) => ("map_has", vec![map_place_operand(place), lower_operand(key, bindings, lowering)]),
+        Expr::MapRemove(place, key, ..) => ("map_remove", vec![map_place_operand(place), lower_operand(key, bindings, lowering)]),
+        Expr::MapInc(place, key, value, ..) => ("map_inc", vec![map_place_operand(place), lower_operand(key, bindings, lowering), lower_operand(value, bindings, lowering)]),
+        Expr::Utf8Len(e, ..) => ("utf8_len", vec![lower_operand(e, bindings, lowering)]),
+        Expr::Utf8Prefix(e, n, ..) => ("utf8_prefix", vec![lower_operand(e, bindings, lowering), lower_operand(n, bindings, lowering)]),
+        Expr::Trim(e, ..) => ("trim", vec![lower_operand(e, bindings, lowering)]),
+        Expr::StartsWith(a, b, ..) => ("starts_with", vec![lower_operand(a, bindings, lowering), lower_operand(b, bindings, lowering)]),
+        Expr::EndsWith(a, b, ..) => ("ends_with", vec![lower_operand(a, bindings, lowering), lower_operand(b, bindings, lowering)]),
+        Expr::TryAppendFile(path, text, ..) => ("append_file", vec![lower_operand(path, bindings, lowering), lower_operand(text, bindings, lowering)]),
+        Expr::Env(name, ..) => ("env", vec![lower_operand(name, bindings, lowering)]),
+        Expr::JsonGet(src, key, ..) => ("json_get", vec![lower_operand(src, bindings, lowering), lower_operand(key, bindings, lowering)]),
+        Expr::JsonInt(src, key, ..) => ("json_int", vec![lower_operand(src, bindings, lowering), lower_operand(key, bindings, lowering)]),
+        Expr::JsonBool(src, key, ..) => ("json_bool", vec![lower_operand(src, bindings, lowering), lower_operand(key, bindings, lowering)]),
+        Expr::JsonLen(src, key, ..) => ("json_len", vec![lower_operand(src, bindings, lowering), lower_operand(key, bindings, lowering)]),
+        Expr::JsonHas(src, key, ..) => ("json_has", vec![lower_operand(src, bindings, lowering), lower_operand(key, bindings, lowering)]),
+        Expr::Find(text, pattern, ..) => ("find", vec![lower_operand(text, bindings, lowering), lower_operand(pattern, bindings, lowering)]),
+        Expr::ReadStdin(..) => ("read_stdin", vec![]),
+        Expr::Cwd(..) => ("cwd", vec![]),
+        Expr::StrVecNew(..) => ("strvec_new", vec![]),
+        Expr::F64VecNew(..) => ("f64vec_new", vec![]),
+        Expr::NowMs => ("now_ms", vec![]),
+        Expr::NowS => ("now_s", vec![]),
+        Expr::Neg(e, ..) => ("neg", vec![lower_operand(e, bindings, lowering)]),
+        Expr::Not(e, ..) => ("not", vec![lower_operand(e, bindings, lowering)]),
+        // The math calls are indexed into a name table; the printed name is
+        // the source spelling, and the operands are the call's arguments.
+        Expr::MathCall(index, args, ..) => {
+            let mut operands: Vec<MirOperand> = args.iter().map(|a| lower_operand(a, bindings, lowering)).collect();
+            operands.insert(0, MirOperand::Str(super::MATH_FNS[*index as usize].0, 0, 0));
+            ("math", operands)
+        }
+        _ => ("expr", vec![]),
+    }
+}
+
+// A slice view or token cursor reads a string variable, or a string field of
+// one; the field name rides along when present.
+fn string_base_operand(id: usize, field: &Option<String>) -> MirOperand {
+    match field {
+        Some(name) => MirOperand::Place(MirPlace::Field(Box::new(MirPlace::Local(id, Type::String)), name.clone(), Type::String)),
+        None => MirOperand::Place(MirPlace::Local(id, Type::String)),
+    }
+}
+
 fn expr_type(expr: &Expr) -> Type {
     match expr {
         Expr::Number(..) | Expr::Index(..) | Expr::VecIndex(..) | Expr::Len(..) => Type::Int,
@@ -253,10 +415,25 @@ fn expr_type(expr: &Expr) -> Type {
         // The printed place types are evidence, so the string-shaped
         // expressions name their real types instead of the integer
         // catch-all (a string literal bound to `v0 (i64)` misleads).
-        Expr::StrLit(..) | Expr::ReadFile(..) | Expr::Join(..) => Type::String,
+        Expr::StrLit(..) | Expr::ReadFile(..) | Expr::Join(..) | Expr::Trim(..) => Type::String,
         Expr::SliceView(..) => Type::StrView,
         Expr::Tokens(..) => Type::Tokens,
-        Expr::Split(..) | Expr::Args(..) => Type::StrVec,
+        Expr::Split(..) | Expr::Args(..) | Expr::Lines(..) | Expr::StrVecNew(..) => Type::StrVec,
+        Expr::F64VecNew(..) => Type::VecF,
+        Expr::MapNew(..) => Type::Map,
+        // Math calls return f64 by definition (ADR-60).
+        Expr::MathCall(..) => Type::F64,
+        Expr::BoolLit(..) | Expr::StrEq(..) | Expr::Contains(..) | Expr::Not(..)
+        | Expr::PathExists(..) | Expr::PathIsDir(..) | Expr::StartsWith(..) | Expr::EndsWith(..) | Expr::JsonHas(..) => Type::Bool,
+        // Result-returning built-ins carry their result type; the printed
+        // temp names the enum the program must match on.
+        Expr::TryReadFile(_, ty, ..) | Expr::TryListDir(_, ty, ..) | Expr::ParseInt(_, ty, ..)
+        | Expr::TryFileInfo(_, ty, ..) | Expr::TryRemoveFile(_, ty, ..) | Expr::TryRemoveDir(_, ty, ..)
+        | Expr::TryCreateDir(_, ty, ..) | Expr::SetCwd(_, ty, ..) | Expr::Env(_, ty, ..)
+        | Expr::ReadStdin(ty, ..) | Expr::Cwd(ty, ..) => ty.clone(),
+        Expr::TryWriteFile(_, _, ty, ..) | Expr::TryCopyFile(_, _, ty, ..) | Expr::TryRenamePath(_, _, ty, ..)
+        | Expr::TryAppendFile(_, _, ty, ..) | Expr::JsonGet(_, _, ty, ..) | Expr::JsonInt(_, _, ty, ..)
+        | Expr::JsonBool(_, _, ty, ..) | Expr::JsonLen(_, _, ty, ..) | Expr::Find(_, _, ty, ..) => ty.clone(),
         _ => Type::Int,
     }
 }
@@ -715,7 +892,9 @@ fn print_operand(operand: &MirOperand, out: &mut String) {
     match operand {
         MirOperand::Place(place) => print_place(place, out),
         MirOperand::Int(n) => out.push_str(&n.to_string()),
-        MirOperand::Float(x) => out.push_str(&x.to_string()),
+        // Debug formatting keeps the decimal point: `4.0` prints as `4.0`,
+        // not `4`, which would read as an integer operand.
+        MirOperand::Float(x) => out.push_str(&format!("{x:?}")),
         MirOperand::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
         MirOperand::Str(text, line, col) => out.push_str(&format!("{:?} @{}:{}", text, line, col)),
     }
