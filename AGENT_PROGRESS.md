@@ -28,6 +28,7 @@
 - [x] 16. drops pass 精化 `?` 错误路径 release（propagate 先应用 move 再重写列表），probe 用例 6 个 release 减到 2 个
 - [x] 17. 修复 movewalk `?` 截断 bug（二元/多操作数表达式第二个操作数起从未 walk）：recorder 完整记录 move，alloc workload 恢复 elision；Checked 与 parser agreement 经全套件确认
 - [x] 18. M2.4 基准报告（bench/reports/2026-11-14-windows-drop-elision.md）：release 调用点结构性消除（alloc 2/3、straight 20000/20000），运行时差异在噪声内（诚实结论：价值在 C 形态而非秒数）
+- [x] 19. fuzzer 语法补容器操作面（push/下标写/sort），40 seeds 0 failures
 
 ## 日志
 - 2026-11-13 15:57 初始化 AGENT_PROGRESS.md，定位到 4 个失败的 execution 测试均由 enum_generic_impls.ae 的 receiver move 引起。
@@ -48,3 +49,4 @@
 - 2026-11-14 14:45 drops pass 覆盖 `?` 传播：rewrite 对 Propagate 先应用值表达式的 move 效果、再按该状态重写错误路径 release 列表（错误路径直接退出函数）、最后应用 Ok 绑定的 revive；语句本体恒保留。probe 用例（concat 消耗 s 后 `?`）错误路径与 scope-end 各消 1 个死 release，MIR 后端 2 个 release 对 tree 后端 6 个；新增 mir_drop_elision_thins_propagate_error_path_releases，ADR-0204 证据更新，cargo test 275 全绿。
 - 2026-11-14 15:15 修复 movewalk 长期潜伏的 `?` 截断：普通读取返回 None 被当作提前退出，二元表达式/多参数 Call/Store/树形控制语句的后续子树从未被 walk。改为 if-let 模式（违例传播、正常继续）。recorder 现在完整记录 Plus 链与多参数调用中的 move（alloc workload main: kept=1 elided=2）；同时修复 propagate rewrite 污染继续路径状态的 bug（错误路径 release 用状态副本重写），该 bug 由 mir_drop_elision_thins_propagate_error_path_releases 测试当场抓住。cargo test 275 全绿，fuzz 40 seeds 0 failures，verify_generated_c 41 PASS。
 - 2026-11-14 15:35 M2.4 基准报告落地：drop_elision_timings.py 双 workload（alloc/straight）× 双后端 11 轮交错计时，stdout 全程校验一致；结构性结果精确（alloc 1/3、straight 0/20000 个 release 调用点），运行时中位数差异 ~2%（alloc）与持平（straight）——如实记录为「价值在 C 形态而非秒数」，原始 JSON 存 bench/results/。ADR-0204 证据更新。
+- 2026-11-14 15:50 fuzzer 语法新增向量操作面（构造+push+下标写+sort+读），四路差分覆盖容器 lowering 的索引检查与排序确定性；40 seeds 0 failures。
