@@ -31,7 +31,7 @@ use std::collections::HashMap;
 
 use super::*;
 use super::cfg::CfgTerminator;
-use super::mir::MirFunction;
+use super::mir::{MirBinding, MirFunction, MirOperand, MirPlace, MirRvalue};
 use super::movewalk::statement_move_effects;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -79,14 +79,61 @@ pub(super) fn elaborate(function: &mut MirFunction) -> DropStats {
         if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG fn#{} block{} entry={state:?} statements={:?}", function.id, block.id, block.statements.iter().map(|s| format!("{s:?}").chars().take(120).collect::<String>()).collect::<Vec<_>>()); }
         let statements = std::mem::take(&mut block.statements);
         let mut kept = Vec::with_capacity(statements.len());
+        // Each release list decomposed into a `releases(...)` binding keeps
+        // its place in the block's binding list; the two views must show the
+        // same releases after the pass, or emit-mir would print releases the
+        // shipped C does not run (bindings are the printer's view, statements
+        // the C backend's).
+        let mut consumed = 0usize;
         for statement in statements {
-            if let Some(statement) = rewrite(statement, &mut state, &mut stats, function.id, block.id) {
-                kept.push(statement);
+            match statement {
+                Statement::Frees(list) => {
+                    let original: Vec<usize> = list.iter().map(|(id, _)| *id).collect();
+                    let kept_list = rewrite_list(list, &mut state, &mut stats, function.id, block.id);
+                    sync_releases_binding(&mut block.bindings, &original, &kept_list, &mut consumed);
+                    if !kept_list.is_empty() { kept.push(Statement::Frees(kept_list)); }
+                }
+                statement => {
+                    if let Some(statement) = rewrite(statement, &mut state, &mut stats, function.id, block.id) {
+                        kept.push(statement);
+                    }
+                }
             }
         }
         block.statements = kept;
     }
     stats
+}
+
+// Rewrite the decomposition of one `Frees` statement: the binding whose
+// operands match the original list in order is the one this statement
+// lowered into (each Frees contributes exactly one binding, in statement
+// order, so first-unconsumed-match in order is the right one). The kept
+// slots become the binding's new operands; an empty kept list removes the
+// binding the way the statement itself is removed.
+fn sync_releases_binding(bindings: &mut Vec<MirBinding>, original: &[usize], kept: &[(usize, Type)], consumed: &mut usize) {
+    let mut index = *consumed;
+    while index < bindings.len() {
+        if let MirRvalue::Intrinsic(name, ops, _) = &bindings[index].rvalue {
+            if *name == "releases" {
+                let ids: Vec<usize> = ops.iter().filter_map(|op| match op {
+                    MirOperand::Place(MirPlace::Local(id, _)) => Some(*id),
+                    _ => None,
+                }).collect();
+                if ids == original {
+                    if kept.is_empty() {
+                        bindings.remove(index);
+                    } else {
+                        let new_ops: Vec<MirOperand> = kept.iter().map(|&(id, ty)| MirOperand::Place(MirPlace::Local(id, ty))).collect();
+                        bindings[index].rvalue = MirRvalue::Intrinsic("releases", new_ops, Type::Int);
+                    }
+                    *consumed = index;
+                    return;
+                }
+            }
+        }
+        index += 1;
+    }
 }
 
 // Per-block state on entry, to a fixed point. `Uninit` is the default for

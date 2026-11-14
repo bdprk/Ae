@@ -3383,6 +3383,32 @@ fn emit_tree_runs_clean_on_the_run_suite() {
 }
 
 #[test]
+fn emit_mir_shows_which_releases_survive_drop_elaboration() {
+    // M2.4: the printed graph is the one the C backend ships — releases
+    // included. A release list prints as a `releases(...)` binding with one
+    // operand per slot, and the drop pass rewrites both views together: the
+    // moved slot's release vanishes from the print, the unproven one stays.
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("ae-emit-mir-drops-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&path, "fn take(x: string) -> i64 { return 1; }\nfn moved() -> i64 {\n    let s = \"hello\";\n    print(take(s));\n    return 0;\n}\nfn branchy(c: bool) -> i64 {\n    let s = \"hello\";\n    if c { print(take(s)); }\n    return 0;\n}\nfn main() { print(moved()); print(branchy(true)); }\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-mir").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let mir = String::from_utf8_lossy(&output.stdout);
+    // `take` releases its parameter: the release prints with the slot's type.
+    let take_body = mir.split("fn #0").nth(1).and_then(|rest| rest.split("fn #1").next()).unwrap_or("");
+    assert!(take_body.contains("releases(v0 (string))"), "the parameter release prints: {mir}");
+    // `moved` consumed its binding with the call, so its release is gone
+    // from both views.
+    let moved_body = mir.split("fn #1").nth(1).and_then(|rest| rest.split("fn #2").next()).unwrap_or("");
+    assert!(!moved_body.contains("releases("), "the moved slot's release is elided from the print: {mir}");
+    // `branchy`'s binding is live on one path and moved on the other: no
+    // proof decides, so the release stays visible.
+    let branchy_body = mir.split("fn #2").nth(1).and_then(|rest| rest.split("fn main").next()).unwrap_or("");
+    assert!(branchy_body.contains("releases(v1 (string))"), "the unproven release prints: {mir}");
+}
+
+#[test]
 fn emit_mir_lowers_closures_and_aggregates() {
     let dir = std::env::temp_dir();
     let path = dir.join(format!("ae-emit-mir-closures-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
