@@ -30,7 +30,7 @@ use c_output::*;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), StructRef(usize), StructMut(usize), Enum(&'static str, usize), Tokens, Closure(usize), Fn(usize), Ptr(usize) }
+enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), StructRef(usize), StructMut(usize), Enum(&'static str, usize), Tokens, Closure(usize), Fn(usize), Ptr(usize), PtrMut(usize) }
 // The pointee registry for `Type::Ptr` (M2.12): Type is Copy, so the
 // pointee rides an id exactly like the closure/fn signature registries do.
 thread_local! {
@@ -91,6 +91,7 @@ impl Type {
             }
             // A raw pointer (M2.12): an address typed by pointee layout only.
             Type::Ptr(id) => format!("*const {}", ptr_pointee(id).name()),
+            Type::PtrMut(id) => format!("*mut {}", ptr_pointee(id).name()),
         }
     }
     fn c_temp(self) -> String {
@@ -117,6 +118,7 @@ impl Type {
             Type::Closure(_) => "void ".to_owned(),
             Type::Fn(_) => "void ".to_owned(),
             Type::Ptr(id) => format!("const {}* ", ptr_pointee(id).c_temp().trim_end()),
+            Type::PtrMut(id) => format!("{}* ", ptr_pointee(id).c_temp().trim_end()),
             _ => "int64_t ".to_owned(),
         }
     }
@@ -220,9 +222,10 @@ enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Bo
     // captures at the moment of the call. Passed as a function value, the
     // emitted pointer is the literal's function id (ADR-0189).
     ClosureLit(usize), FnCall(usize, Vec<Argument>, Type),
-    // A raw pointer (M2.12 slice 2): `&expr as *const T` takes the address of
-    // addressable storage; `p.deref()` reads through it, inside `unsafe` only.
-    BorrowAs(Box<Expr>, usize, usize), DerefPtr(Box<Expr>, usize, usize) }
+    // A raw pointer (M2.12 slice 2/3): `&expr as *const T` and
+    // `&mut expr as *mut T` take the address of a local; the bool records
+    // mutability. `p.deref()` reads through it, inside `unsafe` only.
+    BorrowAs(Box<Expr>, bool, usize, usize), DerefPtr(Box<Expr>, usize, usize) }
 // Which value type a map holds: the builtins dispatch on it (ADR-65).
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum MapKind { Int, Float }
@@ -261,7 +264,7 @@ enum Printed { Expr(Expr), Text(String) }
 // top of the arm's block, so the MIR backend can emit them from the block
 // graph. The parser never produces one; the tree form of a match keeps its
 // bindings on the `MatchArm`.
-enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), Sort(usize, bool, usize, usize), Reverse(usize, bool, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize, bool), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize, bool), VecFPush(usize, Expr, usize, usize), VecFPop(usize, usize, usize), VecFStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr, bool), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), ForTokens(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), BindPayload(usize, usize, usize, usize, Type), MapPut(MapPlace, Expr, Expr, usize, usize), Propagate(Expr, Type, Vec<Type>, Option<(usize, Type)>, Vec<(usize, Type)>), Break, Continue(Option<usize>), Exit(Expr, Vec<(usize, Type)>), Frees(Vec<(usize, Type)>), Unsafe(Vec<Statement>) }
+enum Statement { Return(Expr, Vec<(usize, Type)>), Declare(usize, Expr), Array(usize, Vec<Expr>), Assign(usize, Expr, bool), Store(usize, usize, Expr, Expr, usize, usize), VecPush(usize, Expr, usize, usize), Sort(usize, bool, usize, usize), Reverse(usize, bool, usize, usize), VecPop(usize, usize, usize), VecStore(usize, Expr, Expr, usize, usize), StrVecPush(usize, Expr, usize, usize, bool), StrVecPop(usize, usize, usize), StrVecStore(usize, Expr, Expr, usize, usize, bool), VecFPush(usize, Expr, usize, usize), VecFPop(usize, usize, usize), VecFStore(usize, Expr, Expr, usize, usize), FieldStore(usize, String, Type, Expr, bool), Print(Printed), Assert(Expr, usize, usize), If(Expr, Vec<Statement>, Vec<Statement>), While(Expr, Vec<Statement>), For(usize, usize, Vec<Statement>, usize, usize, usize), ForTokens(usize, usize, Vec<Statement>, usize, usize, usize), Match(usize, Type, Vec<MatchArm>), BindPayload(usize, usize, usize, usize, Type), MapPut(MapPlace, Expr, Expr, usize, usize), Propagate(Expr, Type, Vec<Type>, Option<(usize, Type)>, Vec<(usize, Type)>), Break, Continue(Option<usize>), Exit(Expr, Vec<(usize, Type)>), Frees(Vec<(usize, Type)>), Unsafe(Vec<Statement>), PtrStore(usize, Expr, usize, usize) }
 #[derive(Debug)]
 struct Function { id: usize, params: Vec<(usize, Type)>, body: Vec<Statement>, is_main: bool, returns: Type }
 fn returns(stmts: &[Statement]) -> bool {

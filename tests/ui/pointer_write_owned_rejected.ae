@@ -1,0 +1,8 @@
+// Owned pointees are rejected at pointer creation (spec hard rule 3): the
+// pointer's borrow is untracked, so safe code could dangle it by moving the
+// value — an owned write through it would take over the release.
+fn main() {
+    var s = "abc";
+    let p = &s as *const string;
+    print(len(s));
+}

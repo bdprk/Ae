@@ -1,0 +1,1 @@
+ae: $DIR/pointer_mut_requires_var.ae:5:20: cannot take a mutable pointer to an immutable binding; declare it with 'var'

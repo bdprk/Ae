@@ -1,0 +1,8 @@
+// M2.12 slice 3: writing through a raw pointer is the unchecked operation —
+// outside an unsafe block it is rejected at the write site (E0700).
+fn main() {
+    var n = 1;
+    let p = &mut n as *mut i64;
+    *p = 2;
+    print(n);
+}

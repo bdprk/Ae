@@ -335,6 +335,9 @@ fn walk_statements(statements: &[Statement], used: &mut std::collections::HashSe
     for statement in statements {
         match statement {
             Statement::Unsafe(inner) => walk_statements(inner, used, mutated),
+            // A pointer write uses the pointer variable and the value; the
+            // target storage is untracked (M2.12).
+            Statement::PtrStore(id, value, ..) => { used.insert(*id); walk_expr(value, used, mutated); }
             Statement::Return(expr, _) | Statement::Declare(_, expr) => walk_expr(expr, used, mutated),
             Statement::Array(_, values) => for v in values { walk_expr(v, used, mutated); },
             Statement::Assign(id, expr, _) => { mutated.insert(*id); walk_expr(expr, used, mutated); }

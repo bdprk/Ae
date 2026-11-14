@@ -1,0 +1,1 @@
+ae: $DIR/pointer_write_requires_unsafe.ae:1:7: writing through a raw pointer requires 'unsafe'

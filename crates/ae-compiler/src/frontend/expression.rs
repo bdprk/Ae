@@ -122,21 +122,51 @@ impl Parser<'_> {
             Kind::Amp => {
                 let (line, column) = self.position();
                 self.pos += 1;
+                let mutable_borrow = if *self.current() == Kind::Mut { self.pos += 1; true } else { false };
                 let (operand, ty) = self.expression(6, false)?;
                 if !matches!(operand, Expr::Variable(..)) {
                     return Err(self.fail("only the address of a local variable can be taken; bind the value to a variable first"));
                 }
+                if let Expr::Variable(id, ..) = &operand {
+                    // A mutable borrow writes through the pointer, so the
+                    // variable must be a `var` binding — the same rule the
+                    // `&mut Struct` borrow takes (ADR-0185).
+                    if mutable_borrow {
+                        let mutable = self.names.values().find(|slot| slot.0 == *id)
+                            .map(|slot| slot.1)
+                            .ok_or_else(|| self.fail("internal: pointer operand vanished"))?;
+                        if !mutable {
+                            return Err(self.fail("cannot take a mutable pointer to an immutable binding; declare it with 'var'"));
+                        }
+                    }
+                }
                 if *self.current() != Kind::As {
-                    return Err(self.fail("a borrow expression must be cast to a pointer; write '&expr as *const T'"));
+                    return Err(self.fail("a borrow expression must be cast to a pointer; write '&expr as *const T' or '&mut expr as *mut T'"));
                 }
                 self.pos += 1;
                 self.take(Kind::Star)?;
-                self.take(Kind::Const)?;
-                let pointee = self.named_type()?;
+                let pointee = if mutable_borrow {
+                    self.take(Kind::Mut)?;
+                    self.named_type()?
+                } else {
+                    self.take(Kind::Const)?;
+                    self.named_type()?
+                };
                 if pointee != ty {
-                    return Err(self.fail(&format!("cannot cast &{} to *const {}; reinterpret casts do not exist yet", ty.name(), pointee.name())));
+                    return Err(self.fail(&format!("cannot cast &{} to *{}{}; reinterpret casts do not exist yet", ty.name(), if mutable_borrow { "mut " } else { "const " }, pointee.name())));
                 }
-                (Expr::BorrowAs(Box::new(operand), line, column), Type::Ptr(super::intern_pointee(ty)))
+                // The pointer's borrow is untracked (the borrow checker sees
+                // no registration), so the pointee must be a value that can
+                // neither move nor release: a dangling pointer may only arise
+                // inside unsafe, never from a safe cast (spec hard rule 3).
+                if ty.owned() {
+                    return Err(self.fail("a pointer to an owned value is not supported yet; its borrow is not tracked, so safe code could dangle it by moving the value"));
+                }
+                if mutable_borrow {
+                    (Expr::BorrowAs(Box::new(operand), true, line, column), Type::PtrMut(super::intern_pointee(ty)))
+                } else {
+                    (Expr::BorrowAs(Box::new(operand), false, line, column), Type::Ptr(super::intern_pointee(ty)))
+                }
             }
             Kind::Ident(name) => {
                 let name_offset = self.tokens[self.pos].offset;
@@ -998,7 +1028,7 @@ impl Parser<'_> {
             // slice 2), and only inside `unsafe` — reading through an address
             // the checker cannot validate is the unchecked operation the
             // block exists for.
-            if let Type::Ptr(pointee_id) = base_ty {
+            if let Type::Ptr(pointee_id) | Type::PtrMut(pointee_id) = base_ty {
                 if fname != "deref" {
                     return Err(self.fail(&format!("pointers have no method '{fname}'")));
                 }

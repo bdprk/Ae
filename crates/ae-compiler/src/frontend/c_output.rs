@@ -32,6 +32,7 @@ pub(super) fn c_type_field(ty: Type) -> String {
         // bind as locals only); the value keeps the pointer shape so a future
         // slip prints valid C.
         Type::Ptr(id) => format!("const {} *", c_type_field(ptr_pointee(id))),
+        Type::PtrMut(id) => format!("{} *", c_type_field(ptr_pointee(id))),
     }
 }
 pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
@@ -79,6 +80,8 @@ pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         // move tracking), so the declaration is the plain C pointer form.
         Type::Ptr(pid) if declaration => format!("const {} *v{id}", c_type_field(ptr_pointee(pid))),
         Type::Ptr(pid) => format!("const {} *", c_type_field(ptr_pointee(pid))),
+        Type::PtrMut(pid) if declaration => format!("{} *v{id}", c_type_field(ptr_pointee(pid))),
+        Type::PtrMut(pid) => format!("{} *", c_type_field(ptr_pointee(pid))),
     }
 }
 // Return type of a generated C function: the same spelling the expression
