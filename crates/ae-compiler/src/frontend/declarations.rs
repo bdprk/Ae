@@ -130,6 +130,55 @@ impl Parser<'_> {
             if *self.current() == Kind::Enum { self.parse_enum_def(public)?; continue; }
             if *self.current() == Kind::Trait { self.skip_trait_def()?; continue; }
             if *self.current() == Kind::Impl { self.collect_impl(next_id)?; continue; }
+            if *self.current() == Kind::Extern {
+                // M2.12 slice 4 (spec/unsafe.md 4.1): `extern "C" fn name(params) -> ret;`
+                // names a C symbol the program links against. No body, no
+                // definition in the generated C — the call site references
+                // the symbol by name. Slice 4 restricts the shapes to the
+                // scalars the C ABI passes in registers.
+                self.pos += 1;
+                let text = match self.current().clone() {
+                    Kind::Text(t) => { self.pos += 1; t }
+                    other => return Err(self.fail(&format!("expected the ABI string \"C\", found {other:?}"))),
+                };
+                if text != "C" { return Err(self.fail("only the C ABI is supported; write extern \"C\" fn")); }
+                self.take(Kind::Fn)?;
+                let name = self.identifier()?;
+                if !seen.insert(name.clone()) { return Err(self.fail(&format!("duplicate function '{name}'"))); }
+                self.take(Kind::LParen)?;
+                let mut types = Vec::new();
+                if *self.current() != Kind::RParen {
+                    loop {
+                        if types.len() >= 64 { return Err(self.fail("function parameter limit exceeded (64)")); }
+                        if *self.current() == Kind::Var { self.pos += 1; }
+                        let _parameter = self.identifier()?;
+                        self.take(Kind::Colon)?;
+                        types.push(self.parameter_type()?);
+                        if *self.current() != Kind::Comma { break; }
+                        self.pos += 1;
+                    }
+                }
+                self.take(Kind::RParen)?;
+                self.take(Kind::Arrow)?;
+                let ret = self.return_annotation()?;
+                for ty in types.iter().chain(std::iter::once(&ret)) {
+                    if !matches!(ty, Type::Int | Type::Bool | Type::F64) {
+                        return Err(self.fail(&format!("'{}' cannot cross the C ABI in this slice; only i64, bool, and f64 can", ty.name())));
+                    }
+                }
+                if name == "main" { return Err(self.fail("main cannot be an extern declaration")); }
+                self.generics.next_fn_id = self.generics.next_fn_id.max(*next_id);
+                let id = self.generics.next_fn_id;
+                self.generics.next_fn_id += 1;
+                *next_id = self.generics.next_fn_id;
+                let signature = Signature { id, params: types.clone(), ret: ret.clone(), file: self.file.clone(), public, extern_c: true };
+                if self.functions.insert(name.clone(), signature).is_some() {
+                    return Err(self.fail(&format!("duplicate function '{name}' (already defined in an imported file)")));
+                }
+                super::register_extern(id, name.clone(), types, ret);
+                self.take(Kind::Semi)?;
+                continue;
+            }
             self.take(Kind::Fn)?;
             let name = self.identifier()?;
             if !seen.insert(name.clone()) { return Err(self.fail(&format!("duplicate function '{name}'"))); }
@@ -717,6 +766,17 @@ impl Parser<'_> {
             if *self.current() == Kind::Enum { self.skip_enum_def(); continue; }
             if *self.current() == Kind::Trait { self.skip_trait_def()?; continue; }
             if *self.current() == Kind::Impl { self.parse_impl_bodies(&mut result)?; continue; }
+            if *self.current() == Kind::Extern {
+                // The signature pass registered the extern (M2.12 slice 4);
+                // this pass skips its tokens — the declaration has no body,
+                // only the trailing semicolon.
+                while *self.current() != Kind::Semi {
+                    if *self.current() == Kind::Eof { return Err(self.fail("expected ';' before end of file after an extern declaration")); }
+                    self.pos += 1;
+                }
+                self.pos += 1;
+                continue;
+            }
             self.take(Kind::Fn)?;
             let name = self.identifier()?;
             // A generic declaration has no body of its own: the signature pass

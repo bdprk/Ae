@@ -15,6 +15,13 @@
 // yields the other, two NaNs yield NaN. The ±0.0 tie follows the IEEE
 // totalOrder (−0.0 below +0.0), so min(-0.0, 0.0) is always −0.0 and the
 // printed text is portable — libm's fmin leaves that case unspecified.
+// A non-static helper the extern "C" corpus test links against (M2.12
+// slice 4): the declaration's prototype makes the pruner keep it, and the
+// call exercises the whole declare -> unsafe call -> link -> run path on
+// both platforms without depending on any libc signature.
+int64_t ae_extern_probe(int64_t v) {
+    return v * 2 + 1;
+}
 static double ae_f64_min(double a, double b) {
     if (isnan(a)) return b;
     if (isnan(b)) return a;

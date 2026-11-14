@@ -40,13 +40,17 @@ thread_local! {
 // to the C symbol the declaration names. The code emitter and the interpreter
 // both read it; the parser fills it.
 thread_local! {
-    static EXTERN_NAMES: std::cell::RefCell<HashMap<usize, String>> = std::cell::RefCell::new(HashMap::new());
+    static EXTERN_NAMES: std::cell::RefCell<HashMap<usize, (String, Vec<Type>, Type)>> = std::cell::RefCell::new(HashMap::new());
 }
-pub(super) fn register_extern(id: usize, c_name: String) {
-    EXTERN_NAMES.with(|map| { map.borrow_mut().insert(id, c_name); });
+pub(super) fn register_extern(id: usize, c_name: String, params: Vec<Type>, ret: Type) {
+    EXTERN_NAMES.with(|map| { map.borrow_mut().insert(id, (c_name, params, ret)); });
 }
 pub(super) fn extern_name(id: usize) -> Option<String> {
-    EXTERN_NAMES.with(|map| map.borrow().get(&id).cloned())
+    EXTERN_NAMES.with(|map| map.borrow().get(&id).map(|(name, _, _)| name.clone()))
+}
+// Every declared extern with its C signature, for the prototype emission.
+pub(super) fn extern_declarations() -> Vec<(String, Vec<Type>, Type)> {
+    EXTERN_NAMES.with(|map| map.borrow().values().cloned().collect())
 }
 // Intern a pointee type; identical pointees share one id.
 pub(super) fn intern_pointee(pointee: Type) -> usize {

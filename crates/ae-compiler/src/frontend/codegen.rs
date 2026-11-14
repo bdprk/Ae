@@ -142,7 +142,8 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
                 Argument::FnPtr(cid) => format!("ae_fn_{}", crate::frontend::closures::closure_fn_id(*cid)),
             }).collect::<Vec<_>>().join(", ");
             let t = *next; *next += 1;
-            out.push_str(&format!("    {}t{t} = ae_fn_{id}({arguments});\n", ret.c_temp()));
+            let callee = crate::frontend::extern_name(*id).unwrap_or_else(|| format!("ae_fn_{id}"));
+            out.push_str(&format!("    {}t{t} = {callee}({arguments});\n", ret.c_temp()));
             for text in &view_temps { out.push_str(&format!("    ae_str_release(&{text});\n")); }
             null_moves(out, &moves);
             Emitted { text: format!("t{t}"), ty: *ret, owned: ret.owned(), moves: Vec::new(), materialized: true }

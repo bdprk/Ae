@@ -1,0 +1,6 @@
+// M2.12 slice 4 (U3's shape for externs): calling a declared C symbol is the
+// unchecked operation — outside `unsafe` the call is rejected (E0701).
+extern "C" fn probe(v: i64) -> i64;
+fn main() {
+    print(probe(1));
+}

@@ -1,0 +1,8 @@
+// The return side is the same restriction: a string cannot come back
+// through the C ABI in this slice.
+extern "C" fn give() -> string;
+fn main() {
+    unsafe {
+        print(give());
+    }
+}
