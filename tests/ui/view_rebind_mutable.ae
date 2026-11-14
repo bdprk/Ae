@@ -1,0 +1,16 @@
+// Views bind once (M2.5): the NLL regions treat view slots as declare-only.
+// A mutable view binding would let a reassignment re-point the view at
+// different bytes with no kill in the region math — the borrow checker's
+// soundness probe re-pointed a view at a second base and read freed bytes
+// after the first base was reassigned. Mutable bindings are rejected before
+// they can exist; `let` is the only view binding form.
+fn main() {
+    var s = "abcdef";
+    var t = "xyz";
+    var h = slice_view(t, 0, 1);
+    print(h);
+    h = slice_view(s, 0, 3);
+    print(h);
+    s = "other";
+    print(h);
+}

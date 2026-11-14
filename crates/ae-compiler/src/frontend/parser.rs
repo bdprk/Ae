@@ -256,6 +256,14 @@ impl<'a> Parser<'a> {
                             result.push(statement);
                             continue;
                         }
+                        // A view binds once (M2.5): the NLL regions treat view
+                        // slots as declare-only — a mutable binding would let a
+                        // reassignment re-point the view at different bytes
+                        // with no kill in the region math, so it is rejected
+                        // before it can exist.
+                        if mutable && matches!(ty, Type::StrView | Type::Tokens) {
+                            return Err(self.fail("a view binding cannot be mutable; declare it with 'let'"));
+                        }
                         self.take(Kind::Semi)?;
                         // A borrow has no storage of its own: it lives only as a
                         // parameter or a pattern binding, never as a variable.
@@ -533,6 +541,14 @@ impl<'a> Parser<'a> {
                             self.deferred_write_conflicts.push((id, name_offset, name.clone(), "assign to", None));
                         }
                         self.take(Kind::Equal)?;
+                        // A view slot never re-points (M2.5): the region math
+                        // has no kills, so a reassigned view would both
+                        // overstate the old region and silently borrow a base
+                        // the recorded introduction never names. Bind a new
+                        // view with 'let' instead.
+                        if matches!(ty, Type::StrView | Type::Tokens) {
+                            return Err(self.fail("a view binding cannot be reassigned; declare a new view with 'let'"));
+                        }
                         let moved_before = self.moved.contains(&id);
                         let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
                         if value_ty != ty { return Err(self.fail(&format!("cannot assign a {} value to {} variable '{name}'", value_ty.name(), ty.name()))); }

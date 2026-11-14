@@ -54,3 +54,14 @@ The mut receiver and `&mut` argument calls kept their on-sight rejection — the
 **Evidence**: six unit tests in `borrowscope.rs` pin the covered/after-last-use/ordered/terminator/position faces on hand-built CFGs; the language corpus pins all six end-to-end faces — `tests/run/borrow_mut_call_after_last_use.ae`, `tests/run/borrow_mut_arg_after_last_use.ae`, `tests/run/borrow_mut_call_read_before.ae` (allowed, run) and `tests/ui/borrow_mut_call_during_view.ae`, `tests/ui/borrow_mut_arg_during_view.ae`, `tests/ui/borrow_mut_call_read_after_in_statement.ae` (rejected at the call site). 290 tests, 41/41 `verify_generated_c`, 40-seed four-way differential all green; Windows-verified, Linux rides CI.
 
 **Fixed on the way**: the `MapPut` arm of the move walk still truncated with `?` — the value's walk was abandoned whenever the key's walk found nothing, the exact pattern the failure log documents for the `Binary` arm. Both operands walk now.
+
+## Slice 4 (2026-11-14): views bind once — the declare-only invariant enforced
+
+A self-built soundness probe broke the region math's core assumption: **`var h = slice_view(t, 0, 1); h = slice_view(s, 0, 3);` parses** — the view slot is reassigned to a different base. Two failure directions followed from the one gap:
+
+- **Unsound allow** (demonstrated with freed-memory reads): the recorded view borrows only carry the *first* declare's base, so a write to the *reassigned* base is never covered — `s = "other"` while `h` views `s`'s bytes compiled, and the later `print(h)` read the released buffer.
+- **False positive** (latent): with no kill points, the old view's region lives forever, so a write between two reassignments of one slot is rejected even though no view of it is live.
+
+The minimal fix restores the invariant instead of building kill-point NLL (an L4+ option): a view binding is immutable — `var h = <view>` is rejected at the declaration ("a view binding cannot be mutable; declare it with 'let'"), and any assignment into a `StrView`/`Tokens` slot is rejected at the assignment ("a view binding cannot be reassigned; declare a new view with 'let'"). The cursor type is covered by the same checks. `let`-bound views were already protected by the immutable-binding rule; the slot check is the second line of defense for any path the assignment form can reach.
+
+**Evidence**: the probe's exact shape is `tests/ui/view_rebind_mutable.ae` (rejected at the declaration) and `tests/ui/view_reassign_let.ae` (rejected at the write); the corpus holds no `var`-bound views, so nothing else changes. 290 tests, 60-seed four-way differential, 41/41 `verify_generated_c` all green; the 1,000-seed run over seeds 5000–5999 finished with 0 failures before this slice.

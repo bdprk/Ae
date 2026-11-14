@@ -1,0 +1,1 @@
+ae: $DIR/view_rebind_mutable.ae:10:32: a view binding cannot be mutable; declare it with 'let'
