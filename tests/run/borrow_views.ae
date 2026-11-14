@@ -1,0 +1,16 @@
+// Borrow matrix, positive faces (M2.5 L0 baseline): two shared views of one
+// base coexist for reads (§3.1), and a view created before a loop stays
+// readable inside it across the back edge, next to the cursor's own borrow
+// of the same base (§3.6). Reads never conflict; the program runs.
+fn main() {
+    var s = "a,b,c";
+    let head = slice_view(s, 0, 3);
+    let mid = slice_view(s, 2, 5);
+    print(head);
+    print(mid);
+    let cur = tokenize(s, ",");
+    for t in cur {
+        print(head);
+        print(t);
+    }
+}

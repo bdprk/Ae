@@ -1,0 +1,12 @@
+// Borrow matrix §3.8: a container element read lends the container — the
+// element view keeps the whole vector borrowed, so an element write (and a
+// push) while the element is bound is rejected.
+fn main() {
+    var v = strvec_new();
+    push(v, "a");
+    push(v, "b");
+    let e = v[0];
+    print(e);
+    v[0] = "z";
+    print(v);
+}

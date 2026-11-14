@@ -1,0 +1,1 @@
+ae: $DIR/borrow_view_escape.ae:11:9: cannot assign a string view value to string variable 'kept'

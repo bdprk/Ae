@@ -1,0 +1,13 @@
+// Borrow matrix §3.6 (negative): a view re-established every iteration and
+// kept by the next one needs an escape, and escapes are prohibited at this
+// level — a view cannot be assigned out to an outer variable.
+fn main() {
+    var s = "a,b,c";
+    var kept = "";
+    let cur = tokenize(s, ",");
+    for t in cur {
+        let v = slice_view(s, 0, 3);
+        kept = v;
+        print(kept);
+    }
+}

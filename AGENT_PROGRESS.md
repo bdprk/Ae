@@ -22,6 +22,7 @@
 - [x] 10. 完成 M2.4 MIR drop 精化（`mir::elaborate_drops` 数据流消除已证死的 release，Mixed 保守保留 + MoveTracker 共享 move 语义 + 2 个回归测试 + ADR-0204）
 - [x] 11. 修复 ADR-0196 引入的 `Self::` 普通枚且回归（examples/enum_methods.ae 编译失败），verify_generated_c.py 41 例全过
 - [x] 12. 四路差分模糊测试例行化并扩展语法（分支内 move 字符串的 Mixed 形状），40 seeds 0 failures
+- [x] 13. 落地 borrow-checker-design §3 对抗矩阵（先探行为再写测试）：5 个 UI 拒绝例 + 1 个 run 正例，钉住 L0 基线供 L1 NLL 差分
 
 ## 日志
 - 2026-11-13 15:57 初始化 AGENT_PROGRESS.md，定位到 4 个失败的 execution 测试均由 enum_generic_impls.ae 的 receiver move 引起。
@@ -36,3 +37,4 @@
 - 2026-11-14 11:50 完成 M2.4 drop 精化：`drops.rs` 对优化后的 MIR 块图做 per-block/per-slot 数据流（Live/Uninit/Dropped/Mixed），有证明才消除 release（Uninit/Dropped 移除、Mixed 保守保留依赖幂等 release，修复 WIP 中"拒绝合法程序"的 internal error）；`movewalk` 重构为 MoveTracker trait（verifier/recorder 共享一份 move 语义），emit-mir 打印精化后的图；新增 2 个回归测试与 ADR-0204，失败日志新增 1 条。修复后 `cargo test --workspace --locked` 272 项全绿。
 - 2026-11-14 12:25 修复 `Self::` 普通枚举关联函数解析回归：expression.rs 的 Self 枚举臂在无 enum_origin 时回退 associated_call（与裸名路径共用 inherent 查找），examples/enum_methods.ae 恢复编译运行；verify_generated_c.py 41 PASS / 0 FAIL（此前从未跑过，由本次例行化引入并立刻抓到该回归）；新增正例+拒绝例回归测试，失败日志新增 1 条。`cargo test --workspace --locked` 273 项全绿。
 - 2026-11-14 12:45 四路差分（MIR/drops vs tree vs release vs interp）40 seeds 全过；fuzzer 语法新增"分支内按值调用 move 字符串"形状（M2.4 Mixed 站点，seed 5 实测 kept_mixed=1），ADR-0204 证据同步更新。
+- 2026-11-14 13:15 落地 borrow-checker-design §3 对抗矩阵测试（M2.5 L0 基线）：别名对读写（§3.1）、last-use 后写入（§3.2）、last-use 后 move（§3.3）、视图逃逸（§3.6 反例）、元素借用后容器写入（§3.8）五个 UI 拒绝快照 + 别名/回边正例 run 测试；全部先经编译器实测探明行为与诊断文本再固化。cargo test 273 全绿。
