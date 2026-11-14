@@ -1106,8 +1106,17 @@ impl Parser<'_> {
                 match &base {
                     Expr::Variable(id, ty, _, _) if ty.owned() => {
                         let id = *id;
-                        if self.is_borrowed(id) {
+                        // The receiver move re-homes the buffer, so a view of
+                        // it dangles only if the view can still be read later
+                        // (M2.5 L1): the conflict is deferred to the graph's
+                        // adjudication, like the plain move it is.
+                        if self.is_borrowed(id) && !self.all_borrows_are_views(id) {
                             return Err(self.fail(&format!("cannot move the receiver of '{fname}' while it is borrowed")));
+                        }
+                        if self.is_borrowed(id) {
+                            let offset = self.tokens.get(self.pos.saturating_sub(1)).map(|t| t.offset).unwrap_or(0);
+                            let name = self.names.iter().find(|(_, (vid, _, _))| *vid == id).map(|(n, _)| n.clone()).unwrap_or_else(|| format!("v{id}"));
+                            self.deferred_write_conflicts.push((id, offset, name, "move", None));
                         }
                         if self.moved.contains(&id) {
                             return Err(moved_value_hint(self.binding_label(self.fail(&format!("cannot use a moved value as the receiver of '{fname}'")).with_code("E0102"), id)));
