@@ -202,6 +202,218 @@ fn m_contains_ref(place: &MapPlace, locals: &HashMap<usize, Val>, caller_locals:
     }
 }
 
+// ---- JSON navigation (json_get / json_int) ---------------------------------
+//
+// The interp scans the raw document text: a path walks keys and indices, and
+// a value is returned as its raw slice (strings decoded). The runtime scans
+// the same way, so the semantics match without a materialised tree.
+
+fn json_skip_ws(bytes: &[u8], mut at: usize) -> usize {
+    while at < bytes.len() && matches!(bytes[at], b' ' | b'\t' | b'\n' | b'\r') { at += 1; }
+    at
+}
+
+// The exclusive end of the value whose first byte sits at `at`: a string's
+// closing quote, a container's matching brace/bracket, or a literal's end.
+fn json_value_end(bytes: &[u8], at: usize) -> usize {
+    if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG vend enter at={at} first={:?}", bytes.get(at).map(|b| *b as char)); }
+    let result = json_value_end_inner(bytes, at);
+    if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG vend exit end={result}"); }
+    result
+}
+
+fn json_value_end_inner(bytes: &[u8], mut at: usize) -> usize {
+    match bytes.get(at) {
+        Some(b'"') => {
+            at += 1;
+            while at < bytes.len() {
+                match bytes[at] {
+                    b'\\' => { at += 2; }
+                    b'"' => return at + 1,
+                    _ => at += 1,
+                }
+            }
+            at
+        }
+        Some(open @ (b'{' | b'[')) => {
+            let close = if *open == b'{' { b'}' } else { b']' };
+            let mut depth = 0usize;
+            while at < bytes.len() {
+                match bytes[at] {
+                    b'"' => {
+                        at += 1;
+                        while at < bytes.len() {
+                            match bytes[at] {
+                                b'\\' => at += 2,
+                                b'"' => { at += 1; break; }
+                                _ => at += 1,
+                            }
+                        }
+                    }
+                    c if c == *open => { depth += 1; at += 1; }
+                    c if c == close => { depth -= 1; if depth == 0 { return at + 1; } at += 1; }
+                    _ => at += 1,
+                }
+            }
+            at
+        }
+        _ => {
+            while at < bytes.len() && !matches!(bytes[at], b',' | b'}' | b']' | b' ' | b'\t' | b'\n' | b'\r') { at += 1; }
+            at
+        }
+    }
+}
+
+// Decode a JSON string's raw interior (escapes included, surrogate pairs
+// combined). `raw` excludes the surrounding quotes.
+fn json_decode_string(raw: &str) -> String {
+    let mut out = String::new();
+    let mut chars = raw.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' { out.push(c); continue; }
+        match chars.next() {
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            Some('/') => out.push('/'),
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some('b') => out.push('\u{0008}'),
+            Some('f') => out.push('\u{000C}'),
+            Some('u') => {
+                let hex: String = chars.by_ref().take(4).collect();
+                let code = u32::from_str_radix(&hex, 16).unwrap_or(0xFFFD);
+                let decoded = if (0xD800..0xDC00).contains(&code) {
+                    // A high surrogate: the pair's low half follows.
+                    if chars.next() == Some('\\') && chars.next() == Some('u') {
+                        let low: String = chars.by_ref().take(4).collect();
+                        let low = u32::from_str_radix(&low, 16).unwrap_or(0xFFFD);
+                        let combined = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                        char::from_u32(combined).unwrap_or('\u{FFFD}')
+                    } else {
+                        '\u{FFFD}'
+                    }
+                } else {
+                    char::from_u32(code).unwrap_or('\u{FFFD}')
+                };
+                out.push(decoded);
+            }
+            Some(other) => out.push(other),
+            None => {}
+        }
+    }
+    out
+}
+
+// The members of the object whose opening brace sits at `at`: each yields
+// (decoded key, value start, value end).
+fn json_object_members(bytes: &[u8], at: usize) -> Vec<(String, usize, usize)> {
+    if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG members enter at={at}"); }
+    let mut members = Vec::new();
+    let mut cursor = json_skip_ws(bytes, at + 1);
+    loop {
+        if cursor >= bytes.len() || bytes[cursor] == b'}' { break; }
+        cursor = json_skip_ws(bytes, cursor);
+        if cursor >= bytes.len() || bytes[cursor] != b'"' { break; }
+        // The member's key, raw interior then decoded.
+        let key_start = cursor + 1;
+        let mut key_end = key_start;
+        while key_end < bytes.len() {
+            match bytes[key_end] {
+                b'\\' => key_end += 2,
+                b'"' => break,
+                _ => key_end += 1,
+            }
+        }
+        let raw_key = String::from_utf8_lossy(&bytes[key_start..key_end]).to_string();
+        let key = json_decode_string(&raw_key);
+        let after_key = json_skip_ws(bytes, key_end + 1);
+        if after_key >= bytes.len() || bytes[after_key] != b':' { break; }
+        let value_start = json_skip_ws(bytes, after_key + 1);
+        let value_end = json_value_end(bytes, value_start);
+        members.push((key, value_start, value_end));
+        cursor = json_skip_ws(bytes, value_end);
+        if cursor < bytes.len() && bytes[cursor] == b',' { cursor += 1; } else { break; }
+    }
+    members
+}
+
+// The elements of the array whose opening bracket sits at `at`.
+fn json_array_elements(bytes: &[u8], at: usize) -> Vec<(usize, usize)> {
+    let mut elements = Vec::new();
+    let mut cursor = json_skip_ws(bytes, at + 1);
+    loop {
+        if cursor >= bytes.len() || bytes[cursor] == b']' { break; }
+        let value_start = cursor;
+        let value_end = json_value_end(bytes, value_start);
+        elements.push((value_start, value_end));
+        cursor = json_skip_ws(bytes, value_end);
+        if cursor < bytes.len() && bytes[cursor] == b',' { cursor = json_skip_ws(bytes, cursor + 1); } else { break; }
+    }
+    elements
+}
+
+// The raw slice the path selects, or the runtime's exact "why": the
+// segment walk mirrors ae_json_locate, whose messages programs can
+// observe through the result enums.
+fn json_locate(text: &str, path: &str) -> Result<String, String> {
+    let bytes = text.as_bytes();
+    let kind_of = |raw: &str| -> &'static str {
+        match raw.trim().as_bytes().first() {
+            Some(b'"') => "a string",
+            Some(b'{') => "an object",
+            Some(b'[') => "an array",
+            Some(b't') | Some(b'f') => "a boolean",
+            Some(b'n') => "null",
+            Some(_) => "a number",
+            None => "nothing",
+        }
+    };
+    let mut start = json_skip_ws(bytes, 0);
+    let mut end = json_value_end(bytes, start);
+    let mut segments: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_index = false;
+    for c in path.chars() {
+        match c {
+            '.' if !in_index => { segments.push(current.clone()); current = String::new(); }
+            '[' => { if !current.is_empty() { segments.push(current.clone()); current = String::new(); } in_index = true; }
+            ']' => { segments.push(current.clone()); current = String::new(); in_index = false; }
+            _ => current.push(c),
+        }
+    }
+    if !current.is_empty() { segments.push(current); }
+    for segment in &segments {
+        let index: Option<usize> = segment.parse().ok();
+        match index {
+            Some(i) => {
+                let raw = text[start..end].to_owned();
+                let kind = kind_of(&raw);
+                if kind != "an array" {
+                    return Err(format!("path segment [{}] needs an array, found {}", segment, kind));
+                }
+                let elements = json_array_elements(bytes, start);
+                match elements.get(i) {
+                    Some((value_start, value_end)) => { start = *value_start; end = *value_end; }
+                    None => return Err(format!("path segment [{}] is past the end of the array", i)),
+                }
+            }
+            None => {
+                let raw = text[start..end].to_owned();
+                let kind = kind_of(&raw);
+                if kind != "an object" {
+                    return Err(format!("path segment '{}' needs an object, found {}", segment, kind));
+                }
+                let members = json_object_members(bytes, start);
+                match members.iter().find(|(key, _, _)| key == segment) {
+                    Some((_, value_start, value_end)) => { start = *value_start; end = *value_end; }
+                    None => return Err(format!("no member named '{}'", segment)),
+                }
+            }
+        }
+    }
+    Ok(text[start..end].to_owned())
+}
 fn trap(msg: &str, line: usize, col: usize) -> Flow {
     Flow::Trap(format!("{line}:{col}: {msg}"))
 }
@@ -1237,6 +1449,147 @@ fn eval_expr(
             match std::env::current_dir() {
                 Ok(dir) => result_value(env, ty, true, vec![Val::Str(dir.to_string_lossy().to_string())]),
                 Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot read the working directory: {error}"))]),
+            }
+        }
+        // json_get: strings decode escapes; numbers, true/false/null, and
+        // containers come back as their raw slices. A missing segment is
+        // Err("key not found") — the runtime's constant.
+        Expr::JsonGet(text, path, ..) => {
+            let doc = match eval_expr(env, text, locals, caller_locals, false)? {
+                Val::Str(v) => v,
+                _ => return Err(Flow::Trap("internal: json text".to_owned())),
+            };
+            let path = match eval_expr(env, path, locals, caller_locals, false)? {
+                Val::Str(v) => v,
+                _ => return Err(Flow::Trap("internal: json path".to_owned())),
+            };
+            let (eid, ok, err) = result_enum_of(env, "ReadResult").ok_or_else(|| Flow::Trap("internal: result enum missing".to_owned()))?;
+            match json_locate(&doc, &path) {
+                Ok(raw) => {
+                    let decoded = if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
+                        json_decode_string(&raw[1..raw.len() - 1])
+                    } else {
+                        raw
+                    };
+                    Ok(Val::Enum(eid, ok, vec![Val::Str(decoded)]))
+                }
+                Err(why) => Ok(Val::Enum(eid, err, vec![Val::Str(why)])),
+            }
+        }
+        // json_bool: only true/false are accepted; anything else is Err.
+        Expr::JsonBool(text, path, ..) => {
+            let doc = match eval_expr(env, text, locals, caller_locals, false) {
+                Ok(Val::Str(v)) => v,
+                Ok(_) => return Err(Flow::Trap("internal: json text".to_owned())),
+                Err(f) => return Err(f),
+            };
+            let path = match eval_expr(env, path, locals, caller_locals, false) {
+                Ok(Val::Str(v)) => v,
+                Ok(_) => return Err(Flow::Trap("internal: json path".to_owned())),
+                Err(f) => return Err(f),
+            };
+            let (eid, ok, err) = result_enum_of(env, "BoolResult").ok_or_else(|| Flow::Trap("internal: result enum missing".to_owned()))?;
+            match json_locate(&doc, &path) {
+                Err(why) => Ok(Val::Enum(eid, err, vec![Val::Str(why)])),
+                Ok(raw) => {
+                    let kind = match raw.trim().as_bytes().first() {
+                        Some(b'"') => "a string",
+                        Some(b'{') => "an object",
+                        Some(b'[') => "an array",
+                        Some(b't') | Some(b'f') => "a boolean",
+                        Some(b'n') => "null",
+                        Some(_) => "a number",
+                        None => "nothing",
+                    };
+                    if kind == "a boolean" {
+                        Ok(Val::Enum(eid, ok, vec![Val::Bool(raw.trim() == "true")]))
+                    } else {
+                        Ok(Val::Enum(eid, err, vec![Val::Str(format!("'{}' is {}, not a boolean", path, kind))]))
+                    }
+                }
+            }
+        }
+        // json_len: the element or member count of the selected container.
+        // json_has: existence only — null counts as existent, and a failed
+        // locate is simply false (a plain bool, no result enum).
+        Expr::JsonHas(text, path, ..) => {
+            let doc = match eval_expr(env, text, locals, caller_locals, false) {
+                Ok(Val::Str(v)) => v,
+                Ok(_) => return Err(Flow::Trap("internal: json text".to_owned())),
+                Err(f) => return Err(f),
+            };
+            let path = match eval_expr(env, path, locals, caller_locals, false) {
+                Ok(Val::Str(v)) => v,
+                Ok(_) => return Err(Flow::Trap("internal: json path".to_owned())),
+                Err(f) => return Err(f),
+            };
+            Ok(Val::Bool(json_locate(&doc, &path).is_ok()))
+        }
+        Expr::JsonLen(text, path, ..) => {
+            let doc = match eval_expr(env, text, locals, caller_locals, false) {
+                Ok(Val::Str(v)) => v,
+                Ok(_) => return Err(Flow::Trap("internal: json text".to_owned())),
+                Err(f) => return Err(f),
+            };
+            let path = match eval_expr(env, path, locals, caller_locals, false) {
+                Ok(Val::Str(v)) => v,
+                Ok(_) => return Err(Flow::Trap("internal: json path".to_owned())),
+                Err(f) => return Err(f),
+            };
+            let (eid, ok, err) = result_enum_of(env, "IntResult").ok_or_else(|| Flow::Trap("internal: result enum missing".to_owned()))?;
+            match json_locate(&doc, &path) {
+                Err(why) => Ok(Val::Enum(eid, err, vec![Val::Str(why)])),
+                Ok(raw) => {
+                    let bytes = raw.as_bytes();
+                    let start = json_skip_ws(bytes, 0);
+                    let count = match bytes.get(start) {
+                        Some(b'[') => json_array_elements(bytes, start).len() as i64,
+                        Some(b'{') => json_object_members(bytes, start).len() as i64,
+                        _ => -1,
+                    };
+                    if count < 0 {
+                        return Ok(Val::Enum(eid, err, vec![Val::Str(format!("'{}' is {}; only arrays and objects have a member count", path, "a value"))]));
+                    }
+                    Ok(Val::Enum(eid, ok, vec![Val::Int(count)]))
+                }
+            }
+        }
+        // json_int: the selected value must be a strictly pure integer —
+        // decimals or exponents are errors, as is i64 overflow.
+        Expr::JsonInt(text, path, ..) => {
+            let doc = match eval_expr(env, text, locals, caller_locals, false)? {
+                Val::Str(v) => v,
+                _ => return Err(Flow::Trap("internal: json text".to_owned())),
+            };
+            let path = match eval_expr(env, path, locals, caller_locals, false)? {
+                Val::Str(v) => v,
+                _ => return Err(Flow::Trap("internal: json path".to_owned())),
+            };
+            let (eid, ok, err) = result_enum_of(env, "IntResult").ok_or_else(|| Flow::Trap("internal: result enum missing".to_owned()))?;
+            match json_locate(&doc, &path) {
+                Err(why) => Ok(Val::Enum(eid, err, vec![Val::Str(why)])),
+                Ok(raw) => {
+                    let kind = match raw.trim().as_bytes().first() {
+                        Some(b'"') => "a string",
+                        Some(b'{') => "an object",
+                        Some(b'[') => "an array",
+                        Some(b't') | Some(b'f') => "a boolean",
+                        Some(b'n') => "null",
+                        Some(_) => "a number",
+                        None => "nothing",
+                    };
+                    if kind != "a number" {
+                        return Ok(Val::Enum(eid, err, vec![Val::Str(format!("'{}' is {}, not a number", path, kind))]));
+                    }
+                    let trimmed = raw.trim();
+                    if trimmed.contains('.') || trimmed.contains('e') || trimmed.contains('E') {
+                        return Ok(Val::Enum(eid, err, vec![Val::Str(format!("'{}' is not an integer", path))]));
+                    }
+                    match trimmed.parse::<i64>() {
+                        Ok(n) => Ok(Val::Enum(eid, ok, vec![Val::Int(n)])),
+                        Err(_) => Ok(Val::Enum(eid, err, vec![Val::Str(format!("'{}' does not fit in i64", path))])),
+                    }
+                }
             }
         }
         Expr::MapNew(_, _, kind) => match kind {
