@@ -459,9 +459,15 @@ impl<'a> Parser<'a> {
                             }
                             // A view into one of the fields points at the bytes
                             // this write would release, so the write is only
-                            // allowed once the view is gone (ADR-52).
-                            if self.is_borrowed(id) {
+                            // allowed once the view is gone (ADR-52) — the
+                            // view-kind case is deferred to the graph's NLL
+                            // adjudication at the variable granularity the
+                            // borrow uses; container borrows reject on sight.
+                            if self.is_borrowed(id) && !self.all_borrows_are_views(id) {
                                 return Err(self.fail(&format!("cannot modify '{name}' while it is borrowed")));
+                            }
+                            if self.is_borrowed(id) {
+                                self.deferred_write_conflicts.push((id, name_offset, name.clone(), "modify"));
                             }
                             self.take(Kind::Equal)?;
                             let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
