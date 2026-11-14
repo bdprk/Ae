@@ -3414,6 +3414,61 @@ fn emit_mir_shows_which_releases_survive_drop_elaboration() {
 }
 
 #[test]
+#[test]
+fn field_granularity_borrows_freeze_their_own_field_only() {
+    // M2.5 L2: a view of `p.name` freezes writes to `p.name` while the view
+    // can still be read, but a write to a different field releases bytes the
+    // view does not point at — allowed, and the run proves both fields
+    // behave. The viewed field's write while the view is read later is the
+    // rejection.
+    let dir = unique_temp_dir("field_granularity");
+    let source = dir.join("fields.ae");
+    fs::write(&source, "struct P { name: string, note: string }
+fn main() {
+    var p = P { name: \"hello\", note: \"n\" };
+    let a = slice_view(p.name, 0, 1);
+    let b = slice_view(p.note, 0, 1);
+    print(a);
+    print(b);
+    p.note = \"changed\";
+    print(p.name);
+    print(p.note);
+}
+").unwrap();
+    let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).output().unwrap();
+    assert!(run.status.success(), "run failed: {}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "h\nn\nhello\nchanged\n");
+
+    let viewed = dir.join("viewed.ae");
+    fs::write(&viewed, "struct P { name: string, note: string }
+fn main() {
+    var p = P { name: \"hello\", note: \"n\" };
+    let a = slice_view(p.name, 0, 1);
+    p.name = \"changed\";
+    print(a);
+}
+").unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&viewed).output().unwrap();
+    assert!(!rejected.status.success(), "writing the viewed field while it is read later must be rejected");
+    let err = String::from_utf8_lossy(&rejected.stderr);
+    assert!(err.contains("may still be read"), "the NLL diagnostic names the conflict: {err}");
+
+    let moved = dir.join("moved.ae");
+    fs::write(&moved, "struct P { name: string, note: string }
+fn main() {
+    var p = P { name: \"hello\", note: \"n\" };
+    let a = slice_view(p.name, 0, 1);
+    let q = p;
+    print(a);
+}
+").unwrap();
+    let rejected_move = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&moved).output().unwrap();
+    assert!(!rejected_move.status.success(), "moving the whole struct while a field view is read later must be rejected");
+    let err = String::from_utf8_lossy(&rejected_move.stderr);
+    assert!(err.contains("may still be read"), "the NLL diagnostic names the conflict: {err}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
 fn mir_drop_elision_thins_propagate_error_path_releases() {
     // M2.4: a `?`'s releases ride the error path, which exits the function,
     // so the state to read them with is the one after the value evaluated.

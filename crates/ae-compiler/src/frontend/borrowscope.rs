@@ -45,17 +45,17 @@ use super::movewalk::{expr_reads, statement_move_effects, statement_reads};
 // Every write to the base in the CFG is a deferred one (the parser defers
 // all of them when only view borrows are active), so one covered write
 // anywhere is reported at the first recorded conflict's site.
-pub(super) fn adjudicate_deferred(function: &Function, conflicts: &[(usize, usize, String, &'static str)]) -> Result<(), String> {
+pub(super) fn adjudicate_deferred(function: &Function, conflicts: &[(usize, usize, String, &'static str, Option<String>)]) -> Result<(), String> {
     if conflicts.is_empty() { return Ok(()); }
     let graph = build_cfg(function);
-    let view_borrows: Vec<(usize, usize)> = graph.blocks.iter()
+    let view_borrows: Vec<(usize, usize, Option<String>)> = graph.blocks.iter()
         .flat_map(|block| block.statements.iter())
         .filter_map(view_borrow_introduced)
         .collect();
     let introductions: HashMap<usize, (usize, usize)> = graph.blocks.iter()
         .flat_map(|block| {
             block.statements.iter().enumerate()
-                .filter_map(|(index, statement)| view_borrow_introduced(statement).map(|(view, _)| (view, (block.id, index))))
+                .filter_map(|(index, statement)| view_borrow_introduced(statement).map(|(view, _, _)| (view, (block.id, index))))
         })
         .collect();
     let nll = NllRegions::compute(&graph, &view_borrows);
@@ -82,18 +82,19 @@ pub(super) fn adjudicate_deferred(function: &Function, conflicts: &[(usize, usiz
             // at: a write releases them in place; a move hands them to a new
             // owner that may die before the view does. Either way the view
             // must be dead by then — introduced before the statement
-            // dominates it and read on no later path.
-            let mut targets = std::collections::HashSet::new();
-            if let Some(written) = writes_slot(statement) { targets.insert(written); }
-            targets.extend(statement_move_effects(statement).moved);
+            // dominates it and read on no later path. The places decide the
+            // overlap: a field write only touches that field's bytes (L2).
+            let targets = statement_targets(statement);
             if targets.is_empty() { continue; }
             let mut live_at_write = suffix[index + 1].clone();
             live_at_write.extend(&live_out);
             let covered = view_borrows.iter()
-                .any(|&(view, base)| targets.contains(&base)
-                    && view_covers_write(view, block.id, index, &introductions, &dom, &live_at_write));
+                .any(|&(view, base, ref view_field)| {
+                    targets.iter().any(|target| places_overlap(base, view_field, target))
+                        && view_covers_write(view, block.id, index, &introductions, &dom, &live_at_write)
+                });
             if covered {
-                let (_, _, name, verb) = &conflicts[0];
+                let (_, _, name, verb, _) = &conflicts[0];
                 return Err(format!("cannot {verb} '{name}' while a view binding of it may still be read"));
             }
         }
@@ -115,12 +116,41 @@ pub(super) fn verify_program_borrows(program: &Program) -> Result<(), String> {
 // and `let cur = tokens(base, ..)` bind a view of the base slot. The base of
 // a field view (`slice_view(p.name, ..)`) is the struct itself, at the
 // granularity the parser's registers use (ADR-52).
-fn view_borrow_introduced(statement: &Statement) -> Option<(usize, usize)> {
+// The view borrows one statement introduces: `let v = slice_view(base, ..)`
+// and `let cur = tokens(base, ..)` bind a view of the base slot. The view's
+// place is the base variable with the viewed field, when the base is a
+// struct (`slice_view(p.name, ..)` views the place `p.name`).
+fn view_borrow_introduced(statement: &Statement) -> Option<(usize, usize, Option<String>)> {
     match statement {
-        Statement::Declare(view, Expr::SliceView(base, ..)) => Some((*view, *base)),
-        Statement::Declare(view, Expr::Tokens(base, ..)) => Some((*view, *base)),
+        Statement::Declare(view, Expr::SliceView(base, field, ..)) => Some((*view, *base, field.clone())),
+        Statement::Declare(view, Expr::Tokens(base, field, ..)) => Some((*view, *base, field.clone())),
         _ => None,
     }
+}
+
+// A target place: the base slot with the written field, None for a
+// whole-variable write or a move (both re-home every field's bytes).
+type Place = (usize, Option<String>);
+
+// The places one statement releases or re-homes.
+fn statement_targets(statement: &Statement) -> std::collections::HashSet<Place> {
+    let mut targets = std::collections::HashSet::new();
+    if let Some(written) = writes_slot(statement) { targets.insert((written, None)); }
+    if let Statement::FieldStore(id, fname, ..) = statement {
+        // A field write releases the written field's bytes only.
+        targets.remove(&(id.to_owned(), None));
+        targets.insert((*id, Some(fname.clone())));
+    }
+    targets.extend(statement_move_effects(statement).moved.into_iter().map(|id| (id, None)));
+    targets
+}
+
+// A view covers a target place when the places overlap: the same base, and
+// the target is the whole variable or the very field the view reads. A
+// whole-variable view (a plain string base) overlaps every write to it.
+fn places_overlap(base: usize, view_field: &Option<String>, target: &Place) -> bool {
+    let &(tbase, ref tfield) = target;
+    tbase == base && (tfield.is_none() || *view_field == *tfield)
 }
 
 // A write conflicts with a view only when the view was introduced BEFORE the
@@ -157,7 +187,7 @@ impl BorrowRegions {
         // The view borrows get NLL regions: backwards liveness of the view
         // slot, which never dies by assignment (views are declare-only), so
         // a view is live exactly where some later path may still read it.
-        let view_borrows: Vec<(usize, usize)> = function.blocks.iter()
+        let view_borrows: Vec<(usize, usize, Option<String>)> = function.blocks.iter()
             .flat_map(|block| block.statements.iter())
             .filter_map(view_borrow_introduced)
             .collect();
@@ -165,7 +195,7 @@ impl BorrowRegions {
         let introductions: HashMap<usize, (usize, usize)> = function.blocks.iter()
             .flat_map(|block| {
                 block.statements.iter().enumerate()
-                    .filter_map(|(index, statement)| view_borrow_introduced(statement).map(|(view, _)| (view, (block.id, index))))
+                    .filter_map(|(index, statement)| view_borrow_introduced(statement).map(|(view, _, _)| (view, (block.id, index))))
             })
             .collect();
         let dom = dominators(function);
@@ -200,36 +230,37 @@ impl BorrowRegions {
                 .flat_map(|succ| nll.live_in.get(succ).into_iter().flatten().copied())
                 .collect();
             for (index, statement) in block.statements.iter().enumerate() {
-                let mut targets = std::collections::HashSet::new();
-                if let Some(written) = writes_slot(statement) { targets.insert(written); }
-                targets.extend(statement_move_effects(statement).moved);
+                let targets = statement_targets(statement);
                 if targets.is_empty() { continue; }
                 // The strict rule the parser enforces: no write inside a
-                // scope region.
-                for written in &targets {
-                    if scope_live.contains(written) {
+                // scope region. The borrow's granularity is the variable
+                // (ADR-52), so any touched place of the variable counts.
+                let touched_vars: std::collections::HashSet<usize> = targets.iter().map(|(base, _)| *base).collect();
+                for base in &touched_vars {
+                    if scope_live.contains(base) {
                         return Err(format!(
                             "internal: fn #{} block {} writes v{} while its scope borrow region is live; the parser's borrow registers and the CFG regions disagree",
-                            function.id, block.id, written
+                            function.id, block.id, base
                         ));
                     }
                 }
-                // The L1 rule computed here: no write or move while a view
-                // of the slot may still be read later on some path — for a
-                // view whose introduction dominates the statement. A view
-                // created after the statement looks at the new bytes.
+                // The L1/L2 rule computed here: no write or move while a
+                // view of an overlapping place may still be read later on
+                // some path — for a view whose introduction dominates the
+                // statement. A view created after the statement looks at the
+                // new bytes.
                 let mut live_at_write = suffix[index + 1].clone();
                 live_at_write.extend(&live_out);
-                let covering: Vec<&(usize, usize)> = view_borrows.iter()
-                    .filter(|&&(view, base)| targets.contains(&base)
-                        && view_covers_write(view, block.id, index, &introductions, &dom, &live_at_write))
+                let covering: Vec<&(usize, usize, Option<String>)> = view_borrows.iter()
+                    .filter(|&&(view, base, ref view_field)| {
+                        targets.iter().any(|target| places_overlap(base, view_field, target))
+                            && view_covers_write(view, block.id, index, &introductions, &dom, &live_at_write)
+                    })
                     .collect();
-                if let Some(&(view, _)) = covering.first() {
+                if let Some(&(view, base, _)) = covering.first() {
                     return Err(format!(
                         "internal: fn #{} block {} touches v{} while its view v{} may still be read; the parser's move rules and the NLL regions disagree",
-                        function.id, block.id,
-                        view_borrows.iter().find(|&&(v, _)| v == *view).map(|&(_, b)| b).unwrap_or(0),
-                        view
+                        function.id, block.id, base, view
                     ));
                 }
             }
@@ -288,8 +319,8 @@ struct NllRegions {
 }
 
 impl NllRegions {
-    fn compute(function: &CfgFunction, view_borrows: &[(usize, usize)]) -> NllRegions {
-        let views: std::collections::HashSet<usize> = view_borrows.iter().map(|&(view, _)| view).collect();
+    fn compute(function: &CfgFunction, view_borrows: &[(usize, usize, Option<String>)]) -> NllRegions {
+        let views: std::collections::HashSet<usize> = view_borrows.iter().map(|&(view, _, _)| view).collect();
         let mut live_in: Vec<std::collections::HashSet<usize>> = vec![std::collections::HashSet::new(); function.blocks.len()];
         let mut changed = true;
         let mut rounds = function.blocks.len() + 1;
@@ -427,7 +458,7 @@ mod tests {
             Statement::Print(Printed::Expr(Expr::Variable(10, Type::StrView, 3, 6))),
         ];
         let function = function_of(vec![block(0, statements, CfgTerminator::Unreachable)]);
-        let regions = NllRegions::compute(&function, &[(10, 5)]);
+        let regions = NllRegions::compute(&function, &[(10, 5, None)]);
         assert!(regions.live_in[&0].contains(&10), "the view is live on entry: {:?}", regions.live_in);
         let error = BorrowRegions::run(&function).unwrap_err();
         assert!(error.contains("may still be read"), "the NLL check fires: {error}");
@@ -446,7 +477,7 @@ mod tests {
             Statement::Assign(5, Expr::StrLit("other".to_owned(), 3, 8), true),
         ];
         let function = function_of(vec![block(0, statements, CfgTerminator::Unreachable)]);
-        let regions = NllRegions::compute(&function, &[(10, 5)]);
+        let regions = NllRegions::compute(&function, &[(10, 5, None)]);
         // The view's last read is the print, inside this block, so the
         // entry liveness still includes it — but nothing reads the view
         // after the write, which is what the check asks.
