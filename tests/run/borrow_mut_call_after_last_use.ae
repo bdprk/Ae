@@ -1,0 +1,21 @@
+// Borrow matrix §3.4 (M2.5): a `&mut self` call releases the viewed bytes
+// at the call point — the callee may write any field — but a call after the
+// view's last use is outside the view's region, so it parses and runs.
+struct Doc { name: string, note: string }
+
+impl Doc {
+    fn rename(&mut self, to: string) -> i64 {
+        self.name = to;
+        return len(self.name);
+    }
+}
+
+fn main() {
+    var d = Doc { name: "alpha", note: "keep" };
+    let head = slice_view(d.name, 0, 3);
+    print(head);
+    let n = d.rename("beta");
+    print(n);
+    print(d.name);
+    print(d.note);
+}

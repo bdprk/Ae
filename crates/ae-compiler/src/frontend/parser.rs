@@ -101,6 +101,18 @@ impl<'a> Parser<'a> {
         self.is_borrowed(id) && !self.borrows.iter().any(|&(bid, _, kind)| bid == id && kind == BorrowKind::Container)
     }
 
+    // Whether the only active borrows on `id` are persistent view borrows:
+    // the deferral precondition for a mut lending call (M2.5). Call-argument
+    // borrows and earlier mut lends in the same statement are statement-
+    // scoped exclusions the on-sight rule still guards (`c.doubled() +
+    // c.inc()` stays rejected), and container borrows keep their scope rule.
+    pub(super) fn only_view_borrows_active(&self, id: usize) -> bool {
+        !self.call_borrows.iter().any(|&(bid, _)| bid == id)
+            && !self.mut_borrows.iter().any(|&(bid, _)| bid == id)
+            && self.borrows.iter().any(|&(bid, _, kind)| bid == id && kind == BorrowKind::View)
+            && !self.borrows.iter().any(|&(bid, _, kind)| bid == id && kind == BorrowKind::Container)
+    }
+
     pub(super) fn is_borrowed(&self, id: usize) -> bool {
         self.borrows.iter().any(|&(bid, _, _)| bid == id)
             || self.call_borrows.iter().any(|&(bid, _)| bid == id)
@@ -111,8 +123,21 @@ impl<'a> Parser<'a> {
     // graph decides whether a view of the written slot may still be read.
     // A surviving conflict is the positioned rejection; everything else was
     // a write after the view's last use, which now parses.
+    // Whether the graph's release scan will see a call through this
+    // signature id: the scan reads the four tables every `Expr::Call` id
+    // can come from. A deferral whose callee is outside them would be an
+    // unsound allowance, so the deferral sites reject on sight instead.
+    pub(super) fn signature_in_release_tables(&self, callee: Option<usize>) -> bool {
+        let Some(id) = callee else { return false; };
+        self.functions.values().any(|s| s.id == id)
+            || self.generics.inherent.values().any(|m| m.signature.id == id)
+            || self.generics.fn_done.values().any(|(iid, _, _)| *iid == id)
+            || self.generics.generic_impl_done.values().any(|(iid, _, _)| *iid == id)
+    }
+
     pub(super) fn adjudicate_deferred_conflicts(&mut self, function: &Function) -> Result<(), ae_span::Diagnostic> {
-        let outcome = borrowscope::adjudicate_deferred(function, &self.deferred_write_conflicts);
+        let mut_sigs = borrowscope::mut_borrow_positions(self.functions, self.generics);
+        let outcome = borrowscope::adjudicate_deferred(function, &self.deferred_write_conflicts, &mut_sigs);
         match outcome {
             Ok(()) => { self.deferred_write_conflicts.clear(); Ok(()) }
             Err(message) => {

@@ -1,0 +1,18 @@
+// Borrow matrix §3.4, the flip side (M2.5): the mut call releases the
+// viewed bytes while the view may still be read — the deferred conflict is
+// adjudicated on the graph and rejected with the positioned diagnostic.
+struct Doc { name: string, note: string }
+
+impl Doc {
+    fn rename(&mut self, to: string) -> i64 {
+        self.name = to;
+        return len(self.name);
+    }
+}
+
+fn main() {
+    var d = Doc { name: "alpha", note: "keep" };
+    let head = slice_view(d.name, 0, 3);
+    let n = d.rename("beta");
+    print(head);
+}

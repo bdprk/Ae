@@ -305,8 +305,9 @@ fn load_program_full(entry: &Path, recover: bool) -> Result<Loaded, FrontendErro
         return Err(disagreement.into());
     }
     // The borrow-region walk computes persistent-borrow liveness per block
-    // and verifies no write occurs while a borrow region is live (ADR-0193).
-    if let Err(disagreement) = borrowscope::verify_program_borrows(&program) {
+    // and verifies no write occurs while a borrow region is live (ADR-0193);
+    // the mut lending calls the parser deferred are part of the same rule.
+    if let Err(disagreement) = borrowscope::verify_program_borrows(&program, &borrowscope::mut_borrow_positions(&shared, &generics)) {
         return Err(disagreement.into());
     }
     Ok(Loaded { program, shared, generics, modules })

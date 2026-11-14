@@ -139,11 +139,16 @@ fn successors(function: &CfgFunction, block_id: usize) -> Vec<usize> {
 // statement consume or re-initialize?" without checking anything). Sharing
 // the walk keeps the two answers from drifting: there is one reading of
 // what counts as a move, not two.
-trait MoveTracker {
+pub(super) trait MoveTracker {
     fn read(&mut self, id: usize) -> Option<usize>;
     fn consume(&mut self, id: usize) -> Option<usize>;
     fn mark(&mut self, id: usize);
     fn revive(&mut self, id: usize);
+    // A call argument that lends its slot mutably: the callee may write any
+    // field, so this releases the viewed bytes of the slot at this point in
+    // evaluation order (M2.5). The default no-op keeps the move walkers
+    // unchanged; the borrow adjudication is the consumer.
+    fn mut_release(&mut self, _sig: usize, _position: usize, _slot: usize) {}
 }
 
 // Checks every read against the moved set; a violation is the id returned.
@@ -228,7 +233,7 @@ pub(super) fn statement_move_effects(statement: &Statement) -> MoveEffects {
 
 // Walk a statement: reads are checked against the moved set, moves insert
 // into it. Returns the id of a variable read after its move, if any.
-fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker) -> Option<usize> {
+pub(super) fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker) -> Option<usize> {
     match statement {
         // A return's expression is a moving position: an owned variable in it
         // is consumed by the return.
@@ -310,7 +315,15 @@ fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker) -> Option<
             moved.revive(*bid);
             None
         }
-        Statement::MapPut(_, key, value, ..) => { walk_expr(key, moved)?; walk_expr(value, moved)?; None }
+        // Both operands walk even when the key walk finds nothing: `?` here
+        // would treat the key's clean None as an early exit and abandon the
+        // value's walk (the same truncation the Binary arm's failure log
+        // entry documents).
+        Statement::MapPut(_, key, value, ..) => {
+            let key_walk = walk_expr(key, moved);
+            let value_walk = walk_expr(value, moved);
+            key_walk.or(value_walk)
+        }
         // `?` binds its Ok payload in the slot the statement declared; the
         // releases it carries belong to the error path, which leaves the
         // function, so they say nothing about the continuing path.
@@ -341,7 +354,7 @@ fn walk_statements_reads(statements: &[Statement], moved: &mut dyn MoveTracker) 
     None
 }
 
-fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usize> {
+pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usize> {
     match expr {
         Expr::Variable(id, ..) => {
             // A moving context consumes the value; the caller decides which
@@ -349,12 +362,33 @@ fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usize> {
             moved.read(*id)
         }
         Expr::Field(base, _, _) => walk_expr(base, moved),
-        Expr::Call(_, args, _) | Expr::FnCall(_, args, _) => {
-            for arg in args {
+        Expr::Call(sig, args, _) => {
+            for (position, arg) in args.iter().enumerate() {
                 match arg {
                     // By-value arguments move; borrows and views read.
                     Argument::Value(e) => {
                         // A bare owned variable as a by-value argument moves.
+                        if let Some(violation) = walk_moving_expr(e, moved) { return Some(violation); }
+                    }
+                    Argument::View(e) => { if let Some(violation) = walk_expr(e, moved) { return Some(violation); } }
+                    Argument::Borrow(id, _) => {
+                        // The callee id names a signature, so the adjudication
+                        // can tell whether this borrow lends mutably (the
+                        // callee's parameter type says so).
+                        moved.mut_release(*sig, position, *id);
+                        if let Some(violation) = moved.read(*id) { return Some(violation); }
+                    }
+                    Argument::FnPtr(_) => {}
+                }
+            }
+            None
+        }
+        Expr::FnCall(_, args, _) => {
+            for arg in args {
+                match arg {
+                    // A `FnCall`'s callee is a variable and fn types cannot
+                    // carry `&mut` (ADR-0189), so its borrows are reads only.
+                    Argument::Value(e) => {
                         if let Some(violation) = walk_moving_expr(e, moved) { return Some(violation); }
                     }
                     Argument::View(e) => { if let Some(violation) = walk_expr(e, moved) { return Some(violation); } }
