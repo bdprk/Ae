@@ -91,6 +91,49 @@ Each level must cover at least:
 9. **Generic cross-product**: `&T` instantiated as the four container types + future L3 behavior consistent within generic bodies (instantiation-by-instantiation checking still acts as a fallback);
 10. **Differential baseline**: All existing L0 rejection cases **re-run** after L1/L2—relaxation may only reduce rejections, and any existing rejections classified as "false positives" must be individually named in the ADR with reasons provided for their allowance.
 
+## 3.1 L2 Adversarial Case List (field-granularity loans — written before implementation)
+
+Each case names its expected verdict under L2 and what pins it. The tests land
+with the implementation; the list is the contract.
+
+**Allowances (positive)**
+
+- A1. `let h = slice_view(p.name, ..); p.note = "y"; print(h);` — writing a
+  *different* field never dangles a view of `p.name`; allowed at L2 (rejected
+  at L0/L1 by the variable-granularity rule).
+- A2. `let h = slice_view(p.name, ..); print(h); p.note = "y";` — same shape,
+  write after last use; allowed at L1 already through the variable-granularity
+  region, stays allowed.
+- A3. Two field views of *different* fields coexist: `slice_view(p.name, ..)`
+  and `slice_view(p.note, ..)`; both readable; writes to the *unviewed* third
+  field allowed.
+- A4. A view of `p.name` and a move of a *different* struct `q` — unrelated
+  variables, unaffected (regression guard).
+
+**Rejections (negative)**
+
+- R1. Write the *viewed field*: `p.name = "x";` while a view of `p.name` is
+  still readable → rejected (the write releases the viewed bytes).
+- R2. Move the whole struct while any field view is readable:
+  `let q = p;` → rejected (the move re-homes every field's bytes).
+- R3. Write the whole struct (fresh value in) while a field view is readable →
+  rejected (releases every field).
+- R4. A field view escapes (stored/returned) → rejected, same as L0.
+
+**Adversarial**
+
+- X1. Nested fields `a.b.c`: a view of `a.b.c` freezes writes to `a.b.c` and
+  to `a.b` and to `a` (the intermediate places own the leaf's storage);
+  writes to a *sibling* leaf `a.b.d` — L2's stretch goal, may stay rejected
+  with an honest message (the design's "ambiguous source means rejection").
+- X2. A field of an array/vector element (`v[0].name`) — elements stay
+  un-borrowable at L2; the existing rejection message must not regress.
+- X3. The move walk's field granularity: `p.a = p.b;` (a field-to-field move)
+  moves `p.b` and re-initializes `p.a` — reads of `p.a` afterwards are legal,
+  reads of `p.b` rejected; the borrow regions must respect the same places.
+- X4. Differential: every L1 rejection re-runs under L2 — relaxations only
+  reduce rejections; each newly-allowed program gets a run-corpus entry.
+
 ## 4. Implementation Hosting
 
 - The frontend already has a prototype CFG (branch merging/loop fixed-points have been run on the move set); the borrow checker reuses the same skeleton, replacing `borrows: Vec<(id, depth)>` with `Map<Place, Loan>` + live sets.
