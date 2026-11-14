@@ -10,10 +10,13 @@ matches with payload bindings, and counted loops with `continue`; compiles each 
 with every backend and optimization level — the MIR block-graph backend (the
 -O0 default, M2.3) and the structured tree emitter (`AE_CODEGEN=tree`),
 both at -O0, plus the optimized build; runs every binary; and asserts that
-all runs produce identical output. The parser's own move/borrow/type rules
-gate generation (a generated program the compiler rejects is a generator bug
-and fails the run), so each seed doubles as a regression test of
-compile-or-die determinism.
+all runs produce identical output. A runtime trap is agreement too (the
+generator can produce overflowing arithmetic; seed 1762): every mode must
+exit with the same code, print the same stdout up to the trap, and trap at
+the same position with the same message. The parser's own move/borrow/type
+rules gate generation (a generated program the compiler rejects is a
+generator bug and fails the run), so each seed doubles as a regression test
+of compile-or-die determinism.
 
 Usage: python scripts/diff_fuzz.py [--seeds N] [--start SEED] [--jobs N]
                                    [--save-corpus DIR]
@@ -27,6 +30,7 @@ DIR/seed_N.ae — the regression corpus for future compiler changes.
 
 import argparse
 import os
+import re
 import time
 import subprocess
 import sys
@@ -280,6 +284,14 @@ def compile_at(source: str, workdir: Path, tag: str, opt: bool, tree: bool = Fal
     return out
 
 
+def _run_dump(runs: list[tuple[str, subprocess.CompletedProcess]]) -> str:
+    """Every mode's exit code, stdout, and stderr, for a mismatch report."""
+    blocks = []
+    for name, run in runs:
+        blocks.append(f"--- {name} (exit {run.returncode}) ---{NL}{run.stdout}{NL}[stderr]{NL}{run.stderr}")
+    return NL.join(blocks)
+
+
 def run_seed(seed: int, workdir: Path, cache_dir: Path, compile_timeout: int) -> dict:
     """One seed's four-way differential, fully isolated.
 
@@ -300,33 +312,34 @@ def run_seed(seed: int, workdir: Path, cache_dir: Path, compile_timeout: int) ->
         debug_bin = compile_at(source, seed_dir, "d", opt=False, cache_dir=cache, timeout=compile_timeout)
         tree_bin = compile_at(source, seed_dir, "t", opt=False, tree=True, cache_dir=cache, timeout=compile_timeout)
         release_bin = compile_at(source, seed_dir, "r", opt=True, cache_dir=cache, timeout=compile_timeout)
-        outputs = []
+        runs = []
         for bin_path in (debug_bin, tree_bin, release_bin):
-            run = subprocess.run([str(bin_path)], capture_output=True, text=True, timeout=30)
-            if run.returncode != 0:
-                raise RuntimeError(f"run ({bin_path.name}) failed: {run.stderr}")
-            outputs.append(run.stdout)
+            runs.append((bin_path.name, subprocess.run([str(bin_path)], capture_output=True, text=True, timeout=30)))
         interp_run = subprocess.run(
             [str(EXE), "run", str(seed_dir / "prog_d.ae"), "--interp"],
             capture_output=True,
             text=True,
             timeout=30,
         )
-        if interp_run.returncode != 0:
-            raise RuntimeError(f"run (--interp) failed: {interp_run.stderr}")
-        outputs.append(interp_run.stdout)
-        if len(set(outputs)) != 1:
+        runs.append(("interp", interp_run))
+        # A runtime trap is part of the language's observable behavior, so
+        # agreement includes traps (seed 1762's overflow): every mode must
+        # exit with the same code, print the same stdout up to the trap, and
+        # trap at the same position with the same message. ADR-55 exempts
+        # diagnostic wording for compile and file errors, not runtime traps;
+        # the interp's `ae: ` prefix spacing is normalized away.
+        codes = {run.returncode for _, run in runs}
+        outs = [run.stdout for _, run in runs]
+        traps = [re.match(r"ae:\s*(\d+:\d+): (.+)", run.stderr.strip()) for _, run in runs] if codes != {0} else []
+        if codes != {0} and (None in traps or len(set(t.groups() for t in traps if t)) != 1):
             result["ok"] = False
-            result["detail"] = (
-                "OUTPUT MISMATCH" + NL
-                + f"--- debug (mir) ---{NL}{outputs[0]}"
-                + f"{NL}--- debug (tree) ---{NL}{outputs[1]}"
-                + f"{NL}--- release ---{NL}{outputs[2]}"
-                + f"{NL}--- interp ---{NL}{outputs[3]}"
-            )
+            result["detail"] = "TRAP MISMATCH" + NL + _run_dump(runs)
+        elif len(codes) != 1 or len(set(outs)) != 1:
+            result["ok"] = False
+            result["detail"] = "OUTPUT MISMATCH" + NL + _run_dump(runs)
         else:
             result["ok"] = True
-            result["lines"] = len(outputs[0].splitlines())
+            result["lines"] = len(outs[0].splitlines())
     except (RuntimeError, subprocess.TimeoutExpired) as error:
         result["ok"] = False
         result["detail"] = str(error)
