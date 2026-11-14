@@ -370,6 +370,9 @@ fn walk_statements_reads(statements: &[Statement], moved: &mut dyn MoveTracker) 
 
 pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usize> {
     match expr {
+        // Taking an address reads the slot and never moves it; dereferencing
+        // reads the pointer variable (M2.12 slice 2).
+        Expr::BorrowAs(e, ..) | Expr::DerefPtr(e, ..) => walk_expr(e, moved),
         Expr::Variable(id, ..) => {
             // A moving context consumes the value; the caller decides which
             // reads are moves, so nothing is inserted here.

@@ -284,6 +284,15 @@ impl<'a> TreePrinter<'a> {
                 self.arguments(args, out);
                 out.push_str(&format!(") -> {}", ret.name()));
             }
+            // M2.12 slice 2: the raw-pointer shapes.
+            Expr::BorrowAs(operand, _, _) => {
+                out.push('&');
+                out.push_str(&self.expression_text(operand));
+            }
+            Expr::DerefPtr(pointer, _, _) => {
+                out.push('*');
+                out.push_str(&self.expression_text(pointer));
+            }
             Expr::ClosureLit(cid) => out.push_str(&format!("closure#{}", cid)),
             Expr::Binary(a, op, b, line, col, ty) => {
                 self.expression(a, out);

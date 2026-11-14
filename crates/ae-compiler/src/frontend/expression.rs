@@ -114,6 +114,30 @@ impl Parser<'_> {
                 if ty != Type::Bool { return Err(self.fail("'!' requires a boolean operand")); }
                 (Expr::Not(Box::new(operand)), Type::Bool)
             }
+            // A borrow expression exists only to be cast (M2.12 slice 2):
+            // `&expr as *const T` takes the address of addressable storage.
+            // A general borrow expression is a later slice; the address of a
+            // temporary is meaningless, so only variables and their fields
+            // are accepted.
+            Kind::Amp => {
+                let (line, column) = self.position();
+                self.pos += 1;
+                let (operand, ty) = self.expression(6, false)?;
+                if !matches!(operand, Expr::Variable(..)) {
+                    return Err(self.fail("only the address of a local variable can be taken; bind the value to a variable first"));
+                }
+                if *self.current() != Kind::As {
+                    return Err(self.fail("a borrow expression must be cast to a pointer; write '&expr as *const T'"));
+                }
+                self.pos += 1;
+                self.take(Kind::Star)?;
+                self.take(Kind::Const)?;
+                let pointee = self.named_type()?;
+                if pointee != ty {
+                    return Err(self.fail(&format!("cannot cast &{} to *const {}; reinterpret casts do not exist yet", ty.name(), pointee.name())));
+                }
+                (Expr::BorrowAs(Box::new(operand), line, column), Type::Ptr(super::intern_pointee(ty)))
+            }
             Kind::Ident(name) => {
                 let name_offset = self.tokens[self.pos].offset;
                 let (vline, vcol) = self.position();
@@ -970,6 +994,23 @@ impl Parser<'_> {
             self.pos += 1;
             let fname = self.identifier()?;
             let (base, base_ty) = lhs;
+            // A raw pointer's only operation in this slice is `deref` (M2.12
+            // slice 2), and only inside `unsafe` — reading through an address
+            // the checker cannot validate is the unchecked operation the
+            // block exists for.
+            if let Type::Ptr(pointee_id) = base_ty {
+                if fname != "deref" {
+                    return Err(self.fail(&format!("pointers have no method '{fname}'")));
+                }
+                if self.unsafe_depth == 0 {
+                    return Err(self.error_at(self.tokens[self.pos - 1].offset, "dereferencing a raw pointer requires 'unsafe'").with_code("E0700"));
+                }
+                self.take(Kind::LParen)?;
+                self.take(Kind::RParen)?;
+                let (line, column) = self.position();
+                lhs = (Expr::DerefPtr(Box::new(base), line, column), super::ptr_pointee(pointee_id));
+                continue;
+            }
             // Field access works on owned structs and on read-only borrows of
             // them (ADR-0184): the borrowed form reads through the pointer and
             // emits the same `Expr::Field`, whose C emission is member access.

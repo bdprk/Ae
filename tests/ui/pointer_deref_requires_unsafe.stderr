@@ -1,0 +1,1 @@
+ae: $DIR/pointer_deref_requires_unsafe.ae:7:13: dereferencing a raw pointer requires 'unsafe'

@@ -30,6 +30,10 @@ enum Val {
     Enum(#[allow(dead_code)] usize, usize, Vec<Val>),
     Closure(usize),
     FnPtr(usize),
+    // A raw pointer (M2.12 slice 2): the slot it points at. Pointers are
+    // locals-only — no pointer type annotation exists on parameters or
+    // returns, so a pointer cannot cross a frame.
+    Ptr(usize),
     Ref(usize),
     Moved,
 }
@@ -1867,6 +1871,21 @@ fn eval_expr(
             }
         }
         Expr::ClosureLit(cid) => Ok(Val::Closure(*cid)),
+        // `&v as *const T` (M2.12 slice 2): the operand is a bare variable,
+        // so the pointer carries its slot; a deref reads the slot's current
+        // value, exactly what the compiled backends read through the address.
+        Expr::BorrowAs(operand, ..) => match &**operand {
+            Expr::Variable(id, ..) => Ok(Val::Ptr(*id)),
+            _ => Err(Flow::Trap("internal: pointer operand is not a variable".to_owned())),
+        },
+        Expr::DerefPtr(pointer, ..) => match eval_expr(env, pointer, locals, caller_locals, false)? {
+            Val::Ptr(slot) => match locals.get(&slot).cloned() {
+                Some(Val::Moved) => Err(trap("reading through a pointer to a moved value", 0, 0)),
+                Some(value) => Ok(value),
+                None => Err(Flow::Trap("internal: pointer target vanished".to_owned())),
+            },
+            _ => Err(Flow::Trap("internal: deref of a non-pointer".to_owned())),
+        },
         Expr::Call(fn_id, args, _) => invoke_call(env, *fn_id, args, locals, caller_locals),
         Expr::FnCall(var_id, args, _) => {
             let target_fn = match read_var(locals, caller_locals, *var_id, 0, 0)? {

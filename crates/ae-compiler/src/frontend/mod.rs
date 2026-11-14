@@ -30,7 +30,26 @@ use c_output::*;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), StructRef(usize), StructMut(usize), Enum(&'static str, usize), Tokens, Closure(usize), Fn(usize) }
+enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), StructRef(usize), StructMut(usize), Enum(&'static str, usize), Tokens, Closure(usize), Fn(usize), Ptr(usize) }
+// The pointee registry for `Type::Ptr` (M2.12): Type is Copy, so the
+// pointee rides an id exactly like the closure/fn signature registries do.
+thread_local! {
+    static PTR_POINTEES: std::cell::RefCell<Vec<Type>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+// Intern a pointee type; identical pointees share one id.
+pub(super) fn intern_pointee(pointee: Type) -> usize {
+    PTR_POINTEES.with(|pointees| {
+        let mut pointees = pointees.borrow_mut();
+        if let Some(index) = pointees.iter().position(|t| *t == pointee) { return index; }
+        pointees.push(pointee);
+        pointees.len() - 1
+    })
+}
+// The pointee of an interned pointer type. Runs without a parser handy, like
+// `fn_sig` (ADR-0189).
+pub(super) fn ptr_pointee(id: usize) -> Type {
+    PTR_POINTEES.with(|pointees| pointees.borrow()[id])
+}
 impl Type {
     fn name(self) -> String {
         match self {
@@ -70,6 +89,8 @@ impl Type {
                 let (params, ret) = closures::fn_sig(sig);
                 format!("fn({}) -> {}", params.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "), ret.name())
             }
+            // A raw pointer (M2.12): an address typed by pointee layout only.
+            Type::Ptr(id) => format!("*const {}", ptr_pointee(id).name()),
         }
     }
     fn c_temp(self) -> String {
@@ -95,6 +116,7 @@ impl Type {
             // so a stray use fails the build instead of printing a bad type.
             Type::Closure(_) => "void ".to_owned(),
             Type::Fn(_) => "void ".to_owned(),
+            Type::Ptr(id) => format!("const {}* ", ptr_pointee(id).c_temp().trim_end()),
             _ => "int64_t ".to_owned(),
         }
     }
@@ -103,6 +125,8 @@ impl Type {
     // slots, which may hold strings.
     fn owned(self) -> bool {
         matches!(self, Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..))
+        // A raw pointer is a plain value (M2.12): copying it moves nothing,
+        // so it neither moves nor releases.
     }
 }
 enum MoveKind { Var(usize), Field, StrVecElement }
@@ -195,7 +219,10 @@ enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Bo
     // (ADR-0188): the declaration emits no C, and the call site reads the
     // captures at the moment of the call. Passed as a function value, the
     // emitted pointer is the literal's function id (ADR-0189).
-    ClosureLit(usize), FnCall(usize, Vec<Argument>, Type) }
+    ClosureLit(usize), FnCall(usize, Vec<Argument>, Type),
+    // A raw pointer (M2.12 slice 2): `&expr as *const T` takes the address of
+    // addressable storage; `p.deref()` reads through it, inside `unsafe` only.
+    BorrowAs(Box<Expr>, usize, usize), DerefPtr(Box<Expr>, usize, usize) }
 // Which value type a map holds: the builtins dispatch on it (ADR-65).
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum MapKind { Int, Float }
@@ -444,12 +471,12 @@ type SharedFunctions = HashMap<String, Signature>;
 #[derive(Clone, Copy, PartialEq)]
 enum BorrowKind { View, Container }
 
-struct Parser<'a> { file: String, source: &'a str, tokens: Rc<Vec<Token>>, shared_source: Rc<str>, pos: usize, names: HashMap<String, (usize, bool, Type)>, binding_ranges: HashMap<usize, std::ops::Range<usize>>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize, BorrowKind)>, deferred_write_conflicts: Vec<(usize, usize, String, &'static str, Option<String>)>, call_borrows: Vec<(usize, usize)>, mut_borrows: Vec<(usize, usize)>, plus_operand_depth: usize, scopes: Vec<Vec<(usize, Type)>>, subst: HashMap<String, Type>, trait_bounds: HashMap<String, Vec<usize>>, receiver: Option<Type>, impl_self: Option<Type>, shadow_ok: bool, pending: Vec<Function> }
+struct Parser<'a> { file: String, source: &'a str, tokens: Rc<Vec<Token>>, shared_source: Rc<str>, pos: usize, names: HashMap<String, (usize, bool, Type)>, binding_ranges: HashMap<usize, std::ops::Range<usize>>, next_var: usize, expression_depth: usize, expression_nodes: usize, block_depth: usize, loop_depth: usize, loop_scopes: Vec<usize>, loop_labels: Vec<Option<usize>>, next_label: usize, unsafe_depth: usize, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics, id_order: Vec<usize>, in_main: bool, return_type: Type, moved: std::collections::HashSet<usize>, borrows: Vec<(usize, usize, BorrowKind)>, deferred_write_conflicts: Vec<(usize, usize, String, &'static str, Option<String>)>, call_borrows: Vec<(usize, usize)>, mut_borrows: Vec<(usize, usize)>, plus_operand_depth: usize, scopes: Vec<Vec<(usize, Type)>>, subst: HashMap<String, Type>, trait_bounds: HashMap<String, Vec<usize>>, receiver: Option<Type>, impl_self: Option<Type>, shadow_ok: bool, pending: Vec<Function> }
 #[derive(Debug, Default)]
 struct Program { files: Vec<Vec<Function>>, structs: Vec<StructDef>, enums: Vec<EnumDef> }
 
 fn make_parser<'a>(file: &str, source: &'a str, tokens: Rc<Vec<Token>>, functions: &'a mut SharedFunctions, structs: &'a mut Vec<StructDef>, struct_names: &'a mut HashMap<String, usize>, enums: &'a mut Vec<EnumDef>, enum_names: &'a mut HashMap<String, usize>, generics: &'a mut Generics) -> Parser<'a> {
-    Parser { file: file.to_owned(), source, tokens, shared_source: Rc::from(source), pos: 0, names: HashMap::new(), binding_ranges: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), deferred_write_conflicts: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst: HashMap::new(), trait_bounds: HashMap::new(), receiver: None, impl_self: None, shadow_ok: false, pending: Vec::new() }
+    Parser { file: file.to_owned(), source, tokens, shared_source: Rc::from(source), pos: 0, names: HashMap::new(), binding_ranges: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0, loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, unsafe_depth: 0, functions, structs, struct_names, enums, enum_names, generics, id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(), borrows: Vec::new(), deferred_write_conflicts: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst: HashMap::new(), trait_bounds: HashMap::new(), receiver: None, impl_self: None, shadow_ok: false, pending: Vec::new() }
 }
 
 #[allow(dead_code)] // exercised by in-memory unit tests

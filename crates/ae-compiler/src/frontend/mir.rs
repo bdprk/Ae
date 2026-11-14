@@ -403,7 +403,7 @@ fn string_base_operand(id: usize, field: &Option<String>) -> MirOperand {
     }
 }
 
-fn expr_type(expr: &Expr) -> Type {
+pub(super) fn expr_type(expr: &Expr) -> Type {
     match expr {
         Expr::Number(..) | Expr::Index(..) | Expr::VecIndex(..) | Expr::Len(..) => Type::Int,
         Expr::Binary(_, _, _, _, _, ty) => *ty,
@@ -424,6 +424,10 @@ fn expr_type(expr: &Expr) -> Type {
         // Math calls return f64 by definition (ADR-60).
         Expr::MathCall(..) => Type::F64,
         Expr::Not(..) | Expr::PathExists(..) | Expr::PathIsDir(..) | Expr::StartsWith(..) | Expr::EndsWith(..) | Expr::JsonHas(..) => Type::Bool,
+        // M2.12 slice 2: the address takes the pointee's pointer shape; a
+        // deref yields the pointee.
+        Expr::BorrowAs(e, ..) => Type::Ptr(crate::frontend::intern_pointee(expr_type(e))),
+        Expr::DerefPtr(p, ..) => match expr_type(p) { Type::Ptr(id) => crate::frontend::ptr_pointee(id), other => other },
         // Result-returning built-ins carry their result type; the printed
         // temp names the enum the program must match on.
         Expr::TryReadFile(_, ty, ..) | Expr::TryListDir(_, ty, ..) | Expr::ParseInt(_, ty, ..)
