@@ -315,6 +315,10 @@ fn map_place_operand(place: &MapPlace) -> MirOperand {
 // per input. Every arm mirrors what the C backend computes for the shape.
 fn expr_intrinsic(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut MirLowering) -> (&'static str, Vec<MirOperand>) {
     match expr {
+        // M2.12 slice 2: the raw-pointer shapes ride the intrinsic path like
+        // the built-in reads.
+        Expr::BorrowAs(e, ..) => ("borrow_as_ptr", vec![lower_operand(e, bindings, lowering)]),
+        Expr::DerefPtr(e, ..) => ("deref_ptr", vec![lower_operand(e, bindings, lowering)]),
         Expr::Len(e, ..) => ("len", vec![lower_operand(e, bindings, lowering)]),
         Expr::Index(id, len, index, ..) => ("index", vec![
             MirOperand::Place(MirPlace::Local(*id, Type::Array(*len))),
