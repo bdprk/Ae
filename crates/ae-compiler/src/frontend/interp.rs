@@ -814,6 +814,34 @@ fn eval_expr(
             let needle = match eval_expr(env, needle, locals, caller_locals, false)? { Val::Str(s) => s, _ => return Err(Flow::Trap("internal: contains needle".to_owned())) };
             Ok(Val::Bool(hay.contains(&needle)))
         }
+        // to_i64 is an EXACT conversion: non-finite, out-of-range, and
+        // fractional values are IntResult::Err with the runtime's exact
+        // texts — no truncation.
+        Expr::ToI64(inner, ty, ..) => {
+            let value = eval_expr(env, inner, locals, caller_locals, false)?;
+            match value {
+                Val::Int(n) => {
+                    let (eid, ok, _) = result_enum_of(env, "IntResult").ok_or_else(|| Flow::Trap("internal: result enum missing".to_owned()))?;
+                    Ok(Val::Enum(eid, ok, vec![Val::Int(n)]))
+                }
+                Val::Float(x) => {
+                    let (eid, ok, err) = result_enum_of(env, "IntResult").ok_or_else(|| Flow::Trap("internal: result enum missing".to_owned()))?;
+                    if !x.is_finite() {
+                        return Ok(Val::Enum(eid, err, vec![Val::Str("f64 value is not finite".to_owned())]));
+                    }
+                    if x < -9223372036854775808.0 || x >= 9223372036854775808.0 {
+                        return Ok(Val::Enum(eid, err, vec![Val::Str("f64 value is outside the i64 range".to_owned())]));
+                    }
+                    let converted = x as i64;
+                    if converted as f64 != x {
+                        return Ok(Val::Enum(eid, err, vec![Val::Str("f64 value is not an exact integer".to_owned())]));
+                    }
+                    let _ = ty;
+                    Ok(Val::Enum(eid, ok, vec![Val::Int(converted)]))
+                }
+                _ => Err(Flow::Trap("internal: to_i64 operand".to_owned())),
+            }
+        }
         Expr::Trim(inner, _, _) => {
             match eval_expr(env, inner, locals, caller_locals, false)? {
                 Val::Str(s) => Ok(Val::Str(s.trim().to_owned())),
@@ -825,6 +853,34 @@ fn eval_expr(
             let hay = match eval_expr(env, a, locals, caller_locals, false)? { Val::Str(s) => s, _ => return Err(Flow::Trap("internal: starts/ends operand".to_owned())) };
             let prefix = match eval_expr(env, b, locals, caller_locals, false)? { Val::Str(s) => s, _ => return Err(Flow::Trap("internal: starts/ends operand".to_owned())) };
             Ok(Val::Bool(if is_start { hay.starts_with(&prefix) } else { hay.ends_with(&prefix) }))
+        }
+        // find: the first byte offset (an empty needle matches at 0).
+        Expr::Find(text, pattern, ..) => {
+            let hay = match eval_expr(env, text, locals, caller_locals, false)? {
+                Val::Str(s) => s,
+                _ => return Err(Flow::Trap("internal: find text".to_owned())),
+            };
+            let needle = match eval_expr(env, pattern, locals, caller_locals, false)? {
+                Val::Str(s) => s,
+                _ => return Err(Flow::Trap("internal: find pattern".to_owned())),
+            };
+            let (eid, ok, err) = result_enum_of(env, "IntResult").ok_or_else(|| Flow::Trap("internal: result enum missing".to_owned()))?;
+            match hay.find(&needle) {
+                Some(offset) => Ok(Val::Enum(eid, ok, vec![Val::Int(offset as i64)])),
+                None => Ok(Val::Enum(eid, err, vec![Val::Str("substring not found".to_owned())])),
+            }
+        }
+        Expr::Utf8Prefix(text, limit, ..) => {
+            let s = match eval_expr(env, text, locals, caller_locals, false)? {
+                Val::Str(v) => v,
+                _ => return Err(Flow::Trap("internal: utf8_prefix text".to_owned())),
+            };
+            let n = match eval_expr(env, limit, locals, caller_locals, false)? {
+                Val::Int(n) => n,
+                _ => return Err(Flow::Trap("internal: utf8_prefix limit".to_owned())),
+            };
+            let out: String = s.chars().take(n.max(0) as usize).collect();
+            Ok(Val::Str(out))
         }
         Expr::Utf8Len(inner, _, _) => {
             match eval_expr(env, inner, locals, caller_locals, false)? {
@@ -1460,7 +1516,7 @@ fn eval_expr(
             };
             invoke_call(env, target_fn, args, locals, caller_locals)
         }
-        _ => Err(Flow::Trap("unsupported expression in MIR interpreter".to_owned())),
+        other => Err(Flow::Trap(format!("unsupported expression in MIR interpreter: {}", format!("{other:?}").chars().take(60).collect::<String>()))),
     }
 }
 
