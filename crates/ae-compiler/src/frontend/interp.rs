@@ -1228,6 +1228,43 @@ fn eval_expr(
                 _ => Err(Flow::Trap("internal: keys on non-map".to_owned())),
             }
         }
+        // The math builtins are libm calls in the C; the interp computes
+        // the same f64 operations. min/max are the language's documented
+        // NaN-aware total order (ae_f64_min/max), not f64::min/max.
+        Expr::MathCall(index, args, ..) => {
+            let name = super::MATH_FNS[*index as usize].0;
+            let mut values: Vec<f64> = Vec::new();
+            for arg in args {
+                match eval_expr(env, arg, locals, caller_locals, false)? {
+                    Val::Float(x) => values.push(x),
+                    _ => return Err(Flow::Trap("internal: math operand".to_owned())),
+                }
+            }
+            let x = values.first().copied().unwrap_or(f64::NAN);
+            let y = values.get(1).copied().unwrap_or(f64::NAN);
+            let out = match name {
+                "sqrt" => x.sqrt(),
+                "abs" => x.abs(),
+                "floor" => x.floor(),
+                "ceil" => x.ceil(),
+                "round" => x.round(),
+                "exp" => x.exp(),
+                "log" => x.ln(),
+                "sin" => x.sin(),
+                "cos" => x.cos(),
+                "pow" => x.powf(y),
+                "atan2" => x.atan2(y),
+                "min" => {
+                    // NaN-aware: the non-NaN side wins; both NaN -> NaN.
+                    if x.is_nan() { y } else if y.is_nan() { x } else if x < y { x } else { y }
+                }
+                "max" => {
+                    if x.is_nan() { y } else if y.is_nan() { x } else if x > y { x } else { y }
+                }
+                _ => return Err(Flow::Trap("internal: math function".to_owned())),
+            };
+            Ok(Val::Float(out))
+        }
         Expr::Neg(inner, line, col) => {
             match eval_expr(env, inner, locals, caller_locals, false)? {
                 Val::Int(n) => n.checked_neg().map(Val::Int).ok_or_else(|| trap("integer overflow", *line, *col)),

@@ -69,3 +69,4 @@
 - 2026-11-14 20:20 M2.11 解释器补齐文件 I/O 族（read_file/try_read_file/write_file/try_write_file/try_append_file/try_list_dir 字节序排序/try_file_info 的 Unix 秒 mtime/copy/rename/remove/create/set_cwd/path 族/args）；探针 11 项检查与编译后端逐行一致（错误文案按 ADR-55 规则不要求一致）；修复探针过程中的 4 个堆积 #[test] 重复属性。cargo test 284 全绿，fuzz 40 seeds，verify 41 PASS。
 - 2026-11-14 20:30 M2.11 解释器补齐 run_command（std::process 子进程 + CommandResult 构造，Ok(code, stdout)/Err）；探针与编译后端一致。cargo test 284 全绿，fuzz 40 seeds。
 - 2026-11-14 20:40 M2.11 解释器补齐 env/cwd/read_stdin/now_s（环境变量缺失的 Err 文案与运行时一致；探针与编译后端逐行一致）。cargo test 284 全绿，fuzz 40 seeds，verify 41 PASS。
+- 2026-11-14 20:50 M2.11 解释器补齐 MathCall（sqrt/abs/floor/ceil/round/exp/log/sin/cos/pow/atan2/min/max 与 C libm 语义一致，min/max 为文档化的 NaN 感知全序）；math 探针与编译后端逐行一致。cargo test 284 全绿，fuzz 40 seeds，verify 41 PASS。
