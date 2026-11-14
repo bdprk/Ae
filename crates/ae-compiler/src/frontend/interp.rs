@@ -25,6 +25,7 @@ enum Val {
     VecF(Vec<f64>),
     Map(HashMap<String, i64>),
     MapF(HashMap<String, f64>),
+    Tokens { base: String, sep: String, offset: usize },
     Struct(#[allow(dead_code)] usize, HashMap<String, Val>),
     Enum(#[allow(dead_code)] usize, usize, Vec<Val>),
     Closure(usize),
@@ -273,6 +274,50 @@ fn eval_stmts(
             // `m[key] = value;` (and the field form): the map owns the
             // bytes, the key copies, and the value must match the map's
             // value type — the same contract the runtime's put enforces.
+            Statement::ForTokens(cursor, elem, body, ..) => {
+                // The cursor restarts so a second loop over the same binding
+                // behaves like the first (the C backend resets too). Each
+                // step yields the next token — a view in the C, a copy here,
+                // equivalent because the base cannot move while the cursor
+                // lives — and `continue` advances like the runtime's step
+                // label does.
+                match locals.get_mut(cursor) {
+                    Some(Val::Tokens { offset, .. }) => { *offset = 0; }
+                    _ => return Flow::Trap("internal: for-tokens cursor".to_owned()),
+                }
+                loop {
+                    let next = match locals.get(cursor) {
+                        Some(Val::Tokens { base, sep, offset }) => {
+                            // At (or past) the end — the tail token's
+                            // sentinel is base.len() + 1 — the iteration is
+                            // done. Otherwise the next separator bounds the
+                            // token, and a missing separator leaves the tail.
+                            if *offset >= base.len() {
+                                None
+                            } else {
+                                match base[*offset..].find(sep.as_str()) {
+                                    Some(rel) => Some((base[*offset..*offset + rel].to_owned(), *offset + rel + sep.len())),
+                                    None => Some((base[*offset..].to_owned(), base.len() + 1)),
+                                }
+                            }
+                        }
+                        _ => return Flow::Trap("internal: for-tokens cursor".to_owned()),
+                    };
+                    let Some((token, next_offset)) = next else { break };
+                    let next_offset = next_offset;
+                    locals.insert(*elem, Val::Str(token));
+                    match eval_stmts(env, body, locals, caller_locals) {
+                        Flow::Next | Flow::Continue(0) => {}
+                        Flow::Continue(d) => return Flow::Continue(d - 1),
+                        Flow::Break => break,
+                        other => return other,
+                    }
+                    match locals.get_mut(cursor) {
+                        Some(Val::Tokens { offset, .. }) => { *offset = next_offset; }
+                        _ => return Flow::Trap("internal: for-tokens cursor".to_owned()),
+                    }
+                }
+            }
             Statement::MapPut(place, key_expr, value_expr, ..) => {
                 let key = match eval_expr(env, key_expr, locals, caller_locals, false) {
                     Ok(Val::Str(k)) => k,
@@ -698,6 +743,29 @@ fn eval_expr(
                 _ => Err(Flow::Trap("internal: len on unsupported value".to_owned())),
             }
         }
+        Expr::Tokens(id, field, sep, ..) => {
+            // The cursor copies the separator and reads through a view of
+            // the base; the interp copies the base's current bytes, which
+            // the borrow rules make equivalent (the base cannot move or be
+            // reassigned while the cursor lives).
+            let (base, sep) = {
+                let sep = match eval_expr(env, sep, locals, caller_locals, false)? {
+                    Val::Str(s) => s,
+                    _ => return Err(Flow::Trap("internal: tokenize separator".to_owned())),
+                };
+                let base_val = read_var(locals, caller_locals, *id, 0, 0)?;
+                let base = match (&base_val, field) {
+                    (Val::Str(text), None) => text.clone(),
+                    (Val::Struct(_, fields), Some(fname)) => match fields.get(fname) {
+                        Some(Val::Str(text)) => text.clone(),
+                        _ => return Err(Flow::Trap("internal: tokenize field".to_owned())),
+                    },
+                    _ => return Err(Flow::Trap("internal: tokenize base".to_owned())),
+                };
+                (base, sep)
+            };
+            Ok(Val::Tokens { base, sep, offset: 0 })
+        }
         // The string builtins the run corpus uses. The split/lines/slice
         // semantics mirror the runtime's exactly: split retains empty
         // segments and traps on an empty separator; lines keep internal
@@ -748,6 +816,13 @@ fn eval_expr(
             }
             Ok(Val::Str(base[s..e].to_owned()))
         }
+        Expr::NowMs => {
+            let millis = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            Ok(Val::Int(millis))
+        }
         Expr::MapNew(_, _, kind) => match kind {
             MapKind::Int => Ok(Val::Map(HashMap::new())),
             MapKind::Float => Ok(Val::MapF(HashMap::new())),
@@ -777,7 +852,7 @@ fn eval_expr(
                 _ => Err(Flow::Trap("internal: map remove on non-map".to_owned())),
             }
         }
-        Expr::MapGet(place, key, ty, line, col) => {
+        Expr::MapGet(place, key, ty, ..) => {
             // A hit is Ok(value); a miss is Err("key not found") — the same
             // read-only constant the runtime hands back, zero-allocation.
             let key = match eval_expr(env, key, locals, caller_locals, false)? {

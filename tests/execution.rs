@@ -3506,6 +3506,38 @@ fn constant_array_indices_in_range_skip_the_bounds_check() {
 
 #[test]
 #[test]
+#[test]
+fn mir_interpreter_agrees_on_token_cursors_with_the_compiled_backends() {
+    // M2.11: the tokenizer's cursor — creation, per-iteration token views
+    // with empty segments retained, the reset that makes a second loop over
+    // the same cursor behave like the first, and now_ms's real clock —
+    // must agree with the compiled backends line for line.
+    let dir = unique_temp_dir("interp_tokens");
+    let source = dir.join("tokens.ae");
+    fs::write(&source, "fn main() {
+    var text = \"alpha,beta,,gamma\";
+    let cur = tokenize(text, \",\");
+    for t in cur {
+        print(t);
+        print(len(t));
+    }
+    print(now_ms() > 0);
+    for t in cur {
+        print(t);
+    }
+}
+").unwrap();
+    let interp = Command::new(env!("CARGO_BIN_EXE_ae")).args(["run", source.to_str().unwrap(), "--interp"]).output().unwrap();
+    assert!(interp.status.success(), "interp failed: {}", String::from_utf8_lossy(&interp.stderr));
+    let compiled = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).output().unwrap();
+    assert!(compiled.status.success(), "compiled failed: {}", String::from_utf8_lossy(&compiled.stderr));
+    let normalize = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace("\r\n", "\n");
+    let expected = "alpha\n5\nbeta\n4\n\n0\ngamma\n5\ntrue\nalpha\nbeta\n\ngamma\n";
+    assert_eq!(normalize(&interp.stdout), normalize(&compiled.stdout), "the interpreter and the compiled backend disagree");
+    assert_eq!(normalize(&interp.stdout), expected);
+    fs::remove_dir_all(dir).unwrap();
+}
+
 fn mir_interpreter_agrees_on_result_enums_with_the_compiled_backends() {
     // M2.11: map_get and parse_int construct the prelude's result enums —
     // the hit/miss/parse-error payloads must match the runtime's constants
