@@ -4,7 +4,8 @@
 Generates random *well-typed* programs from a grammar of arithmetic,
 comparisons, control flow, strings (including one a branch moves into a
 by-value call, the mixed drop shape M2.4 keeps unproven), vectors with
-their mutation surface (push, indexed store, sort), structs, enums,
+their mutation surface (push, indexed store, sort) and string vectors
+(push, element store releasing the old element, join), structs, enums,
 matches with payload bindings, and counted loops with `continue`; compiles each source
 with every backend and optimization level — the MIR block-graph backend (the
 -O0 default, M2.3) and the structured tree emitter (`AE_CODEGEN=tree`),
@@ -73,7 +74,23 @@ class Gen:
         """One statement, possibly introducing new variables. Returns lines."""
         if depth >= 3:
             return [f"print({self.int_expr(vars)});"]
-        kind = self.rnd() % 13
+        kind = self.rnd() % 14
+        if kind == 13:
+            # A string vector with the full mutation surface: pushes, an
+            # indexed store (releasing the old element), and reads. The
+            # differential exercises the string-ownership paths — the push
+            # consumes, the store releases — against all four modes.
+            name = f"sv{self.rnd() % 1000}"
+            return [
+                f"var {name} = strvec_new();",
+                f'push({name}, "w{self.rnd() % 100}");',
+                f'push({name}, "x{self.rnd() % 100}");',
+                f'{name}[0] = "y{self.rnd() % 100}";',
+                f"print(len({name}));",
+                f'print({name}[0]);',
+                f'print(join({name}, "-"));',
+                *self.statement(vars, depth + 1),
+            ]
         if kind == 12:
             # A vector with the full mutation surface: push, indexed store,
             # sort, and reads. The MIR renders all of these as named
