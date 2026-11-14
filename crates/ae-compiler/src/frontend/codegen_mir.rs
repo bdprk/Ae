@@ -59,13 +59,19 @@ fn statement_supported(statement: &Statement) -> bool {
 }
 
 // Emit one function body as labelled blocks. The caller owns the signature and
-// the trailing backstops; this writes everything between them.
-pub(super) fn emit_function_body(function: &Function, out: &mut String) {
+// the trailing backstops; this writes everything between them. Returns the
+// internal error of a pass that could not make the graph safe (only a mixed
+// drop state can, and no accepted program produces one).
+pub(super) fn emit_function_body(function: &Function, out: &mut String) -> Result<(), String> {
     let mut mir = mir::lower_function(function);
     // The same optimization pipeline the printer uses: constant folding and
     // CFG simplification decide which blocks are live. A pruned block is
     // unreachable, so not emitting it changes nothing.
     mir::optimize_function(&mut mir);
+    // Drop elaboration (M2.4) removes the releases the graph proves
+    // unnecessary and refuses any release that would depend on a slot's
+    // zeroed state rather than on a live value.
+    mir::elaborate_drops(&mut mir)?;
     let mut next = 0usize;
     let mut needs_tail = false;
     for block in &mir.blocks {
@@ -81,6 +87,7 @@ pub(super) fn emit_function_body(function: &Function, out: &mut String) {
     if needs_tail {
         out.push_str("  block_tail: ;\n");
     }
+    Ok(())
 }
 
 fn emit_block(function: &MirFunction, block: &MirBlock, out: &mut String, next: &mut usize, needs_tail: &mut bool) {
