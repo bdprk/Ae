@@ -1,0 +1,10 @@
+// Borrow matrix §3.3, allowed under L1 (M2.5): moving the base after the
+// view's last use is outside the view's NLL region — the move hands the
+// buffer to the new binding, and the view is never read again.
+fn main() {
+    var s = "abcdef";
+    let head = slice_view(s, 0, 3);
+    print(head);
+    let copy = s;
+    print(copy);
+}

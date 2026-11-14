@@ -1156,8 +1156,16 @@ impl Parser<'_> {
             let move_target = match (&lhs.0, lhs.1) {
                 (_, ty) if !ty.owned() => None,
                 (Expr::Variable(id, _, _, _), _) if !operator_follows || plus_follows => {
-                    if self.is_borrowed(*id) {
+                    // A move under view borrows is deferred (M2.5 L1): the
+                    // view may have died at its last read, in which case the
+                    // move is fine. Container borrows reject on sight.
+                    if self.is_borrowed(*id) && !self.all_borrows_are_views(*id) {
                         return Err(self.fail("cannot move a value while it is borrowed"));
+                    }
+                    if self.is_borrowed(*id) {
+                        let offset = self.tokens.get(self.pos.saturating_sub(1)).map(|t| t.offset).unwrap_or(0);
+                        let name = self.names.iter().find(|(_, (vid, _, _))| vid == id).map(|(n, _)| n.clone()).unwrap_or_else(|| format!("v{id}"));
+                        self.deferred_write_conflicts.push((*id, offset, name, "move"));
                     }
                     Some(MoveKind::Var(*id))
                 }

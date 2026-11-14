@@ -95,12 +95,12 @@ impl MoveWalk {
         }
         match &block.terminator {
             CfgTerminator::Return(expr) => {
-                if let Some(violation) = walk_expr(expr, &mut Checked(&mut moved)) {
+                if let Some(violation) = walk_moving_expr(expr, &mut Checked(&mut moved)) {
                     return (moved, Some((block_id, violation)));
                 }
             }
             CfgTerminator::Exit(code) => {
-                if let Some(violation) = walk_expr(code, &mut Checked(&mut moved)) {
+                if let Some(violation) = walk_moving_expr(code, &mut Checked(&mut moved)) {
                     return (moved, Some((block_id, violation)));
                 }
             }
@@ -230,18 +230,22 @@ pub(super) fn statement_move_effects(statement: &Statement) -> MoveEffects {
 // into it. Returns the id of a variable read after its move, if any.
 fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker) -> Option<usize> {
     match statement {
-        Statement::Return(expr, _) => walk_expr(expr, moved),
+        // A return's expression is a moving position: an owned variable in it
+        // is consumed by the return.
+        Statement::Return(expr, _) => walk_moving_expr(expr, moved),
         // A declaration writes a fresh slot: the binding holds a value again,
-        // even when the declaration re-runs on every iteration of a loop.
+        // even when the declaration re-runs on every iteration of a loop. The
+        // init is a moving position — `let t = s;` consumes s.
         Statement::Declare(id, expr) => {
-            let violation = walk_expr(expr, moved);
+            let violation = walk_moving_expr(expr, moved);
             if violation.is_none() { moved.revive(*id); }
             violation
         }
         Statement::Assign(id, expr, _) => {
             // The right side evaluates first, then the slot is overwritten —
-            // a re-assignment clears the slot's moved state.
-            if let Some(violation) = walk_expr(expr, moved) { return Some(violation); }
+            // a re-assignment clears the slot's moved state. The right side
+            // is a moving position — `t = s;` consumes s.
+            if let Some(violation) = walk_moving_expr(expr, moved) { return Some(violation); }
             moved.revive(*id);
             None
         }

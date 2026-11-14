@@ -116,7 +116,7 @@ impl<'a> Parser<'a> {
         match outcome {
             Ok(()) => { self.deferred_write_conflicts.clear(); Ok(()) }
             Err(message) => {
-                let (_, offset, _) = self.deferred_write_conflicts[0];
+                let (_, offset, _, _) = self.deferred_write_conflicts[0];
                 Err(self.error_at(offset, &message))
             }
         }
@@ -493,7 +493,7 @@ impl<'a> Parser<'a> {
                             return Err(self.fail(&format!("cannot assign to '{name}' while it is borrowed")));
                         }
                         if self.is_borrowed(id) {
-                            self.deferred_write_conflicts.push((id, name_offset, name.clone()));
+                            self.deferred_write_conflicts.push((id, name_offset, name.clone(), "assign to"));
                         }
                         self.take(Kind::Equal)?;
                         let moved_before = self.moved.contains(&id);
