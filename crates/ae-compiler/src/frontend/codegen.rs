@@ -167,8 +167,20 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             Emitted { text: get, ty: *elem_ty, owned: false, moves: i.moves, materialized: false }
         }
         Expr::Index(id, len, index, line, col) => {
-            let i = emit_expr(index, out, next, false);
-            Emitted { text: format!("v{id}[ae_index({}, {len}, {line}, {col})]", i.text), ty: Type::Int, owned: false, moves: i.moves, materialized: false }
+            // A constant index inside the array's compile-time length is
+            // provably in bounds: the check elides (M2.10). An out-of-range
+            // constant keeps the runtime check and its trap.
+            if let Expr::Number(n) = &**index {
+                if *n >= 0 && (*n as usize) < *len {
+                    Emitted { text: format!("v{id}[{n}]"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: false }
+                } else {
+                    let i = emit_expr(index, out, next, false);
+                    Emitted { text: format!("v{id}[ae_index({}, {len}, {line}, {col})]", i.text), ty: Type::Int, owned: false, moves: i.moves, materialized: false }
+                }
+            } else {
+                let i = emit_expr(index, out, next, false);
+                Emitted { text: format!("v{id}[ae_index({}, {len}, {line}, {col})]", i.text), ty: Type::Int, owned: false, moves: i.moves, materialized: false }
+            }
         }
         Expr::Len(e, line, col) => {
             let t = emit_expr(e, out, next, false);
@@ -953,11 +965,20 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                 out.push_str("};\n");
             }
             Statement::Store(id, len, index, value, line, col) => {
+                // The same constant-index proof the read uses (M2.10):
+                // in range, the check elides; out of range, it stays and
+                // traps at the same site.
+                let constant_in_range = matches!(&*index, Expr::Number(n) if *n >= 0 && (*n as usize) < *len);
                 let i = emit_expr(index, out, next, false);
-                let checked = *next; *next += 1;
-                out.push_str(&format!("    size_t t{checked} = ae_index({}, {len}, {line}, {col});\n", i.text));
+                let slot = if constant_in_range {
+                    match &*index { Expr::Number(n) => format!("{n}"), _ => unreachable!() }
+                } else {
+                    let checked = *next; *next += 1;
+                    out.push_str(&format!("    size_t t{checked} = ae_index({}, {len}, {line}, {col});\n", i.text));
+                    format!("t{checked}")
+                };
                 let value = emit_expr(value, out, next, false);
-                out.push_str(&format!("    v{id}[t{checked}] = {};\n", value.text));
+                out.push_str(&format!("    v{id}[{slot}] = {};\n", value.text));
             }
             Statement::VecPush(id, value, line, col) => {
                 out.push_str(&format!("    if (!v{id}.data) ae_fail(\"use of moved vector\", {line}, {col});\n"));

@@ -61,3 +61,4 @@
 - 2026-11-14 18:15 修复字段写的所有权三层不一致（先于本会话的健全性缺陷）：parser 字段写值改 moving=true（源 forfeit）、codegen FieldStore 值改 moving 发射（源清零）、movewalk FieldStore 臂改 walk_moving_expr（recorder/verifier 同步）；`p.a = s` 的 s 被 forfeit（后续使用拒绝）、`p.a = p.b` 以字段移动拒绝（copy 用 slice）。cargo test 279 全绿，fuzz 40 seeds，verify 41 PASS；失败日志新增 1 条。
 - 2026-11-14 18:30 M2.11 解释器补齐字符串内建（join/contains/trim/starts_with/ends_with/utf8_len）——fuzzer 新增 strvec 操作面（push/元素写释放旧元素/join）后首次暴露解释器的缺失臂；四路差分 100 seeds 0 failures。cargo test 279 全绿。
 - 2026-11-14 18:45 L1 补全：by-value 接收者（value receiver 方法调用）的 move 也延迟裁定——视图仍可读才拒绝（recv 探针双面验证：死视图允许、活视图拒绝）；&mut 接收者的变异点在 CFG 中不可见（签名表才能区分 mut 调用），保持当场拒绝并留待后续。cargo test 279 全绿，verify 41 PASS。
+- 2026-11-14 18:55 M2.10 常量索引界检查消除（ADR-0206）：固定数组的 Type::Array(len) 使常量索引可静态证明——范围内直发 v[n]、范围外保留运行时陷阱（与除零的运行时陷阱先例一致）；向量长度是运行时值不做消除。constant_array_indices 测试钉住零检查/正确运行/OOB 陷阱三面。cargo test 280 全绿，fuzz 40 seeds，verify 41 PASS。

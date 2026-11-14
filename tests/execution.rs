@@ -3469,6 +3469,41 @@ fn main() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn constant_array_indices_in_range_skip_the_bounds_check() {
+    // M2.10: a constant index into a fixed array carries its length in the
+    // type, so an in-range constant is provably in bounds and the runtime
+    // check elides from the C. An out-of-range constant keeps the check —
+    // the trap is runtime behavior, like division by zero.
+    let dir = unique_temp_dir("bounds_elision");
+    let source = dir.join("arrays.ae");
+    fs::write(&source, "fn main() {
+    var arr = [10, 20, 30];
+    arr[1] = 99;
+    print(arr[0]);
+    print(arr[1]);
+    print(arr[2]);
+}
+").unwrap();
+    let emit = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-c").arg(&source).output().unwrap();
+    assert!(emit.status.success(), "{}", String::from_utf8_lossy(&emit.stderr));
+    let c = String::from_utf8_lossy(&emit.stdout);
+    assert!(!c.contains("ae_index"), "in-range constant indices elide the check: {c}");
+    let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "10\n99\n30\n");
+
+    let oob = dir.join("oob.ae");
+    fs::write(&oob, "fn main() {
+    var arr = [10, 20, 30];
+    print(arr[7]);
+}
+").unwrap();
+    let trap = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&oob).output().unwrap();
+    assert!(!trap.status.success(), "an out-of-range constant still traps");
+    assert!(String::from_utf8_lossy(&trap.stderr).contains("array index out of bounds"), "the trap names the failure: {}", String::from_utf8_lossy(&trap.stderr));
+    fs::remove_dir_all(dir).unwrap();
+}
+
 fn mir_drop_elision_thins_propagate_error_path_releases() {
     // M2.4: a `?`'s releases ride the error path, which exits the function,
     // so the state to read them with is the one after the value evaluated.
