@@ -6,7 +6,7 @@ pub enum Kind {
     Ident(String), Number(i64), Float(f64), Text(String), Fn, Let, Var, Mut, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang, Pipe,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, Struct,
-    Enum, Match, ColonColon, FatArrow, Question, Trait, Impl, Eof,
+    Enum, Match, ColonColon, FatArrow, Question, Trait, Impl, Unsafe, Eof,
 }
 #[derive(Debug, Clone)]
 pub struct Token { pub kind: Kind, pub offset: usize, pub end: usize, pub line: usize, pub column: usize }
@@ -34,7 +34,7 @@ fn kind_name(kind: &Kind) -> &'static str {
         Kind::Equal => "Equal", Kind::Plus => "Plus", Kind::Minus => "Minus", Kind::Star => "Star",
         Kind::Slash => "Slash", Kind::Percent => "Percent", Kind::Dot => "Dot", Kind::DotDot => "DotDot",
         Kind::ColonColon => "ColonColon", Kind::FatArrow => "FatArrow", Kind::Question => "Question",
-        Kind::Trait => "Trait", Kind::Impl => "Impl", Kind::Eof => "Eof",
+        Kind::Trait => "Trait", Kind::Impl => "Impl", Kind::Unsafe => "Unsafe", Kind::Eof => "Eof",
     }
 }
 
@@ -198,7 +198,7 @@ fn lex_inner(source: &str, mut recovered: Option<&mut Vec<Diagnostic>>) -> Resul
                 "for" => Kind::For, "in" => Kind::In,
                 "break" => Kind::Break, "continue" => Kind::Continue, "assert" => Kind::Assert,
                 "true" => Kind::True, "false" => Kind::False, "use" => Kind::Use, "struct" => Kind::Struct,
-                "enum" => Kind::Enum, "match" => Kind::Match, "trait" => Kind::Trait, "impl" => Kind::Impl,
+                "enum" => Kind::Enum, "match" => Kind::Match, "trait" => Kind::Trait, "impl" => Kind::Impl, "unsafe" => Kind::Unsafe,
                 s => Kind::Ident(s.to_owned()),
             }
         } else if c.is_ascii_digit() {

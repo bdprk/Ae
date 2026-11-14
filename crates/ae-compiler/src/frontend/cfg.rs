@@ -256,6 +256,13 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             lowering.block(current).terminator = CfgTerminator::Exit((*code).clone());
             (lowering.new_block(), true)
         }
+        // An `unsafe` block is a scoping container (M2.12 slice 1): its inner
+        // statements lower inline, like the branches of an `if` minus the
+        // branch, so the graph and every pass over it see flat statements.
+        Statement::Unsafe(stmts) => {
+            let (after, ended) = lower_statements(stmts, current, lowering);
+            (after, ended)
+        }
         Statement::Break => {
             let Some(exit) = lowering.loop_exits.last().copied() else {
                 // The parser rejects break outside loops; the arm is a guard.
