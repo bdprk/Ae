@@ -255,9 +255,14 @@ pub(super) fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker)
             None
         }
         Statement::Array(id, values) => {
-            for v in values { walk_expr(v, moved)?; }
+            // Every element walks even after a clean one: `?` here would
+            // abandon the rest of the list on the first None.
+            let mut violation = None;
+            for v in values {
+                if let Some(found) = walk_expr(v, moved) { violation = Some(found); }
+            }
             moved.revive(*id);
-            None
+            violation
         }
         Statement::Store(_, _, index, value, ..) => {
             if let Some(violation) = walk_expr(index, moved) { return Some(violation); }
@@ -328,9 +333,15 @@ pub(super) fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker)
         // releases it carries belong to the error path, which leaves the
         // function, so they say nothing about the continuing path.
         Statement::Propagate(expr, _, _, binding, _) => {
-            walk_expr(expr, moved)?;
+            // The binding revives even when the value walk is clean: `?` on
+            // the walk returned the arm's None outright, the revive never
+            // ran, the drop pass saw the bound slot as Uninit, and the
+            // error-path release of the payload was elided — a real leak the
+            // ASan CI run caught in copy_notes.ae (the third `?`-truncation
+            // site; see the failure log).
+            let violation = walk_expr(expr, moved);
             if let Some((id, _)) = binding { moved.revive(*id); }
-            None
+            violation
         }
         Statement::Exit(code, _) => walk_expr(code, moved),
         Statement::Break | Statement::Continue(_) => None,
@@ -454,10 +465,17 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         }
         Expr::Join(_, sep, ..) => walk_expr(sep, moved),
         Expr::MapGet(_, key, ..) | Expr::MapHas(_, key, ..) | Expr::MapRemove(_, key, ..) => walk_expr(key, moved),
-        Expr::MapInc(_, key, delta, ..) => { walk_expr(key, moved)?; walk_expr(delta, moved)?; None }
+        Expr::MapInc(_, key, delta, ..) => {
+            let key_walk = walk_expr(key, moved);
+            let delta_walk = walk_expr(delta, moved);
+            key_walk.or(delta_walk)
+        }
         Expr::MathCall(_, args, ..) => {
-            for arg in args { walk_expr(arg, moved)?; }
-            None
+            let mut violation = None;
+            for arg in args {
+                if let Some(found) = walk_expr(arg, moved) { violation = Some(found); }
+            }
+            violation
         }
         // map_keys borrows its map; run_command borrows its argument vector.
         Expr::MapKeys(place, ..) => { let _ = place; None }

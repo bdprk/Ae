@@ -22,8 +22,12 @@ class ComparisonTest(unittest.TestCase):
         (self.root / "examples" / "modules").mkdir(parents=True)
         (self.root / "examples" / "one.ae").write_text("example", encoding="utf-8")
         (self.root / "examples" / "modules" / "main.ae").write_text("module", encoding="utf-8")
-        self.baseline = self.root / "before"
-        self.candidate = self.root / "after"
+        # Resolved here because compare_emit_c.main() resolves the paths
+        # before passing them to emit: the temp directory's short-name form
+        # differs from the resolved one on Windows, and the emit stubs tell
+        # the two binaries apart by path equality.
+        self.baseline = (self.root / "before").resolve()
+        self.candidate = (self.root / "after").resolve()
         self.baseline.write_bytes(b"before")
         self.candidate.write_bytes(b"after")
 
