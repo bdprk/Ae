@@ -70,7 +70,13 @@ class Gen:
         return f"{prefix}{self.name_seq}"
 
     def int_expr(self, vars: list[str], depth: int = 0) -> str:
-        if depth >= 3 or self.rnd() % 4 == 0:
+        # Depth 2, not 3: each level wraps division operands in a guard that
+        # roughly triples the node count, and the compiler rejects any
+        # expression over 128 nodes — a vec literal with two deep elements
+        # blew straight through it (cluster seeds 240072/242098/245815/251900,
+        # 2026-11-15). Depth 2 keeps every generated shape well inside the
+        # limit while the guard-wrapping still exercises the checked paths.
+        if depth >= 2 or self.rnd() % 3 == 0:
             if vars and self.rnd() % 3 != 0:
                 return self.pick(vars)
             return str(self.rnd() % 1000 - 500)
