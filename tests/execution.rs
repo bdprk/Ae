@@ -3505,6 +3505,50 @@ fn constant_array_indices_in_range_skip_the_bounds_check() {
 }
 
 #[test]
+#[test]
+fn mir_interpreter_agrees_on_result_enums_with_the_compiled_backends() {
+    // M2.11: map_get and parse_int construct the prelude's result enums —
+    // the hit/miss/parse-error payloads must match the runtime's constants
+    // ("key not found", "not a base-10 integer") byte for byte, in both the
+    // interpreter and the compiled backends.
+    let dir = unique_temp_dir("interp_results");
+    let source = dir.join("results.ae");
+    fs::write(&source, "fn main() {
+    var hit = map_new();
+    hit[\"k\"] = 42;
+    let found = map_get(hit, \"k\");
+    match found {
+        IntResult::Ok(n) => { print(n); }
+        IntResult::Err(e) => { print(e); }
+    }
+    let miss = map_get(hit, \"nope\");
+    match miss {
+        IntResult::Ok(n) => { print(n); }
+        IntResult::Err(e) => { print(e); }
+    }
+    let parsed = parse_int(\"42\");
+    match parsed {
+        IntResult::Ok(n) => { print(n); }
+        IntResult::Err(e) => { print(e); }
+    }
+    let bad = parse_int(\"4x2\");
+    match bad {
+        IntResult::Ok(n) => { print(n); }
+        IntResult::Err(e) => { print(e); }
+    }
+}
+").unwrap();
+    let interp = Command::new(env!("CARGO_BIN_EXE_ae")).args(["run", source.to_str().unwrap(), "--interp"]).output().unwrap();
+    assert!(interp.status.success(), "interp failed: {}", String::from_utf8_lossy(&interp.stderr));
+    let compiled = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).output().unwrap();
+    assert!(compiled.status.success(), "compiled failed: {}", String::from_utf8_lossy(&compiled.stderr));
+    let normalize = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace("\r\n", "\n");
+    let expected = "42\nkey not found\n42\nnot a base-10 integer\n";
+    assert_eq!(normalize(&interp.stdout), normalize(&compiled.stdout), "the interpreter and the compiled backend disagree");
+    assert_eq!(normalize(&interp.stdout), expected);
+    fs::remove_dir_all(dir).unwrap();
+}
+
 fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
     // M2.11: the interpreter's map family — puts, incs (insert-or-
     // increment), predicates, sorted keys, removals — must agree with the

@@ -74,6 +74,16 @@ pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
     }
 }
 
+// A prelude result enum (IntResult, FloatResult, ...), resolved by name:
+// its enum id and the Ok/Err variant indices in declaration order.
+fn result_enum_of(env: &Env, name: &str) -> Option<(usize, usize, usize)> {
+    // The enum id is the declaration's position in the program's enum list.
+    let (eid, def) = env.program.enums.iter().enumerate().find(|(_, def)| def.name == name)?;
+    let ok = def.variants.iter().position(|(v, _)| v == "Ok")?;
+    let err = def.variants.iter().position(|(v, _)| v == "Err")?;
+    Some((eid, ok, err))
+}
+
 // The map a place names, resolved through the locals (and the caller's, for
 // a closure reading a captured map). Kind and storage must agree.
 enum MapVal<'a> {
@@ -107,6 +117,31 @@ fn map_val_ref<'a>(
         (_, Some(Val::MapF(m))) => Ok(MapVal::MapF(m)),
         (_, Some(Val::Moved)) => Err(trap("use of moved map", 0, 0)),
         _ => Ok(MapVal::Missing),
+    }
+}
+
+// Read-only re-resolution for the map_get miss check: whether the key is
+// present, looked up through the same place resolution as the value above.
+fn m_contains_ref(place: &MapPlace, locals: &HashMap<usize, Val>, caller_locals: &Option<&mut HashMap<usize, Val>>, key: &str) -> bool {
+    let slot: Option<&Val> = match place {
+        MapPlace::Var(id, _) => locals.get(id),
+        MapPlace::Field(id, fname, _) => match locals.get(id) {
+            Some(Val::Struct(_, fields)) => fields.get(fname),
+            _ => None,
+        },
+    };
+    let slot = slot.or_else(|| match (place, caller_locals.as_deref()) {
+        (MapPlace::Var(id, _), Some(caller)) => caller.get(id),
+        (MapPlace::Field(id, fname, _), Some(caller)) => match caller.get(id) {
+            Some(Val::Struct(_, fields)) => fields.get(fname),
+            _ => None,
+        },
+        _ => None,
+    });
+    match slot {
+        Some(Val::Map(m)) => m.contains_key(key),
+        Some(Val::MapF(m)) => m.contains_key(key),
+        _ => false,
     }
 }
 
@@ -741,6 +776,72 @@ fn eval_expr(
                 MapVal::MapF(m) => Ok(Val::Bool(m.remove(&key).is_some())),
                 _ => Err(Flow::Trap("internal: map remove on non-map".to_owned())),
             }
+        }
+        Expr::MapGet(place, key, ty, line, col) => {
+            // A hit is Ok(value); a miss is Err("key not found") — the same
+            // read-only constant the runtime hands back, zero-allocation.
+            let key = match eval_expr(env, key, locals, caller_locals, false)? {
+                Val::Str(k) => k,
+                _ => return Err(Flow::Trap("internal: map key type".to_owned())),
+            };
+            let float_result = matches!(ty, Type::Enum(name, _) if *name == "FloatResult");
+            let (result_name, ok_value) = match map_val_ref(place, locals, caller_locals)? {
+                MapVal::MapI(m) => ("IntResult", Val::Int(*m.get(&key).unwrap_or(&0))),
+                MapVal::MapF(m) => ("FloatResult", Val::Float(*m.get(&key).unwrap_or(&0.0))),
+                _ => return Err(Flow::Trap("internal: map get on non-map".to_owned())),
+            };
+            let _ = float_result;
+            let (eid, ok, err) = result_enum_of(env, result_name).ok_or_else(|| Flow::Trap("internal: result enum missing".to_owned()))?;
+            if m_contains_ref(place, locals, caller_locals, &key) {
+                Ok(Val::Enum(eid, ok, vec![ok_value]))
+            } else {
+                let _ = err;
+                Ok(Val::Enum(eid, err, vec![Val::Str("key not found".to_owned())]))
+            }
+        }
+        Expr::ParseInt(inner, ty, line, col) => {
+            // The runtime's parser: optional sign, base-10 digits, the i64
+            // range, and the same three error strings.
+            let text = match eval_expr(env, inner, locals, caller_locals, false)? {
+                Val::Str(s) => s,
+                _ => return Err(Flow::Trap("internal: parse_int operand".to_owned())),
+            };
+            let (eid, ok, err) = result_enum_of(env, "IntResult").ok_or_else(|| Flow::Trap("internal: result enum missing".to_owned()))?;
+            let _ = ty;
+            let mut at = 0usize;
+            let bytes = text.as_bytes();
+            let mut negative = false;
+            if !bytes.is_empty() && (bytes[0] == b'-' || bytes[0] == b'+') {
+                negative = bytes[0] == b'-';
+                at = 1;
+            }
+            if at >= bytes.len() {
+                let payload = "empty or sign-only integer";
+                let (_, e, _) = (eid, err, ok);
+                return Ok(Val::Enum(eid, e, vec![Val::Str(payload.to_owned())]));
+            }
+            let mut magnitude: u64 = 0;
+            let limit: u64 = if negative { (u64::MAX - 1) / 2 + 1 } else { i64::MAX as u64 };
+            for &byte in &bytes[at..] {
+                if !byte.is_ascii_digit() {
+                    return Ok(Val::Enum(eid, err, vec![Val::Str("not a base-10 integer".to_owned())]));
+                }
+                let digit = (byte - b'0') as u64;
+                if magnitude > (limit - digit) / 10 {
+                    return Ok(Val::Enum(eid, err, vec![Val::Str("integer out of i64 range".to_owned())]));
+                }
+                magnitude = magnitude * 10 + digit;
+            }
+            let _ = line;
+            let _ = col;
+            let value = if negative {
+                if magnitude > (i64::MAX as u64) + 1 { return Ok(Val::Enum(eid, err, vec![Val::Str("integer out of i64 range".to_owned())])); }
+                (0u64).wrapping_sub(magnitude) as i64
+            } else {
+                if magnitude > i64::MAX as u64 { return Ok(Val::Enum(eid, err, vec![Val::Str("integer out of i64 range".to_owned())])); }
+                magnitude as i64
+            };
+            Ok(Val::Enum(eid, ok, vec![Val::Int(value)]))
         }
         Expr::MapInc(place, key, delta, ..) => {
             // Both operands evaluate before the map resolves: the map borrow
