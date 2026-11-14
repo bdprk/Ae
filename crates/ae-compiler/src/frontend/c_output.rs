@@ -543,7 +543,7 @@ pub(super) fn emit_program(program: Program) -> Result<GeneratedC, String> {
         out.push_str("    ae_fail(\"function exited without return\", 0, 0);\n}\n");
     }
     let main = all.iter().find(|f| f.is_main).expect("load_program checks exactly one main");
-    out.push_str("\nint main(int argc, char **argv) {\n    ae_argc_g = (int64_t)argc;\n    ae_argv_g = argv;\n");
+    out.push_str("\nint main(int argc, char **argv) {\n    ae_args_init(argc, argv);\n    ae_argc_g = (int64_t)argc;\n    ae_argv_g = argv;\n");
     emit_body(main, &mut out);
     out.push_str("    if (fflush(stdout) == EOF) return 1;\n    return 0;\n}\n");
     // The fixed prefix is program-independent; emit only its reachable part.
