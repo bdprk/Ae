@@ -6,7 +6,11 @@ comparisons, control flow, strings (including one a branch moves into a
 by-value call, the mixed drop shape M2.4 keeps unproven), vectors with
 their mutation surface (push, indexed store, sort) and string vectors
 (push, element store releasing the old element, join), structs, enums,
-matches with payload bindings, and counted loops with `continue`; compiles each source
+matches with payload bindings, counted loops with `continue`, and the
+borrow surface (M2.5): a Doc struct with a `&mut self` method and a free
+`&mut` function, field views born and read inside one statement group,
+the L2 field-granularity write across a live view, and the ordered
+read-then-release shape left-to-right evaluation keeps legal; compiles each source
 with every backend and optimization level — the MIR block-graph backend (the
 -O0 default, M2.3) and the structured tree emitter (`AE_CODEGEN=tree`),
 both at -O0, plus the optimized build; runs every binary; and asserts that
@@ -90,11 +94,20 @@ class Gen:
             return f"({self.bool_expr(vars, depth + 1)} {self.pick(['&&', '||'])} {self.bool_expr(vars, depth + 1)})"
         return f"!{self.bool_expr(vars, depth + 1)}"
 
-    def statement(self, vars: list[str], depth: int) -> list[str]:
-        """One statement, possibly introducing new variables. Returns lines."""
+    def statement(self, vars: list[str], depth: int, docs: list[str]) -> list[str]:
+        """One statement, possibly introducing new variables. Returns lines.
+
+        `docs` carries the Doc variables in scope, threading the borrow
+        surface (views, `&mut` calls) through the same subtree discipline
+        `vars` follows: a binding created inside a branch stays in that
+        branch's subtree, so no generated statement references a variable
+        the parser would reject as undefined on some path.
+        """
         if depth >= 3:
             return [f"print({self.int_expr(vars)});"]
-        kind = self.rnd() % 14
+        kind = self.rnd() % 18
+        if 14 <= kind <= 17 and not docs:
+            kind = 14
         if kind == 13:
             # A string vector with the full mutation surface: pushes, an
             # indexed store (releasing the old element), and reads. The
@@ -109,7 +122,7 @@ class Gen:
                 f"print(len({name}));",
                 f'print({name}[0]);',
                 f'print(join({name}, "-"));',
-                *self.statement(vars, depth + 1),
+                *self.statement(vars, depth + 1, docs),
             ]
         if kind == 12:
             # A vector with the full mutation surface: push, indexed store,
@@ -124,7 +137,7 @@ class Gen:
                 f"sort({name});",
                 f"print(len({name}));",
                 f"print({name}[0]);",
-                *self.statement(vars, depth + 1),
+                *self.statement(vars, depth + 1, docs),
             ]
         if kind == 11:
             # A string one branch consumes: the taken path moves it into a
@@ -138,7 +151,7 @@ class Gen:
                 f"var {name} = {a};",
                 f"print(len({name}) > 0);",
                 f"if {self.bool_expr(vars)} {{ print(eat({name})); }}",
-                *self.statement(vars, depth + 1),
+                *self.statement(vars, depth + 1, docs),
             ]
         if kind == 9:
             # A match over a generated enum value: every variant is covered,
@@ -159,7 +172,7 @@ class Gen:
                 f"    Op::Pair(a, b) => {{ print(a + b); }}",
                 f"    Op::Flat => {{ print(42); }}",
                 f"}}",
-                *self.statement(vars, depth + 1),
+                *self.statement(vars, depth + 1, docs),
             ]
         if kind == 10:
             # A counted loop with a continue landing on the hidden increment.
@@ -173,7 +186,7 @@ class Gen:
                 f"    if {name} == {skip} {{ continue; }}",
                 f"    print({name});",
                 f"}}",
-                *self.statement(vars, depth + 1),
+                *self.statement(vars, depth + 1, docs),
             ]
         if kind == 6:
             # A string built from two literals; reads are borrows.
@@ -183,7 +196,7 @@ class Gen:
             return [
                 f"var {name} = {a} + {b};",
                 f"print(len({name}));",
-                *self.statement(vars, depth + 1),
+                *self.statement(vars, depth + 1, docs),
             ]
         if kind == 7:
             # A vector with pushes and a length read.
@@ -192,7 +205,7 @@ class Gen:
                 f"var {name} = vec[{self.int_expr(vars)}, {self.int_expr(vars)}];",
                 f"push({name}, {self.int_expr(vars)});",
                 f"print(len({name}));",
-                *self.statement(vars, depth + 1),
+                *self.statement(vars, depth + 1, docs),
             ]
         if kind == 8:
             # A struct with two scalar fields, read field-wise.
@@ -200,17 +213,17 @@ class Gen:
             return [
                 f"var {name} = Pt {{ a: {self.int_expr(vars)}, b: {self.int_expr(vars)} }};",
                 f"print({name}.a + {name}.b);",
-                *self.statement(vars, depth + 1),
+                *self.statement(vars, depth + 1, docs),
             ]
         if kind == 0:
             name = self.fresh("x")
-            return [f"var {name} = {self.int_expr(vars)};"] + self.statement(vars + [name], depth + 1)
+            return [f"var {name} = {self.int_expr(vars)};"] + self.statement(vars + [name], depth + 1, docs)
         if kind == 1:
             return [
                 f"if {self.bool_expr(vars)} {{",
-                *self.statement(vars, depth + 1),
+                *self.statement(vars, depth + 1, docs),
                 "} else {",
-                *self.statement(vars, depth + 1),
+                *self.statement(vars, depth + 1, docs),
                 "}",
             ]
         if kind == 2:
@@ -219,7 +232,7 @@ class Gen:
             return [
                 f"var {name} = {bound};",
                 f"var {self.fresh('i')} = 0;",
-                *self.statement(vars, depth + 1),
+                *self.statement(vars, depth + 1, docs),
             ]
         if kind == 3:
             return [f"print({self.int_expr(vars)});"]
@@ -228,23 +241,96 @@ class Gen:
                 f"if {self.bool_expr(vars)} {{",
                 f"    print({self.int_expr(vars)});",
                 "}",
-                *self.statement(vars, depth + 1),
+                *self.statement(vars, depth + 1, docs),
+            ]
+        if kind == 14:
+            # A Doc with two string fields opens the borrow surface: the
+            # `&mut self` method, the free `&mut` function, the field view,
+            # and the L2 field-granularity write. Views are born and die
+            # inside one statement group, so no borrow state outlives a
+            # statement and every emitted shape is one the parser accepts.
+            name = self.fresh("d")
+            return [
+                f'var {name} = Doc {{ name: "alpha{self.rnd() % 100}", note: "keep" }};',
+                *self.statement(vars, depth + 1, docs + [name]),
+            ]
+        if kind == 15:
+            # The L2 field-granularity face (ADR-0205): a view of `name`
+            # stays readable across a write to the *other* field, then dies
+            # at its read. The four modes must agree on both printed lines.
+            d = self.pick(docs)
+            h = self.fresh("h")
+            return [
+                f"let {h} = slice_view({d}.name, 0, 2);",
+                f'{d}.note = "m{self.rnd() % 100}";',
+                f"print({h});",
+                f"print({d}.note);",
+                *self.statement(vars, depth + 1, docs),
+            ]
+        if kind == 16:
+            # A `&mut` lending call (M2.5 slice 3): no views exist anywhere,
+            # so the call's whole-variable release site is uncovered and it
+            # parses; the modes must agree on the write landing, the return
+            # value, and the renamed field.
+            d = self.pick(docs)
+            n = self.fresh("n")
+            if self.rnd() % 2 == 0:
+                call = f'{d}.rename("r{self.rnd() % 100}")'
+            else:
+                call = f'doc_bump(&mut {d}, "r{self.rnd() % 100}")'
+            return [
+                f"let {n} = {call};",
+                f"print({n});",
+                f"print({d}.name);",
+                *self.statement(vars, depth + 1, docs),
+            ]
+        if kind == 17:
+            # The ordered face (M2.5 slice 3): the view is read by the first
+            # argument — its last use — and the mut call releases after it;
+            # left-to-right evaluation is what keeps this accepted.
+            d = self.pick(docs)
+            h = self.fresh("h")
+            n = self.fresh("n")
+            return [
+                f"let {h} = slice_view({d}.name, 0, 2);",
+                f'let {n} = doc_combine(len({h}), {d}.rename("r{self.rnd() % 100}"));',
+                f"print({n});",
+                *self.statement(vars, depth + 1, docs),
             ]
         name = self.fresh("s")
         return [
             f"var {name} = {self.int_expr(vars)};",
             f"print({name} > 0 || {name} <= 0);",
-            *self.statement(vars, depth + 1),
+            *self.statement(vars, depth + 1, docs),
         ]
 
     def program(self) -> str:
         # `main` cannot `return` in this language; its exit is implicit. The
         # struct Pt and its two scalar fields are fixed: field reads borrow.
         # The Op enum exercises match dispatch and payload bindings.
-        lines = ["struct Pt { a: i64, b: i64 }", "enum Op { Wrap(i64), Pair(i64, i64), Flat }", "fn eat(t: string) -> i64 { return len(t); }", "fn main() {"]
+        lines = [
+            "struct Pt { a: i64, b: i64 }",
+            "struct Doc { name: string, note: string }",
+            "enum Op { Wrap(i64), Pair(i64, i64), Flat }",
+            "fn eat(t: string) -> i64 { return len(t); }",
+            "impl Doc {",
+            "    fn rename(&mut self, to: string) -> i64 {",
+            "        self.name = to;",
+            "        return len(self.name);",
+            "    }",
+            "}",
+            "fn doc_bump(d: &mut Doc, to: string) -> i64 {",
+            "    d.name = to;",
+            "    return len(d.name);",
+            "}",
+            "fn doc_combine(a: i64, b: i64) -> i64 {",
+            "    return a + b;",
+            "}",
+            "fn main() {",
+        ]
         vars = ["seed0"]
         lines.append("    var seed0 = 7;")
-        body = self.statement(vars, 0)
+        body = self.statement(vars, 0, [])
         lines.extend("    " + line for line in body)
         lines.append("}")
         return "\n".join(lines)
