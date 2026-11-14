@@ -36,7 +36,7 @@ The MIR block graph (ADR-0197–0203) already knows, per block and per owned loc
 - `cargo test --workspace --locked` — 272 tests, 0 failures on Windows, including the two new M2.4 tests:
   - `mir_drop_elision_removes_releases_of_moved_slots`: the MIR backend emits no scope-end release for a binding a call consumed; the tree backend still emits it; both backends run the program identically.
   - `mir_drop_elision_keeps_live_and_unproven_releases`: a loop-carried binding's release is kept (live on every path), a branch-moved binding's release is kept without proof, and both backends agree byte for byte on stdout.
-- `AE_DROP_STATS=1 ae emit-c` on the differential corpus reports `elided_moved` counts per function with `kept=0` for move-only mains, confirming real programs exercise the pass.
+- `AE_DROP_STATS=1 ae emit-c` on the differential corpus reports `elided_moved` counts per function with `kept=0` for move-only mains, and `kept_mixed=1` on seed 5 of the fuzzer, confirming both faces are exercised by real generated programs.
 - Single-platform verification (Windows); the pass emits no new C templates, so `verify_generated_c.py`'s sanitizer mode adds nothing platform-specific here.
 
 ## Consequences
@@ -44,4 +44,4 @@ The MIR block graph (ADR-0197–0203) already knows, per block and per owned loc
 - The shipped C for typical programs no longer runs releases the graph has proven dead; the tree backend keeps its behavior unchanged (`AE_CODEGEN=tree` remains the differential baseline).
 - A latent hazard class is closed structurally: a release of a slot no path wrote can no longer reach the C output through the MIR backend, whatever the parser's lists say.
 - Safety is never traded: any state the pass cannot prove keeps the conservative release, identical to tree-backend output.
-- Next: extend the fuzzer's grammar with owned locals across loops and branches so the four-way differential covers `Mixed` shapes; then M2.5+ continues on the same graph.
+- The fuzzer's grammar now generates the `Mixed` shape itself: a string a branch moves into a by-value call (`eat`), retired after the branch so the program stays accepted. 40 seeds, 0 failures, four-way.

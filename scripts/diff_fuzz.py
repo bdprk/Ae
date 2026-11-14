@@ -2,8 +2,9 @@
 """Differential fuzzing for the AE compiler (plan M2.10, C-backend slice).
 
 Generates random *well-typed* programs from a grammar of arithmetic,
-comparisons, control flow, strings, vectors, structs, enums, matches with
-payload bindings, and counted loops with `continue`; compiles each source
+comparisons, control flow, strings (including one a branch moves into a
+by-value call, the mixed drop shape M2.4 keeps unproven), vectors, structs,
+enums, matches with payload bindings, and counted loops with `continue`; compiles each source
 with every backend and optimization level — the MIR block-graph backend (the
 -O0 default, M2.3) and the structured tree emitter (`AE_CODEGEN=tree`),
 both at -O0, plus the optimized build; runs every binary; and asserts that
@@ -71,7 +72,21 @@ class Gen:
         """One statement, possibly introducing new variables. Returns lines."""
         if depth >= 3:
             return [f"print({self.int_expr(vars)});"]
-        kind = self.rnd() % 11
+        kind = self.rnd() % 12
+        if kind == 11:
+            # A string one branch consumes: the taken path moves it into a
+            # by-value call, the untaken path leaves it live, so its scope-end
+            # release is a mixed drop site the MIR backend must keep without
+            # proof (M2.4). The name is retired after the branch — it is never
+            # read again, which is what keeps the program accepted.
+            name = f"str{self.rnd() % 1000}"
+            a = '"m' + str(self.rnd() % 1000) + '"'
+            return [
+                f"var {name} = {a};",
+                f"print(len({name}) > 0);",
+                f"if {self.bool_expr(vars)} {{ print(eat({name})); }}",
+                *self.statement(vars, depth + 1),
+            ]
         if kind == 9:
             # A match over a generated enum value: every variant is covered,
             # arms carry payload bindings, and each arm prints one line.
@@ -173,7 +188,7 @@ class Gen:
         # `main` cannot `return` in this language; its exit is implicit. The
         # struct Pt and its two scalar fields are fixed: field reads borrow.
         # The Op enum exercises match dispatch and payload bindings.
-        lines = ["struct Pt { a: i64, b: i64 }", "enum Op { Wrap(i64), Pair(i64, i64), Flat }", "fn main() {"]
+        lines = ["struct Pt { a: i64, b: i64 }", "enum Op { Wrap(i64), Pair(i64, i64), Flat }", "fn eat(t: string) -> i64 { return len(t); }", "fn main() {"]
         vars = ["seed0"]
         lines.append("    var seed0 = 7;")
         body = self.statement(vars, 0)
