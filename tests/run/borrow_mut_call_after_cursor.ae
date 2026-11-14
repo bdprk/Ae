@@ -1,0 +1,22 @@
+// Borrow matrix §3.6 under M2.5 slice 3: the token cursor's base is a view
+// borrow, so a `&mut` call after the loop — the cursor's region is over —
+// parses and runs; the renamed field prints after the loop's tokens.
+struct Doc { name: string, note: string }
+
+impl Doc {
+    fn rename(&mut self, to: string) -> i64 {
+        self.name = to;
+        return len(self.name);
+    }
+}
+
+fn main() {
+    var d = Doc { name: "a,b,c", note: "keep" };
+    let cur = tokenize(d.name, ",");
+    for t in cur {
+        print(t);
+    }
+    let n = d.rename("z");
+    print(n);
+    print(d.name);
+}

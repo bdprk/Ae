@@ -1,0 +1,1 @@
+ae: $DIR/borrow_mut_call_during_cursor.ae:16:29: cannot mutate 'd' while a view binding of it may still be read
