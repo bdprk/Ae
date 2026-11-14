@@ -94,20 +94,25 @@ class Gen:
             return f"({self.bool_expr(vars, depth + 1)} {self.pick(['&&', '||'])} {self.bool_expr(vars, depth + 1)})"
         return f"!{self.bool_expr(vars, depth + 1)}"
 
-    def statement(self, vars: list[str], depth: int, docs: list[str]) -> list[str]:
+    def statement(self, vars: list[str], depth: int, docs: list[str], pointers: list[tuple[str, str, bool]]) -> list[str]:
         """One statement, possibly introducing new variables. Returns lines.
 
-        `docs` carries the Doc variables in scope, threading the borrow
-        surface (views, `&mut` calls) through the same subtree discipline
-        `vars` follows: a binding created inside a branch stays in that
-        branch's subtree, so no generated statement references a variable
-        the parser would reject as undefined on some path.
+        `docs` and `pointers` carry the borrow and raw-pointer surfaces
+        (M2.5, M2.12), threading through the same subtree discipline `vars`
+        follows: a binding created inside a branch stays in that branch's
+        subtree, so no generated statement references a variable the parser
+        would reject as undefined on some path. Pointer targets are scalars,
+        which never move, so no generated shape can dangle.
         """
         if depth >= 3:
             return [f"print({self.int_expr(vars)});"]
-        kind = self.rnd() % 18
+        kind = self.rnd() % 21
         if 14 <= kind <= 17 and not docs:
             kind = 14
+        if kind == 18 and not vars:
+            kind = 3
+        if kind in (19, 20) and (not vars or not pointers):
+            kind = 3
         if kind == 13:
             # A string vector with the full mutation surface: pushes, an
             # indexed store (releasing the old element), and reads. The
@@ -122,7 +127,7 @@ class Gen:
                 f"print(len({name}));",
                 f'print({name}[0]);',
                 f'print(join({name}, "-"));',
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
             ]
         if kind == 12:
             # A vector with the full mutation surface: push, indexed store,
@@ -137,7 +142,7 @@ class Gen:
                 f"sort({name});",
                 f"print(len({name}));",
                 f"print({name}[0]);",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
             ]
         if kind == 11:
             # A string one branch consumes: the taken path moves it into a
@@ -151,7 +156,7 @@ class Gen:
                 f"var {name} = {a};",
                 f"print(len({name}) > 0);",
                 f"if {self.bool_expr(vars)} {{ print(eat({name})); }}",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
             ]
         if kind == 9:
             # A match over a generated enum value: every variant is covered,
@@ -172,7 +177,7 @@ class Gen:
                 f"    Op::Pair(a, b) => {{ print(a + b); }}",
                 f"    Op::Flat => {{ print(42); }}",
                 f"}}",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
             ]
         if kind == 10:
             # A counted loop with a continue landing on the hidden increment.
@@ -186,7 +191,7 @@ class Gen:
                 f"    if {name} == {skip} {{ continue; }}",
                 f"    print({name});",
                 f"}}",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
             ]
         if kind == 6:
             # A string built from two literals; reads are borrows.
@@ -196,7 +201,7 @@ class Gen:
             return [
                 f"var {name} = {a} + {b};",
                 f"print(len({name}));",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
             ]
         if kind == 7:
             # A vector with pushes and a length read.
@@ -205,7 +210,7 @@ class Gen:
                 f"var {name} = vec[{self.int_expr(vars)}, {self.int_expr(vars)}];",
                 f"push({name}, {self.int_expr(vars)});",
                 f"print(len({name}));",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
             ]
         if kind == 8:
             # A struct with two scalar fields, read field-wise.
@@ -213,17 +218,17 @@ class Gen:
             return [
                 f"var {name} = Pt {{ a: {self.int_expr(vars)}, b: {self.int_expr(vars)} }};",
                 f"print({name}.a + {name}.b);",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
             ]
         if kind == 0:
             name = self.fresh("x")
-            return [f"var {name} = {self.int_expr(vars)};"] + self.statement(vars + [name], depth + 1, docs)
+            return [f"var {name} = {self.int_expr(vars)};"] + self.statement(vars + [name], depth + 1, docs, pointers)
         if kind == 1:
             return [
                 f"if {self.bool_expr(vars)} {{",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
                 "} else {",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
                 "}",
             ]
         if kind == 2:
@@ -232,7 +237,7 @@ class Gen:
             return [
                 f"var {name} = {bound};",
                 f"var {self.fresh('i')} = 0;",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
             ]
         if kind == 3:
             return [f"print({self.int_expr(vars)});"]
@@ -241,7 +246,7 @@ class Gen:
                 f"if {self.bool_expr(vars)} {{",
                 f"    print({self.int_expr(vars)});",
                 "}",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
             ]
         if kind == 14:
             # A Doc with two string fields opens the borrow surface: the
@@ -252,7 +257,7 @@ class Gen:
             name = self.fresh("d")
             return [
                 f'var {name} = Doc {{ name: "alpha{self.rnd() % 100}", note: "keep" }};',
-                *self.statement(vars, depth + 1, docs + [name]),
+                *self.statement(vars, depth + 1, docs + [name], pointers),
             ]
         if kind == 15:
             # The L2 field-granularity face (ADR-0205): a view of `name`
@@ -265,7 +270,7 @@ class Gen:
                 f'{d}.note = "m{self.rnd() % 100}";',
                 f"print({h});",
                 f"print({d}.note);",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
             ]
         if kind == 16:
             # A `&mut` lending call (M2.5 slice 3): no views exist anywhere,
@@ -282,7 +287,7 @@ class Gen:
                 f"let {n} = {call};",
                 f"print({n});",
                 f"print({d}.name);",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
             ]
         if kind == 17:
             # The ordered face (M2.5 slice 3): the view is read by the first
@@ -295,13 +300,51 @@ class Gen:
                 f"let {h} = slice_view({d}.name, 0, 2);",
                 f'let {n} = doc_combine(len({h}), {d}.rename("r{self.rnd() % 100}"));',
                 f"print({n});",
-                *self.statement(vars, depth + 1, docs),
+                *self.statement(vars, depth + 1, docs, pointers),
+            ]
+        if kind == 18:
+            # A raw pointer to a scalar (M2.12): the target never moves, so
+            # the pointer stays valid for its whole scope. Every generated
+            # scalar is a `var`, so the mutable form is always legal.
+            target = self.pick(vars)
+            name = self.fresh("ptr")
+            if self.rnd() % 2 == 0:
+                return [
+                    f"let {name} = &{target} as *const i64;",
+                    *self.statement(vars, depth + 1, docs, pointers + [(name, target, False)]),
+                ]
+            return [
+                f"let {name} = &mut {target} as *mut i64;",
+                *self.statement(vars, depth + 1, docs, pointers + [(name, target, True)]),
+            ]
+        if kind == 19:
+            # A deref read inside unsafe (M2.12 slice 2): the pointer and the
+            # variable agree on every backend.
+            name, target, _ = self.pick(pointers)
+            return [
+                f"unsafe {{ print({name}.deref()); }}",
+                f"print({target});",
+                *self.statement(vars, depth + 1, docs, pointers),
+            ]
+        if kind == 20:
+            # A write through a mutable pointer (M2.12 slice 3): the variable,
+            # the pointer, and any later pointer all observe the write.
+            name, target, mutable = self.pick(pointers)
+            if not mutable:
+                name, target, mutable = next(((p, t, m) for (p, t, m) in pointers if m), (None, None, False))
+            if name is None:
+                return [f"print({self.int_expr(vars)});"]
+            return [
+                f"unsafe {{ *{name} = {self.int_expr(vars)}; }}",
+                f"print({target});",
+                f"unsafe {{ print({name}.deref()); }}",
+                *self.statement(vars, depth + 1, docs, pointers),
             ]
         name = self.fresh("s")
         return [
             f"var {name} = {self.int_expr(vars)};",
             f"print({name} > 0 || {name} <= 0);",
-            *self.statement(vars, depth + 1, docs),
+            *self.statement(vars, depth + 1, docs, pointers),
         ]
 
     def program(self) -> str:
@@ -330,7 +373,7 @@ class Gen:
         ]
         vars = ["seed0"]
         lines.append("    var seed0 = 7;")
-        body = self.statement(vars, 0, [])
+        body = self.statement(vars, 0, [], [])
         lines.extend("    " + line for line in body)
         lines.append("}")
         return "\n".join(lines)
