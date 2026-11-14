@@ -121,7 +121,63 @@ fn map_val_ref<'a>(
     }
 }
 
-// Read-only re-resolution for the map_get miss check: whether the key is
+// A prelude result value: the enum type carries the name, the Ok/Err
+// variant indices come from the declaration, and the payloads match the
+// variant's fields. The error messages the interp produces differ from the
+// C runtime's strerror text — programs cannot rely on it (ADR-55's rule).
+fn result_value(env: &Env, ty: &Type, ok: bool, payloads: Vec<Val>) -> Result<Val, Flow> {
+    let Some(Type::Enum(name, _)) = Some(ty) else {
+        return Err(Flow::Trap("internal: result type not an enum".to_owned()));
+    };
+    let Some((eid, ok_idx, err_idx)) = result_enum_of(env, name) else {
+        return Err(Flow::Trap("internal: result enum missing".to_owned()));
+    };
+    Ok(Val::Enum(eid, if ok { ok_idx } else { err_idx }, payloads))
+}
+
+fn path_string(val: Val) -> Option<String> {
+    match val { Val::Str(s) => Some(s), _ => None }
+}
+
+// A path operand: evaluated, then narrowed to a string with a positioned
+// internal trap when it is not one.
+fn path_operand(result: Result<Val, Flow>) -> Result<String, Flow> {
+    match result? {
+        Val::Str(s) => Ok(s),
+        _ => Err(Flow::Trap("internal: path operand".to_owned())),
+    }
+}
+
+fn is_separator(byte: char) -> bool { byte == '/' || byte == chr_backslash() }
+fn chr_backslash() -> char { chr(92) }
+fn chr(n: u8) -> char { n as char }
+
+fn path_is_absolute(path: &str) -> bool {
+    if path.is_empty() { return false; }
+    let mut chars = path.chars();
+    let first = chars.next().unwrap();
+    if is_separator(first) { return true; }
+    // A drive letter (`x:`) — the second character decides.
+    path.len() >= 2 && path.as_bytes()[1] == b':'
+}
+
+// `path_name`: everything after the final separator; `path_parent`: every-
+// thing before it (the separator itself dropped, matching the runtime).
+fn path_name(path: &str) -> String {
+    match path.rfind(|c| is_separator(c)) {
+        Some(idx) => path[idx + 1..].to_owned(),
+        None => path.to_owned(),
+    }
+}
+
+fn path_parent(path: &str) -> String {
+    match path.rfind(|c| is_separator(c)) {
+        Some(idx) => path[..idx].to_owned(),
+        None => String::new(),
+    }
+}
+
+// The map a place names, resolved through the locals: whether the key is
 // present, looked up through the same place resolution as the value above.
 fn m_contains_ref(place: &MapPlace, locals: &HashMap<usize, Val>, caller_locals: &Option<&mut HashMap<usize, Val>>, key: &str) -> bool {
     let slot: Option<&Val> = match place {
@@ -815,6 +871,163 @@ fn eval_expr(
                 return Err(trap("string index splits a UTF-8 character", *line, *col));
             }
             Ok(Val::Str(base[s..e].to_owned()))
+        }
+        // The file builtins. read_file traps (the runtime's ae_fail);
+        // the try_* family wraps failures in their result enum, whose error
+        // text differs from the C runtime's strerror wording — programs
+        // cannot rely on it. Listings sort by bytes, file_info's mtime is
+        // seconds since the Unix epoch, and write_file returns the byte
+        // count.
+        Expr::ReadFile(path, line, col) => {
+            let Some(p) = path_string(eval_expr(env, path, locals, caller_locals, false)?) else {
+                return Err(Flow::Trap("internal: path operand".to_owned()));
+            };
+            match std::fs::read_to_string(&p) {
+                Ok(text) => Ok(Val::Str(text)),
+                Err(_) => Err(trap("cannot read file", *line, *col)),
+            }
+        }
+        Expr::TryReadFile(path, ty, ..) => {
+            let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
+            match std::fs::read_to_string(&p) {
+                Ok(text) => result_value(env, ty, true, vec![Val::Str(text)]),
+                Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot read file: {error}"))]),
+            }
+        }
+        Expr::WriteFile(path, text, line, col) => {
+            let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
+            let t = path_operand(eval_expr(env, text, locals, caller_locals, false))?;
+            match std::fs::write(&p, &t) {
+                Ok(()) => Ok(Val::Int(t.len() as i64)),
+                Err(_) => Err(trap("cannot write file", *line, *col)),
+            }
+        }
+        Expr::TryWriteFile(path, text, ty, ..) => {
+            let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
+            let t = path_operand(eval_expr(env, text, locals, caller_locals, false))?;
+            if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG try_write p={p} bytes={}", t.len()); }
+            match std::fs::write(&p, &t) {
+                Err(error) => {
+                    if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG try_write error: {error}"); }
+                    return result_value(env, ty, false, vec![Val::Str(format!("cannot write file: {error}"))]);
+                }
+                Ok(()) => result_value(env, ty, true, vec![Val::Int(t.len() as i64)]),
+            }
+        }
+        Expr::TryAppendFile(path, text, ty, ..) => {
+            use std::io::Write as _;
+            let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
+            let t = path_operand(eval_expr(env, text, locals, caller_locals, false))?;
+            match std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+                Ok(mut file) => match file.write_all(t.as_bytes()) {
+                    Ok(()) => result_value(env, ty, true, vec![Val::Int(t.len() as i64)]),
+                    Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot append file: {error}"))]),
+                },
+                Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot append file: {error}"))]),
+            }
+        }
+        Expr::TryListDir(path, ty, ..) => {
+            let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
+            match std::fs::read_dir(&p) {
+                Ok(entries) => {
+                    let mut names: Vec<String> = entries.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().to_string()).collect();
+                    // Byte order, the same sort the runtime applies.
+                    names.sort();
+                    result_value(env, ty, true, vec![Val::VecS(names)])
+                }
+                Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot list directory: {error}"))]),
+            }
+        }
+        Expr::PathExists(path, ..) => {
+            let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
+            Ok(Val::Bool(std::path::Path::new(&p).exists()))
+        }
+        Expr::PathIsDir(path, ..) => {
+            let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
+            Ok(Val::Bool(std::path::Path::new(&p).is_dir()))
+        }
+        Expr::TryFileInfo(path, ty, ..) => {
+            let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
+            match std::fs::metadata(&p) {
+                Ok(meta) => {
+                    let size = meta.len() as i64;
+                    let modified = meta.modified().ok()
+                        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    let is_dir = meta.is_dir();
+                    result_value(env, ty, true, vec![Val::Int(size), Val::Int(modified), Val::Bool(is_dir)])
+                }
+                Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot read file metadata: {error}"))]),
+            }
+        }
+        Expr::TryCopyFile(from, to, ty, ..) => {
+            let from = path_operand(eval_expr(env, from, locals, caller_locals, false))?;
+            let to = path_operand(eval_expr(env, to, locals, caller_locals, false))?;
+            match std::fs::copy(&from, &to) {
+                Ok(_) => result_value(env, ty, true, vec![]),
+                Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot copy file: {error}"))]),
+            }
+        }
+        Expr::TryRenamePath(from, to, ty, ..) => {
+            let from = path_operand(eval_expr(env, from, locals, caller_locals, false))?;
+            let to = path_operand(eval_expr(env, to, locals, caller_locals, false))?;
+            match std::fs::rename(&from, &to) {
+                Ok(()) => result_value(env, ty, true, vec![]),
+                Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot rename path: {error}"))]),
+            }
+        }
+        Expr::TryRemoveFile(path, ty, ..) => {
+            let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
+            match std::fs::remove_file(&p) {
+                Ok(()) => result_value(env, ty, true, vec![]),
+                Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot remove file: {error}"))]),
+            }
+        }
+        Expr::TryRemoveDir(path, ty, ..) => {
+            let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
+            match std::fs::remove_dir(&p) {
+                Ok(()) => result_value(env, ty, true, vec![]),
+                Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot remove directory: {error}"))]),
+            }
+        }
+        Expr::TryCreateDir(path, ty, ..) => {
+            let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
+            match std::fs::create_dir(&p) {
+                Ok(()) => result_value(env, ty, true, vec![]),
+                Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot create directory: {error}"))]),
+            }
+        }
+        Expr::SetCwd(path, ty, ..) => {
+            let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
+            match std::env::set_current_dir(&p) {
+                Ok(()) => result_value(env, ty, true, vec![]),
+                Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot set cwd: {error}"))]),
+            }
+        }
+        Expr::PathJoin(dir, name, ..) => {
+            let d = path_operand(eval_expr(env, dir, locals, caller_locals, false))?;
+            let n = path_operand(eval_expr(env, name, locals, caller_locals, false))?;
+            // The runtime's join: an empty side returns the other, an
+            // absolute name wins, and a separator is inserted only when the
+            // directory does not already end with one.
+            if n.is_empty() { return Ok(Val::Str(d)); }
+            if d.is_empty() { return Ok(Val::Str(n)); }
+            if path_is_absolute(&n) { return Ok(Val::Str(n)); }
+            let separated = d.chars().last().map(is_separator).unwrap_or(false);
+            if separated { return Ok(Val::Str(format!("{d}{n}"))); }
+            Ok(Val::Str(format!("{d}/{n}")))
+        }
+        Expr::PathName(path, ..) => Ok(Val::Str(path_name(&path_operand(eval_expr(env, path, locals, caller_locals, false))?))),
+        Expr::PathParent(path, ..) => Ok(Val::Str(path_parent(&path_operand(eval_expr(env, path, locals, caller_locals, false))?))),
+        Expr::Args(..) => Ok(Val::VecS(std::env::args().collect())),
+        // now_s is now_ms in whole seconds.
+        Expr::NowS => {
+            let millis = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            Ok(Val::Int(millis / 1000))
         }
         Expr::NowMs => {
             let millis = std::time::SystemTime::now()

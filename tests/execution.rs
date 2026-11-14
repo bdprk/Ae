@@ -3414,7 +3414,6 @@ fn emit_mir_shows_which_releases_survive_drop_elaboration() {
 }
 
 #[test]
-#[test]
 fn field_granularity_borrows_freeze_their_own_field_only() {
     // M2.5 L2: a view of `p.name` freezes writes to `p.name` while the view
     // can still be read, but a write to a different field releases bytes the
@@ -3505,7 +3504,29 @@ fn constant_array_indices_in_range_skip_the_bounds_check() {
 }
 
 #[test]
-#[test]
+fn mir_interpreter_agrees_on_file_builtins_with_the_compiled_backends() {
+    // M2.11: the file builtins interpret against the real filesystem —
+    // writes, reads, metadata, byte-sorted listings, path operations,
+    // and removals — and must agree with the compiled backend line for
+    // line. The error payload TEXT differs (the C runtime strerror
+    // wording vs the interp io::Error wording — programs cannot rely
+    // on it), so the probe exercises success paths, whose payloads are
+    // exact. The probe files live in the process CWD and are cleaned
+    // up afterwards.
+    let source = "probe_files.ae";
+    fs::write(source, "fn main() {\n    let _c = try_create_dir(\"./probe_dir\");\n    let w = try_write_file(\"./probe_dir/probe.txt\", \"hello file\");\n    match w { WriteResult::Ok(n) => { print(n); } WriteResult::Err(_) => { print(0 - 1); } }\n    let text = read_file(\"./probe_dir/probe.txt\");\n    print(text);\n    let st = try_file_info(\"./probe_dir/probe.txt\");\n    match st {\n        FileResult::Ok(size, modified, is_dir) => { print(size); }\n        FileResult::Err(_) => { print(0 - 1); }\n    }\n    let _c2 = try_create_dir(\"./probe_dir/sub\");\n    let _w2 = try_write_file(\"./probe_dir/sub/inner.txt\", \"inner\");\n    let listed = try_list_dir(\"./probe_dir/sub\");\n    match listed {\n        DirResult::Ok(names) => { print(len(names)); print(names[0]); }\n        DirResult::Err(e) => { print(e); }\n    }\n    print(path_exists(\"./probe_dir/sub\"));\n    print(path_is_dir(\"./probe_dir/sub\"));\n    print(path_join(\"dir\", \"name\"));\n    print(path_name(\"dir/sub/name.txt\"));\n    print(path_parent(\"dir/sub/name.txt\"));\n    let _r1 = try_remove_file(\"./probe_dir/probe.txt\");\n    let _r2 = try_remove_file(\"./probe_dir/sub/inner.txt\");\n    let _r3 = try_remove_dir(\"./probe_dir/sub\");\n    print(path_exists(\"./probe_dir/probe.txt\"));\n}").unwrap();
+    let interp = Command::new(env!("CARGO_BIN_EXE_ae")).args(["run", source, "--interp"]).output().unwrap();
+    assert!(interp.status.success(), "interp failed: {}", String::from_utf8_lossy(&interp.stderr));
+    let compiled = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(source).output().unwrap();
+    assert!(compiled.status.success(), "compiled failed: {}", String::from_utf8_lossy(&compiled.stderr));
+    let normalize = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace("\r\n", "\n");
+    let expected = "10\nhello file\n10\n1\ninner.txt\ntrue\ntrue\ndir/name\nname.txt\ndir/sub\nfalse\n";
+    assert_eq!(normalize(&interp.stdout), normalize(&compiled.stdout), "the interpreter and the compiled backend disagree");
+    assert_eq!(normalize(&interp.stdout), expected);
+    let _ = fs::remove_file("probe_files.ae");
+    let _ = fs::remove_dir_all("probe_dir");
+}
+
 #[test]
 fn mir_interpreter_agrees_on_token_cursors_with_the_compiled_backends() {
     // M2.11: the tokenizer's cursor — creation, per-iteration token views
@@ -3538,6 +3559,7 @@ fn mir_interpreter_agrees_on_token_cursors_with_the_compiled_backends() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
 fn mir_interpreter_agrees_on_result_enums_with_the_compiled_backends() {
     // M2.11: map_get and parse_int construct the prelude's result enums —
     // the hit/miss/parse-error payloads must match the runtime's constants
@@ -3581,6 +3603,7 @@ fn mir_interpreter_agrees_on_result_enums_with_the_compiled_backends() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
 fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
     // M2.11: the interpreter's map family — puts, incs (insert-or-
     // increment), predicates, sorted keys, removals — must agree with the
@@ -3615,6 +3638,7 @@ fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
 fn mir_drop_elision_thins_propagate_error_path_releases() {
     // M2.4: a `?`'s releases ride the error path, which exits the function,
     // so the state to read them with is the one after the value evaluated.
