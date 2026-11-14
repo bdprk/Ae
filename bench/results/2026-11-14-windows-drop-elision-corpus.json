@@ -1,0 +1,486 @@
+{
+  "suite": "tests/run",
+  "files": 95,
+  "compiled": 95,
+  "total_mir_release_sites": 917,
+  "total_tree_release_sites": 2182,
+  "elided": 1265,
+  "elided_share": 0.5797,
+  "rows": [
+    {
+      "file": "tests/run\\arithmetic.ae",
+      "mir_release_sites": 0,
+      "tree_release_sites": 0
+    },
+    {
+      "file": "tests/run\\batch_core_advanced.ae",
+      "mir_release_sites": 8,
+      "tree_release_sites": 27
+    },
+    {
+      "file": "tests/run\\batch_core_alloc_and_arith.ae",
+      "mir_release_sites": 25,
+      "tree_release_sites": 72
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_abi2.ae",
+      "mir_release_sites": 9,
+      "tree_release_sites": 31
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_asm.ae",
+      "mir_release_sites": 5,
+      "tree_release_sites": 15
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_asm2.ae",
+      "mir_release_sites": 17,
+      "tree_release_sites": 38
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_cfg2.ae",
+      "mir_release_sites": 12,
+      "tree_release_sites": 39
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_codegen.ae",
+      "mir_release_sites": 6,
+      "tree_release_sites": 20
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_coff.ae",
+      "mir_release_sites": 12,
+      "tree_release_sites": 38
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_debug.ae",
+      "mir_release_sites": 8,
+      "tree_release_sites": 25
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_dwarf2.ae",
+      "mir_release_sites": 9,
+      "tree_release_sites": 29
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_elf.ae",
+      "mir_release_sites": 9,
+      "tree_release_sites": 31
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_elf2.ae",
+      "mir_release_sites": 10,
+      "tree_release_sites": 30
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_emit.ae",
+      "mir_release_sites": 6,
+      "tree_release_sites": 19
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_frontend.ae",
+      "mir_release_sites": 4,
+      "tree_release_sites": 8
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_ir.ae",
+      "mir_release_sites": 12,
+      "tree_release_sites": 33
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_linker.ae",
+      "mir_release_sites": 9,
+      "tree_release_sites": 17
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_macho.ae",
+      "mir_release_sites": 9,
+      "tree_release_sites": 29
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_opt.ae",
+      "mir_release_sites": 23,
+      "tree_release_sites": 60
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_opt2.ae",
+      "mir_release_sites": 18,
+      "tree_release_sites": 41
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_opt3.ae",
+      "mir_release_sites": 10,
+      "tree_release_sites": 31
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_pe2.ae",
+      "mir_release_sites": 10,
+      "tree_release_sites": 32
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_primitives.ae",
+      "mir_release_sites": 5,
+      "tree_release_sites": 20
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_regalloc2.ae",
+      "mir_release_sites": 9,
+      "tree_release_sites": 32
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_runtime.ae",
+      "mir_release_sites": 11,
+      "tree_release_sites": 37
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_runtime2.ae",
+      "mir_release_sites": 12,
+      "tree_release_sites": 38
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_wasm.ae",
+      "mir_release_sites": 10,
+      "tree_release_sites": 31
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_wasm2.ae",
+      "mir_release_sites": 8,
+      "tree_release_sites": 25
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_wasm3.ae",
+      "mir_release_sites": 11,
+      "tree_release_sites": 33
+    },
+    {
+      "file": "tests/run\\batch_core_compiler_wasm4.ae",
+      "mir_release_sites": 9,
+      "tree_release_sites": 26
+    },
+    {
+      "file": "tests/run\\batch_core_encoding.ae",
+      "mir_release_sites": 2,
+      "tree_release_sites": 7
+    },
+    {
+      "file": "tests/run\\batch_core_generators.ae",
+      "mir_release_sites": 6,
+      "tree_release_sites": 17
+    },
+    {
+      "file": "tests/run\\batch_core_hash_table.ae",
+      "mir_release_sites": 8,
+      "tree_release_sites": 21
+    },
+    {
+      "file": "tests/run\\batch_core_hashing_fmt.ae",
+      "mir_release_sites": 6,
+      "tree_release_sites": 19
+    },
+    {
+      "file": "tests/run\\batch_core_heap_control.ae",
+      "mir_release_sites": 12,
+      "tree_release_sites": 33
+    },
+    {
+      "file": "tests/run\\batch_core_incremental.ae",
+      "mir_release_sites": 46,
+      "tree_release_sites": 98
+    },
+    {
+      "file": "tests/run\\batch_core_infra.ae",
+      "mir_release_sites": 15,
+      "tree_release_sites": 37
+    },
+    {
+      "file": "tests/run\\batch_core_io_primitives.ae",
+      "mir_release_sites": 11,
+      "tree_release_sites": 32
+    },
+    {
+      "file": "tests/run\\batch_core_link.ae",
+      "mir_release_sites": 50,
+      "tree_release_sites": 77
+    },
+    {
+      "file": "tests/run\\batch_core_memory.ae",
+      "mir_release_sites": 6,
+      "tree_release_sites": 18
+    },
+    {
+      "file": "tests/run\\batch_core_memory_advanced.ae",
+      "mir_release_sites": 7,
+      "tree_release_sites": 20
+    },
+    {
+      "file": "tests/run\\batch_core_memory_budget.ae",
+      "mir_release_sites": 16,
+      "tree_release_sites": 47
+    },
+    {
+      "file": "tests/run\\batch_core_memory_layout.ae",
+      "mir_release_sites": 12,
+      "tree_release_sites": 39
+    },
+    {
+      "file": "tests/run\\batch_core_metrics_advanced.ae",
+      "mir_release_sites": 9,
+      "tree_release_sites": 23
+    },
+    {
+      "file": "tests/run\\batch_core_modules.ae",
+      "mir_release_sites": 5,
+      "tree_release_sites": 18
+    },
+    {
+      "file": "tests/run\\batch_core_netpath.ae",
+      "mir_release_sites": 6,
+      "tree_release_sites": 17
+    },
+    {
+      "file": "tests/run\\batch_core_parsing.ae",
+      "mir_release_sites": 10,
+      "tree_release_sites": 28
+    },
+    {
+      "file": "tests/run\\batch_core_process_env.ae",
+      "mir_release_sites": 9,
+      "tree_release_sites": 27
+    },
+    {
+      "file": "tests/run\\batch_core_protocols.ae",
+      "mir_release_sites": 5,
+      "tree_release_sites": 15
+    },
+    {
+      "file": "tests/run\\batch_core_ranges.ae",
+      "mir_release_sites": 19,
+      "tree_release_sites": 56
+    },
+    {
+      "file": "tests/run\\batch_core_search_sort.ae",
+      "mir_release_sites": 8,
+      "tree_release_sites": 22
+    },
+    {
+      "file": "tests/run\\batch_core_semantic_analysis.ae",
+      "mir_release_sites": 13,
+      "tree_release_sites": 31
+    },
+    {
+      "file": "tests/run\\batch_core_semver.ae",
+      "mir_release_sites": 82,
+      "tree_release_sites": 125
+    },
+    {
+      "file": "tests/run\\batch_core_serialization.ae",
+      "mir_release_sites": 9,
+      "tree_release_sites": 23
+    },
+    {
+      "file": "tests/run\\batch_core_simd_math.ae",
+      "mir_release_sites": 9,
+      "tree_release_sites": 22
+    },
+    {
+      "file": "tests/run\\batch_core_structures.ae",
+      "mir_release_sites": 15,
+      "tree_release_sites": 42
+    },
+    {
+      "file": "tests/run\\batch_core_systems.ae",
+      "mir_release_sites": 5,
+      "tree_release_sites": 16
+    },
+    {
+      "file": "tests/run\\batch_core_unwind.ae",
+      "mir_release_sites": 12,
+      "tree_release_sites": 22
+    },
+    {
+      "file": "tests/run\\batch_core_wire_protocol.ae",
+      "mir_release_sites": 6,
+      "tree_release_sites": 15
+    },
+    {
+      "file": "tests/run\\bitwise_traits.ae",
+      "mir_release_sites": 5,
+      "tree_release_sites": 11
+    },
+    {
+      "file": "tests/run\\borrow_move_after_last_use.ae",
+      "mir_release_sites": 1,
+      "tree_release_sites": 2
+    },
+    {
+      "file": "tests/run\\borrow_views.ae",
+      "mir_release_sites": 2,
+      "tree_release_sites": 2
+    },
+    {
+      "file": "tests/run\\borrow_write_after_last_use.ae",
+      "mir_release_sites": 3,
+      "tree_release_sites": 3
+    },
+    {
+      "file": "tests/run\\box_wrapper.ae",
+      "mir_release_sites": 3,
+      "tree_release_sites": 4
+    },
+    {
+      "file": "tests/run\\cfg_loops.ae",
+      "mir_release_sites": 1,
+      "tree_release_sites": 1
+    },
+    {
+      "file": "tests/run\\checked_arithmetic.ae",
+      "mir_release_sites": 2,
+      "tree_release_sites": 4
+    },
+    {
+      "file": "tests/run\\clone_trait.ae",
+      "mir_release_sites": 3,
+      "tree_release_sites": 6
+    },
+    {
+      "file": "tests/run\\closures.ae",
+      "mir_release_sites": 16,
+      "tree_release_sites": 16
+    },
+    {
+      "file": "tests/run\\cmp_traits.ae",
+      "mir_release_sites": 4,
+      "tree_release_sites": 12
+    },
+    {
+      "file": "tests/run\\convert_traits.ae",
+      "mir_release_sites": 2,
+      "tree_release_sites": 5
+    },
+    {
+      "file": "tests/run\\default_trait.ae",
+      "mir_release_sites": 7,
+      "tree_release_sites": 12
+    },
+    {
+      "file": "tests/run\\display_trait.ae",
+      "mir_release_sites": 14,
+      "tree_release_sites": 17
+    },
+    {
+      "file": "tests/run\\divide_by_zero.ae",
+      "mir_release_sites": 0,
+      "tree_release_sites": 0
+    },
+    {
+      "file": "tests/run\\duration_primitives.ae",
+      "mir_release_sites": 4,
+      "tree_release_sites": 6
+    },
+    {
+      "file": "tests/run\\enum_generic_impls.ae",
+      "mir_release_sites": 9,
+      "tree_release_sites": 20
+    },
+    {
+      "file": "tests/run\\enum_methods.ae",
+      "mir_release_sites": 17,
+      "tree_release_sites": 25
+    },
+    {
+      "file": "tests/run\\error_trait.ae",
+      "mir_release_sites": 2,
+      "tree_release_sites": 5
+    },
+    {
+      "file": "tests/run\\function_types.ae",
+      "mir_release_sites": 0,
+      "tree_release_sites": 0
+    },
+    {
+      "file": "tests/run\\generic_impl.ae",
+      "mir_release_sites": 10,
+      "tree_release_sites": 11
+    },
+    {
+      "file": "tests/run\\generic_owned.ae",
+      "mir_release_sites": 21,
+      "tree_release_sites": 26
+    },
+    {
+      "file": "tests/run\\hash_trait.ae",
+      "mir_release_sites": 2,
+      "tree_release_sites": 7
+    },
+    {
+      "file": "tests/run\\iterator_trait.ae",
+      "mir_release_sites": 4,
+      "tree_release_sites": 7
+    },
+    {
+      "file": "tests/run\\methods.ae",
+      "mir_release_sites": 12,
+      "tree_release_sites": 26
+    },
+    {
+      "file": "tests/run\\nested_generics.ae",
+      "mir_release_sites": 13,
+      "tree_release_sites": 13
+    },
+    {
+      "file": "tests/run\\num_traits.ae",
+      "mir_release_sites": 7,
+      "tree_release_sites": 14
+    },
+    {
+      "file": "tests/run\\ops_traits.ae",
+      "mir_release_sites": 5,
+      "tree_release_sites": 11
+    },
+    {
+      "file": "tests/run\\option_prelude.ae",
+      "mir_release_sites": 3,
+      "tree_release_sites": 5
+    },
+    {
+      "file": "tests/run\\pair_product.ae",
+      "mir_release_sites": 1,
+      "tree_release_sites": 1
+    },
+    {
+      "file": "tests/run\\self_type.ae",
+      "mir_release_sites": 3,
+      "tree_release_sites": 8
+    },
+    {
+      "file": "tests/run\\slice_view.ae",
+      "mir_release_sites": 1,
+      "tree_release_sites": 5
+    },
+    {
+      "file": "tests/run\\struct_borrow.ae",
+      "mir_release_sites": 7,
+      "tree_release_sites": 9
+    },
+    {
+      "file": "tests/run\\struct_mut_borrow.ae",
+      "mir_release_sites": 3,
+      "tree_release_sites": 3
+    },
+    {
+      "file": "tests/run\\sync_markers.ae",
+      "mir_release_sites": 2,
+      "tree_release_sites": 5
+    },
+    {
+      "file": "tests/run\\trait_bounds.ae",
+      "mir_release_sites": 2,
+      "tree_release_sites": 5
+    },
+    {
+      "file": "tests/run\\vector_out_of_bounds.ae",
+      "mir_release_sites": 1,
+      "tree_release_sites": 1
+    }
+  ]
+}
