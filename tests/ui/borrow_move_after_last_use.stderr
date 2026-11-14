@@ -1,0 +1,1 @@
+ae: $DIR/borrow_move_after_last_use.ae:9:14: cannot move a value while it is borrowed

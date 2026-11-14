@@ -1,0 +1,11 @@
+// Borrow matrix §3.2: a write after a borrow is rejected. The view's last
+// use is the print above the write, but at the current level the borrow's
+// region runs to the end of the scope rather than dying after the last use.
+// This case is the differential baseline for the L1 NLL relaxation.
+fn main() {
+    var s = "abcdef";
+    let a = slice_view(s, 0, 3);
+    print(a);
+    s = "other";
+    print(s);
+}
