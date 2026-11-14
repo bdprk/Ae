@@ -527,6 +527,43 @@ fn eval_expr(
                 _ => Err(Flow::Trap("internal: strvec index on non-vec".to_owned())),
             }
         }
+        // `join` totals the length in the runtime and traps on overflow;
+        // the interpreter's strings are heap-backed Rust strings, so the
+        // overflow case cannot arise here (the fuzzer's seeds never
+        // approach it) and the join is exact.
+        Expr::Join(id, sep_expr, line, col) => {
+            let sep = match eval_expr(env, sep_expr, locals, caller_locals, false)? {
+                Val::Str(s) => s,
+                _ => return Err(Flow::Trap("internal: join separator".to_owned())),
+            };
+            match read_var(locals, caller_locals, *id, *line, *col)? {
+                Val::VecS(v) => Ok(Val::Str(v.join(&sep))),
+                _ => Err(Flow::Trap("internal: join on non-strvec".to_owned())),
+            }
+        }
+        Expr::Contains(haystack, needle, ..) => {
+            let hay = match eval_expr(env, haystack, locals, caller_locals, false)? { Val::Str(s) => s, _ => return Err(Flow::Trap("internal: contains haystack".to_owned())) };
+            let needle = match eval_expr(env, needle, locals, caller_locals, false)? { Val::Str(s) => s, _ => return Err(Flow::Trap("internal: contains needle".to_owned())) };
+            Ok(Val::Bool(hay.contains(&needle)))
+        }
+        Expr::Trim(inner, _, _) => {
+            match eval_expr(env, inner, locals, caller_locals, false)? {
+                Val::Str(s) => Ok(Val::Str(s.trim().to_owned())),
+                _ => Err(Flow::Trap("internal: trim operand".to_owned())),
+            }
+        }
+        Expr::StartsWith(a, b) | Expr::EndsWith(a, b) => {
+            let is_start = matches!(expr, Expr::StartsWith(..));
+            let hay = match eval_expr(env, a, locals, caller_locals, false)? { Val::Str(s) => s, _ => return Err(Flow::Trap("internal: starts/ends operand".to_owned())) };
+            let prefix = match eval_expr(env, b, locals, caller_locals, false)? { Val::Str(s) => s, _ => return Err(Flow::Trap("internal: starts/ends operand".to_owned())) };
+            Ok(Val::Bool(if is_start { hay.starts_with(&prefix) } else { hay.ends_with(&prefix) }))
+        }
+        Expr::Utf8Len(inner, _, _) => {
+            match eval_expr(env, inner, locals, caller_locals, false)? {
+                Val::Str(s) => Ok(Val::Int(s.chars().count() as i64)),
+                _ => Err(Flow::Trap("internal: utf8_len operand".to_owned())),
+            }
+        }
         Expr::Len(inner, line, col) => {
             match eval_expr(env, inner, locals, caller_locals, false)? {
                 Val::Str(s) => Ok(Val::Int(s.len() as i64)),
