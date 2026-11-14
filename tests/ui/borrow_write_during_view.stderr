@@ -1,0 +1,1 @@
+ae: $DIR/borrow_write_during_view.ae:8:5: cannot assign to 's' while a view binding of it may still be read

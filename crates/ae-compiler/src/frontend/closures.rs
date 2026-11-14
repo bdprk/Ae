@@ -142,7 +142,7 @@ impl Parser<'_> {
         // behind the closure's back (the same rule a string view gets).
         for (outer_id, _) in &borrow_captures {
             if !self.is_borrowed(*outer_id) {
-                self.borrows.push((*outer_id, self.scopes.len()));
+                self.borrows.push((*outer_id, self.scopes.len(), BorrowKind::Container));
             }
         }
         let cid = self.generics.closures.len();
@@ -163,7 +163,7 @@ impl Parser<'_> {
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
-            borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(),
+            borrows: Vec::new(), deferred_write_conflicts: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(),
             subst: HashMap::new(), trait_bounds: HashMap::new(), receiver: None, impl_self: None,
             // Shadowing stays allowed in both passes: a body-local may reuse
             // an outer name, and the AST walk (not the name map) decides what
@@ -256,7 +256,14 @@ impl Parser<'_> {
         let owned: Vec<(usize, Type)> = scope.iter().filter(|(_, ty)| ty.owned()).copied().collect();
         if !owned.is_empty() { body.push(Statement::Frees(owned)); }
         if !returns(&body) { return Err(self.fail("a closure body must return a value on every path")); }
-        Ok(Function { id, params, body, is_main: false, returns: ret })
+        // The closure's deferred conflicts belong to the closure's own graph;
+        // the enclosing function keeps the ones it deferred before.
+        let saved = std::mem::take(&mut self.deferred_write_conflicts);
+        let function = Function { id, params, body, is_main: false, returns: ret };
+        let adjudication = self.adjudicate_deferred_conflicts(&function);
+        self.deferred_write_conflicts.extend(saved);
+        adjudication?;
+        Ok(function)
     }
 
     // `name(args)` on a variable of closure type: the captures are read at

@@ -819,7 +819,9 @@ impl Parser<'_> {
         let param_owned: Vec<(usize, Type)> = params_scope.iter().filter(|(_, ty)| ty.owned()).copied().collect();
         if !param_owned.is_empty() { body.push(Statement::Frees(param_owned)); }
         if !is_main && !returns(&body) { return Err(self.fail("function may exit without returning a value")); }
-        Ok(Function { id, params, body, is_main, returns: returns_type })
+        let function = Function { id, params, body, is_main, returns: returns_type };
+        self.adjudicate_deferred_conflicts(&function)?;
+        Ok(function)
     }
     // Parse a generic function's own tokens once per argument list. The
     // sub-parser shares this program's maps and id space, so a nested
@@ -870,7 +872,7 @@ impl Parser<'_> {
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
-            borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst, trait_bounds, receiver: None, impl_self: None, shadow_ok: false, pending: Vec::new(),
+            borrows: Vec::new(), deferred_write_conflicts: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst, trait_bounds, receiver: None, impl_self: None, shadow_ok: false, pending: Vec::new(),
         };
         let parsed = sub.function_rest(false, id);
         let mut nested = std::mem::take(&mut sub.pending);
@@ -938,7 +940,7 @@ impl Parser<'_> {
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
-            borrows: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(),
+            borrows: Vec::new(), deferred_write_conflicts: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(),
             subst, trait_bounds: HashMap::new(), receiver: receiver_ty,
             impl_self: Some(impl_self_ty), shadow_ok: false, pending: Vec::new(),
         };

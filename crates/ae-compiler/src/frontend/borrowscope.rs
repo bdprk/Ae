@@ -35,6 +35,64 @@ use super::*;
 use super::cfg::{build_cfg, CfgFunction, CfgTerminator};
 use super::movewalk::{expr_reads, statement_reads};
 
+// Adjudicate the parser's deferred write-under-view-borrow conflicts (M2.5
+// L1): the parser no longer rejects a write to a string whose view may have
+// died, it records the candidate and the finished function is checked here
+// against the NLL regions. A write whose view may still be read later on
+// some path is the real rejection — the write releases the bytes the view
+// points at; a write after the view's last use is the relaxation.
+//
+// Every write to the base in the CFG is a deferred one (the parser defers
+// all of them when only view borrows are active), so one covered write
+// anywhere is reported at the first recorded conflict's site.
+pub(super) fn adjudicate_deferred(function: &Function, conflicts: &[(usize, usize, String)]) -> Result<(), String> {
+    if conflicts.is_empty() { return Ok(()); }
+    let graph = build_cfg(function);
+    let view_borrows: Vec<(usize, usize)> = graph.blocks.iter()
+        .flat_map(|block| block.statements.iter())
+        .filter_map(view_borrow_introduced)
+        .collect();
+    let introductions: HashMap<usize, (usize, usize)> = graph.blocks.iter()
+        .flat_map(|block| {
+            block.statements.iter().enumerate()
+                .filter_map(|(index, statement)| view_borrow_introduced(statement).map(|(view, _)| (view, (block.id, index))))
+        })
+        .collect();
+    let nll = NllRegions::compute(&graph, &view_borrows);
+    let dom = dominators(&graph);
+    for block in &graph.blocks {
+        let mut suffix: Vec<std::collections::HashSet<usize>> = vec![std::collections::HashSet::new(); block.statements.len() + 1];
+        for index in (0..block.statements.len()).rev() {
+            let mut here = suffix[index + 1].clone();
+            here.extend(statement_reads(&block.statements[index]));
+            suffix[index] = here;
+        }
+        suffix[block.statements.len()].extend(match &block.terminator {
+            CfgTerminator::Return(expr) | CfgTerminator::Exit(expr) => expr_reads(expr),
+            CfgTerminator::Branch(cond, ..) => expr_reads(cond),
+            CfgTerminator::Switch(subject, ..) => vec![*subject],
+            _ => Vec::new(),
+        });
+        let live_out: std::collections::HashSet<usize> = successors(&graph, block.id)
+            .iter()
+            .flat_map(|succ| nll.live_in.get(succ).into_iter().flatten().copied())
+            .collect();
+        for (index, statement) in block.statements.iter().enumerate() {
+            let Some(written) = writes_slot(statement) else { continue };
+            let mut live_at_write = suffix[index + 1].clone();
+            live_at_write.extend(&live_out);
+            let covered = view_borrows.iter()
+                .any(|&(view, base)| base == written
+                    && view_covers_write(view, block.id, index, &introductions, &dom, &live_at_write));
+            if covered {
+                let (_, _, name) = &conflicts[0];
+                return Err(format!("cannot assign to '{name}' while a view binding of it may still be read"));
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn verify_program_borrows(program: &Program) -> Result<(), String> {
     for file in &program.files {
         for function in file {
@@ -57,6 +115,29 @@ fn view_borrow_introduced(statement: &Statement) -> Option<(usize, usize)> {
     }
 }
 
+// A write conflicts with a view only when the view was introduced BEFORE the
+// write on every path to it — the introduction dominates the write — and the
+// view may still be read later. A view created after the write looks at the
+// new bytes, never at the ones the write releases; a write is not on the
+// path from an introduction to a read unless the introduction dominates it,
+// because a read without a dominating introduction is a definite-assignment
+// rejection the parser already makes.
+fn view_covers_write(
+    view: usize,
+    write_block: usize,
+    write_index: usize,
+    introductions: &HashMap<usize, (usize, usize)>,
+    dom: &[std::collections::HashSet<usize>],
+    live_at_write: &std::collections::HashSet<usize>,
+) -> bool {
+    if !live_at_write.contains(&view) { return false; }
+    match introductions.get(&view) {
+        Some(&(intro_block, intro_index)) if intro_block == write_block => intro_index < write_index,
+        Some(&(intro_block, _)) => dom[write_block].contains(&intro_block),
+        None => false,
+    }
+}
+
 struct BorrowRegions;
 
 impl BorrowRegions {
@@ -73,6 +154,13 @@ impl BorrowRegions {
             .filter_map(view_borrow_introduced)
             .collect();
         let nll = NllRegions::compute(function, &view_borrows);
+        let introductions: HashMap<usize, (usize, usize)> = function.blocks.iter()
+            .flat_map(|block| {
+                block.statements.iter().enumerate()
+                    .filter_map(|(index, statement)| view_borrow_introduced(statement).map(|(view, _)| (view, (block.id, index))))
+            })
+            .collect();
+        let dom = dominators(function);
 
         // Write-through-borrow verification: a statement that writes a slot
         // must not run inside a region covering that slot. The parser
@@ -114,10 +202,16 @@ impl BorrowRegions {
                         ));
                     }
                     // The L1 rule computed here: no write while a view of
-                    // the slot may still be read later on some path.
+                    // the slot may still be read later on some path — for a
+                    // view whose introduction dominates the write. A view
+                    // created after the write looks at the new bytes; a
+                    // write off the introduction's path cannot dangle a read
+                    // the parser's definite-assignment rule already guards.
+                    let mut live_at_write = suffix[index + 1].clone();
+                    live_at_write.extend(&live_out);
                     let covering: Vec<&(usize, usize)> = view_borrows.iter()
                         .filter(|&&(view, base)| base == written
-                            && (suffix[index + 1].contains(&view) || live_out.contains(&view)))
+                            && view_covers_write(view, block.id, index, &introductions, &dom, &live_at_write))
                         .collect();
                     if let Some(&(view, _)) = covering.first() {
                         return Err(format!(
@@ -223,6 +317,45 @@ fn successors(function: &CfgFunction, block_id: usize) -> Vec<usize> {
         CfgTerminator::Switch(_, _, targets) => targets.clone(),
         CfgTerminator::Return(_) | CfgTerminator::Exit(_) | CfgTerminator::Unreachable => Vec::new(),
     }
+}
+
+// The dominators of every block: block b's dominator set is {b} plus the
+// blocks every path from the entry passes through. The iterative algorithm
+// over the CFG's small block counts is plenty. Unreachable blocks keep the
+// full set — nothing dominates them meaningfully and nothing reaches them.
+fn dominators(function: &CfgFunction) -> Vec<std::collections::HashSet<usize>> {
+    let count = function.blocks.len();
+    let mut preds = vec![Vec::new(); count];
+    for block in function.blocks.iter() {
+        for succ in successors(function, block.id) {
+            if succ < count { preds[succ].push(block.id); }
+        }
+    }
+    let full: std::collections::HashSet<usize> = (0..count).collect();
+    let mut dom: Vec<std::collections::HashSet<usize>> = vec![full.clone(); count];
+    if count > 0 {
+        dom[0] = std::collections::HashSet::from([0]);
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for id in 1..count {
+                let reachable_preds: Vec<usize> = preds[id].iter().copied()
+                    .filter(|pred| *pred == 0 || dom[*pred].contains(&0))
+                    .collect();
+                let Some(first) = reachable_preds.first() else { continue };
+                let mut merged = dom[*first].clone();
+                for pred in reachable_preds.iter().skip(1) {
+                    merged = merged.intersection(&dom[*pred]).copied().collect();
+                }
+                merged.insert(id);
+                if merged != dom[id] {
+                    dom[id] = merged;
+                    changed = true;
+                }
+            }
+        }
+    }
+    dom
 }
 
 // A persistent borrow's base variable: loops borrow containers, token loops
