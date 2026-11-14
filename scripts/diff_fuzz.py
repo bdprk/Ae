@@ -107,6 +107,11 @@ class Gen:
         if depth >= 3:
             return [f"print({self.int_expr(vars)});"]
         kind = self.rnd() % 21
+        # With pointers in scope, a third of the draws land on the pointer
+        # kinds (19/20): the fresh surface needs the pressure, and the shapes
+        # are cheap to generate.
+        if pointers and self.rnd() % 3 == 0:
+            kind = self.pick([19, 20])
         if 14 <= kind <= 17 and not docs:
             kind = 14
         if kind == 18 and not vars:
