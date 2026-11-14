@@ -64,3 +64,4 @@
 - 2026-11-14 18:55 M2.10 常量索引界检查消除（ADR-0206）：固定数组的 Type::Array(len) 使常量索引可静态证明——范围内直发 v[n]、范围外保留运行时陷阱（与除零的运行时陷阱先例一致）；向量长度是运行时值不做消除。constant_array_indices 测试钉住零检查/正确运行/OOB 陷阱三面。cargo test 280 全绿，fuzz 40 seeds，verify 41 PASS。
 - 2026-11-14 19:20 M2.11 解释器补齐 split/lines/slice（含 UTF-8 边界检查与空分隔符陷阱；lines 的尾空行/内部空行规则与运行时一致）；探针程序与编译后端输出内容逐行一致（仅 CRLF 差异，差分框架归一化）。cargo test 280 全绿。
 - 2026-11-14 19:35 M2.11 解释器补齐 map 族（Val::Map/MapF + MapPut 语句 + MapNew/Has/Remove/Inc/Keys 表达式 + 字段 Place 解析与闭包捕获回退）；map 探针与编译后端逐行一致；mir_interpreter_agrees_on_maps 测试钉住。cargo test 281 全绿，fuzz 40 seeds，verify 41 PASS。
+- 2026-11-14 19:50 M2.11 解释器补齐结果枚举管线（result_enum_of 按名查 IntResult/FloatResult 的 eid 与 Ok/Err 变体序）：map_get（命中 Ok(value)、未命中 Err("key not found")——与运行时常量逐字一致）与 parse_int（可选符号 + 基 10 数字 + i64 范围，三种错误文案与运行时逐字一致）。results 探针 interp 与编译输出逐行一致；mir_interpreter_agrees_on_result_enums 测试钉住。cargo test 282 全绿，fuzz 40 seeds，verify 41 PASS。
