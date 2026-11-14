@@ -863,6 +863,13 @@ fn eval_stmts(
             // (for, while, for-tokens) catches as its own step.
             Statement::Continue(_) => return Flow::Continue(0),
             Statement::Frees(_) => {}
+            // An `unsafe` block is a scoping container (M2.12 slice 1): the
+            // inner statements evaluate inline and any control flow — a
+            // return, a break, a continue — unwinds through it unchanged.
+            Statement::Unsafe(inner) => {
+                let flow = eval_stmts(env, inner, locals, caller_locals);
+                if !matches!(flow, Flow::Next) { return flow; }
+            }
             _ => return Flow::Trap("unsupported statement in MIR interpreter".to_owned()),
         }
     }

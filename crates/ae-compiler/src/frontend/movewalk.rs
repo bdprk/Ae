@@ -348,6 +348,9 @@ pub(super) fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker)
         // Scope-end releases sit where the storage left scope; the parser
         // makes any later read unrepresentable, so they add nothing here.
         Statement::Frees(_) => None,
+        // An `unsafe` block lowers transparently into the CFG, but the walk
+        // stays complete for any caller that hands it the raw tree.
+        Statement::Unsafe(inner) => walk_statements_reads(inner, moved),
     }
 }
 

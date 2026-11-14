@@ -334,6 +334,7 @@ fn collect_capture_uses(function: &Function) -> (std::collections::HashSet<usize
 fn walk_statements(statements: &[Statement], used: &mut std::collections::HashSet<usize>, mutated: &mut std::collections::HashSet<usize>) {
     for statement in statements {
         match statement {
+            Statement::Unsafe(inner) => walk_statements(inner, used, mutated),
             Statement::Return(expr, _) | Statement::Declare(_, expr) => walk_expr(expr, used, mutated),
             Statement::Array(_, values) => for v in values { walk_expr(v, used, mutated); },
             Statement::Assign(id, expr, _) => { mutated.insert(*id); walk_expr(expr, used, mutated); }

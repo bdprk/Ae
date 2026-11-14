@@ -573,6 +573,17 @@ impl<'a> Parser<'a> {
                     // Every live owned value that is not returned is released.
                     result.push(Statement::Return(value, self.live_owned()));
                 }
+                Kind::Unsafe => {
+                    // M2.12 slice 1 (spec/unsafe.md 3.1): an `unsafe { ... }`
+                    // block at statement position. The block is a scoping
+                    // container for now — no unchecked operation exists yet —
+                    // but it is a distinct statement so the later slices can
+                    // gate raw-pointer dereference and unsafe calls on being
+                    // inside one.
+                    self.pos += 1;
+                    let inner = self.block()?;
+                    result.push(Statement::Unsafe(inner));
+                }
                 Kind::If => result.push(self.if_statement()?),
                 Kind::Match => result.push(self.match_statement()?),
                 Kind::While => {

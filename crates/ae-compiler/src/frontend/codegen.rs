@@ -1193,6 +1193,15 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                 out.push_str("    }\n");
             }
             Statement::Frees(ids) => { for &(id, ty) in ids { release_var(out, id, ty); } }
+            // M2.12 slice 1: the block's inner statements emit inline; the
+            // braces are a scoping container until unchecked operations land.
+            Statement::Unsafe(inner) => {
+                out.push_str("    {
+");
+                emit_statements(inner, out, next);
+                out.push_str("    }
+");
+            }
         }
     }
 }

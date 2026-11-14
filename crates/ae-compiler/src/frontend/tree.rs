@@ -229,6 +229,13 @@ impl<'a> TreePrinter<'a> {
                 let list = owned.iter().map(|(id, t)| format!("v{}: {}", id, t.name())).collect::<Vec<_>>().join(", ");
                 self.line(&format!("release {}", list));
             }
+            Statement::Unsafe(inner) => {
+                self.line("unsafe {");
+                self.indent += 1;
+                for statement in inner { self.statement(statement); }
+                self.indent -= 1;
+                self.line("}");
+            }
         }
     }
 
