@@ -15,11 +15,19 @@ gate generation (a generated program the compiler rejects is a generator bug
 and fails the run), so each seed doubles as a regression test of
 compile-or-die determinism.
 
-Usage: python scripts/diff_fuzz.py [--seeds N] [--start SEED]
+Usage: python scripts/diff_fuzz.py [--seeds N] [--start SEED] [--jobs N]
+                                   [--save-corpus DIR]
+
+Seeds run through a worker pool (--jobs, default min(cpu, 8)); each worker
+owns its files and its own content cache, so parallel seeds never share
+mutable state. Results print as they complete and the summary repeats the
+failed seeds in order. --save-corpus writes every generated program as
+DIR/seed_N.ae — the regression corpus for future compiler changes.
 """
 
 import argparse
 import os
+import time
 import subprocess
 import sys
 import tempfile
@@ -35,6 +43,10 @@ class Gen:
     def __init__(self, seed: int):
         self.state = (seed & 0xFFFFFFFF) or 1
         self.lines: list[str] = []
+        # Bindings are collision-free: every declaration draws its name from
+        # one per-program counter instead of a random suffix, so two
+        # statements can never declare the same variable twice.
+        self.name_seq = 0
 
     def rnd(self) -> int:
         self.state ^= (self.state << 13) & 0xFFFFFFFF
@@ -44,6 +56,10 @@ class Gen:
 
     def pick(self, choices):
         return choices[self.rnd() % len(choices)]
+
+    def fresh(self, prefix: str) -> str:
+        self.name_seq += 1
+        return f"{prefix}{self.name_seq}"
 
     def int_expr(self, vars: list[str], depth: int = 0) -> str:
         if depth >= 3 or self.rnd() % 4 == 0:
@@ -80,7 +96,7 @@ class Gen:
             # indexed store (releasing the old element), and reads. The
             # differential exercises the string-ownership paths — the push
             # consumes, the store releases — against all four modes.
-            name = f"sv{self.rnd() % 1000}"
+            name = self.fresh("sv")
             return [
                 f"var {name} = strvec_new();",
                 f'push({name}, "w{self.rnd() % 100}");',
@@ -96,7 +112,7 @@ class Gen:
             # sort, and reads. The MIR renders all of these as named
             # intrinsics now, so the four-way differential exercises their
             # lowering (index checks, sort determinism) on every seed.
-            name = f"vv{self.rnd() % 1000}"
+            name = self.fresh("vv")
             return [
                 f"var {name} = vec[{self.int_expr(vars)}, {self.int_expr(vars)}];",
                 f"push({name}, {self.int_expr(vars)});",
@@ -112,7 +128,7 @@ class Gen:
             # release is a mixed drop site the MIR backend must keep without
             # proof (M2.4). The name is retired after the branch — it is never
             # read again, which is what keeps the program accepted.
-            name = f"str{self.rnd() % 1000}"
+            name = self.fresh("str")
             a = '"m' + str(self.rnd() % 1000) + '"'
             return [
                 f"var {name} = {a};",
@@ -123,7 +139,7 @@ class Gen:
         if kind == 9:
             # A match over a generated enum value: every variant is covered,
             # arms carry payload bindings, and each arm prints one line.
-            name = f"op{self.rnd() % 1000}"
+            name = self.fresh("op")
             value = self.int_expr(vars)
             shape = self.rnd() % 3
             if shape == 0:
@@ -147,7 +163,7 @@ class Gen:
             # output is deterministic whichever backend emits the loop.
             bound = (self.rnd() % 4) + 1
             skip = self.rnd() % bound
-            name = f"i{self.rnd() % 1000}"
+            name = self.fresh("i")
             return [
                 f"for {name} in 0..{bound} {{",
                 f"    if {name} == {skip} {{ continue; }}",
@@ -157,7 +173,7 @@ class Gen:
             ]
         if kind == 6:
             # A string built from two literals; reads are borrows.
-            name = f"str{self.rnd() % 1000}"
+            name = self.fresh("str")
             a = '"t' + str(self.rnd() % 1000) + '"'
             b = '"u' + str(self.rnd() % 1000) + '"'
             return [
@@ -167,7 +183,7 @@ class Gen:
             ]
         if kind == 7:
             # A vector with pushes and a length read.
-            name = f"vec{self.rnd() % 1000}"
+            name = self.fresh("vec")
             return [
                 f"var {name} = vec[{self.int_expr(vars)}, {self.int_expr(vars)}];",
                 f"push({name}, {self.int_expr(vars)});",
@@ -176,14 +192,14 @@ class Gen:
             ]
         if kind == 8:
             # A struct with two scalar fields, read field-wise.
-            name = f"pt{self.rnd() % 1000}"
+            name = self.fresh("pt")
             return [
                 f"var {name} = Pt {{ a: {self.int_expr(vars)}, b: {self.int_expr(vars)} }};",
                 f"print({name}.a + {name}.b);",
                 *self.statement(vars, depth + 1),
             ]
         if kind == 0:
-            name = f"x{self.rnd() % 100}"
+            name = self.fresh("x")
             return [f"var {name} = {self.int_expr(vars)};"] + self.statement(vars + [name], depth + 1)
         if kind == 1:
             return [
@@ -194,11 +210,11 @@ class Gen:
                 "}",
             ]
         if kind == 2:
-            name = f"n{self.rnd() % 100}"
+            name = self.fresh("n")
             bound = self.int_expr(vars)
             return [
                 f"var {name} = {bound};",
-                f"var i{self.rnd() % 100} = 0;",
+                f"var {self.fresh('i')} = 0;",
                 *self.statement(vars, depth + 1),
             ]
         if kind == 3:
@@ -210,7 +226,7 @@ class Gen:
                 "}",
                 *self.statement(vars, depth + 1),
             ]
-        name = f"s{self.rnd() % 100}"
+        name = self.fresh("s")
         return [
             f"var {name} = {self.int_expr(vars)};",
             f"print({name} > 0 || {name} <= 0);",
@@ -230,18 +246,25 @@ class Gen:
         return "\n".join(lines)
 
 
-def compile_at(source: str, workdir: Path, tag: str, opt: bool, tree: bool = False) -> Path:
+def compile_at(source: str, workdir: Path, tag: str, opt: bool, tree: bool = False,
+               cache_dir: str = "", timeout: int = 120) -> Path:
     src = workdir / f"prog_{tag}.ae"
     src.write_text(source, encoding="utf-8")
     # `build` optimizes by default; --debug compiles the same source at -O0.
     # AE_CODEGEN=tree switches that one compile to the structured tree
     # emitter, so the MIR backend's C is differentiated against it (M2.3).
+    # AE_CACHE points the worker at its own content cache, so parallel
+    # workers never share mutable cache state with each other or with the
+    # user's cache.
     env = {**os.environ, "AE_CODEGEN": "tree"} if tree else None
+    if cache_dir:
+        env = {**(env or os.environ), "AE_CACHE": cache_dir}
     result = subprocess.run(
         [str(EXE), "build", str(src), "-o", str(workdir / f"prog_{tag}")] + ([] if opt else ["--debug"]),
         capture_output=True,
         text=True,
         env=env,
+        timeout=timeout,
     )
     if result.returncode != 0:
         raise RuntimeError(f"compile ({tag}) failed: {result.stderr}")
@@ -257,57 +280,129 @@ def compile_at(source: str, workdir: Path, tag: str, opt: bool, tree: bool = Fal
     return out
 
 
+def run_seed(seed: int, workdir: Path, cache_dir: Path, compile_timeout: int) -> dict:
+    """One seed's four-way differential, fully isolated.
+
+    The seed's files live in their own directory and the compiles run with
+    their own content cache, so parallel workers never share mutable state
+    with each other or with the user's cache. Returns a result dict; never
+    raises (every failure becomes a result).
+    """
+    started = time.perf_counter()
+    result = {"seed": seed, "ok": None, "detail": "", "lines": 0, "source": ""}
+    gen = Gen(seed)
+    source = gen.program()
+    result["source"] = source
+    seed_dir = workdir / f"s{seed}"
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    cache = str(cache_dir)
+    try:
+        debug_bin = compile_at(source, seed_dir, "d", opt=False, cache_dir=cache, timeout=compile_timeout)
+        tree_bin = compile_at(source, seed_dir, "t", opt=False, tree=True, cache_dir=cache, timeout=compile_timeout)
+        release_bin = compile_at(source, seed_dir, "r", opt=True, cache_dir=cache, timeout=compile_timeout)
+        outputs = []
+        for bin_path in (debug_bin, tree_bin, release_bin):
+            run = subprocess.run([str(bin_path)], capture_output=True, text=True, timeout=30)
+            if run.returncode != 0:
+                raise RuntimeError(f"run ({bin_path.name}) failed: {run.stderr}")
+            outputs.append(run.stdout)
+        interp_run = subprocess.run(
+            [str(EXE), "run", str(seed_dir / "prog_d.ae"), "--interp"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if interp_run.returncode != 0:
+            raise RuntimeError(f"run (--interp) failed: {interp_run.stderr}")
+        outputs.append(interp_run.stdout)
+        if len(set(outputs)) != 1:
+            result["ok"] = False
+            result["detail"] = (
+                "OUTPUT MISMATCH" + NL
+                + f"--- debug (mir) ---{NL}{outputs[0]}"
+                + f"{NL}--- debug (tree) ---{NL}{outputs[1]}"
+                + f"{NL}--- release ---{NL}{outputs[2]}"
+                + f"{NL}--- interp ---{NL}{outputs[3]}"
+            )
+        else:
+            result["ok"] = True
+            result["lines"] = len(outputs[0].splitlines())
+    except (RuntimeError, subprocess.TimeoutExpired) as error:
+        result["ok"] = False
+        result["detail"] = str(error)
+    result["seconds"] = time.perf_counter() - started
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", type=int, default=40)
     parser.add_argument("--start", type=int, default=0)
+    parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 2, 8),
+                        help="parallel workers; each gets its own files and content cache")
+    parser.add_argument("--compile-timeout", type=int, default=120,
+                        help="seconds before one compile is abandoned (and fails that seed)")
+    parser.add_argument("--save-corpus", metavar="DIR",
+                        help="write every generated program as DIR/seed_N.ae")
     args = parser.parse_args()
 
     if not EXE.exists():
         print(f"ae binary missing: {EXE}\nbuild it first: cargo build --workspace", file=sys.stderr)
         return 2
 
+    jobs = max(1, args.jobs)
+    started = time.perf_counter()
+    results: dict[int, dict] = {}
     failures = 0
+
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
-        for seed in range(args.start, args.start + args.seeds):
-            gen = Gen(seed)
-            source = gen.program()
-            try:
-                debug_bin = compile_at(source, workdir, "d", opt=False)
-                tree_bin = compile_at(source, workdir, "t", opt=False, tree=True)
-                release_bin = compile_at(source, workdir, "r", opt=True)
-                outputs = []
-                for bin_path in (debug_bin, tree_bin, release_bin):
-                    run = subprocess.run([str(bin_path)], capture_output=True, text=True, timeout=30)
-                    if run.returncode != 0:
-                        raise RuntimeError(f"run ({bin_path.name}) failed: {run.stderr}")
-                    outputs.append(run.stdout)
-                interp_run = subprocess.run(
-                    [str(EXE), "run", str(workdir / "prog_d.ae"), "--interp"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                if interp_run.returncode != 0:
-                    raise RuntimeError(f"run (--interp) failed: {interp_run.stderr}")
-                outputs.append(interp_run.stdout)
-                if len(set(outputs)) != 1:
-                    failures += 1
-                    print(
-                        f"seed {seed}: OUTPUT MISMATCH\n{source}"
-                        f"\n--- debug (mir) ---\n{outputs[0]}"
-                        f"\n--- debug (tree) ---\n{outputs[1]}"
-                        f"\n--- release ---\n{outputs[2]}"
-                        f"\n--- interp ---\n{outputs[3]}"
-                    )
-                else:
-                    print(f"seed {seed}: ok ({len(outputs[0].splitlines())} lines)")
-            except RuntimeError as error:
-                failures += 1
-                print(f"seed {seed}: FAILURE\n{source}\n{error}")
+        cache_dir = workdir / "cache"
+        corpus: dict[int, str] = {}
+        seeds = list(range(args.start, args.start + args.seeds))
 
-    print(f"\n{args.seeds} seeds, {failures} failures")
+        if jobs == 1:
+            for seed in seeds:
+                result = run_seed(seed, workdir, cache_dir, args.compile_timeout)
+                results[seed] = result
+                failures += 0 if result["ok"] else 1
+                mark = "ok" if result["ok"] else "FAILURE"
+                print(f"seed {seed}: {mark} ({result['lines']} lines)", flush=True)
+        else:
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=jobs) as pool:
+                futures = {pool.submit(run_seed, seed, workdir, cache_dir, args.compile_timeout): seed for seed in seeds}
+                for future in futures:
+                    pass
+                from concurrent.futures import as_completed
+                for future in as_completed(futures):
+                    result = future.result()
+                    seed = result["seed"]
+                    results[seed] = result
+                    failures += 0 if result["ok"] else 1
+                    mark = "ok" if result["ok"] else "FAILURE"
+                    print(f"seed {seed}: {mark} ({result['lines']} lines)", flush=True)
+
+        if args.save_corpus:
+            corpus_dir = Path(args.save_corpus)
+            corpus_dir.mkdir(parents=True, exist_ok=True)
+            for seed in seeds:
+                gen = Gen(seed)
+                (corpus_dir / f"seed_{seed}.ae").write_text(gen.program(), encoding="utf-8")
+            print(f"corpus saved: {corpus_dir} ({len(seeds)} programs)")
+
+    elapsed = time.perf_counter() - started
+    order = sorted(results)
+    failed_seeds = [seed for seed in order if not results[seed]["ok"]]
+    for seed in failed_seeds:
+        print("")
+        print(f"seed {seed}: FAILURE")
+        print(results[seed]["source"])
+        print(results[seed]["detail"])
+    rate = len(results) / elapsed if elapsed > 0 else 0.0
+    print(f"\n{len(results)} seeds, {failures} failures, {elapsed:.1f}s ({rate:.2f} seeds/s, {jobs} jobs)")
+    if failed_seeds:
+        print(f"failed seeds: {failed_seeds}")
     return 1 if failures else 0
 
 

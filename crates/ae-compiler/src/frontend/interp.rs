@@ -216,10 +216,7 @@ fn json_skip_ws(bytes: &[u8], mut at: usize) -> usize {
 // The exclusive end of the value whose first byte sits at `at`: a string's
 // closing quote, a container's matching brace/bracket, or a literal's end.
 fn json_value_end(bytes: &[u8], at: usize) -> usize {
-    if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG vend enter at={at} first={:?}", bytes.get(at).map(|b| *b as char)); }
-    let result = json_value_end_inner(bytes, at);
-    if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG vend exit end={result}"); }
-    result
+    json_value_end_inner(bytes, at)
 }
 
 fn json_value_end_inner(bytes: &[u8], mut at: usize) -> usize {
@@ -308,7 +305,6 @@ fn json_decode_string(raw: &str) -> String {
 // The members of the object whose opening brace sits at `at`: each yields
 // (decoded key, value start, value end).
 fn json_object_members(bytes: &[u8], at: usize) -> Vec<(String, usize, usize)> {
-    if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG members enter at={at}"); }
     let mut members = Vec::new();
     let mut cursor = json_skip_ws(bytes, at + 1);
     loop {
@@ -858,7 +854,11 @@ fn eval_stmts(
                 }
             }
             Statement::Break => return Flow::Break,
-            Statement::Continue(depth) => return Flow::Continue(depth.unwrap_or(1).saturating_sub(1)),
+            // A `continue` targets the innermost enclosing loop — the
+            // statement's label is the C backend's naming bookkeeping, not a
+            // targeting depth. The Flow::Continue(0) is what every loop arm
+            // (for, while, for-tokens) catches as its own step.
+            Statement::Continue(_) => return Flow::Continue(0),
             Statement::Frees(_) => {}
             _ => return Flow::Trap("unsupported statement in MIR interpreter".to_owned()),
         }
@@ -1270,12 +1270,8 @@ fn eval_expr(
         Expr::TryWriteFile(path, text, ty, ..) => {
             let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
             let t = path_operand(eval_expr(env, text, locals, caller_locals, false))?;
-            if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG try_write p={p} bytes={}", t.len()); }
             match std::fs::write(&p, &t) {
-                Err(error) => {
-                    if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG try_write error: {error}"); }
-                    return result_value(env, ty, false, vec![Val::Str(format!("cannot write file: {error}"))]);
-                }
+                Err(error) => return result_value(env, ty, false, vec![Val::Str(format!("cannot write file: {error}"))]),
                 Ok(()) => result_value(env, ty, true, vec![Val::Int(t.len() as i64)]),
             }
         }
@@ -1895,7 +1891,6 @@ fn invoke_call(
             Argument::View(e) => eval_expr(env, e, locals, caller_locals, false)?,
             Argument::Borrow(slot, _) => {
                 if matches!(param_ty, Type::StructMut(_)) {
-                    if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG borrow param={param_id} slot={slot} local_val={:?}", locals.get(slot).map(|v| format!("{v:?}").chars().take(40).collect::<String>())); }
                     if let Some(Val::Ref(target)) = locals.get(slot).cloned() {
                         // The reference's target lives in the frame that
                         // handed the borrow down: the caller's own locals,
@@ -1906,7 +1901,6 @@ fn invoke_call(
                         let value = caller_locals.as_ref()
                             .and_then(|caller| caller.get(&target).cloned())
                             .ok_or_else(|| Flow::Trap("internal: dangling reference in interpreter".to_owned()))?;
-                        if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG copy-in param={param_id} target={target} value={value:?}"); }
                         copy_backs.push((*param_id, target));
                         value
                     } else {
