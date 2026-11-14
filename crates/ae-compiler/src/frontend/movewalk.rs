@@ -171,6 +171,35 @@ pub(super) struct MoveEffects {
     pub(super) revived: Vec<usize>,
 }
 
+// Records every slot a walk READS, in evaluation order — the M2.5 L1
+// groundwork the NLL borrow regions need: a view's borrow region dies after
+// its last read, and last reads are exactly the reads this tracker collects.
+struct Reads(std::cell::RefCell<Vec<usize>>);
+
+impl MoveTracker for Reads {
+    fn read(&mut self, id: usize) -> Option<usize> { self.0.borrow_mut().push(id); None }
+    fn consume(&mut self, id: usize) -> Option<usize> { self.0.borrow_mut().push(id); None }
+    fn mark(&mut self, id: usize) { self.0.borrow_mut().push(id); }
+    fn revive(&mut self, _id: usize) {}
+}
+
+// The slots one statement reads, in evaluation order. A by-value argument of
+// an owned type appears as a read (consume) — the caller decides whether a
+// read counts as a use for its analysis.
+pub(super) fn statement_reads(statement: &Statement) -> Vec<usize> {
+    let mut tracker = Reads(std::cell::RefCell::new(Vec::new()));
+    let _ = walk_statement(statement, &mut tracker);
+    tracker.0.into_inner()
+}
+
+// The slots one expression reads, in evaluation order — for terminators,
+// whose shapes are expressions the statement walk does not cover.
+pub(super) fn expr_reads(expr: &Expr) -> Vec<usize> {
+    let mut tracker = Reads(std::cell::RefCell::new(Vec::new()));
+    let _ = walk_expr(expr, &mut tracker);
+    tracker.0.into_inner()
+}
+
 // Collects the events instead of checking them.
 struct Recorded(MoveEffects);
 
