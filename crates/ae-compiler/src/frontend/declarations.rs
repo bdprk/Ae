@@ -153,20 +153,32 @@ impl Parser<'_> {
             // parsed literally, and anything but repr(C) is rejected by
             // name so a typo cannot silently mean "no attribute".
             let mut repr_c = false;
+            let mut no_mangle = false;
             if *self.current() == Kind::Hash {
                 self.pos += 1;
                 self.take(Kind::LBracket)?;
                 let attr = self.identifier()?;
-                if attr != "repr" { return Err(self.fail(&format!("unknown attribute '{attr}'; the language has '#[repr(C)]' only"))); }
-                self.take(Kind::LParen)?;
-                let inner = self.identifier()?;
-                if inner != "C" { return Err(self.fail(&format!("only '#[repr(C)]' is supported, found '#[repr({inner})]'"))); }
-                self.take(Kind::RParen)?;
-                self.take(Kind::RBracket)?;
-                if *self.current() != Kind::Struct {
-                    return Err(self.fail("'#[repr(C)]' applies to a struct declaration"));
+                match attr.as_str() {
+                    "repr" => {
+                        self.take(Kind::LParen)?;
+                        let inner = self.identifier()?;
+                        if inner != "C" { return Err(self.fail(&format!("only '#[repr(C)]' is supported, found '#[repr({inner})]'"))); }
+                        self.take(Kind::RParen)?;
+                        self.take(Kind::RBracket)?;
+                        if *self.current() != Kind::Struct {
+                            return Err(self.fail("'#[repr(C)]' applies to a struct declaration"));
+                        }
+                        repr_c = true;
+                    }
+                    "no_mangle" => {
+                        self.take(Kind::RBracket)?;
+                        if *self.current() != Kind::Extern {
+                            return Err(self.fail("'#[no_mangle]' applies to an 'extern \"C\" fn' definition"));
+                        }
+                        no_mangle = true;
+                    }
+                    other => return Err(self.fail(&format!("unknown attribute '{other}'; the language has '#[repr(C)]' and '#[no_mangle]' only"))),
                 }
-                repr_c = true;
             }
             if *self.current() == Kind::Struct { self.parse_struct_def(public, repr_c)?; continue; }
             if *self.current() == Kind::Enum { self.parse_enum_def(public)?; continue; }
@@ -218,12 +230,35 @@ impl Parser<'_> {
                 let id = self.generics.next_fn_id;
                 self.generics.next_fn_id += 1;
                 *next_id = self.generics.next_fn_id;
-                let signature = Signature { id, params: types.clone(), ret: ret.clone(), file: self.file.clone(), public, extern_c: true };
+                // An exposure's body is safe AE code (spec/unsafe.md 4.2):
+                // calls from AE are safe — extern_c stays false. The C name
+                // rides the exposure registry, not this flag.
+                let signature = if no_mangle {
+                    Signature { id, params: types.clone(), ret: ret.clone(), file: self.file.clone(), public, extern_c: false }
+                } else {
+                    Signature { id, params: types.clone(), ret: ret.clone(), file: self.file.clone(), public, extern_c: true }
+                };
                 if self.functions.insert(name.clone(), signature).is_some() {
                     return Err(self.fail(&format!("duplicate function '{name}' (already defined in an imported file)")));
                 }
                 super::register_extern(id, name.clone(), types, ret);
-                self.take(Kind::Semi)?;
+                if no_mangle {
+                    // An exposure (M2.12 U7): the body parses in the body
+                    // pass, under the id this signature registered. The C
+                    // name IS the function's emitted name. A bodyless
+                    // declaration has nothing to expose — its symbol is the
+                    // C name already — so the attribute is rejected.
+                    if *self.current() != Kind::LBrace {
+                        return Err(self.error_at(sig_offset, "'#[no_mangle]' applies to an 'extern \"C\" fn' definition; a declaration's symbol is its own name already"));
+                    }
+                    super::register_exposure(id, name.clone());
+                    // The id joins id_order at this position: the body pass
+                    // lines up result.len() against it (main included).
+                    self.id_order.push(id);
+                    self.skip_balanced_braces()?;
+                } else {
+                    self.take(Kind::Semi)?;
+                }
                 continue;
             }
             // `unsafe fn` (M2.12 slice 5): the body parses like any other
@@ -829,18 +864,38 @@ impl Parser<'_> {
             // The attribute was validated (and its struct registered) by
             // the signature pass; this pass just steps over the tokens.
             if *self.current() == Kind::Hash {
-                self.pos += 7; // #[repr(C)]
+                // #[repr(C)] is 7 tokens, #[no_mangle] is 4: skip to the
+                // closing bracket rather than counting.
+                while *self.current() != Kind::RBracket {
+                    if *self.current() == Kind::Eof { return Err(self.fail("expected ']' to close the attribute")); }
+                    self.pos += 1;
+                }
+                self.pos += 1;
             }
             if *self.current() == Kind::Struct { self.skip_struct_def(); continue; }
             if *self.current() == Kind::Enum { self.skip_enum_def(); continue; }
             if *self.current() == Kind::Trait { self.skip_trait_def()?; continue; }
             if *self.current() == Kind::Impl { self.parse_impl_bodies(&mut result)?; continue; }
             if *self.current() == Kind::Extern {
-                // The signature pass registered the extern (M2.12 slice 4);
-                // this pass skips its tokens — the declaration has no body,
-                // only the trailing semicolon.
+                // The signature pass registered the extern (M2.12 slice 4).
+                // A declaration has no body — skip to its semicolon. An
+                // exposure (`#[no_mangle]`, U7) has a body: it parses
+                // exactly like a file function, under the id the signature
+                // pass registered, so the emitter places it under the C name.
+                self.pos += 3; // Extern, the ABI string, Fn
+                let exposure_name = self.identifier()?;
+                // The signature pass decided the shape: an exposure
+                // (extern_c false — its body is safe AE code) parses
+                // its body here; a declaration skips to its semicolon. The
+                // body's own semicolons make a blind skip wrong.
+                let exposed = self.functions.get(&exposure_name).map(|sig| !sig.extern_c).unwrap_or(false);
+                if exposed {
+                    let id = self.id_order[result.len()];
+                    result.push(self.function_rest(false, id)?);
+                    continue;
+                }
                 while *self.current() != Kind::Semi {
-                    if *self.current() == Kind::Eof { return Err(self.fail("expected ';' before end of file after an extern declaration")); }
+                    if *self.current() == Kind::Eof { return Err(self.fail("expected ';' before the next declaration")); }
                     self.pos += 1;
                 }
                 self.pos += 1;

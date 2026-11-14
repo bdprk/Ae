@@ -545,7 +545,7 @@ pub(super) fn emit_program(program: Program) -> Result<GeneratedC, String> {
         let params_c = if params.is_empty() {
             "void".to_owned()
         } else {
-            params.iter().map(|ty| c_type(*ty, 0, true)).collect::<Vec<_>>().join(", ")
+            params.iter().enumerate().map(|(index, ty)| c_type(*ty, index, true)).collect::<Vec<_>>().join(", ")
         };
         out.push_str(&format!("{} {}({});
 ", c_return(ret), c_name, params_c));
@@ -561,7 +561,13 @@ pub(super) fn emit_program(program: Program) -> Result<GeneratedC, String> {
         if function.is_main { continue; }
         let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, true)).collect::<Vec<_>>().join(", ") };
         let ret = c_return(function.returns);
-        out.push_str(&format!("\nstatic {ret} ae_fn_{}({params}) {{\n", function.id));
+        let signature = match crate::frontend::exposure_name(function.id) {
+            // A `#[no_mangle]` exposure keeps its own name with external
+            // linkage (M2.12 U7); the rest stay internal to the unit.
+            Some(name) => format!("{ret} {name}({params})"),
+            None => format!("static {ret} ae_fn_{}({params})", function.id),
+        };
+        out.push_str(&format!("\n{signature} {{\n"));
         emit_body(function, &mut out);
         // Defensive backstop: even a future control-flow analysis bug must not
         // produce a C function that falls through without returning a value.

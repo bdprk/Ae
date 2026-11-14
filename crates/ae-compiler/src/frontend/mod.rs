@@ -52,6 +52,19 @@ fn extern_name(id: usize) -> Option<String> {
 fn extern_declarations() -> Vec<(String, Vec<Type>, Type)> {
     EXTERN_NAMES.with(|map| map.borrow().values().cloned().collect())
 }
+// The `#[no_mangle]` exposures (M2.12 U7): an `extern "C" fn` WITH a body,
+// emitted under its own name with external linkage so a C symbol can call
+// it. The registry maps the AE function id to the C symbol; the call
+// sites and the emitter both read it.
+thread_local! {
+    static EXPOSURE_NAMES: std::cell::RefCell<HashMap<usize, String>> = std::cell::RefCell::new(HashMap::new());
+}
+pub(super) fn register_exposure(id: usize, c_name: String) {
+    EXPOSURE_NAMES.with(|map| { map.borrow_mut().insert(id, c_name); });
+}
+pub(super) fn exposure_name(id: usize) -> Option<String> {
+    EXPOSURE_NAMES.with(|map| map.borrow().get(&id).cloned())
+}
 // The unsafe-fn registry (M2.12 slice 5): an `unsafe fn` is a normal
 // function in codegen — its call sites are what require `unsafe`.
 thread_local! {

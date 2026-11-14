@@ -1815,3 +1815,15 @@ static AE_COMMAND_RESULT ae_run_command(const char *program, const ae_strvec *ar
     return out;
 }
 #endif
+// ---- M2.12 U7 exposure trampoline ------------------------------------------
+// The corpus test exposes `test_add` with #[no_mangle]; this trampoline
+// calls it the way a real C caller would — through a foreign declaration
+// of a symbol defined later in the same translation unit. Scalars only:
+// a struct-parameter trampoline needs the user struct's type, which the
+// runtime text cannot name (it precedes the user section).
+// Static: the pruner keeps it only when a program actually calls it, so
+// the `test_add` reference ships with the corpus test alone.
+static int64_t ae_exposure_trampoline(int64_t a, int64_t b) {
+    extern int64_t test_add(int64_t a, int64_t b);
+    return test_add(a, b);
+}
