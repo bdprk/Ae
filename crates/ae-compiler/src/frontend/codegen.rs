@@ -1047,7 +1047,11 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                     _ => String::new(),
                 };
                 out.push_str(&release_old);
-                let value = emit_expr(value, out, next, false);
+                // The value emits in a moving context: an owned variable
+                // on the right side is consumed and zeroed here, so the
+                // field owns the bytes and the source does not (no
+                // aliasing, no double release at the scope ends).
+                let value = emit_expr(value, out, next, true);
                 out.push_str(&format!("    v{id}{}{} = {};\n", dot, fname, value.text));
                 null_moves(out, &value.moves);
             }
