@@ -26,6 +26,7 @@
 - [x] 14. emit-mir 打印 releases 精化结果（Frees 专用渲染 + drops pass 双视图同步 + 字面量类型修正），证据链闭合
 - [x] 15. emit-mir 具名 intrinsic 全量渲染：容器/文件/JSON/数学/路径等 ~60 种语句与表达式带操作数显示（push/store/sort/index/join/parse_int/math...），浮点与 bool 格式修正
 - [x] 16. drops pass 精化 `?` 错误路径 release（propagate 先应用 move 再重写列表），probe 用例 6 个 release 减到 2 个
+- [x] 17. 修复 movewalk `?` 截断 bug（二元/多操作数表达式第二个操作数起从未 walk）：recorder 完整记录 move，alloc workload 恢复 elision；Checked 与 parser agreement 经全套件确认
 
 ## 日志
 - 2026-11-13 15:57 初始化 AGENT_PROGRESS.md，定位到 4 个失败的 execution 测试均由 enum_generic_impls.ae 的 receiver move 引起。
@@ -44,3 +45,4 @@
 - 2026-11-14 13:50 emit-mir 补上 releases 渲染：Frees 从 stmt() 占位符改为 releases(v0 (string), ...) 专用 intrinsic；drops pass 同步改写 statements 与 bindings 两个视图（此前只改 statements，打印图会显示 C 里不存在的 release）；expr_type 给字符串形状表达式标注真实类型。新增 emit_mir_shows_which_releases_survive_drop_elaboration，ADR-0204 证据更新，cargo test 274 全绿。
 - 2026-11-14 14:20 emit-mir 具名渲染全量化：语句 catch-all 从裸 stmt() 改为带 slot+操作数的具名 intrinsic（push/pop/store/array/sort/reverse/put/assert/bind_payload/propagate/break/continue/print），表达式 catch-all 覆盖全部内建（index/join/split/slice_view/tokens/len/contains/parse_int/trim/math/文件与 JSON 族/map 族/时间/env/neg/not...），未处理形状保留裸占位符作为 tripwire；Float 操作数用 Debug 格式保住小数点；sort/reverse 的 bool 实为 strings 标志改编码进名字；math 调用打印源名与 f64 类型；Result 型内建 temp 标注真实枚举类型。cargo test 274 全绿，verify_generated_c 41 PASS。
 - 2026-11-14 14:45 drops pass 覆盖 `?` 传播：rewrite 对 Propagate 先应用值表达式的 move 效果、再按该状态重写错误路径 release 列表（错误路径直接退出函数）、最后应用 Ok 绑定的 revive；语句本体恒保留。probe 用例（concat 消耗 s 后 `?`）错误路径与 scope-end 各消 1 个死 release，MIR 后端 2 个 release 对 tree 后端 6 个；新增 mir_drop_elision_thins_propagate_error_path_releases，ADR-0204 证据更新，cargo test 275 全绿。
+- 2026-11-14 15:15 修复 movewalk 长期潜伏的 `?` 截断：普通读取返回 None 被当作提前退出，二元表达式/多参数 Call/Store/树形控制语句的后续子树从未被 walk。改为 if-let 模式（违例传播、正常继续）。recorder 现在完整记录 Plus 链与多参数调用中的 move（alloc workload main: kept=1 elided=2）；同时修复 propagate rewrite 污染继续路径状态的 bug（错误路径 release 用状态副本重写），该 bug 由 mir_drop_elision_thins_propagate_error_path_releases 测试当场抓住。cargo test 275 全绿，fuzz 40 seeds 0 failures，verify_generated_c 41 PASS。

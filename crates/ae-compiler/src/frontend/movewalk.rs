@@ -183,7 +183,7 @@ impl MoveTracker for Recorded {
     fn mark(&mut self, id: usize) {
         if !self.0.moved.contains(&id) { self.0.moved.push(id); }
     }
-    fn revive(&mut self, id: usize) { if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG recorder revive v{id}"); } self.0.revived.push(id); }
+    fn revive(&mut self, id: usize) { self.0.revived.push(id); }
 }
 
 // The slots a statement consumes by value and the slots it re-initializes.
@@ -221,11 +221,17 @@ fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker) -> Option<
             moved.revive(*id);
             None
         }
-        Statement::Store(_, _, index, value, ..) => { walk_expr(index, moved)?; walk_expr(value, moved)?; None }
+        Statement::Store(_, _, index, value, ..) => {
+            if let Some(violation) = walk_expr(index, moved) { return Some(violation); }
+            if let Some(violation) = walk_expr(value, moved) { return Some(violation); }
+            None
+        }
         Statement::VecPush(_, value, ..) | Statement::StrVecPush(_, value, .., _) | Statement::VecFPush(_, value, ..) => walk_expr(value, moved),
         Statement::Sort(..) | Statement::Reverse(..) | Statement::VecPop(..) | Statement::StrVecPop(..) | Statement::VecFPop(..) => None,
         Statement::VecStore(_, index, value, ..) | Statement::StrVecStore(_, index, value, .., _) | Statement::VecFStore(_, index, value, ..) => {
-            walk_expr(index, moved)?; walk_expr(value, moved)?; None
+            if let Some(violation) = walk_expr(index, moved) { return Some(violation); }
+            if let Some(violation) = walk_expr(value, moved) { return Some(violation); }
+            None
         }
         Statement::FieldStore(_, _, _, value, _) => walk_expr(value, moved),
         Statement::Print(printed) => match printed {
@@ -233,23 +239,34 @@ fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker) -> Option<
             Printed::Text(_) => None,
         },
         Statement::Assert(cond, ..) => walk_expr(cond, moved),
-        Statement::If(cond, yes, no) => { walk_expr(cond, moved)?; walk_statements_reads(yes, moved)?; walk_statements_reads(no, moved)?; None }
-        Statement::While(cond, body) => { walk_expr(cond, moved)?; walk_statements_reads(body, moved)?; None }
+        Statement::If(cond, yes, no) => {
+            if let Some(violation) = walk_expr(cond, moved) { return Some(violation); }
+            if let Some(violation) = walk_statements_reads(yes, moved) { return Some(violation); }
+            if let Some(violation) = walk_statements_reads(no, moved) { return Some(violation); }
+            None
+        }
+        Statement::While(cond, body) => {
+            if let Some(violation) = walk_expr(cond, moved) { return Some(violation); }
+            if let Some(violation) = walk_statements_reads(body, moved) { return Some(violation); }
+            None
+        }
         // Loop containers and match subjects are borrowed for their whole
         // statement: the parser registers a borrow, not a move.
         Statement::For(_, container, body, ..) => {
             if let Some(violation) = moved.read(*container) { return Some(violation); }
-            walk_statements_reads(body, moved)?;
+            if let Some(violation) = walk_statements_reads(body, moved) { return Some(violation); }
             None
         }
         Statement::ForTokens(_, base, body, ..) => {
             if let Some(violation) = moved.read(*base) { return Some(violation); }
-            walk_statements_reads(body, moved)?;
+            if let Some(violation) = walk_statements_reads(body, moved) { return Some(violation); }
             None
         }
         Statement::Match(subject, _, arms) => {
             if let Some(violation) = moved.read(*subject) { return Some(violation); }
-            for arm in arms { walk_statements_reads(&arm.body, moved)?; }
+            for arm in arms {
+                if let Some(violation) = walk_statements_reads(&arm.body, moved) { return Some(violation); }
+            }
             None
         }
         // CFG-only (M2.3): a payload binding reads the subject it binds from,
@@ -283,8 +300,10 @@ fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker) -> Option<
 // checks reads and records moves in the same state the block walk carries —
 // a simplification the fixed point corrects for loops.
 fn walk_statements_reads(statements: &[Statement], moved: &mut dyn MoveTracker) -> Option<usize> {
+    // A statement without a violation returns None — the normal case — so
+    // the loop must keep walking, not `?`-return at the first one.
     for statement in statements {
-        walk_statement(statement, moved)?;
+        if let Some(violation) = walk_statement(statement, moved) { return Some(violation); }
     }
     None
 }
@@ -305,7 +324,7 @@ fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usize> {
                         // A bare owned variable as a by-value argument moves.
                         if let Some(violation) = walk_moving_expr(e, moved) { return Some(violation); }
                     }
-                    Argument::View(e) => { walk_expr(e, moved)?; }
+                    Argument::View(e) => { if let Some(violation) = walk_expr(e, moved) { return Some(violation); } }
                     Argument::Borrow(id, _) => {
                         if let Some(violation) = moved.read(*id) { return Some(violation); }
                     }
@@ -315,8 +334,13 @@ fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usize> {
             None
         }
         Expr::Binary(a, op, b, ..) => {
-            walk_expr(a, moved)?;
-            walk_expr(b, moved)?;
+            // Both operands walk even after a violation: a plain read
+            // returns None, and `?` here would abandon the walk before the
+            // second operand — the recorder would miss every move to the
+            // right of the first read, and the verifier's flow states would
+            // stop there too.
+            let left = walk_expr(a, moved);
+            let right = walk_expr(b, moved);
             // `+` on strings consumes owned string operands.
             if *op == Kind::Plus {
                 for side in [a, b] {
@@ -327,7 +351,7 @@ fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usize> {
                     }
                 }
             }
-            None
+            left.or(right)
         }
         Expr::StructLit(_, values) => {
             for v in values {
@@ -352,9 +376,15 @@ fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usize> {
         Expr::Len(a, ..) | Expr::Neg(a, ..) | Expr::Not(a) | Expr::ReadFile(a, ..) | Expr::Bytes(a, ..) | Expr::Trim(a, ..) | Expr::Lines(a, ..) | Expr::Utf8Len(a, ..) | Expr::ToString(a, ..) | Expr::FloatToString(a, ..) | Expr::ToF64(a, ..) | Expr::ParseInt(a, ..) | Expr::TryReadFile(a, ..) | Expr::TryListDir(a, ..) | Expr::PathExists(a, ..) | Expr::PathIsDir(a, ..) | Expr::PathName(a, ..) | Expr::PathParent(a, ..) | Expr::TryFileInfo(a, ..) | Expr::TryRemoveFile(a, ..) | Expr::TryRemoveDir(a, ..) | Expr::TryCreateDir(a, ..) | Expr::SetCwd(a, ..) | Expr::Env(a, ..) | Expr::ToI64(a, ..) => walk_expr(a, moved),
         Expr::Tokens(_, _, sep, ..) => walk_expr(sep, moved),
         Expr::StrEq(a, b, _) | Expr::Contains(a, b, ..) | Expr::Split(a, b, ..) | Expr::WriteFile(a, b, ..) | Expr::Slice(a, b, ..) | Expr::TryWriteFile(a, b, ..) | Expr::TryCopyFile(a, b, ..) | Expr::TryRenamePath(a, b, ..) | Expr::PathJoin(a, b, ..) | Expr::StartsWith(a, b) | Expr::EndsWith(a, b) | Expr::CountLinesWith(a, b, ..) | Expr::Find(a, b, ..) | Expr::JsonGet(a, b, ..) | Expr::JsonInt(a, b, ..) | Expr::JsonBool(a, b, ..) | Expr::JsonLen(a, b, ..) | Expr::TryAppendFile(a, b, ..) | Expr::Utf8Prefix(a, b, ..) => {
-            walk_expr(a, moved)?; walk_expr(b, moved)?; None
+            let left = walk_expr(a, moved);
+            let right = walk_expr(b, moved);
+            left.or(right)
         }
-        Expr::SliceView(_, _, start, end, ..) => { walk_expr(start, moved)?; walk_expr(end, moved)?; None }
+        Expr::SliceView(_, _, start, end, ..) => {
+            let left = walk_expr(start, moved);
+            let right = walk_expr(end, moved);
+            left.or(right)
+        }
         Expr::Join(_, sep, ..) => walk_expr(sep, moved),
         Expr::MapGet(_, key, ..) | Expr::MapHas(_, key, ..) | Expr::MapRemove(_, key, ..) => walk_expr(key, moved),
         Expr::MapInc(_, key, delta, ..) => { walk_expr(key, moved)?; walk_expr(delta, moved)?; None }
