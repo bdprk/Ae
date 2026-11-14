@@ -3717,6 +3717,53 @@ fn unsafe_fn_doc_comment_is_enforced_and_a_documented_one_runs() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn no_mangle_exposure_runs_bidirectionally_and_stays_c_visible() {
+    // M2.12 U7: `#[no_mangle]` on an `extern "C" fn` with a body keeps
+    // the symbol C-visible with external linkage. The runtime's
+    // trampoline calls it exactly as a real C caller would — through a
+    // foreign declaration of a symbol defined later in the same unit —
+    // and main calls it directly as AE code.
+    let dir = unique_temp_dir("no_mangle");
+    let source = dir.join("exposure.ae");
+    fs::write(&source, "#[no_mangle]\nextern \"C\" fn test_add(a: i64, b: i64) -> i64 { return a + b; }\nextern \"C\" fn ae_exposure_trampoline(a: i64, b: i64) -> i64;\nfn main() {\n    unsafe { print(ae_exposure_trampoline(20, 22)); }\n    print(test_add(1, 2));\n}").unwrap();
+    let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).output().unwrap();
+    assert!(run.status.success(), "run failed: {}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "42\n3\n");
+
+    // The emitted C: the exposure under its own name, external linkage,
+    // and the prototypes both declarations need.
+    let emitted = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-c").arg(&source).output().unwrap();
+    assert!(emitted.status.success(), "{}", String::from_utf8_lossy(&emitted.stderr));
+    let c = String::from_utf8_lossy(&emitted.stdout).replace("\r\n", "\n");
+    assert!(c.contains("int64_t test_add(int64_t v0, int64_t v1) {"), "the exposure definition is non-static: {c}");
+    assert!(c.contains("int64_t ae_exposure_trampoline(int64_t v0, int64_t v1);"), "the declaration prototype: {c}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn no_mangle_attribute_misuse_is_rejected() {
+    // The attribute belongs on an `extern "C" fn` definition: on any
+    // other item (or on a bodyless declaration, whose symbol name is
+    // already the C name) it is rejected by name.
+    let cases = [
+        ("#[no_mangle]\nfn plain() { }\nfn main() {}", "applies to an"),
+        ("#[no_mangle]\nextern \"C\" fn probe(x: i64) -> i64;\nfn main() {}", "applies to an"),
+        ("#[repr(C)]\nextern \"C\" fn probe(x: i64) -> i64;\nfn main() {}", "applies to a struct"),
+        ("#[missing]\nfn main() {}", "unknown attribute"),
+    ];
+    let dir = unique_temp_dir("no_mangle_guards");
+    for (index, (source, expected)) in cases.iter().enumerate() {
+        let path = dir.join(format!("case{index}.ae"));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        assert!(!output.status.success(), "accepted: {source}");
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(err.contains(expected), "{source}: {err}");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
 fn mir_drop_elision_thins_propagate_error_path_releases() {
     // M2.4: a `?`'s releases ride the error path, which exits the function,
     // so the state to read them with is the one after the value evaluated.
