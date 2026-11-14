@@ -282,6 +282,23 @@ fn rewrite(statement: Statement, state: &mut State, stats: &mut DropStats, funct
         }
         Statement::Return(expr, list) => Some(Statement::Return(expr, rewrite_list(list, state, stats, function, block))),
         Statement::Exit(code, list) => Some(Statement::Exit(code, rewrite_list(list, state, stats, function, block))),
+        // A `?`'s releases ride the error path, which exits the function, so
+        // the state to read them with is the one after the value evaluated —
+        // its moves first, the releases, then the Ok binding written after.
+        prop @ Statement::Propagate(..) => {
+            let effects = statement_move_effects(&prop);
+            for id in effects.moved {
+                state.insert(id, DropState::Dropped);
+            }
+            let Statement::Propagate(expr, ty, fields, binding, releases) = prop else { unreachable!("matched above") };
+            let kept = rewrite_list(releases, state, stats, function, block);
+            for id in effects.revived {
+                state.insert(id, DropState::Live);
+            }
+            // The statement itself always survives: it still unwraps and
+            // returns on the error path; only its release list thins.
+            Some(Statement::Propagate(expr, ty, fields, binding, kept))
+        }
         other => {
             apply_effects(&other, state);
             Some(other)

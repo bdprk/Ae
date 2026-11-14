@@ -423,8 +423,7 @@ fn expr_type(expr: &Expr) -> Type {
         Expr::MapNew(..) => Type::Map,
         // Math calls return f64 by definition (ADR-60).
         Expr::MathCall(..) => Type::F64,
-        Expr::BoolLit(..) | Expr::StrEq(..) | Expr::Contains(..) | Expr::Not(..)
-        | Expr::PathExists(..) | Expr::PathIsDir(..) | Expr::StartsWith(..) | Expr::EndsWith(..) | Expr::JsonHas(..) => Type::Bool,
+        Expr::Not(..) | Expr::PathExists(..) | Expr::PathIsDir(..) | Expr::StartsWith(..) | Expr::EndsWith(..) | Expr::JsonHas(..) => Type::Bool,
         // Result-returning built-ins carry their result type; the printed
         // temp names the enum the program must match on.
         Expr::TryReadFile(_, ty, ..) | Expr::TryListDir(_, ty, ..) | Expr::ParseInt(_, ty, ..)

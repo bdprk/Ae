@@ -3409,6 +3409,49 @@ fn emit_mir_shows_which_releases_survive_drop_elaboration() {
 }
 
 #[test]
+fn mir_drop_elision_thins_propagate_error_path_releases() {
+    // M2.4: a `?`'s releases ride the error path, which exits the function,
+    // so the state to read them with is the one after the value evaluated.
+    // A slot the program already moved out of before the `?` reads as
+    // dropped there, and its error-path release is elided; the binding the
+    // program still holds keeps its release, as does the scope end.
+    let dir = unique_temp_dir("drop_propagate");
+    let source = dir.join("propagate.ae");
+    fs::write(&source, "fn try_val(fail: bool) -> IntResult {\n    if fail { return IntResult::Err(\"x\"); }\n    return IntResult::Ok(1);\n}\nfn probe(fail: bool) -> IntResult {\n    let s = \"hello\";\n    let t = s + \"!\";\n    let n = try_val(fail)?;\n    return IntResult::Ok(n);\n}\nfn main() {\n    let a = probe(false);\n    let b = probe(true);\n    match a { IntResult::Ok(x) => { print(x); } IntResult::Err(_) => { print(0 - 1); } }\n    match b { IntResult::Ok(x) => { print(x); } IntResult::Err(_) => { print(0 - 1); } }\n}\n").unwrap();
+    let emit = |mode: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+            .args(["emit-c", source.to_str().unwrap()])
+            .env("AE_CODEGEN", mode)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{mode} failed: {}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
+    };
+    let mir = emit("mir");
+    let tree = emit("tree");
+    let releases_in_probe = |text: &str| -> usize {
+        // The definition, not the prototype: a prototype ends in `);`.
+        let body = text.split("ae_fn_1(bool v0) {").nth(1).unwrap_or("");
+        let end = body.find("\nstatic ").map(|n| body[..n].len()).unwrap_or(body.len());
+        body[..end].matches("ae_str_release(&v").count()
+    };
+    // Two survive: `t` on the error path and `t` at the scope end. Elided:
+    // `s` twice — the concat consumed it before the `?` and before the end.
+    assert_eq!(releases_in_probe(&mir), 2, "the moved slot's releases are elided from both paths: {mir}");
+    assert!(releases_in_probe(&tree) > 2, "the tree backend keeps the conservative releases: {tree}");
+    let run = |mode: &str| Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", source.to_str().unwrap()])
+        .env("AE_CODEGEN", mode)
+        .output()
+        .unwrap();
+    let mir_out = String::from_utf8_lossy(&run("mir").stdout).replace("\r\n", "\n");
+    let tree_out = String::from_utf8_lossy(&run("tree").stdout).replace("\r\n", "\n");
+    assert_eq!(mir_out, tree_out, "backends disagree");
+    assert_eq!(mir_out, "1\n-1\n");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn emit_mir_lowers_closures_and_aggregates() {
     let dir = std::env::temp_dir();
     let path = dir.join(format!("ae-emit-mir-closures-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
