@@ -425,7 +425,11 @@ impl<'a> Parser<'a> {
                                 return Err(self.fail("map fields cannot be written through a '&mut' borrow yet; copy the map out with a by-value receiver instead"));
                             }
                             self.take(Kind::Equal)?;
-                            let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
+                            // An owned field write consumes a string/vec
+                            // right side — the field owns the bytes after
+                            // the write, so the source must forfeit them
+                            // (the same rule the scalar assignment uses).
+                            let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
                             if value_ty != fty { return Err(self.fail(&format!("field '{}' must be {}", fname, fty.name()))); }
                             result.push(Statement::FieldStore(id, fname, fty, value, true));
                             continue;
@@ -470,7 +474,9 @@ impl<'a> Parser<'a> {
                                 self.deferred_write_conflicts.push((id, name_offset, name.clone(), "modify", Some(fname.clone())));
                             }
                             self.take(Kind::Equal)?;
-                            let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
+                            // Same consuming rule as the `&mut` write: the
+                            // field owns the bytes afterwards.
+                            let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
                             if value_ty != fty { return Err(self.fail(&format!("field '{}' must be {}", fname, fty.name()))); }
                             result.push(Statement::FieldStore(id, fname, fty, value, false));
                             continue;
