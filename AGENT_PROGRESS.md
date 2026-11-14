@@ -18,6 +18,8 @@
 - [x] 6. 推进 M2.10/M2.11 三方差分模糊测试（扩展 `scripts/diff_fuzz.py` 对齐 `--debug` / `--release` / `--interp` 三路输出 + 集成测试与 ADR-0200）
 - [x] 7. 推进 M2.10 MIR 不可达基本块消除（Unreachable Block Elimination / CFG 简化 pass + 回归测试与 ADR-0201）
 - [x] 8. 推进 M2.10 MIR 线性基本块合并（单前驱融合 `mir::merge_linear_blocks` + 回归测试与 ADR-0202）
+- [x] 9. 完成 M2.3 C 后端从 MIR 块图发射（match/for 完全下放 + 四路差分 + ADR-0203，提交 4d259a8/8d6dc58）
+- [x] 10. 完成 M2.4 MIR drop 精化（`mir::elaborate_drops` 数据流消除已证死的 release，Mixed 保守保留 + MoveTracker 共享 move 语义 + 2 个回归测试 + ADR-0204）
 
 ## 日志
 - 2026-11-13 15:57 初始化 AGENT_PROGRESS.md，定位到 4 个失败的 execution 测试均由 enum_generic_impls.ae 的 receiver move 引起。
@@ -29,3 +31,4 @@
 - 2026-11-13 18:02 完成 M2.10/M2.11 三方差分测试（扩展 `scripts/diff_fuzz.py` 同时校验 `--debug`/`--release`/`--interp` 15 seeds 全过，新增 `three_way_differential_agreement_between_debug_release_and_interp` 测试与 ADR-0200）。
 - 2026-11-13 22:35 完成 M2.10 线性基本块合并：`mir::merge_linear_blocks`（仅融合"前驱以 `Goto` 跳转、后继只有这一个前驱、目标非入口块"的边，保留前驱块 id、按序拼接绑定并继承后继终结符，循环至不动点），接入 `simplify_cfg` 的 thread→prune→merge 固定点；常量传播用例的 main 由多块 `goto` 链降为 1 块，循环形状不变，新增 `mir_linear_block_merging_fuses_single_predecessor_successors` 测试与 ADR-0202、失败日志第 10 条；`cargo test --workspace --locked` 269 项全绿。
 - 2026-11-13 22:03 完成 M2.10 不可达基本块消除：`mir::simplify_cfg`（入口可达性裁剪 + 空 `Goto` 跳板线程化含环保护 + 同目标分支折叠且要求条件无副作用 + 块 id 不重编号，`validate` 改为按 id 集合校验），新增 `mir_unreachable_block_elimination_prunes_abandoned_continuations` 测试与 ADR-0201；两臂 return 的函数从 6 块降到 3 块，`cargo test --workspace --locked` 268 项全绿。
+- 2026-11-14 11:50 完成 M2.4 drop 精化：`drops.rs` 对优化后的 MIR 块图做 per-block/per-slot 数据流（Live/Uninit/Dropped/Mixed），有证明才消除 release（Uninit/Dropped 移除、Mixed 保守保留依赖幂等 release，修复 WIP 中"拒绝合法程序"的 internal error）；`movewalk` 重构为 MoveTracker trait（verifier/recorder 共享一份 move 语义），emit-mir 打印精化后的图；新增 2 个回归测试与 ADR-0204，失败日志新增 1 条。修复后 `cargo test --workspace --locked` 272 项全绿。

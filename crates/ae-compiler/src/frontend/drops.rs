@@ -16,11 +16,11 @@
 //! needs releasing on **every** incoming path (`Live`), on **none** of them
 //! (`Uninit` for a slot no path wrote, `Dropped` for a slot every path already
 //! moved or released), or on **some** of them (`Mixed`). A `Live` entry stays,
-//! `Uninit`/`Dropped` entries are removed, and a `Mixed` entry would need a
-//! runtime drop flag — a shape the language cannot currently produce, because
-//! every owned binding is declared inside the block whose release list names
-//! it, so the pass reports one as an internal error rather than silently
-//! depending on release idempotence.
+//! `Uninit`/`Dropped` entries are removed, and a `Mixed` entry stays too: a
+//! branch-local move of an outer binding reaches such a release, and the
+//! conservative emission is exactly what the tree backend has always shipped —
+//! the slot is zeroed when a move takes the value, so the idempotent release
+//! frees on the path that still holds the value and no-ops on every other.
 //!
 //! The meet is exact: `Live ⊔ Live = Live`, `Uninit ⊔ Uninit = Uninit`,
 //! `Dropped ⊔ Dropped = Dropped`, and any other pair joins to `Mixed`. Move
@@ -42,8 +42,9 @@ enum DropState {
     Live,
     // Every path reaching here already moved or released the value.
     Dropped,
-    // Some paths hold a value, others do not: a runtime drop flag would be
-    // needed. The language cannot currently produce this state at a release.
+    // Some paths hold a value, others do not: a runtime drop flag would say
+    // which, but the zeroed slot already does — releasing is safe on every
+    // path, so the release is kept rather than proven.
     Mixed,
 }
 
@@ -60,13 +61,17 @@ type State = HashMap<usize, DropState>;
 pub(super) struct DropStats {
     // Releases kept: a live value on every path.
     pub(super) kept: usize,
+    // Releases kept although the state could not prove anything: the paths
+    // disagree, so the idempotent release decides at runtime by finding the
+    // slot zeroed or not.
+    pub(super) kept_mixed: usize,
     // Releases removed because every path already moved the value.
     pub(super) elided_dropped: usize,
     // Releases removed because no path ever wrote the slot.
     pub(super) elided_uninit: usize,
 }
 
-pub(super) fn elaborate(function: &mut MirFunction) -> Result<DropStats, String> {
+pub(super) fn elaborate(function: &mut MirFunction) -> DropStats {
     let states = entry_states(function);
     let mut stats = DropStats::default();
     for block in &mut function.blocks {
@@ -75,13 +80,13 @@ pub(super) fn elaborate(function: &mut MirFunction) -> Result<DropStats, String>
         let statements = std::mem::take(&mut block.statements);
         let mut kept = Vec::with_capacity(statements.len());
         for statement in statements {
-            if let Some(statement) = rewrite(statement, &mut state, &mut stats, function.id, block.id)? {
+            if let Some(statement) = rewrite(statement, &mut state, &mut stats, function.id, block.id) {
                 kept.push(statement);
             }
         }
         block.statements = kept;
     }
-    Ok(stats)
+    stats
 }
 
 // Per-block state on entry, to a fixed point. `Uninit` is the default for
@@ -221,23 +226,23 @@ fn drop_list(list: &[(usize, Type)], state: &mut State) {
 // Rewrite one statement's release lists. `Ok(None)` means the statement does
 // nothing any more and is removed, so a block can become empty and eligible
 // for edge threading again.
-fn rewrite(statement: Statement, state: &mut State, stats: &mut DropStats, function: usize, block: usize) -> Result<Option<Statement>, String> {
+fn rewrite(statement: Statement, state: &mut State, stats: &mut DropStats, function: usize, block: usize) -> Option<Statement> {
     match statement {
         Statement::Frees(list) => {
-            let kept = rewrite_list(list, state, stats, function, block, "release")?;
-            if kept.is_empty() { return Ok(None); }
-            Ok(Some(Statement::Frees(kept)))
+            let kept = rewrite_list(list, state, stats, function, block);
+            if kept.is_empty() { return None; }
+            Some(Statement::Frees(kept))
         }
-        Statement::Return(expr, list) => Ok(Some(Statement::Return(expr, rewrite_list(list, state, stats, function, block, "return")?))),
-        Statement::Exit(code, list) => Ok(Some(Statement::Exit(code, rewrite_list(list, state, stats, function, block, "exit")?))),
+        Statement::Return(expr, list) => Some(Statement::Return(expr, rewrite_list(list, state, stats, function, block))),
+        Statement::Exit(code, list) => Some(Statement::Exit(code, rewrite_list(list, state, stats, function, block))),
         other => {
             apply_effects(&other, state);
-            Ok(Some(other))
+            Some(other)
         }
     }
 }
 
-fn rewrite_list(list: Vec<(usize, Type)>, state: &mut State, stats: &mut DropStats, function: usize, block: usize, where_: &str) -> Result<Vec<(usize, Type)>, String> {
+fn rewrite_list(list: Vec<(usize, Type)>, state: &mut State, stats: &mut DropStats, function: usize, block: usize) -> Vec<(usize, Type)> {
     let mut kept = Vec::with_capacity(list.len());
     for (id, ty) in list {
         match state.get(&id).copied().unwrap_or(DropState::Uninit) {
@@ -251,18 +256,17 @@ fn rewrite_list(list: Vec<(usize, Type)>, state: &mut State, stats: &mut DropSta
                 if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG elide-uninit v{id} in fn#{function} block{block} state={state:?} statements-seen"); }
                 stats.elided_uninit += 1
             }
-            // Releasing here would be required on some paths and a double
-            // release on others: the compile-time answer is a drop flag, which
-            // no accepted program can need (every owned binding is declared in
-            // the block whose release list names it). Refuse rather than emit
-            // a release that depends on the slot's zeroed state.
+            // The paths disagree, so no proof decides the release. Keep it:
+            // a move zeroes the slot it takes from, so the release frees on
+            // the paths that still hold the value and no-ops on every other —
+            // the exact C the tree backend emits for the same program. After
+            // an idempotent release the slot is dropped on every path.
             DropState::Mixed => {
-                return Err(format!(
-                    "internal: fn #{} block {} has a mixed drop state at the {where_} of v{}; drop flags are not implemented, and no accepted program should reach this",
-                    function, block, id
-                ));
+                stats.kept_mixed += 1;
+                state.insert(id, DropState::Dropped);
+                kept.push((id, ty));
             }
         }
     }
-    Ok(kept)
+    kept
 }

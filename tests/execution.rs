@@ -3460,6 +3460,99 @@ fn mir_unreachable_block_elimination_prunes_abandoned_continuations() {
 }
 
 #[test]
+fn mir_drop_elision_removes_releases_of_moved_slots() {
+    // M2.4: the parser's release lists are conservative — a slot a call
+    // already moved out of keeps its scope-end release. The MIR block graph
+    // proves the slot dead, so the MIR backend drops that release; the tree
+    // backend still emits it and lets the idempotent release no-op on the
+    // zeroed slot. Both backends run the program identically.
+    let dir = unique_temp_dir("drop_elision");
+    let source = dir.join("moves.ae");
+    fs::write(&source, "fn take(x: string) -> i64 { return 1; }\nfn main() {\n    let s = \"hello\";\n    print(take(s));\n}\n").unwrap();
+    let emit = |mode: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+            .args(["emit-c", source.to_str().unwrap()])
+            .env("AE_CODEGEN", mode)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{mode} failed: {}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
+    };
+    let mir = emit("mir");
+    let tree = emit("tree");
+    // Release calls after `int main(`: the MIR backend emits none, because
+    // the call consumed `s`; the tree backend emits the conservative one.
+    let releases_in_main = |text: &str| -> usize {
+        let body = text.split("int main(").nth(1).unwrap_or("");
+        body.matches("ae_str_release(&v").count()
+    };
+    assert_eq!(releases_in_main(&mir), 0, "the moved slot's release is elided: {mir}");
+    assert!(releases_in_main(&tree) >= 1, "the tree backend keeps the conservative release: {tree}");
+    let run = |mode: &str| Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", source.to_str().unwrap()])
+        .env("AE_CODEGEN", mode)
+        .output()
+        .unwrap();
+    let mir_out = String::from_utf8_lossy(&run("mir").stdout).replace("\r\n", "\n");
+    let tree_out = String::from_utf8_lossy(&run("tree").stdout).replace("\r\n", "\n");
+    assert_eq!(mir_out, tree_out, "backends disagree");
+    assert_eq!(mir_out, "1\n");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn mir_drop_elision_keeps_live_and_unproven_releases() {
+    // M2.4: a release the graph cannot prove redundant stays. A binding read
+    // across a loop is live on every path, so its scope-end release is kept
+    // with proof; a binding moved in one branch only reaches the scope end
+    // live on that branch and dropped on the other — no proof decides, so
+    // the idempotent release is kept and decides at runtime by finding the
+    // slot zeroed or not. The tree backend emits the same releases.
+    let dir = unique_temp_dir("drop_kept");
+    let source = dir.join("kept.ae");
+    fs::write(&source, "fn take(x: string) -> i64 { return 1; }\nfn looped() -> i64 {\n    let s = \"x\";\n    var i = 0;\n    while i < 3 {\n        print(s);\n        i = i + 1;\n    }\n    return len(s);\n}\nfn branchy(c: bool) -> i64 {\n    let s = \"hello\";\n    if c { print(take(s)); }\n    print(\"done\");\n    return 0;\n}\nfn main() {\n    print(looped());\n    print(branchy(true));\n    print(branchy(false));\n}\n").unwrap();
+    let emit = |mode: &str| {
+        let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+            .args(["emit-c", source.to_str().unwrap()])
+            .env("AE_CODEGEN", mode)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{mode} failed: {}", String::from_utf8_lossy(&output.stderr));
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
+    };
+    let mir = emit("mir");
+    let tree = emit("tree");
+    // Release calls per function body, addressed by the function's own slot
+    // numbering: take releases its parameter, looped's binding is live on
+    // every path at its scope end, and branchy's binding is live on one path
+    // and moved on the other, so its release survives without proof.
+    let releases_in = |text: &str, marker: &str| -> usize {
+        let start = text.find(marker).expect(marker);
+        let body = &text[start..];
+        let end = body.find("\nstatic ").map(|n| body[..n].len()).unwrap_or(body.len());
+        body[..end].matches("ae_str_release(&v").count()
+    };
+    // The markers are the definitions, not the prototypes: a prototype ends
+    // in `);` while a definition ends in `) {`.
+    assert!(releases_in(&mir, "ae_fn_1(void) {") >= 1, "the loop-carried binding's release is kept: {mir}");
+    assert!(releases_in(&mir, "ae_fn_2(bool v0) {") >= 1, "the unproven release is kept: {mir}");
+    assert!(releases_in(&tree, "ae_fn_2(bool v0) {") >= 1, "the tree backend emits the same unproven release: {tree}");
+    let run = |mode: &str| Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", source.to_str().unwrap()])
+        .env("AE_CODEGEN", mode)
+        .output()
+        .unwrap();
+    let mir_out = String::from_utf8_lossy(&run("mir").stdout).replace("\r\n", "\n");
+    let tree_out = String::from_utf8_lossy(&run("tree").stdout).replace("\r\n", "\n");
+    assert_eq!(mir_out, tree_out, "backends disagree");
+    // x,x,x (loop reads), 1 (len), then branchy(true): 1, done, 0 — the
+    // unproven release runs on the moved path as a no-op — and
+    // branchy(false): done, 0 — it frees the live binding.
+    assert_eq!(mir_out, "x\nx\nx\n1\n1\ndone\n0\ndone\n0\n");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn concat_reads_fields_and_equality_does_not_consume() {
     // ADR-0184 follow-up: a binary operator changes what the postfix chain
     // means, so the move check must not decide before the operator is seen.
