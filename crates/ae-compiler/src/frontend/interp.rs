@@ -411,7 +411,10 @@ fn json_locate(text: &str, path: &str) -> Result<String, String> {
     Ok(text[start..end].to_owned())
 }
 fn trap(msg: &str, line: usize, col: usize) -> Flow {
-    Flow::Trap(format!("{line}:{col}: {msg}"))
+    // The exact format the compiled binary's runtime prints
+    // (`ae:%zu:%zu: %s`, runtime.c): the interp's trap output must be
+    // indistinguishable from it, prefix included (differential contract).
+    Flow::Trap(format!("ae:{line}:{col}: {msg}"))
 }
 
 fn eval_stmts(

@@ -596,7 +596,13 @@ fn main() -> ExitCode {
     };
     match result {
         Ok(code) => ExitCode::from(code),
-        Err(e) => { eprintln!("ae: {e}"); ExitCode::FAILURE }
+        Err(e) => {
+            // A runtime trap carries its own `ae:` prefix (the exact
+            // format the compiled binary's runtime prints); diagnostics get
+            // the prefix here.
+            if e.starts_with("ae:") { eprintln!("{e}"); } else { eprintln!("ae: {e}"); }
+            ExitCode::FAILURE
+        }
     }
 }
 
