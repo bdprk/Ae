@@ -284,14 +284,18 @@ fn rewrite(statement: Statement, state: &mut State, stats: &mut DropStats, funct
         Statement::Exit(code, list) => Some(Statement::Exit(code, rewrite_list(list, state, stats, function, block))),
         // A `?`'s releases ride the error path, which exits the function, so
         // the state to read them with is the one after the value evaluated —
-        // its moves first, the releases, then the Ok binding written after.
+        // its moves first, then the releases. They say nothing about the
+        // continuing path: the Ok branch never runs them, so the continuing
+        // state keeps the moves' result and the releases are rewritten
+        // against a copy of the state.
         prop @ Statement::Propagate(..) => {
             let effects = statement_move_effects(&prop);
             for id in effects.moved {
                 state.insert(id, DropState::Dropped);
             }
             let Statement::Propagate(expr, ty, fields, binding, releases) = prop else { unreachable!("matched above") };
-            let kept = rewrite_list(releases, state, stats, function, block);
+            let mut error_state = state.clone();
+            let kept = rewrite_list(releases, &mut error_state, stats, function, block);
             for id in effects.revived {
                 state.insert(id, DropState::Live);
             }
