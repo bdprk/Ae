@@ -302,6 +302,9 @@ fn returns(stmts: &[Statement]) -> bool {
         // produces a value.
         Statement::Exit(..) => true,
         Statement::If(_, yes, no) => returns(yes) && returns(no),
+        // An `unsafe` block is a scoping container: a `return` inside it
+        // returns from the enclosing function exactly as a bare one does.
+        Statement::Unsafe(body) => returns(body),
         // Exhaustive coverage means the match always runs one arm, so the
         // match returns whenever every arm does.
         Statement::Match(_, _, arms) => !arms.is_empty() && arms.iter().all(|arm| returns(&arm.body)),
