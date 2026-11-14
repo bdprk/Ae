@@ -1639,7 +1639,7 @@ fn tokens_reject_a_base_that_moves_is_written_or_is_a_temporary() {
         // with the NLL diagnostic.
         ("fn main() { var text = \"a b\"; let c = tokenize(text, \" \"); text = \"x\"; for t in c { print(t); } }", "may still be read"),
         ("fn main() { let text = \"a b\"; let c = tokenize(text, \" \"); let m = text; for t in c { print(t); } print(m); }", "may still be read"),
-        ("struct R { body: string } fn main() { var r = R { body: \"a b\" }; let c = tokenize(r.body, \" \"); r.body = \"z\"; for t in c { print(t); } }", "while it is borrowed"),
+        ("struct R { body: string } fn main() { var r = R { body: \"a b\" }; let c = tokenize(r.body, \" \"); r.body = \"z\"; for t in c { print(t); } }", "may still be read"),
         ("fn main() { let text = \"a b\"; for t in tokenize(text, \" \") { print(t); } }", "bare cursor variable"),
         ("fn main() { let text = \"a b\"; let c = tokenize(text, \" \"); print(len(c)); }", "token cursor"),
         ("fn main() { let text = \"a b\"; let c = tokenize(text, \" \"); print(c); }", "token cursor"),
@@ -1677,7 +1677,7 @@ fn field_views_borrow_the_whole_struct_variable() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "hello\n11\n");
     for (source, expected) in [
-        ("struct P { name: string } fn main() { var p = P { name: \"hello\" }; let h = slice_view(p.name, 0, 2); p.name = \"replaced\"; print(h); }", "while it is borrowed"),
+        ("struct P { name: string } fn main() { var p = P { name: \"hello\" }; let h = slice_view(p.name, 0, 2); p.name = \"replaced\"; print(h); }", "may still be read"),
         ("struct P { name: string } fn main() { var p = P { name: \"hello\" }; let h = slice_view(p.name, 0, 2); p = P { name: \"replaced\" }; print(h); }", "while it is borrowed"),
         // The move routes through the L1 adjudication: the view is read after
         // the move, so the rejection survives with the NLL diagnostic.
