@@ -27,7 +27,7 @@ pub(super) fn mir_path(path: &Path) -> Result<String, String> {
             // The printed graph is the one the C backend ships, releases
             // included (M2.4), so `emit-mir` shows exactly which drops
             // survived elaboration.
-            elaborate_drops(&mut mir)?;
+            elaborate_drops(&mut mir);
             validate(&mir)?;
             print_function(&mir, &mut out);
         }
@@ -264,18 +264,18 @@ pub(super) fn optimize_function(function: &mut MirFunction) {
 // shape the edge simplifier threads through, so it runs once more afterwards.
 // Neither pass can invalidate the other: threading and fusion only retarget
 // edges and preserve statement order, and a pruned block is unreachable.
-pub(super) fn elaborate_drops(function: &mut MirFunction) -> Result<drops::DropStats, String> {
-    let stats = drops::elaborate(function)?;
+pub(super) fn elaborate_drops(function: &mut MirFunction) -> drops::DropStats {
+    let stats = drops::elaborate(function);
     // Same diagnostic channel as the phase split (M2.4 evidence): counts of
-    // releases kept versus proven redundant, per function.
+    // releases kept, kept without proof, and proven redundant, per function.
     if std::env::var_os("AE_DROP_STATS").is_some() {
         eprintln!(
-            "ae drops: fn #{} kept={} elided_moved={} elided_uninit={}",
-            function.id, stats.kept, stats.elided_dropped, stats.elided_uninit
+            "ae drops: fn #{} kept={} kept_mixed={} elided_moved={} elided_uninit={}",
+            function.id, stats.kept, stats.kept_mixed, stats.elided_dropped, stats.elided_uninit
         );
     }
     simplify_cfg(function);
-    Ok(stats)
+    stats
 }
 
 // M2.10 MIR Unreachable Block Elimination and CFG simplification.
