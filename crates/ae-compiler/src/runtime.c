@@ -915,18 +915,46 @@ static char *ae_utf8_from_acp(const char *text) { /* win32-header */
     return utf8;
 }
 #endif
+// The CRT hands `main` the command line decoded into the ANSI code page, so on
+// a machine whose code page cannot represent the text (437 on a CI runner,
+// say) a path typed as UTF-16 arrives with '?' placeholders and every later
+// widen() sees the corruption. The command line itself is always UTF-16, so
+// the arguments are re-derived from it once, in UTF-8, and the process uses
+// those instead — the intent of ADR-54 without the ACP round trip. The
+// replacement entries live for the program's whole run, like argv itself.
+static void ae_args_init(int argc, char **argv) { /* win32-declared */
+#ifdef _WIN32
+    // Each declaration matches <windows.h> exactly, so a program that keeps
+    // the header for something else (a file API) still compiles.
+    extern wchar_t *GetCommandLineW(void);
+    extern wchar_t **CommandLineToArgvW(const wchar_t *text, int *count);
+    extern void *LocalFree(void *mem);
+    extern int lstrlenW(const wchar_t *text);
+    // CP_UTF8 is 65001; the literal avoids pulling <windows.h> for the macro.
+    extern int WideCharToMultiByte(unsigned page, unsigned long flags, const wchar_t *wide, int units, char *narrow, int bytes, const char *default_char, int *used_default);
+    int count = 0;
+    wchar_t **tokens = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (!tokens || count != argc) { if (tokens) LocalFree(tokens); return; }
+    for (int i = 0; i < count; i++) {
+        const int units = lstrlenW(tokens[i]);
+        const int bytes = WideCharToMultiByte(65001, 0, tokens[i], units, NULL, 0, NULL, NULL);
+        if (bytes <= 0) continue;
+        char *utf8 = ae_alloc_try((size_t)bytes + 1);
+        if (!utf8) continue;
+        WideCharToMultiByte(65001, 0, tokens[i], units, utf8, bytes, NULL, NULL);
+        utf8[bytes] = 0;
+        argv[i] = utf8;
+    }
+    LocalFree(tokens);
+#endif
+}
 static ae_strvec ae_args(size_t line, size_t column) {
     ae_strvec out = ae_strvec_new(line, column);
+    // argv is UTF-8 on every platform: main re-derives it from the UTF-16
+    // command line before this runs (ae_args_init), so no conversion
+    // happens here.
     for (int64_t i = 0; i < ae_argc_g; i++) {
-#ifdef _WIN32
-        // Falls back to the raw bytes if the conversion fails (out of memory),
-        // which keeps an argument usable even when it cannot be decoded.
-        char *utf8 = ae_utf8_from_acp(ae_argv_g[i]);
-        ae_strvec_push(&out, ae_str_from(utf8 ? utf8 : ae_argv_g[i], line, column), line, column);
-        ae_free(utf8);
-#else
         ae_strvec_push(&out, ae_str_from(ae_argv_g[i], line, column), line, column);
-#endif
     }
     return out;
 }

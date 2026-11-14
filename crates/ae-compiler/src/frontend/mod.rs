@@ -660,6 +660,7 @@ mod tests {
             "STARTUPINFOW", "GetLastError", "RemoveDirectoryW", "DeleteFileW",
             "CreateDirectoryW", "MoveFileExW", "SetCurrentDirectoryW",
             "GetStdHandle", "GetConsoleMode", "WriteConsoleW",
+            "GetCommandLineW", "CommandLineToArgvW", "LocalFree", "lstrlenW",
         ];
         let sources = [("runtime.c", include_str!("../runtime.c")), ("runtime_ex.c", include_str!("../runtime_ex.c"))];
         assert!(sources[0].1.contains(WIN32_HEADER_INCLUDE), "include line must still exist in runtime.c");
@@ -695,7 +696,7 @@ mod tests {
             assert!(WIN32_DECLS.contains(&name), "self-declared Win32 symbol not in the audit list: {name}");
             declared += 1;
         }
-        assert_eq!(declared, 4, "expected four self-declared Win32 entry points");
+        assert_eq!(declared, 9, "expected nine self-declared Win32 entry points");
     }
 
     #[test]
