@@ -573,6 +573,32 @@ impl<'a> Parser<'a> {
                     // Every live owned value that is not returned is released.
                     result.push(Statement::Return(value, self.live_owned()));
                 }
+                Kind::Star => {
+                    // `*p = value;` (M2.12 slice 3): a write through a `*mut`
+                    // pointer, inside `unsafe` only. The pointer is a local
+                    // variable; the pointee's current storage is whatever the
+                    // pointer names.
+                    let (line, column) = self.position();
+                    self.pos += 1;
+                    let name = self.identifier()?;
+                    let Some((var_id, _, Type::PtrMut(pointee_id))) = self.names.get(&name).cloned() else {
+                        return Err(self.fail(&format!("'*{name}' requires a *mut pointer variable")));
+                    };
+                    if self.unsafe_depth == 0 {
+                        return Err(self.error_at(line, "writing through a raw pointer requires 'unsafe'").with_code("E0700"));
+                    }
+                    self.take(Kind::Equal)?;
+                    let (value, value_ty) = self.expression(0, false)?;
+                    let pointee = super::ptr_pointee(pointee_id);
+                    if value_ty != pointee {
+                        return Err(self.fail(&format!("cannot write a {} value through *mut {}", value_ty.name(), pointee.name())));
+                    }
+                    if pointee.owned() {
+                        return Err(self.fail("writing an owned value through a pointer is not supported yet; the pointer would take over its release"));
+                    }
+                    self.take(Kind::Semi)?;
+                    result.push(Statement::PtrStore(var_id, value, line, column));
+                }
                 Kind::Unsafe => {
                     // M2.12 slice 1 (spec/unsafe.md 3.1): an `unsafe { ... }`
                     // block at statement position. The block is a scoping

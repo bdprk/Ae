@@ -1,0 +1,1 @@
+ae: $DIR/pointer_write_owned_rejected.ae:6:32: a pointer to an owned value is not supported yet; its borrow is not tracked, so safe code could dangle it by moving the value

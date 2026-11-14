@@ -236,6 +236,10 @@ impl<'a> TreePrinter<'a> {
                 self.indent -= 1;
                 self.line("}");
             }
+            Statement::PtrStore(id, value, ..) => {
+                let value_text = self.expression_text(value);
+                self.line(&format!("*v{id} = {}", value_text));
+            }
         }
     }
 
@@ -285,7 +289,7 @@ impl<'a> TreePrinter<'a> {
                 out.push_str(&format!(") -> {}", ret.name()));
             }
             // M2.12 slice 2: the raw-pointer shapes.
-            Expr::BorrowAs(operand, _, _) => {
+            Expr::BorrowAs(operand, ..) => {
                 out.push('&');
                 out.push_str(&self.expression_text(operand));
             }

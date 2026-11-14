@@ -351,6 +351,13 @@ pub(super) fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker)
         // An `unsafe` block lowers transparently into the CFG, but the walk
         // stays complete for any caller that hands it the raw tree.
         Statement::Unsafe(inner) => walk_statements_reads(inner, moved),
+        // A pointer write reads the pointer variable; the value is written
+        // into untracked storage, so the right side is a plain read (M2.12
+        // slice 3 — non-owned pointees only).
+        Statement::PtrStore(id, value, ..) => {
+            if let Some(violation) = moved.read(*id) { return Some(violation); }
+            walk_expr(value, moved)
+        }
     }
 }
 

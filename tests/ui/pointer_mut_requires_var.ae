@@ -1,0 +1,10 @@
+// A mutable pointer writes through the variable, so the variable must be a
+// `var` binding — the same rule the `&mut Struct` borrow takes (ADR-0185).
+fn main() {
+    let n = 1;
+    let p = &mut n as *mut i64;
+    unsafe {
+        *p = 2;
+    }
+    print(n);
+}

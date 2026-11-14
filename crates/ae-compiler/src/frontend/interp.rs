@@ -874,6 +874,24 @@ fn eval_stmts(
                 let flow = eval_stmts(env, inner, locals, caller_locals);
                 if !matches!(flow, Flow::Next) { return flow; }
             }
+            // `*p = value;` (M2.12 slice 3): the pointer variable evaluates to
+            // the slot it names; the write replaces that slot's current value,
+            // exactly what the compiled backends' `*ptr = value` does.
+            Statement::PtrStore(id, value, ..) => {
+                let pointer = match eval_expr(env, &Expr::Variable(*id, Type::Int, 0, 0), locals, caller_locals, false) {
+                    Ok(val) => val,
+                    Err(flow) => return flow,
+                };
+                let target = match pointer {
+                    Val::Ptr(slot) => slot,
+                    _ => return Flow::Trap("internal: pointer write through a non-pointer".to_owned()),
+                };
+                let written = match eval_expr(env, value, locals, caller_locals, false) {
+                    Ok(val) => val,
+                    Err(flow) => return flow,
+                };
+                locals.insert(target, written);
+            }
             _ => return Flow::Trap("unsupported statement in MIR interpreter".to_owned()),
         }
     }
