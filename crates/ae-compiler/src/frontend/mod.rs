@@ -7,6 +7,7 @@ mod tree;
 mod cfg;
 mod movewalk;
 mod borrowscope;
+mod drops;
 mod mir;
 pub mod interp;
 mod expression;

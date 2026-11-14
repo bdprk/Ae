@@ -89,18 +89,18 @@ impl MoveWalk {
     fn walk_block(function: &CfgFunction, block_id: usize, mut moved: std::collections::HashSet<usize>) -> (std::collections::HashSet<usize>, Option<(usize, usize)>) {
         let block = &function.blocks[block_id];
         for statement in &block.statements {
-            if let Some(violation) = walk_statement(statement, &mut moved) {
+            if let Some(violation) = walk_statement(statement, &mut Checked(&mut moved)) {
                 return (moved, Some((block_id, violation)));
             }
         }
         match &block.terminator {
             CfgTerminator::Return(expr) => {
-                if let Some(violation) = walk_expr(expr, &mut moved) {
+                if let Some(violation) = walk_expr(expr, &mut Checked(&mut moved)) {
                     return (moved, Some((block_id, violation)));
                 }
             }
             CfgTerminator::Exit(code) => {
-                if let Some(violation) = walk_expr(code, &mut moved) {
+                if let Some(violation) = walk_expr(code, &mut Checked(&mut moved)) {
                     return (moved, Some((block_id, violation)));
                 }
             }
@@ -133,20 +133,92 @@ fn successors(function: &CfgFunction, block_id: usize) -> Vec<usize> {
     }
 }
 
+// A tracker receives the walk's events. Two instances exist: the checking
+// one (the move verifier, which is the parser's counterpart) and the
+// recording one (M2.4 drop elaboration, which asks "which slots does this
+// statement consume or re-initialize?" without checking anything). Sharing
+// the walk keeps the two answers from drifting: there is one reading of
+// what counts as a move, not two.
+trait MoveTracker {
+    fn read(&mut self, id: usize) -> Option<usize>;
+    fn consume(&mut self, id: usize) -> Option<usize>;
+    fn mark(&mut self, id: usize);
+    fn revive(&mut self, id: usize);
+}
+
+// Checks every read against the moved set; a violation is the id returned.
+struct Checked<'a>(&'a mut std::collections::HashSet<usize>);
+
+impl MoveTracker for Checked<'_> {
+    fn read(&mut self, id: usize) -> Option<usize> {
+        if self.0.contains(&id) { Some(id) } else { None }
+    }
+    fn consume(&mut self, id: usize) -> Option<usize> {
+        if self.0.contains(&id) { return Some(id); }
+        self.0.insert(id);
+        None
+    }
+    fn mark(&mut self, id: usize) { self.0.insert(id); }
+    fn revive(&mut self, id: usize) { self.0.remove(&id); }
+}
+
+// The moves and re-initializations one statement performs, in the order they
+// happen (moves first: a statement's right side evaluates before its slot is
+// written).
+#[derive(Debug, Default)]
+pub(super) struct MoveEffects {
+    pub(super) moved: Vec<usize>,
+    pub(super) revived: Vec<usize>,
+}
+
+// Collects the events instead of checking them.
+struct Recorded(MoveEffects);
+
+impl MoveTracker for Recorded {
+    fn read(&mut self, _id: usize) -> Option<usize> { None }
+    fn consume(&mut self, id: usize) -> Option<usize> {
+        if !self.0.moved.contains(&id) { self.0.moved.push(id); }
+        None
+    }
+    fn mark(&mut self, id: usize) {
+        if !self.0.moved.contains(&id) { self.0.moved.push(id); }
+    }
+    fn revive(&mut self, id: usize) { if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG recorder revive v{id}"); } self.0.revived.push(id); }
+}
+
+// The slots a statement consumes by value and the slots it re-initializes.
+// Callers that hand this a control statement get the effects of its nested
+// lists in reading order; the MIR block graph has lowered those already, so
+// the drop pass only asks this about the flat statements in a block.
+pub(super) fn statement_move_effects(statement: &Statement) -> MoveEffects {
+    let mut recorder = Recorded(MoveEffects::default());
+    let _ = walk_statement(statement, &mut recorder);
+    if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG effects for {:?} = {:?}", format!("{statement:?}").chars().take(40).collect::<String>(), recorder.0); }
+    recorder.0
+}
+
 // Walk a statement: reads are checked against the moved set, moves insert
 // into it. Returns the id of a variable read after its move, if any.
-fn walk_statement(statement: &Statement, moved: &mut std::collections::HashSet<usize>) -> Option<usize> {
+fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker) -> Option<usize> {
     match statement {
-        Statement::Return(expr, _) | Statement::Declare(_, expr) => walk_expr(expr, moved),
+        Statement::Return(expr, _) => walk_expr(expr, moved),
+        // A declaration writes a fresh slot: the binding holds a value again,
+        // even when the declaration re-runs on every iteration of a loop.
+        Statement::Declare(id, expr) => {
+            let violation = walk_expr(expr, moved);
+            if violation.is_none() { moved.revive(*id); }
+            violation
+        }
         Statement::Assign(id, expr, _) => {
             // The right side evaluates first, then the slot is overwritten —
             // a re-assignment clears the slot's moved state.
             if let Some(violation) = walk_expr(expr, moved) { return Some(violation); }
-            moved.remove(id);
+            moved.revive(*id);
             None
         }
-        Statement::Array(_, values) => {
+        Statement::Array(id, values) => {
             for v in values { walk_expr(v, moved)?; }
+            moved.revive(*id);
             None
         }
         Statement::Store(_, _, index, value, ..) => { walk_expr(index, moved)?; walk_expr(value, moved)?; None }
@@ -166,27 +238,37 @@ fn walk_statement(statement: &Statement, moved: &mut std::collections::HashSet<u
         // Loop containers and match subjects are borrowed for their whole
         // statement: the parser registers a borrow, not a move.
         Statement::For(_, container, body, ..) => {
-            if moved.contains(container) { return Some(*container); }
+            if let Some(violation) = moved.read(*container) { return Some(violation); }
             walk_statements_reads(body, moved)?;
             None
         }
         Statement::ForTokens(_, base, body, ..) => {
-            if moved.contains(base) { return Some(*base); }
+            if let Some(violation) = moved.read(*base) { return Some(violation); }
             walk_statements_reads(body, moved)?;
             None
         }
         Statement::Match(subject, _, arms) => {
-            if moved.contains(subject) { return Some(*subject); }
+            if let Some(violation) = moved.read(*subject) { return Some(violation); }
             for arm in arms { walk_statements_reads(&arm.body, moved)?; }
             None
         }
-        // CFG-only (M2.3): a payload binding reads the subject it binds from.
-        Statement::BindPayload(_, subject, ..) => {
-            if moved.contains(subject) { return Some(*subject); }
+        // CFG-only (M2.3): a payload binding reads the subject it binds from,
+        // and binds its own slot (a view, a borrow, or a copy — never a move
+        // out of the subject).
+        Statement::BindPayload(bid, subject, ..) => {
+            if let Some(violation) = moved.read(*subject) { return Some(violation); }
+            moved.revive(*bid);
             None
         }
         Statement::MapPut(_, key, value, ..) => { walk_expr(key, moved)?; walk_expr(value, moved)?; None }
-        Statement::Propagate(expr, ..) => walk_expr(expr, moved),
+        // `?` binds its Ok payload in the slot the statement declared; the
+        // releases it carries belong to the error path, which leaves the
+        // function, so they say nothing about the continuing path.
+        Statement::Propagate(expr, _, _, binding, _) => {
+            walk_expr(expr, moved)?;
+            if let Some((id, _)) = binding { moved.revive(*id); }
+            None
+        }
         Statement::Exit(code, _) => walk_expr(code, moved),
         Statement::Break | Statement::Continue(_) => None,
         // Scope-end releases sit where the storage left scope; the parser
@@ -200,21 +282,19 @@ fn walk_statement(statement: &Statement, moved: &mut std::collections::HashSet<u
 // join's business (the walk handles them through the graph), so this walk
 // checks reads and records moves in the same state the block walk carries —
 // a simplification the fixed point corrects for loops.
-fn walk_statements_reads(statements: &[Statement], moved: &mut std::collections::HashSet<usize>) -> Option<usize> {
+fn walk_statements_reads(statements: &[Statement], moved: &mut dyn MoveTracker) -> Option<usize> {
     for statement in statements {
         walk_statement(statement, moved)?;
     }
     None
 }
 
-fn walk_expr(expr: &Expr, moved: &mut std::collections::HashSet<usize>) -> Option<usize> {
+fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usize> {
     match expr {
-        Expr::Variable(id, ty, ..) => {
-            if moved.contains(id) { return Some(*id); }
+        Expr::Variable(id, ..) => {
             // A moving context consumes the value; the caller decides which
             // reads are moves, so nothing is inserted here.
-            let _ = ty;
-            None
+            moved.read(*id)
         }
         Expr::Field(base, _, _) => walk_expr(base, moved),
         Expr::Call(_, args, _) | Expr::FnCall(_, args, _) => {
@@ -227,7 +307,7 @@ fn walk_expr(expr: &Expr, moved: &mut std::collections::HashSet<usize>) -> Optio
                     }
                     Argument::View(e) => { walk_expr(e, moved)?; }
                     Argument::Borrow(id, _) => {
-                        if moved.contains(id) { return Some(*id); }
+                        if let Some(violation) = moved.read(*id) { return Some(violation); }
                     }
                     Argument::FnPtr(_) => {}
                 }
@@ -241,7 +321,9 @@ fn walk_expr(expr: &Expr, moved: &mut std::collections::HashSet<usize>) -> Optio
             if *op == Kind::Plus {
                 for side in [a, b] {
                     if let Expr::Variable(id, ty, ..) = &**side {
-                        if ty.owned() { moved.insert(*id); }
+                        // `s + s` consumes one binding written twice; the
+                        // reads above already passed, so this only records.
+                        if ty.owned() { moved.mark(*id); }
                     }
                 }
             }
@@ -282,7 +364,7 @@ fn walk_expr(expr: &Expr, moved: &mut std::collections::HashSet<usize>) -> Optio
         }
         // map_keys borrows its map; run_command borrows its argument vector.
         Expr::MapKeys(place, ..) => { let _ = place; None }
-        Expr::RunCommand(_, vid, ..) => { if moved.contains(vid) { return Some(*vid); } None }
+        Expr::RunCommand(_, vid, ..) => moved.read(*vid),
         Expr::ClosureLit(_) | Expr::NowMs | Expr::NowS | Expr::Args(..) | Expr::ReadStdin(..) | Expr::Cwd(..) | Expr::StrVecNew(..) | Expr::F64VecNew(..) | Expr::MapNew(..) | Expr::JsonHas(..) => None,
         // Literals and constants own nothing and reference nothing.
         Expr::Number(_) | Expr::FloatLit(_) | Expr::BoolLit(_) | Expr::StrLit(..) => None,
@@ -291,11 +373,10 @@ fn walk_expr(expr: &Expr, moved: &mut std::collections::HashSet<usize>) -> Optio
 
 // A read in a moving position: an owned variable is consumed (checked, then
 // marked); any other shape is a read.
-fn walk_moving_expr(expr: &Expr, moved: &mut std::collections::HashSet<usize>) -> Option<usize> {
+fn walk_moving_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usize> {
     if let Expr::Variable(id, ty, ..) = expr {
-        if moved.contains(id) { return Some(*id); }
-        if ty.owned() { moved.insert(*id); }
-        return None;
+        if ty.owned() { return moved.consume(*id); }
+        return moved.read(*id);
     }
     walk_expr(expr, moved)
 }

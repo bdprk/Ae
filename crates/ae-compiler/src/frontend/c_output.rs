@@ -436,14 +436,15 @@ pub(super) fn emit_enum_layouts(enums: &[EnumDef], from: usize, to: usize, out: 
     }
 }
 
-// M2.3: a function whose statement shapes are decomposed far enough is
-// emitted from the MIR block graph; the rest stay on the structured tree
-// emitter until `for` and `match` lowering carry their full semantics.
-fn emit_body(function: &Function, out: &mut String) {
+// M2.3/M2.4: a function whose statement shapes are decomposed far enough is
+// emitted from the MIR block graph, where drop elaboration has already thinned
+// its release lists; the rest stay on the structured tree emitter.
+fn emit_body(function: &Function, out: &mut String) -> Result<(), String> {
     if codegen_mir::enabled() && codegen_mir::supported(function) {
-        codegen_mir::emit_function_body(function, out);
+        codegen_mir::emit_function_body(function, out)
     } else {
         emit_statements(&function.body, out, &mut 0);
+        Ok(())
     }
 }
 
@@ -537,14 +538,14 @@ pub(super) fn emit_program(program: Program) -> Result<GeneratedC, String> {
         let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, true)).collect::<Vec<_>>().join(", ") };
         let ret = c_return(function.returns);
         out.push_str(&format!("\nstatic {ret} ae_fn_{}({params}) {{\n", function.id));
-        emit_body(function, &mut out);
+        emit_body(function, &mut out)?;
         // Defensive backstop: even a future control-flow analysis bug must not
         // produce a C function that falls through without returning a value.
         out.push_str("    ae_fail(\"function exited without return\", 0, 0);\n}\n");
     }
     let main = all.iter().find(|f| f.is_main).expect("load_program checks exactly one main");
     out.push_str("\nint main(int argc, char **argv) {\n    ae_argc_g = (int64_t)argc;\n    ae_argv_g = argv;\n");
-    emit_body(main, &mut out);
+    emit_body(main, &mut out)?;
     out.push_str("    if (fflush(stdout) == EOF) return 1;\n    return 0;\n}\n");
     // The fixed prefix is program-independent; emit only its reachable part.
     // `split_off` avoids copying the 100 KB runtime text.
