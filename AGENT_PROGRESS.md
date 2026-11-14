@@ -70,3 +70,4 @@
 - 2026-11-14 20:30 M2.11 解释器补齐 run_command（std::process 子进程 + CommandResult 构造，Ok(code, stdout)/Err）；探针与编译后端一致。cargo test 284 全绿，fuzz 40 seeds。
 - 2026-11-14 20:40 M2.11 解释器补齐 env/cwd/read_stdin/now_s（环境变量缺失的 Err 文案与运行时一致；探针与编译后端逐行一致）。cargo test 284 全绿，fuzz 40 seeds，verify 41 PASS。
 - 2026-11-14 20:50 M2.11 解释器补齐 MathCall（sqrt/abs/floor/ceil/round/exp/log/sin/cos/pow/atan2/min/max 与 C libm 语义一致，min/max 为文档化的 NaN 感知全序）；math 探针与编译后端逐行一致。cargo test 284 全绿，fuzz 40 seeds，verify 41 PASS。
+- 2026-11-14 21:00 M2.11 解释器 &mut 健全性三连修：Expr::Field 读解引用 Val::Ref（原实现 remove 字段——既丢值又破坏所有权模型）；FieldStore 写穿透 Ref 目标帧（标志位来源不一，按 slot 实际内容判定）；invoke_call 对「引用转发引用」的链式 &mut 实现 copy-in/copy-out（copy-in 从引用创建者的帧读值，返回时写回）。语料扫描 93/95（余 2 个为故意的陷阱测试）——解释器语义覆盖达标。cargo test 284 全绿，fuzz 40 seeds，verify 41 PASS。

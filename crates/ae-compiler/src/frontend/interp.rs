@@ -259,21 +259,35 @@ fn eval_stmts(
                     arr[idx as usize] = val;
                 }
             }
-            Statement::FieldStore(id, fname, _, val_expr, through_ptr) => {
+            Statement::FieldStore(id, fname, _, val_expr, _through_ptr) => {
                 let val = match eval_expr(env, val_expr, locals, caller_locals, true) {
                     Ok(v) => v,
                     Err(f) => return f,
                 };
-                if *through_ptr {
-                    if let Some(Val::Ref(target_id)) = locals.get(id).cloned() {
-                        if let Some(caller) = caller_locals.as_mut() {
-                            if let Some(Val::Struct(_, fields)) = caller.get_mut(&target_id) {
-                                fields.insert(fname.clone(), val);
-                            }
+                // The write lands where the storage is. A slot holding a
+                // reference is written through to the lender's frame —
+                // whatever the statement's flag says, because the flag's
+                // provenance varies with the parse — and the direct case
+                // writes the owning slot. The ref-through branch consumes
+                // the value; the direct branch clones it, because only one
+                // of the two runs.
+                let ref_target = match locals.get(id).cloned() {
+                    Some(Val::Ref(target_id)) => Some(target_id),
+                    _ => None,
+                };
+                let mut wrote = false;
+                if let Some(target_id) = ref_target {
+                    if let Some(caller) = caller_locals.as_mut() {
+                        if let Some(Val::Struct(_, fields)) = caller.get_mut(&target_id) {
+                            fields.insert(fname.clone(), val.clone());
+                            wrote = true;
                         }
                     }
-                } else if let Some(Val::Struct(_, fields)) = locals.get_mut(id) {
-                    fields.insert(fname.clone(), val);
+                }
+                if !wrote {
+                    if let Some(Val::Struct(_, fields)) = locals.get_mut(id) {
+                        fields.insert(fname.clone(), val);
+                    }
                 }
             }
             Statement::VecPush(id, val_expr, line, col) => {
@@ -612,6 +626,25 @@ fn eval_stmts(
                     Err(f) => f,
                 };
             }
+            // `?`: the success variant binds its payload and continues; the
+            // failure variant propagates out of the function unchanged.
+            Statement::Propagate(expr, _, _, binding, _) => {
+                let value = match eval_expr(env, expr, locals, caller_locals, false) {
+                Ok(v) => v,
+                Err(f) => return f,
+            };
+                match value {
+                    Val::Enum(eid, vidx, payloads) if vidx != 0 => {
+                        return Flow::Return(Val::Enum(eid, vidx, payloads));
+                    }
+                    Val::Enum(_, _, payloads) => {
+                        if let (Some((id, _)), Some(payload)) = (binding, payloads.first()) {
+                            locals.insert(*id, payload.clone());
+                        }
+                    }
+                    _ => return Flow::Trap("internal: propagate subject".to_owned()),
+                }
+            }
             Statement::Break => return Flow::Break,
             Statement::Continue(depth) => return Flow::Continue(depth.unwrap_or(1).saturating_sub(1)),
             Statement::Frees(_) => {}
@@ -665,7 +698,20 @@ fn eval_expr(
         Expr::Field(base, fname, _) => {
             let base_val = eval_expr(env, base, locals, caller_locals, false)?;
             match base_val {
-                Val::Struct(_, mut fields) => fields.remove(fname).ok_or_else(|| Flow::Trap(format!("internal: missing field {fname}"))),
+                // A read only observes the bytes; a clone is the same value.
+                Val::Struct(_, fields) => fields.get(fname).cloned().ok_or_else(|| Flow::Trap(format!("internal: missing field {fname}"))),
+                // A &mut receiver is a reference: the field read goes
+                // through to the lender's storage (the write path already
+                // does the same through Statement::FieldStore).
+                Val::Ref(target_id) => {
+                    let Some(caller) = caller_locals.as_ref() else {
+                        return Err(Flow::Trap("internal: dangling reference in interpreter".to_owned()));
+                    };
+                    match caller.get(&target_id) {
+                        Some(Val::Struct(_, fields)) => fields.get(fname).cloned().ok_or_else(|| Flow::Trap(format!("internal: missing field {fname}"))),
+                        _ => Err(Flow::Trap("internal: field access on non-struct".to_owned())),
+                    }
+                }
                 _ => Err(Flow::Trap("internal: field access on non-struct".to_owned())),
             }
         }
@@ -827,6 +873,57 @@ fn eval_expr(
         // segments and traps on an empty separator; lines keep internal
         // empties and drop the trailing newline's empty tail; slice checks
         // the UTF-8 boundaries before cutting.
+        Expr::SliceView(base, field, start, end, line, col) => {
+            // A view reads as the bytes it points at; the interp materialises
+            // a copy, which the borrow rules make equivalent (the base
+            // cannot move or be reassigned while the view lives).
+            let bytes = match read_var(locals, caller_locals, *base, *line, *col)? {
+                Val::Str(text) => text,
+                Val::Struct(_, fields) => match field {
+                    Some(fname) => match fields.get(fname) {
+                        Some(Val::Str(text)) => text.clone(),
+                        _ => return Err(Flow::Trap("internal: view field".to_owned())),
+                    },
+                    None => return Err(Flow::Trap("internal: view base".to_owned())),
+                },
+                _ => return Err(Flow::Trap("internal: view operand".to_owned())),
+            };
+            let start = match eval_expr(env, start, locals, caller_locals, false)? {
+                Val::Int(n) => n,
+                _ => return Err(Flow::Trap("internal: view start".to_owned())),
+            };
+            let end = match eval_expr(env, end, locals, caller_locals, false)? {
+                Val::Int(n) => n,
+                _ => return Err(Flow::Trap("internal: view end".to_owned())),
+            };
+            if start < 0 || end < start || (end as usize) > bytes.len() {
+                return Err(trap("slice index out of bounds", *line, *col));
+            }
+            let (s, e) = (start as usize, end as usize);
+            if !bytes.is_char_boundary(s) || !bytes.is_char_boundary(e) {
+                return Err(trap("string index splits a UTF-8 character", *line, *col));
+            }
+            Ok(Val::Str(bytes[s..e].to_owned()))
+        }
+        // count_lines_with: the runtime's single-pass scan. The interp
+        // counts lines containing the pattern with the same semantics
+        // (empty pattern matches every line; empty text is zero).
+        Expr::CountLinesWith(text, pattern, ..) => {
+            let hay = match eval_expr(env, text, locals, caller_locals, false)? {
+                Val::Str(s) => s,
+                _ => return Err(Flow::Trap("internal: count_lines_with text".to_owned())),
+            };
+            let needle = match eval_expr(env, pattern, locals, caller_locals, false)? {
+                Val::Str(s) => s,
+                _ => return Err(Flow::Trap("internal: count_lines_with pattern".to_owned())),
+            };
+            if hay.is_empty() { return Ok(Val::Int(0)); }
+            let mut count = 0i64;
+            for line in hay.split(LF_CHAR) {
+                if needle.is_empty() || line.contains(&needle) { count += 1; }
+            }
+            Ok(Val::Int(count))
+        }
         Expr::Split(base, sep, line, col) => {
             let base = match eval_expr(env, base, locals, caller_locals, false)? {
                 Val::Str(s) => s,
@@ -1376,13 +1473,35 @@ fn invoke_call(
 ) -> Result<Val, Flow> {
     let callee = *env.fns.get(&fn_id).ok_or_else(|| Flow::Trap(format!("internal: missing fn #{fn_id}")))?;
     let mut callee_locals: HashMap<usize, Val> = HashMap::new();
+    // A &mut parameter whose slot already holds a reference (a &mut borrow
+    // forwarded deeper) resolves to a copy-in: the callee mutates its own
+    // copy and the value is written back to the original frame on return.
+    // The direct case keeps the live reference, whose one-level target the
+    // callee's caller frame reaches.
+    let mut copy_backs: Vec<(usize, usize)> = Vec::new();
     for ((param_id, param_ty), arg) in callee.params.iter().zip(args.iter()) {
         let val = match arg {
             Argument::Value(e) => eval_expr(env, e, locals, caller_locals, true)?,
             Argument::View(e) => eval_expr(env, e, locals, caller_locals, false)?,
             Argument::Borrow(slot, _) => {
                 if matches!(param_ty, Type::StructMut(_)) {
-                    Val::Ref(*slot)
+                    if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG borrow param={param_id} slot={slot} local_val={:?}", locals.get(slot).map(|v| format!("{v:?}").chars().take(40).collect::<String>())); }
+                    if let Some(Val::Ref(target)) = locals.get(slot).cloned() {
+                        // The reference's target lives in the frame that
+                        // handed the borrow down: the caller's own locals,
+                        // or — for a chain — the caller's caller's.
+                        // The reference's target names a slot in the frame
+                        // that created it — from this call's perspective, the
+                        // caller_locals.
+                        let value = caller_locals.as_ref()
+                            .and_then(|caller| caller.get(&target).cloned())
+                            .ok_or_else(|| Flow::Trap("internal: dangling reference in interpreter".to_owned()))?;
+                        if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG copy-in param={param_id} target={target} value={value:?}"); }
+                        copy_backs.push((*param_id, target));
+                        value
+                    } else {
+                        Val::Ref(*slot)
+                    }
                 } else {
                     read_var(locals, caller_locals, *slot, 0, 0)?
                 }
@@ -1392,7 +1511,16 @@ fn invoke_call(
         callee_locals.insert(*param_id, val);
     }
     let mut parent = Some(&mut *locals);
-    match eval_stmts(env, &callee.body, &mut callee_locals, &mut parent) {
+    let outcome = eval_stmts(env, &callee.body, &mut callee_locals, &mut parent);
+    // The copy-ins write back to the frames their references named.
+    for (param_id, target) in &copy_backs {
+        if let Some(value) = callee_locals.get(param_id) {
+            if let Some(caller) = caller_locals.as_mut() {
+                caller.insert(*target, value.clone());
+            }
+        }
+    }
+    match outcome {
         Flow::Return(v) => Ok(v),
         Flow::Next => Ok(Val::Int(0)),
         other => Err(other),
