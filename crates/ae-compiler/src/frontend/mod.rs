@@ -52,6 +52,17 @@ pub(super) fn extern_name(id: usize) -> Option<String> {
 pub(super) fn extern_declarations() -> Vec<(String, Vec<Type>, Type)> {
     EXTERN_NAMES.with(|map| map.borrow().values().cloned().collect())
 }
+// The unsafe-fn registry (M2.12 slice 5): an `unsafe fn` is a normal
+// function in codegen — its call sites are what require `unsafe`.
+thread_local! {
+    static UNSAFE_FNS: std::cell::RefCell<std::collections::HashSet<usize>> = std::cell::RefCell::new(std::collections::HashSet::new());
+}
+pub(super) fn register_unsafe_fn(id: usize) {
+    UNSAFE_FNS.with(|set| { set.borrow_mut().insert(id); });
+}
+pub(super) fn is_unsafe_fn(id: usize) -> bool {
+    UNSAFE_FNS.with(|set| set.borrow().contains(&id))
+}
 // Intern a pointee type; identical pointees share one id.
 pub(super) fn intern_pointee(pointee: Type) -> usize {
     PTR_POINTEES.with(|pointees| {
