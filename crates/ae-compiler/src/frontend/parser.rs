@@ -82,7 +82,7 @@ impl<'a> Parser<'a> {
         let live: std::collections::HashSet<usize> = self.names.values().map(|&(id, _, _)| id).collect();
         self.moved.retain(|id| live.contains(id));
         let depth_now = self.scopes.len();
-        self.borrows.retain(|&(_, depth)| depth <= depth_now);
+        self.borrows.retain(|&(_, depth, _)| depth <= depth_now);
         self.call_borrows.retain(|&(_, depth)| depth <= depth_now);
         self.mut_borrows.retain(|&(_, depth)| depth <= depth_now);
         Ok(result)
@@ -94,10 +94,32 @@ impl<'a> Parser<'a> {
     // argument created, which die when the statement that made the call
     // ends -- the callee has returned by then and nothing retains the
     // pointer (ADR-0184).
+    // Whether every borrow on `id` is a view-kind borrow: only then can a
+    // write conflict be deferred to the NLL adjudication (the view dies
+    // after its last use; container borrows run to the scope's end).
+    pub(super) fn all_borrows_are_views(&self, id: usize) -> bool {
+        self.is_borrowed(id) && !self.borrows.iter().any(|&(bid, _, kind)| bid == id && kind == BorrowKind::Container)
+    }
+
     pub(super) fn is_borrowed(&self, id: usize) -> bool {
-        self.borrows.iter().any(|&(bid, _)| bid == id)
+        self.borrows.iter().any(|&(bid, _, _)| bid == id)
             || self.call_borrows.iter().any(|&(bid, _)| bid == id)
             || self.mut_borrows.iter().any(|&(bid, _)| bid == id)
+    }
+
+    // Adjudicate the write conflicts this function deferred (M2.5 L1): the
+    // graph decides whether a view of the written slot may still be read.
+    // A surviving conflict is the positioned rejection; everything else was
+    // a write after the view's last use, which now parses.
+    pub(super) fn adjudicate_deferred_conflicts(&mut self, function: &Function) -> Result<(), ae_span::Diagnostic> {
+        let outcome = borrowscope::adjudicate_deferred(function, &self.deferred_write_conflicts);
+        match outcome {
+            Ok(()) => { self.deferred_write_conflicts.clear(); Ok(()) }
+            Err(message) => {
+                let (_, offset, _) = self.deferred_write_conflicts[0];
+                Err(self.error_at(offset, &message))
+            }
+        }
     }
     // Views borrow their base: element reads and slice_views of variable
     // bases register the owner so it cannot be modified or moved while a
@@ -106,7 +128,7 @@ impl<'a> Parser<'a> {
         match e {
             Expr::StrVecIndex(id, idx, _, _, _) => {
                 if !self.is_borrowed(*id) {
-                    self.borrows.push((*id, self.scopes.len()));
+                    self.borrows.push((*id, self.scopes.len(), BorrowKind::Container));
                 }
                 self.record_borrow_bases(idx);
             }
@@ -461,8 +483,17 @@ impl<'a> Parser<'a> {
                         self.moved.remove(&id);
                         result.push(Statement::Assign(id, value, true));
                     } else {
-                        if self.is_borrowed(id) {
+                        // A string's borrows can be view-kind borrows, whose
+                        // region dies after the view's last use (M2.5 L1):
+                        // the conflict is deferred to the graph's
+                        // adjudication instead of rejected on sight, so a
+                        // write after the last view use parses. Container
+                        // borrows keep the on-sight rejection.
+                        if self.is_borrowed(id) && !self.all_borrows_are_views(id) {
                             return Err(self.fail(&format!("cannot assign to '{name}' while it is borrowed")));
+                        }
+                        if self.is_borrowed(id) {
+                            self.deferred_write_conflicts.push((id, name_offset, name.clone()));
                         }
                         self.take(Kind::Equal)?;
                         let moved_before = self.moved.contains(&id);
@@ -579,14 +610,14 @@ impl<'a> Parser<'a> {
                         self.names.insert(var_name.clone(), (var, false, elem_ty));
                         // The container is borrowed for the whole loop.
                         let container_depth = self.scopes.len();
-                        self.borrows.push((v_id, container_depth));
+                        self.borrows.push((v_id, container_depth, BorrowKind::Container));
                         let body = self.block();
                         self.loop_labels.pop();
                         self.loop_scopes.pop();
                         self.scopes.pop().unwrap();
                         self.loop_depth -= 1;
                         self.names.remove(&var_name);
-                        self.borrows.retain(|&(id, _)| id != v_id);
+                        self.borrows.retain(|&(id, _, _)| id != v_id);
                         let mut body = body?;
                         if self.moved.contains(&v_id) { return Err(self.fail(&format!("cannot move the vector being iterated (a move of it happens in this loop)"))); }
                         self.close_loop_moves(base, moved_before, loop_offset)?;
@@ -742,7 +773,7 @@ impl<'a> Parser<'a> {
         self.take(Kind::LBrace)?;
         let mut arms: Vec<MatchArm> = Vec::new();
         let mut seen = vec![false; def.variants.len()];
-        self.borrows.push((sid, self.scopes.len()));
+        self.borrows.push((sid, self.scopes.len(), BorrowKind::Container));
         while *self.current() != Kind::RBrace {
             let pattern = self.identifier()?;
             // An instantiated enum is matched by its declaration name:

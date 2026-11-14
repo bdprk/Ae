@@ -1634,7 +1634,10 @@ fn tokens_reject_a_base_that_moves_is_written_or_is_a_temporary() {
     // reassigned or have its field written while the cursor is alive; a
     // temporary makes no sense (it would be freed before the first iteration).
     let cases = [
-        ("fn main() { var text = \"a b\"; let c = tokenize(text, \" \"); text = \"x\"; for t in c { print(t); } }", "while it is borrowed"),
+        // The write case routes through the L1 adjudication (M2.5): the
+        // cursor is still read after the write, so the rejection survives
+        // with the NLL diagnostic.
+        ("fn main() { var text = \"a b\"; let c = tokenize(text, \" \"); text = \"x\"; for t in c { print(t); } }", "may still be read"),
         ("fn main() { let text = \"a b\"; let c = tokenize(text, \" \"); let m = text; for t in c { print(t); } print(m); }", "while it is borrowed"),
         ("struct R { body: string } fn main() { var r = R { body: \"a b\" }; let c = tokenize(r.body, \" \"); r.body = \"z\"; for t in c { print(t); } }", "while it is borrowed"),
         ("fn main() { let text = \"a b\"; for t in tokenize(text, \" \") { print(t); } }", "bare cursor variable"),

@@ -418,8 +418,8 @@ impl Parser<'_> {
                     // The base may not move or be reassigned while a view of
                     // it can still be read (until this scope ends).
                     let depth = self.scopes.len();
-                    if !self.borrows.iter().any(|&(id, _)| id == vid) {
-                        self.borrows.push((vid, depth));
+                    if !self.borrows.iter().any(|&(id, _, _)| id == vid) {
+                        self.borrows.push((vid, depth, BorrowKind::View));
                     }
                     (Expr::SliceView(vid, field, Box::new(start), Box::new(end), line, col), Type::StrView)
                 } else if name == "tokenize" && *self.current() == Kind::LParen {
@@ -447,8 +447,8 @@ impl Parser<'_> {
                     // Same rule as a view: the base may not move or be
                     // reassigned while the cursor can still read it.
                     let depth = self.scopes.len();
-                    if !self.borrows.iter().any(|&(id, _)| id == vid) {
-                        self.borrows.push((vid, depth));
+                    if !self.borrows.iter().any(|&(id, _, _)| id == vid) {
+                        self.borrows.push((vid, depth, BorrowKind::View));
                     }
                     (Expr::Tokens(vid, field, Box::new(sep), line, col), Type::Tokens)
                 } else if name == "count_lines_with" && *self.current() == Kind::LParen {

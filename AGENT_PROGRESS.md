@@ -30,6 +30,7 @@
 - [x] 18. M2.4 基准报告（bench/reports/2026-11-14-windows-drop-elision.md）：release 调用点结构性消除（alloc 2/3、straight 20000/20000），运行时差异在噪声内（诚实结论：价值在 C 形态而非秒数）
 - [x] 19. fuzzer 语法补容器操作面（push/下标写/sort），40 seeds 0 failures
 - [x] 20. M2.5 L1 第一步：borrowscope 拆分两类借用区域——loop/match 保持 scope 区域（union meet），view 借用改 NLL 区域（视图槽后向活跃性，最后使用即死），写检查用 suffix+live_out；3 个单元测试钉住区域数学，enforcement 仍留 parser（下一步）
+- [x] 21. M2.5 L1 落地（ADR-0205）：BorrowKind 标签 + parser 延迟 string 写冲突 + 函数装配时 NLL 裁定（引入支配写点 ∧ 视图仍可读才拒绝）；基线两例翻转为允许（run 语料），新增拒绝例 ui 快照；current-language/resource-model 同步
 
 ## 日志
 - 2026-11-13 15:57 初始化 AGENT_PROGRESS.md，定位到 4 个失败的 execution 测试均由 enum_generic_impls.ae 的 receiver move 引起。
@@ -52,3 +53,4 @@
 - 2026-11-14 15:35 M2.4 基准报告落地：drop_elision_timings.py 双 workload（alloc/straight）× 双后端 11 轮交错计时，stdout 全程校验一致；结构性结果精确（alloc 1/3、straight 0/20000 个 release 调用点），运行时中位数差异 ~2%（alloc）与持平（straight）——如实记录为「价值在 C 形态而非秒数」，原始 JSON 存 bench/results/。ADR-0204 证据更新。
 - 2026-11-14 15:50 fuzzer 语法新增向量操作面（构造+push+下标写+sort+读），四路差分覆盖容器 lowering 的索引检查与排序确定性；40 seeds 0 failures。
 - 2026-11-14 16:05 M2.5 L1 地基：movewalk 新增 Reads tracker（statement_reads/expr_reads，按求值序收集读取）；borrowscope 拆分为 ScopeRegions（loop/match/for-tokens 借用，union meet 不变）与 NllRegions（slice_view/tokens 视图借用的后向活跃性——视图不可重赋值故无 kill），写检查对视图借用改用「写语句之后的后缀读取 ∪ 后继块入口活跃」判定；3 个手工构造 CFG 的单元测试钉住区域数学（冲突/最后使用后允许/循环容器 scope 保持）。纯计算切片，parser enforcement 未动，cargo test 278 全绿。
+- 2026-11-14 17:05 M2.5 L1 第一切片落地：parser 的 scalar 赋值在视图借用下不再当场拒绝，延迟到函数装配时由 borrowscope::adjudicate_deferred 裁定（NLL 区域 + 支配关系：引入支配写点且视图仍可读才拒绝，写后创建的视图永不冲突）；容器借用保持当场拒绝；BorrowKind{View,Container} 标签贯穿 13 处触碰点。borrow_write_after_last_use/alias_write 两例按基线翻转为 run 允许例，新增 borrow_write_during_view 拒绝例；current-language.md 与 resource-model.md 同步；3 个单元测试钉区域数学。期间抓到并修复 live_at_write 一次性计算的粒度混装 bug。cargo test 278 全绿，fuzz 40 seeds 0 failures，verify_generated_c 41 PASS。
