@@ -1061,6 +1061,31 @@ fn eval_expr(
                 Err(error) => Ok(Val::Enum(eid, err, vec![Val::Str(format!("cannot run program: {error}"))])),
             }
         }
+        Expr::Env(variable, ty, ..) => {
+            // ae_try_env: found -> Ok(value), missing -> Err(the same
+            // read-only constant family the runtime hands back).
+            let name = path_operand(eval_expr(env, variable, locals, caller_locals, false))?;
+            match std::env::var(&name) {
+                Ok(value) => result_value(env, ty, true, vec![Val::Str(value)]),
+                Err(std::env::VarError::NotPresent) => result_value(env, ty, false, vec![Val::Str("environment variable not found".to_owned())]),
+                Err(error) => result_value(env, ty, false, vec![Val::Str(format!("environment variable: {error}"))]),
+            }
+        }
+        Expr::ReadStdin(ty, ..) => {
+            let mut line = String::new();
+            let read = std::io::stdin().read_line(&mut line);
+            match read {
+                Ok(0) => result_value(env, ty, false, vec![Val::Str("end of input".to_owned())]),
+                Ok(_) => result_value(env, ty, true, vec![Val::Str(line.trim_end_matches(['\r', '\n']).to_owned())]),
+                Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot read stdin: {error}"))]),
+            }
+        }
+        Expr::Cwd(ty, ..) => {
+            match std::env::current_dir() {
+                Ok(dir) => result_value(env, ty, true, vec![Val::Str(dir.to_string_lossy().to_string())]),
+                Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot read the working directory: {error}"))]),
+            }
+        }
         Expr::MapNew(_, _, kind) => match kind {
             MapKind::Int => Ok(Val::Map(HashMap::new())),
             MapKind::Float => Ok(Val::MapF(HashMap::new())),

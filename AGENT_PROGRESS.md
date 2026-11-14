@@ -68,3 +68,4 @@
 - 2026-11-14 20:05 M2.11 解释器补齐 tokenize 游标（Val::Tokens{base,sep,offset} + Expr::Tokens 构建 + ForTokens 迭代：空段保留、continue 推进、重置语义与运行时一致）与 now_ms（真实系统时钟）；tokens 探针 interp 与编译输出逐行一致（两轮循环 + 重置验证）；mir_interpreter_agrees_on_token_cursors 测试钉住。cargo test 283 全绿，fuzz 40 seeds，verify 41 PASS。
 - 2026-11-14 20:20 M2.11 解释器补齐文件 I/O 族（read_file/try_read_file/write_file/try_write_file/try_append_file/try_list_dir 字节序排序/try_file_info 的 Unix 秒 mtime/copy/rename/remove/create/set_cwd/path 族/args）；探针 11 项检查与编译后端逐行一致（错误文案按 ADR-55 规则不要求一致）；修复探针过程中的 4 个堆积 #[test] 重复属性。cargo test 284 全绿，fuzz 40 seeds，verify 41 PASS。
 - 2026-11-14 20:30 M2.11 解释器补齐 run_command（std::process 子进程 + CommandResult 构造，Ok(code, stdout)/Err）；探针与编译后端一致。cargo test 284 全绿，fuzz 40 seeds。
+- 2026-11-14 20:40 M2.11 解释器补齐 env/cwd/read_stdin/now_s（环境变量缺失的 Err 文案与运行时一致；探针与编译后端逐行一致）。cargo test 284 全绿，fuzz 40 seeds，verify 41 PASS。
