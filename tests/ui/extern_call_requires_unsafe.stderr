@@ -1,0 +1,1 @@
+ae: $DIR/extern_call_requires_unsafe.ae:5:11: call to unsafe function 'probe' requires 'unsafe'

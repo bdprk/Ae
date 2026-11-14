@@ -1,0 +1,8 @@
+// Slice 4 restricts the C ABI to the scalars it passes in registers; an
+// owned string cannot cross, because the C side cannot honor its release.
+extern "C" fn eat(text: string) -> i64;
+fn main() {
+    unsafe {
+        print(eat("x"));
+    }
+}

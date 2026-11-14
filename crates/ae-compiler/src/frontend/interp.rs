@@ -1924,7 +1924,15 @@ fn invoke_call(
     locals: &mut HashMap<usize, Val>,
     caller_locals: &mut Option<&mut HashMap<usize, Val>>,
 ) -> Result<Val, Flow> {
-    let callee = *env.fns.get(&fn_id).ok_or_else(|| Flow::Trap(format!("internal: missing fn #{fn_id}")))?;
+    let callee = *env.fns.get(&fn_id).ok_or_else(|| {
+        match crate::frontend::extern_name(fn_id) {
+            // A declared extern has no AE body to interpret (M2.12
+            // slice 4): the compiled backends link the C symbol; the
+            // interpreter cannot.
+            Some(name) => Flow::Trap(format!("extern '{name}' cannot run in the interpreter; run the compiled program")),
+            None => Flow::Trap(format!("internal: missing fn #{fn_id}")),
+        }
+    })?;
     let mut callee_locals: HashMap<usize, Val> = HashMap::new();
     // A &mut parameter whose slot already holds a reference (a &mut borrow
     // forwarded deeper) resolves to a copy-in: the callee mutates its own
