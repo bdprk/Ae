@@ -154,12 +154,20 @@ fn lower_statement(statement: &Statement, bindings: &mut Vec<MirBinding>, loweri
                 bindings.push(MirBinding { target: temp, rvalue });
             }
         }
+        Statement::Frees(list) => {
+            // A release list renders as an intrinsic with one operand per
+            // slot, so the printed graph shows exactly which releases
+            // survived drop elaboration (M2.4) — the same lists the C
+            // backend emits — instead of a bare stmt() placeholder.
+            let operands = list.iter().map(|(id, ty)| MirOperand::Place(MirPlace::Local(*id, *ty))).collect();
+            let temp = lowering.fresh(Type::Int);
+            bindings.push(MirBinding { target: temp, rvalue: MirRvalue::Intrinsic("releases", operands, Type::Int) });
+        }
         other => {
-            // Container updates, asserts, releases, and the remaining
-            // statement shapes keep their whole form as an intrinsic
-            // rvalue bound to a fresh throwaway temporary: the MIR shows
-            // the operation and its operands without inventing semantics
-            // the C backend already owns.
+            // Container updates, asserts, and the remaining statement
+            // shapes keep their whole form as an intrinsic rvalue bound to
+            // a fresh throwaway temporary: the MIR shows the operation
+            // without inventing semantics the C backend already owns.
             let rvalue = MirRvalue::Intrinsic("stmt", vec![], Type::Int);
             let temp = lowering.fresh(Type::Int);
             bindings.push(MirBinding { target: temp, rvalue });
@@ -235,13 +243,20 @@ fn lower_args(args: &[Argument], bindings: &mut Vec<MirBinding>, lowering: &mut 
 
 fn expr_type(expr: &Expr) -> Type {
     match expr {
-        Expr::Number(..) | Expr::Index(..) | Expr::VecIndex(..) => Type::Int,
+        Expr::Number(..) | Expr::Index(..) | Expr::VecIndex(..) | Expr::Len(..) => Type::Int,
         Expr::Binary(_, _, _, _, _, ty) => *ty,
         Expr::FloatLit(..) | Expr::ToF64(..) => Type::F64,
-        Expr::BoolLit(..) | Expr::StrEq(..) => Type::Bool,
+        Expr::BoolLit(..) | Expr::StrEq(..) | Expr::Contains(..) => Type::Bool,
         Expr::Variable(_, ty, ..) | Expr::Field(_, _, ty) | Expr::VecLit(_, ty, ..) => *ty,
         Expr::StructLit(sid, _) => Type::Struct(*sid),
         Expr::EnumLit(name, ..) => Type::Enum(name, 0),
+        // The printed place types are evidence, so the string-shaped
+        // expressions name their real types instead of the integer
+        // catch-all (a string literal bound to `v0 (i64)` misleads).
+        Expr::StrLit(..) | Expr::ReadFile(..) | Expr::Join(..) => Type::String,
+        Expr::SliceView(..) => Type::StrView,
+        Expr::Tokens(..) => Type::Tokens,
+        Expr::Split(..) | Expr::Args(..) => Type::StrVec,
         _ => Type::Int,
     }
 }

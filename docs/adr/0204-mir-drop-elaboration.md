@@ -37,6 +37,7 @@ The MIR block graph (ADR-0197–0203) already knows, per block and per owned loc
   - `mir_drop_elision_removes_releases_of_moved_slots`: the MIR backend emits no scope-end release for a binding a call consumed; the tree backend still emits it; both backends run the program identically.
   - `mir_drop_elision_keeps_live_and_unproven_releases`: a loop-carried binding's release is kept (live on every path), a branch-moved binding's release is kept without proof, and both backends agree byte for byte on stdout.
 - `AE_DROP_STATS=1 ae emit-c` on the differential corpus reports `elided_moved` counts per function with `kept=0` for move-only mains, and `kept_mixed=1` on seed 5 of the fuzzer, confirming both faces are exercised by real generated programs.
+- `ae emit-mir` prints each surviving release list as a `releases(...)` binding with one operand per slot (the release lists were previously a bare `stmt()` placeholder). The drop pass rewrites the statement and its decomposition together, so the printed graph cannot show a release the shipped C does not run; `emit_mir_shows_which_releases_survive_drop_elaboration` pins all three faces (kept, elided, unproven). String-shaped place types print their real types (`v0 (string) = "hello"`), not the integer catch-all.
 - Single-platform verification (Windows); the pass emits no new C templates, so `verify_generated_c.py`'s sanitizer mode adds nothing platform-specific here.
 
 ## Consequences
