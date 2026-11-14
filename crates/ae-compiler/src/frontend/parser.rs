@@ -116,7 +116,7 @@ impl<'a> Parser<'a> {
         match outcome {
             Ok(()) => { self.deferred_write_conflicts.clear(); Ok(()) }
             Err(message) => {
-                let (_, offset, _, _) = self.deferred_write_conflicts[0];
+                let (_, offset, _, _, _) = self.deferred_write_conflicts[0];
                 Err(self.error_at(offset, &message))
             }
         }
@@ -467,7 +467,7 @@ impl<'a> Parser<'a> {
                                 return Err(self.fail(&format!("cannot modify '{name}' while it is borrowed")));
                             }
                             if self.is_borrowed(id) {
-                                self.deferred_write_conflicts.push((id, name_offset, name.clone(), "modify"));
+                                self.deferred_write_conflicts.push((id, name_offset, name.clone(), "modify", Some(fname.clone())));
                             }
                             self.take(Kind::Equal)?;
                             let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
@@ -499,7 +499,7 @@ impl<'a> Parser<'a> {
                             return Err(self.fail(&format!("cannot assign to '{name}' while it is borrowed")));
                         }
                         if self.is_borrowed(id) {
-                            self.deferred_write_conflicts.push((id, name_offset, name.clone(), "assign to"));
+                            self.deferred_write_conflicts.push((id, name_offset, name.clone(), "assign to", None));
                         }
                         self.take(Kind::Equal)?;
                         let moved_before = self.moved.contains(&id);

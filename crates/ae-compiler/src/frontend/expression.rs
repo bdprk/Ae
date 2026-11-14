@@ -1165,7 +1165,7 @@ impl Parser<'_> {
                     if self.is_borrowed(*id) {
                         let offset = self.tokens.get(self.pos.saturating_sub(1)).map(|t| t.offset).unwrap_or(0);
                         let name = self.names.iter().find(|(_, (vid, _, _))| vid == id).map(|(n, _)| n.clone()).unwrap_or_else(|| format!("v{id}"));
-                        self.deferred_write_conflicts.push((*id, offset, name, "move"));
+                        self.deferred_write_conflicts.push((*id, offset, name, "move", None));
                     }
                     Some(MoveKind::Var(*id))
                 }
