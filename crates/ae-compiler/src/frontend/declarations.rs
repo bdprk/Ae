@@ -229,7 +229,20 @@ impl Parser<'_> {
             // `unsafe fn` (M2.12 slice 5): the body parses like any other
             // function — unchecked memory access inside it still needs its
             // own `unsafe` blocks — but calling it requires `unsafe`.
-            let is_unsafe_fn = if *self.current() == Kind::Unsafe { self.pos += 1; self.take(Kind::Fn)?; true } else { self.take(Kind::Fn)?; false };
+            // `unsafe fn` (M2.12 slice 5): the body parses like any other
+            // function — unchecked memory access inside it still needs its
+            // own `unsafe` blocks — but calling it requires `unsafe`. The
+            // precondition doc comment is the author’s half of the deal
+            // (spec/unsafe.md 6): presence is enforced here, truth cannot be.
+            let is_unsafe_fn = if *self.current() == Kind::Unsafe {
+                let fn_offset = self.tokens[self.pos].offset;
+                if !ae_syntax::has_doc_comment_above(self.source, fn_offset) {
+                    return Err(self.fail("an unsafe fn carries a doc comment naming its preconditions (what the caller must guarantee: validity, aliasing, thread context)"));
+                }
+                self.pos += 1;
+                self.take(Kind::Fn)?;
+                true
+            } else { self.take(Kind::Fn)?; false };
             let name = self.identifier()?;
             if !seen.insert(name.clone()) { return Err(self.fail(&format!("duplicate function '{name}'"))); }
             if *self.current() == Kind::LBracket {

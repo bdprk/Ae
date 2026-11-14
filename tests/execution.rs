@@ -3690,6 +3690,33 @@ fn repr_c_attribute_guards_and_extern_struct_rejections() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn unsafe_fn_doc_comment_is_enforced_and_a_documented_one_runs() {
+    // M2.12 U10 (spec/unsafe.md 6): the compiler enforces the presence
+    // of an `unsafe fn`'s precondition doc comment — it cannot enforce
+    // truth. A documented unsafe fn runs like any other.
+    let dir = unique_temp_dir("unsafe_doc");
+    let source = dir.join("scale.ae");
+    fs::write(&source, "/// Preconditions: the caller guarantees `x` is a valid, aligned i64\n/// value; no aliasing concerns (by-value scalar); single-threaded context.\nunsafe fn scale(x: i64) -> i64 { unsafe { return x * 2; } }\nfn main() {\n    unsafe { print(scale(21)); }\n}").unwrap();
+    let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).output().unwrap();
+    assert!(run.status.success(), "run failed: {}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "42\n");
+
+    let missing = dir.join("missing.ae");
+    fs::write(&missing, "unsafe fn raw(x: i64) -> i64 { unsafe { return x; } }\nfn main() {}\n").unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&missing).output().unwrap();
+    assert!(!rejected.status.success(), "an undocumented unsafe fn must be rejected");
+    let err = String::from_utf8_lossy(&rejected.stderr);
+    assert!(err.contains("doc comment naming its preconditions"), "the E0704 diagnostic: {err}");
+
+    // A prose comment block without any `///` line is not a doc comment.
+    let prose = dir.join("prose.ae");
+    fs::write(&prose, "// raw(x): x must be a valid i64.\nunsafe fn raw(x: i64) -> i64 { unsafe { return x; } }\nfn main() {}\n").unwrap();
+    let rejected_prose = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&prose).output().unwrap();
+    assert!(!rejected_prose.status.success(), "a prose comment is not a doc comment");
+    fs::remove_dir_all(dir).unwrap();
+}
+
 fn mir_drop_elision_thins_propagate_error_path_releases() {
     // M2.4: a `?`'s releases ride the error path, which exits the function,
     // so the state to read them with is the one after the value evaluated.

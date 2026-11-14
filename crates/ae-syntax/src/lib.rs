@@ -58,6 +58,38 @@ pub fn diagnostic_range(file: &str, source: &str, range: std::ops::Range<usize>,
         .expect("parser offset must be a UTF-8 boundary in the source");
     Diagnostic::at(span, message)
 }
+/// Whether a doc comment (`///` line) sits in the comment block immediately
+/// above `offset`. The parser uses this for the E0704 precondition rule
+/// (spec/unsafe.md 6): every `unsafe fn` carries a doc comment naming what
+/// the caller must guarantee. Comments themselves are skipped by the lexer,
+/// so the check scans the source text backwards over the contiguous comment
+/// lines and blanks; the first non-comment line ends the walk. A plain
+/// `//` line inside the block does not break it (a doc block commonly mixes
+/// prose lines), but the block must contain at least one `///` line.
+pub fn has_doc_comment_above(source: &str, offset: usize) -> bool {
+    let mut end = offset;
+    // Walk back over the whitespace between the declaration and its comment
+    // block; a token ends the walk only if it is not whitespace (the caller
+    // passes the declaration keyword's offset, so line-leading whitespace
+    // separates the two).
+    while end > 0 {
+        let c = source[..end].chars().next_back().unwrap();
+        if c.is_whitespace() { end -= c.len_utf8(); } else { break; }
+    }
+    // `end` is now just past the last character of the preceding line (or 0).
+    let mut found = false;
+    loop {
+        let line_start = source[..end].rfind('\n').map(|n| n + 1).unwrap_or(0);
+        let line = source[line_start..end].trim_start();
+        if line.starts_with("///") { found = true; }
+        else if line.starts_with("//") { /* prose line inside the block */ }
+        else if !line.is_empty() { break; }
+        if line_start == 0 { break; }
+        end = line_start - 1;
+    }
+    found
+}
+
 pub fn lex(source: &str) -> Result<Vec<Token>, String> {
     lex_diagnostic(source).map_err(|error| error.to_string())
 }

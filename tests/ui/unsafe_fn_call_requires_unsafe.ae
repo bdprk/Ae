@@ -1,5 +1,8 @@
 // M2.12 slice 5: calling an `unsafe fn` outside an unsafe block is rejected
-// at the call site (E0701) — the same rule a declared extern takes.
+// at the call site (E0701) — the same rule a declared extern takes. The
+// doc comment satisfies E0704 so the call-site diagnostic is what fires.
+/// Preconditions: the caller guarantees `v` is a valid, aligned i64 value;
+/// no aliasing concerns (by-value scalar); single-threaded context.
 unsafe fn poke(v: i64) -> i64 {
     return v * 3;
 }
