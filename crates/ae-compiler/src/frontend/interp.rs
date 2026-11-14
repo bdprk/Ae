@@ -1036,6 +1036,31 @@ fn eval_expr(
                 .unwrap_or(0);
             Ok(Val::Int(millis))
         }
+        // The CommandResult enum comes from the name table, so the carried
+        // result type is redundant here.
+        Expr::RunCommand(program, vid, ..) => {
+            // The runtime spawns the program with the vector's elements as
+            // argv and captures stdout plus the exit code into CommandResult
+            // (Ok(code, output), Err(output-on-failure-to-spawn)). The
+            // interp spawns through std::process with the same shape.
+            let program = path_operand(eval_expr(env, program, locals, caller_locals, false))?;
+            let args: Vec<String> = match read_var(locals, caller_locals, *vid, 0, 0)? {
+                Val::VecS(v) => v,
+                _ => return Err(Flow::Trap("internal: run_command argv".to_owned())),
+            };
+            let (eid, ok, err) = result_enum_of(env, "CommandResult").ok_or_else(|| Flow::Trap("internal: result enum missing".to_owned()))?;
+            let output = std::process::Command::new(&program).args(&args).output();
+            match output {
+                Ok(out) => {
+                    if out.status.success() {
+                        Ok(Val::Enum(eid, ok, vec![Val::Int(out.status.code().unwrap_or(0) as i64), Val::Str(String::from_utf8_lossy(&out.stdout).to_string())]))
+                    } else {
+                        Ok(Val::Enum(eid, err, vec![Val::Str(String::from_utf8_lossy(&out.stdout).to_string())]))
+                    }
+                }
+                Err(error) => Ok(Val::Enum(eid, err, vec![Val::Str(format!("cannot run program: {error}"))])),
+            }
+        }
         Expr::MapNew(_, _, kind) => match kind {
             MapKind::Int => Ok(Val::Map(HashMap::new())),
             MapKind::Float => Ok(Val::MapF(HashMap::new())),
