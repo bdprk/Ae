@@ -42,14 +42,14 @@ thread_local! {
 thread_local! {
     static EXTERN_NAMES: std::cell::RefCell<HashMap<usize, (String, Vec<Type>, Type)>> = std::cell::RefCell::new(HashMap::new());
 }
-pub(super) fn register_extern(id: usize, c_name: String, params: Vec<Type>, ret: Type) {
+fn register_extern(id: usize, c_name: String, params: Vec<Type>, ret: Type) {
     EXTERN_NAMES.with(|map| { map.borrow_mut().insert(id, (c_name, params, ret)); });
 }
-pub(super) fn extern_name(id: usize) -> Option<String> {
+fn extern_name(id: usize) -> Option<String> {
     EXTERN_NAMES.with(|map| map.borrow().get(&id).map(|(name, _, _)| name.clone()))
 }
 // Every declared extern with its C signature, for the prototype emission.
-pub(super) fn extern_declarations() -> Vec<(String, Vec<Type>, Type)> {
+fn extern_declarations() -> Vec<(String, Vec<Type>, Type)> {
     EXTERN_NAMES.with(|map| map.borrow().values().cloned().collect())
 }
 // The unsafe-fn registry (M2.12 slice 5): an `unsafe fn` is a normal
@@ -64,7 +64,7 @@ pub(super) fn is_unsafe_fn(id: usize) -> bool {
     UNSAFE_FNS.with(|set| set.borrow().contains(&id))
 }
 // Intern a pointee type; identical pointees share one id.
-pub(super) fn intern_pointee(pointee: Type) -> usize {
+fn intern_pointee(pointee: Type) -> usize {
     PTR_POINTEES.with(|pointees| {
         let mut pointees = pointees.borrow_mut();
         if let Some(index) = pointees.iter().position(|t| *t == pointee) { return index; }
@@ -74,7 +74,7 @@ pub(super) fn intern_pointee(pointee: Type) -> usize {
 }
 // The pointee of an interned pointer type. Runs without a parser handy, like
 // `fn_sig` (ADR-0189).
-pub(super) fn ptr_pointee(id: usize) -> Type {
+fn ptr_pointee(id: usize) -> Type {
     PTR_POINTEES.with(|pointees| pointees.borrow()[id])
 }
 impl Type {
@@ -168,7 +168,7 @@ const MAX_ENUM_TYPES: usize = 256;
 const MAX_STRUCT_TYPES: usize = 256;
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
-const RESERVED: &[&str] = &["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "f64map_new", "map_put", "map_get", "map_has", "map_remove", "map_inc", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "find", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "f64vec_new", "run_command", "set_cwd", "to_f64", "to_i64", "tokenize", "sqrt", "abs", "floor", "ceil", "round", "exp", "log", "sin", "cos", "pow", "atan2", "min", "max"];
+const RESERVED: &[&str] = &["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "f64map_new", "map_put", "map_get", "map_has", "map_remove", "map_inc", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "find", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "f64vec_new", "run_command", "set_cwd", "to_f64", "to_i64", "c_size_of", "c_offset_of", "tokenize", "sqrt", "abs", "floor", "ceil", "round", "exp", "log", "sin", "cos", "pow", "atan2", "min", "max"];
 // The math builtins (ADR-60): AE name, C symbol, arity. Every argument and
 // the result is f64, and each call maps 1:1 onto C libm, so domain errors are
 // IEEE NaN/-inf instead of language-level failures — unlike the checked `/`
@@ -252,7 +252,8 @@ enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Bo
     // A raw pointer (M2.12 slice 2/3): `&expr as *const T` and
     // `&mut expr as *mut T` take the address of a local; the bool records
     // mutability. `p.deref()` reads through it, inside `unsafe` only.
-    BorrowAs(Box<Expr>, bool, usize, usize), DerefPtr(Box<Expr>, usize, usize) }
+    #[allow(dead_code)]
+    BorrowAs(Box<Expr>, bool, usize, usize), #[allow(dead_code)] DerefPtr(Box<Expr>, usize, usize) }
 // Which value type a map holds: the builtins dispatch on it (ADR-65).
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum MapKind { Int, Float }
@@ -308,7 +309,39 @@ fn returns(stmts: &[Statement]) -> bool {
     })
 }
 #[derive(Debug, Clone)]
-struct StructDef { name: String, fields: Vec<(String, Type)>, file: String, public: bool }
+struct StructDef { name: String, fields: Vec<(String, Type)>, file: String, public: bool, repr_c: bool }
+
+impl StructDef {
+    // The C layout of a `#[repr(C)]` struct: each field sits at its natural
+    // alignment (C padding rules), the struct's alignment is the maximum
+    // field alignment, and the size rounds up to that alignment (trailing
+    // padding). A field of owned type cannot appear — the attribute parse
+    // rejects it — so scalars and nested `#[repr(C)]` structs cover all
+    // shapes. Returns None for a struct without the attribute: its layout
+    // is the compiler's choice, not a promise.
+    fn c_layout(&self, structs: &[StructDef]) -> Option<(i64, i64, Vec<i64>)> {
+        if !self.repr_c { return None; }
+        let (mut offset, mut max_align) = (0i64, 1i64);
+        let mut offsets = Vec::with_capacity(self.fields.len());
+        for (_, ty) in &self.fields {
+            let (size, align) = match ty {
+                Type::Int | Type::F64 => (8, 8),
+                Type::Bool => (1, 1),
+                Type::Struct(k) => {
+                    let (inner_size, inner_align, _) = structs[*k].c_layout(structs)?;
+                    (inner_size, inner_align)
+                }
+                _ => return None,
+            };
+            offset = (offset + align - 1) / align * align;
+            offsets.push(offset);
+            offset += size;
+            max_align = max_align.max(align);
+        }
+        let size = (offset + max_align - 1) / max_align * max_align;
+        Some((size, max_align, offsets))
+    }
+}
 // Enum layouts are closed: variants carry a fixed field list, and the first
 // version restricts payload fields to i64/bool/string so no enum can contain
 // itself and every payload has a trivial release.

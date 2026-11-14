@@ -78,7 +78,7 @@ extern "C" fn ae_add(a: i64, b: i64) -> i64 { return a + b; }
 ### 5.1 Layout
 - `#[repr(C)] struct Pair { a: i64, b: i64 }` fixes field order and C padding rules (each field at its natural alignment, struct alignment = max field alignment).
 - Without the attribute, layout is the compiler's choice (today: declaration order, natural alignment); `#[repr(C)]` is required for any struct crossing the FFI boundary in either direction.
-- The layout is pinned by a compile-time `size_of`/`offset_of` query pair so a layout regression fails a test, not an FFI session.
+- The layout is pinned by a compile-time query pair, `c_size_of[T]()` and `c_offset_of[T]("field")` (each field's byte offset), evaluated in the parser to constants. The `c_` prefix keeps the pair distinct from the generic-borrow convention's user-definable `size_of[T]`; the names belong to the same `#[repr(C)]`/`extern "C"` family.
 
 ### 5.2 Diagnostics
 - Passing a non-`#[repr(C)]` struct across `extern "C"` is rejected: `'Pair' is not '#[repr(C)]'; the C ABI requires a fixed layout` (E0703).
@@ -103,7 +103,7 @@ The compiler enforces presence (a doc comment is required on `unsafe fn`, E0704)
 | U5 | `extern "C" fn abs(v: i64) -> i64;` called inside `unsafe` | Links against libc `abs`, runs |
 | U6 | An `extern "C"` declaration taking a `string` | Rejected (owned types are not C-ABI-shaped) |
 | U7 | `extern "C" fn` exposed with `#[no_mangle]`, called from a C stub | Bidirectional example runs on both platforms |
-| U8 | A `#[repr(C)]` struct passed by value to a declaration | Matches the C layout check (`size_of`/`offset_of`) |
+| U8 | A `#[repr(C)]` struct passed by value to a declaration | Matches the C layout check (`c_size_of`/`c_offset_of`); the by-value call compiles with a real C prototype |
 | U9 | A struct without `#[repr(C)]` crossing the boundary | Rejected E0703 |
 | U10 | `unsafe fn` without a doc comment | Rejected E0704 |
 | U11 | A dangling deref under the MIR UB-detection mode (M2.11) | Trapped with a pointer diagnostic |

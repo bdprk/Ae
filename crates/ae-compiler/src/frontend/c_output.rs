@@ -536,6 +536,20 @@ pub(super) fn emit_program(program: Program) -> Result<GeneratedC, String> {
         out.push_str(&format!("static void ae_t{sid}_release(ae_t{sid} *v) {{\n{release}}}\n"));
         out.push_str(&format!("static void ae_t{sid}_forfeit(ae_t{sid} *v) {{\n{forfeit}}}\n"));
     }
+    // The `extern "C"` declarations' prototypes (M2.12 slice 4): the call
+    // site emits the C symbol bare, so without a prototype every foreign
+    // call is an implicit declaration — an error at C99 and UB at C89 (the
+    // implicit `int` return truncates i64). The prototypes sit after the
+    // struct typedefs, so a `#[repr(C)]` parameter names a complete type.
+    for (c_name, params, ret) in crate::frontend::extern_declarations() {
+        let params_c = if params.is_empty() {
+            "void".to_owned()
+        } else {
+            params.iter().map(|ty| c_type(*ty, 0, true)).collect::<Vec<_>>().join(", ")
+        };
+        out.push_str(&format!("{} {}({});
+", c_return(ret), c_name, params_c));
+    }
     let all: Vec<&Function> = files.iter().flatten().collect();
     for function in &all {
         if function.is_main { continue; }

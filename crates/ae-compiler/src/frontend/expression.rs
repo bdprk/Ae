@@ -36,6 +36,12 @@ impl Parser<'_> {
         Ok((Expr::Call(def.signature.id, args, def.signature.ret), def.signature.ret))
     }
 
+    // A compile-time integer constant as an expression: the layout queries
+    // evaluate in the parser and reach every later stage as plain numbers.
+    fn value_number(&self, n: i64) -> (Expr, Type) {
+        (Expr::Number(n), Type::Int)
+    }
+
     fn no_such_method(&self, type_name: &str, method: &str, form: &str) -> ae_span::Diagnostic {
         let prefix = format!("{type_name}#");
         let mut names: Vec<String> = self.generics.inherent.keys()
@@ -444,6 +450,43 @@ impl Parser<'_> {
                             (Expr::Len(Box::new(operand), line, col), Type::Int)
                         }
                     }
+                } else if (name == "c_size_of" || name == "c_offset_of") && *self.current() == Kind::LBracket {
+                    // The layout query pair (M2.12 U8): compile-time
+                    // constants over a `#[repr(C)]` struct, so a layout
+                    // regression fails a test rather than an FFI session.
+                    // `size_of[Pair]()`, `offset_of[Pair]("field")`.
+                    self.pos += 1;
+                    let type_name = self.identifier()?;
+                    let Some(&sid) = self.struct_names.get(&type_name) else {
+                        return Err(self.fail(&format!("'{}' is not a struct; the layout queries name concrete structs", type_name)));
+                    };
+                    if !self.structs[sid].repr_c {
+                        return Err(self.fail(&format!("'{}' has no '#[repr(C)]', so its layout is the compiler's choice; the queries pin promised layouts only", type_name)));
+                    }
+                    self.take(Kind::RBracket)?;
+                    self.take(Kind::LParen)?;
+                    let value = if name == "c_size_of" {
+                        if *self.current() != Kind::RParen { return Err(self.fail("size_of takes no arguments; write size_of[Struct]()")); }
+                        self.pos += 1;
+                        let Some((size, _, _)) = self.structs[sid].c_layout(&self.structs) else {
+                            return Err(self.fail("internal: a repr(C) struct without a layout"));
+                        };
+                        self.value_number(size)
+                    } else {
+                        let (field, field_ty) = self.expression(0, false)?;
+                        if !matches!(field_ty, Type::String) { return Err(self.fail("offset_of's field is written as a string literal")); }
+                        let Expr::StrLit(fname, _, _) = &field else {
+                            return Err(self.fail("offset_of's field is written as a string literal"));
+                        };
+                        self.take(Kind::RParen)?;
+                        let Some((_, _, offsets)) = self.structs[sid].c_layout(&self.structs) else {
+                            return Err(self.fail("internal: a repr(C) struct without a layout"));
+                        };
+                        let index = self.structs[sid].fields.iter().position(|(n, _)| n == fname)
+                            .ok_or_else(|| self.fail(&format!("'{}' has no field '{}'", type_name, fname)))?;
+                        self.value_number(offsets[index])
+                    };
+                    value
                 } else if name == "slice_view" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     self.take(Kind::LParen)?;
@@ -1255,18 +1298,19 @@ impl Parser<'_> {
             let move_target = match (&lhs.0, lhs.1) {
                 (_, ty) if !ty.owned() => None,
                 (Expr::Variable(id, _, _, _), _) if !operator_follows || plus_follows => {
+                    let vid = *id;
                     // A move under view borrows is deferred (M2.5 L1): the
                     // view may have died at its last read, in which case the
                     // move is fine. Container borrows reject on sight.
-                    if self.is_borrowed(*id) && !self.all_borrows_are_views(*id) {
+                    if self.is_borrowed(vid) && !self.all_borrows_are_views(vid) {
                         return Err(self.fail("cannot move a value while it is borrowed"));
                     }
-                    if self.is_borrowed(*id) {
+                    if self.is_borrowed(vid) {
                         let offset = self.tokens.get(self.pos.saturating_sub(1)).map(|t| t.offset).unwrap_or(0);
-                        let name = self.names.iter().find(|(_, (vid, _, _))| vid == id).map(|(n, _)| n.clone()).unwrap_or_else(|| format!("v{id}"));
-                        self.deferred_write_conflicts.push((*id, offset, name, "move", None));
+                        let name = self.names.iter().find(|(_, (bound, _, _))| *bound == vid).map(|(n, _)| n.clone()).unwrap_or_else(|| format!("v{vid}"));
+                        self.deferred_write_conflicts.push((vid, offset, name, "move", None));
                     }
-                    Some(MoveKind::Var(*id))
+                    Some(MoveKind::Var(vid))
                 }
                 (Expr::Field(_, _, fty), _) if fty.owned() && !operator_follows && !read_only_operand => Some(MoveKind::Field),
                 (Expr::StrVecIndex(_, _, _, _, _), _) if !operator_follows && !read_only_operand => Some(MoveKind::StrVecElement),

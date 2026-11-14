@@ -430,7 +430,7 @@ impl Parser<'_> {
         }
         let display = format!("{}[{}]", def.name, args.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "));
         let sid = self.structs.len();
-        self.structs.push(StructDef { name: display, fields, file: def.file, public: def.public });
+        self.structs.push(StructDef { name: display, fields, file: def.file, public: def.public, repr_c: false });
         self.generics.struct_done.insert(key, sid);
         // Remember which declaration and arguments produced this layout, so
         // method calls on the instantiation can resolve through its generic
@@ -438,7 +438,7 @@ impl Parser<'_> {
         self.generics.struct_origin.insert(sid, (gid, args));
         Ok(sid)
     }
-    pub(super) fn parse_struct_def(&mut self, public: bool) -> Result<(), ae_span::Diagnostic> {
+    pub(super) fn parse_struct_def(&mut self, public: bool, repr_c: bool) -> Result<(), ae_span::Diagnostic> {
         self.pos += 1;
         let name_offset = self.tokens[self.pos].offset;
         let name = self.identifier()?;
@@ -454,6 +454,16 @@ impl Parser<'_> {
             if !seen.insert(fname.clone()) { return Err(self.fail(&format!("duplicate field '{}' in struct '{}'", fname, name))); }
             self.take(Kind::Colon)?;
             let fty = self.field_type(&params)?;
+            if repr_c {
+                let owned = match &fty {
+                    Payload::Concrete(ty) => ty.owned(),
+                    Payload::Nested(_) => false,
+                    Payload::Param(_) => false,
+                };
+                if owned {
+                    return Err(self.fail(&format!("field '{}' of '{}' owns storage, so the struct cannot claim a C layout; '#[repr(C)]' structs hold scalars and other '#[repr(C)]' structs", fname, name)));
+                }
+            }
             fields.push((fname, fty));
             if *self.current() == Kind::Comma { self.pos += 1; }
         }
@@ -476,8 +486,11 @@ impl Parser<'_> {
             }
             let id = self.structs.len();
             self.struct_names.insert(name.clone(), id);
-            self.structs.push(StructDef { name, fields: concrete, file: self.file.clone(), public });
+            self.structs.push(StructDef { name, fields: concrete, file: self.file.clone(), public, repr_c });
         } else {
+            if repr_c {
+                return Err(self.fail(&format!("'{}' is generic, so it has no single C layout; '#[repr(C)]' belongs on a concrete struct", name)));
+            }
             let gid = self.generics.struct_defs.len();
             self.generics.struct_names.insert(name.clone(), gid);
             self.generics.struct_defs.push(GenericStruct { name, params, fields, file: self.file.clone(), public });

@@ -3639,6 +3639,57 @@ fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
 }
 
 #[test]
+#[test]
+fn repr_c_layout_queries_and_extern_prototypes() {
+    // M2.12 U8: `#[repr(C)]` pins a struct's layout — declaration
+    // order, natural alignment, trailing padding — and the compile-time
+    // query pair pins it in a test. The `extern "C"` prototype emits
+    // with the struct as a by-value parameter, so a foreign definition
+    // (coming with U7's #[no_mangle]) links against a real type.
+    let dir = unique_temp_dir("repr_c");
+    let source = dir.join("pair.ae");
+    fs::write(&source, "#[repr(C)] struct Pair { a: i64, b: i64 }\nextern \"C\" fn pair_sum(p: Pair) -> i64;\nimpl Pair { fn sum(&self) -> i64 { return self.a + self.b; } }\nfn main() {\n    let p = Pair { a: 10, b: 32 };\n    print(c_size_of[Pair]());\n    print(c_offset_of[Pair](\"a\"));\n    print(c_offset_of[Pair](\"b\"));\n    print(p.sum());\n}").unwrap();
+    let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).output().unwrap();
+    assert!(run.status.success(), "run failed: {}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "16\n0\n8\n42\n");
+
+    // The prototype names the struct type; the layout queries folded to
+    // constants in the C.
+    let emitted = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-c").arg(&source).output().unwrap();
+    assert!(emitted.status.success(), "{}", String::from_utf8_lossy(&emitted.stderr));
+    let c = String::from_utf8_lossy(&emitted.stdout).replace("\r\n", "\n");
+    assert!(c.contains("int64_t pair_sum(ae_t0 v0);"), "the by-value prototype: {c}");
+    assert!(!c.contains("ae_index"), "no runtime layout checks: {c}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn repr_c_attribute_guards_and_extern_struct_rejections() {
+    // The attribute's three guards and the E0703 crossing rejection.
+    let cases = [
+        ("fn size_of[T](v: &T) -> i64 { return len(v); } #[repr(C)] struct Boxed[V] { inner: V } fn main() {}",
+         "is generic, so it has no single C layout"),
+        ("#[repr(C)] struct Bad { name: string } fn main() {}",
+         "owns storage, so the struct cannot claim a C layout"),
+        ("struct Plain { a: i64 } extern \"C\" fn take(p: Plain) -> i64; fn main() {}",
+         "cannot cross the C ABI"),
+        ("struct Plain { a: i64 } fn main() { print(c_size_of[Plain]()); }",
+         "its layout is the compiler's choice"),
+        ("#[repr(C)] struct P { a: i64 } fn main() { print(c_offset_of[P](\"missing\")); }",
+         "has no field"),
+    ];
+    let dir = unique_temp_dir("repr_c_guards");
+    for (index, (source, expected)) in cases.iter().enumerate() {
+        let path = dir.join(format!("case{index}.ae"));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        assert!(!output.status.success(), "accepted: {source}");
+        let err = String::from_utf8_lossy(&output.stderr);
+        assert!(err.contains(expected), "{source}: {err}");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
 fn mir_drop_elision_thins_propagate_error_path_releases() {
     // M2.4: a `?`'s releases ride the error path, which exits the function,
     // so the state to read them with is the one after the value evaluated.
@@ -4772,7 +4823,7 @@ fn check_json_collects_lexical_errors_across_sibling_imports() {
     fs::write(dir.join("left.ae"), "use \"shared.ae\";\n").unwrap();
     fs::write(dir.join("right.ae"), "use \"sub/../shared.ae\";\nuse \"other.ae\";\n").unwrap();
     fs::write(dir.join("shared.ae"), "@\n").unwrap();
-    fs::write(dir.join("other.ae"), "#\n").unwrap();
+    fs::write(dir.join("other.ae"), "`\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&entry).output().unwrap();
     assert!(!output.status.success());
     let json = String::from_utf8(output.stdout).unwrap();
@@ -4800,7 +4851,7 @@ fn check_json_collects_lexical_errors_across_sibling_imports() {
     assert!(json.contains("expected a string path") && json.contains("circular import") && json.contains("other.ae"), "{json}");
     fs::write(dir.join("right.ae"), "use \"other.ae\";\n").unwrap();
     fs::write(dir.join("shared.ae"), "@\n".repeat(20)).unwrap();
-    fs::write(dir.join("other.ae"), "#\n".repeat(20)).unwrap();
+    fs::write(dir.join("other.ae"), "~\n".repeat(20)).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&entry).output().unwrap();
     let json = String::from_utf8(output.stdout).unwrap();
     assert_eq!(json.matches("\"message\":").count(), 32, "{json}");
@@ -4817,14 +4868,14 @@ fn check_json_collects_lexical_errors_across_sibling_imports() {
 fn check_json_reports_multiple_lexical_errors_without_accepting_program() {
     let dir = unique_temp_dir("json-multiple-lex");
     let path = dir.join("bad.ae");
-    fs::write(&path, "// 注释中的 @ 不报错\n@ 中 #\nfn main() {}\n").unwrap();
+    fs::write(&path, "// 注释中的 @ 不报错\n@ 中 ~\nfn main() {}\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_ae"))
         .arg("check").arg("--json").arg(&path).output().unwrap();
     assert!(!output.status.success());
     assert!(output.stderr.is_empty());
     let json = String::from_utf8(output.stdout).unwrap();
     assert_eq!(json.matches("\"message\":").count(), 3, "{json}");
-    for (column, character) in [(1, "@"), (3, "中"), (5, "#")] {
+    for (column, character) in [(1, "@"), (3, "中"), (5, "~")] {
         assert!(json.contains(&format!("\"line\":2,\"column\":{column},\"message\":\"unexpected character '{character}'\"")), "{json}");
     }
     let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
@@ -4983,7 +5034,7 @@ fn json_lexical_recovery_follows_verified_import_prefixes() {
     let entry = dir.join("main.ae");
     fs::write(&entry, "use \"child.ae\";\nfn main() { print(\"bad\\q\"); }\n").unwrap();
     fs::write(dir.join("child.ae"), "use \"nested.ae\";\n@\n").unwrap();
-    fs::write(dir.join("nested.ae"), "#\n").unwrap();
+    fs::write(dir.join("nested.ae"), "`\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg("--json").arg(&entry).output().unwrap();
     assert!(!output.status.success());
     let json = String::from_utf8(output.stdout).unwrap();
