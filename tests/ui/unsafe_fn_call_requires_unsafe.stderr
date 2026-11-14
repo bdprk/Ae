@@ -1,0 +1,1 @@
+ae: $DIR/unsafe_fn_call_requires_unsafe.ae:7:11: call to unsafe function 'poke' requires 'unsafe'

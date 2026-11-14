@@ -179,7 +179,10 @@ impl Parser<'_> {
                 self.take(Kind::Semi)?;
                 continue;
             }
-            self.take(Kind::Fn)?;
+            // `unsafe fn` (M2.12 slice 5): the body parses like any other
+            // function — unchecked memory access inside it still needs its
+            // own `unsafe` blocks — but calling it requires `unsafe`.
+            let is_unsafe_fn = if *self.current() == Kind::Unsafe { self.pos += 1; self.take(Kind::Fn)?; true } else { self.take(Kind::Fn)?; false };
             let name = self.identifier()?;
             if !seen.insert(name.clone()) { return Err(self.fail(&format!("duplicate function '{name}'"))); }
             if *self.current() == Kind::LBracket {
@@ -235,6 +238,7 @@ impl Parser<'_> {
                 if self.functions.insert(name.clone(), signature).is_some() {
                     return Err(self.fail(&format!("duplicate function '{name}' (already defined in an imported file)")));
                 }
+                if is_unsafe_fn { super::register_unsafe_fn(id); }
             }
             self.take(Kind::LBrace)?;
             let mut depth = 1usize;
@@ -777,6 +781,7 @@ impl Parser<'_> {
                 self.pos += 1;
                 continue;
             }
+            if *self.current() == Kind::Unsafe { self.pos += 1; }
             self.take(Kind::Fn)?;
             let name = self.identifier()?;
             // A generic declaration has no body of its own: the signature pass

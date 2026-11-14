@@ -974,10 +974,11 @@ impl Parser<'_> {
                     if !signature.public && signature.file != PRELUDE && signature.file != self.file {
                         return Err(self.error_at(name_offset, &format!("function '{name}' is private to {} (mark it 'pub' to export it)", signature.file)));
                     }
-                    if signature.extern_c && self.unsafe_depth == 0 {
+                    if (signature.extern_c || crate::frontend::is_unsafe_fn(signature.id)) && self.unsafe_depth == 0 {
                         // Calling C is the unchecked operation: the compiler
                         // knows none of the callee's preconditions (M2.12
-                        // slice 4, spec/unsafe.md 4.1).
+                        // slice 4, spec/unsafe.md 4.1). An `unsafe fn` is the
+                        // language's own boundary with the same rule (slice 5).
                         return Err(self.error_at(name_offset, &format!("call to unsafe function '{name}' requires 'unsafe'")).with_code("E0701"));
                     }
                     let (id, types, ret) = (signature.id, signature.params.clone(), signature.ret);
