@@ -106,5 +106,5 @@ The compiler enforces presence (a doc comment is required on `unsafe fn`, E0704)
 | U8 | A `#[repr(C)]` struct passed by value to a declaration | Matches the C layout check (`c_size_of`/`c_offset_of`); the by-value call compiles with a real C prototype |
 | U9 | A struct without `#[repr(C)]` crossing the boundary | Rejected E0703 |
 | U10 | `unsafe fn` without a doc comment | Rejected E0704 |
-| U11 | A dangling deref under the MIR UB-detection mode (M2.11) | Trapped with a pointer diagnostic |
+| U11 | A dangling deref under the MIR UB-detection mode (M2.11) | Trapped with a pointer diagnostic. Today the shape is prevented at the declaration — a pointer to an owned value is rejected because its borrow is untracked — so the interpreter's trap ("reading through a pointer to a moved value") is the backstop that arms when pointer-to-owned lands |
 | U12 | Differential: every U-case's safe mirror compiles and runs identically under interp / MIR / tree / release | Four-way agreement |
