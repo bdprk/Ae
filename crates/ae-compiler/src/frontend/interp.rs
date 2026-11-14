@@ -7,7 +7,11 @@
 //! `assertion failed`, `array index out of bounds`, `vector index out of bounds`,
 //! `use of moved ...`), reporting failures in the exact `ae:line:col: msg`
 //! diagnostic format.
+use std::collections::HashMap;
+
 use super::*;
+
+const LF_CHAR: char = '\n';
 
 #[derive(Debug, Clone)]
 enum Val {
@@ -574,6 +578,56 @@ fn eval_expr(
                 Val::Moved => Err(trap("use of moved value", *line, *col)),
                 _ => Err(Flow::Trap("internal: len on unsupported value".to_owned())),
             }
+        }
+        // The string builtins the run corpus uses. The split/lines/slice
+        // semantics mirror the runtime's exactly: split retains empty
+        // segments and traps on an empty separator; lines keep internal
+        // empties and drop the trailing newline's empty tail; slice checks
+        // the UTF-8 boundaries before cutting.
+        Expr::Split(base, sep, line, col) => {
+            let base = match eval_expr(env, base, locals, caller_locals, false)? {
+                Val::Str(s) => s,
+                _ => return Err(Flow::Trap("internal: split operand".to_owned())),
+            };
+            let sep = match eval_expr(env, sep, locals, caller_locals, false)? {
+                Val::Str(s) => s,
+                _ => return Err(Flow::Trap("internal: split separator".to_owned())),
+            };
+            if sep.is_empty() { return Err(trap("empty separator", *line, *col)); }
+            Ok(Val::VecS(base.split(&sep).map(|part| part.to_owned()).collect()))
+        }
+        Expr::Lines(inner, _, _) => {
+            match eval_expr(env, inner, locals, caller_locals, false)? {
+                Val::Str(s) => {
+                    if s.is_empty() { return Ok(Val::VecS(Vec::new())); }
+                    let mut lines: Vec<String> = s.split(LF_CHAR).map(|part| part.to_owned()).collect();
+                    if lines.last().map(|last| last.is_empty()).unwrap_or(false) { lines.pop(); }
+                    Ok(Val::VecS(lines))
+                }
+                _ => Err(Flow::Trap("internal: lines operand".to_owned())),
+            }
+        }
+        Expr::Slice(base, start, end, line, col) => {
+            let base = match eval_expr(env, base, locals, caller_locals, false)? {
+                Val::Str(s) => s,
+                _ => return Err(Flow::Trap("internal: slice operand".to_owned())),
+            };
+            let start = match eval_expr(env, start, locals, caller_locals, false)? {
+                Val::Int(n) => n,
+                _ => return Err(Flow::Trap("internal: slice start".to_owned())),
+            };
+            let end = match eval_expr(env, end, locals, caller_locals, false)? {
+                Val::Int(n) => n,
+                _ => return Err(Flow::Trap("internal: slice end".to_owned())),
+            };
+            if start < 0 || end < start || (end as usize) > base.len() {
+                return Err(trap("slice index out of bounds", *line, *col));
+            }
+            let (s, e) = (start as usize, end as usize);
+            if !base.is_char_boundary(s) || !base.is_char_boundary(e) {
+                return Err(trap("string index splits a UTF-8 character", *line, *col));
+            }
+            Ok(Val::Str(base[s..e].to_owned()))
         }
         Expr::Neg(inner, line, col) => {
             match eval_expr(env, inner, locals, caller_locals, false)? {
