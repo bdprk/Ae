@@ -1215,7 +1215,7 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
 ");
             }
             // M2.12 slice 3: the write goes through the pointer's address.
-            Statement::PtrStore(id, value, line, column) => {
+            Statement::PtrStore(id, value, _line, _column) => {
                 let t = emit_expr(value, out, next, false);
                 out.push_str(&format!("    *v{id} = {};
 ", t.text));

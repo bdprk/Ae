@@ -1,1 +1,1 @@
-ae: $DIR/extern_abi_shape_rejected2.ae:3:31: 'string' cannot cross the C ABI in this slice; only i64, bool, and f64 can
+ae: $DIR/extern_abi_shape_rejected2.ae:3:19: 'string' cannot cross the C ABI; scalars, '#[repr(C)]' structs, and '*const T'/'*mut T' can

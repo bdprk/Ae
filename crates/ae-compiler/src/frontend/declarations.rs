@@ -8,6 +8,28 @@ impl Parser<'_> {
     }
     // `pub` marks an item as importable from other files. It is consumed by the
     // declaration passes, never by expression parsing.
+    // The C-ABI shape of a type crossing an `extern "C"` boundary (M2.12
+    // U8): scalars pass directly; a `#[repr(C)]` struct passes by value
+    // when every field is itself C-shaped (recursively); raw pointers and
+    // borrowed arrays are the spec's pointer forms. An owned type is
+    // rejected at the declaration: the C side cannot honor its release
+    // logic. The struct's own `#[repr(C)]` attribute is what makes its
+    // layout a promise; without it the layout is the compiler's choice.
+    pub(super) fn c_abi_shape(&self, ty: &Type, offset: usize) -> bool {
+        match ty {
+            Type::Int | Type::Bool | Type::F64 => true,
+            Type::Ptr(_) | Type::PtrMut(_) => true,
+            Type::Struct(sid) => {
+                let def = &self.structs[*sid];
+                if !def.repr_c {
+                    return false;
+                }
+                def.fields.iter().all(|(_, fty)| self.c_abi_shape(fty, offset))
+            }
+            _ => false,
+        }
+    }
+
     pub(super) fn take_pub(&mut self) -> bool {
         let is_pub = matches!(self.current(), Kind::Ident(name) if name == "pub");
         if is_pub { self.pos += 1; }
@@ -126,7 +148,27 @@ impl Parser<'_> {
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::Eof {
             let public = self.take_pub();
-            if *self.current() == Kind::Struct { self.parse_struct_def(public)?; continue; }
+            // `#[repr(C)]` is the language's one attribute (M2.12 U8): it
+            // pins the struct's layout for the C ABI. The bracket shape is
+            // parsed literally, and anything but repr(C) is rejected by
+            // name so a typo cannot silently mean "no attribute".
+            let mut repr_c = false;
+            if *self.current() == Kind::Hash {
+                self.pos += 1;
+                self.take(Kind::LBracket)?;
+                let attr = self.identifier()?;
+                if attr != "repr" { return Err(self.fail(&format!("unknown attribute '{attr}'; the language has '#[repr(C)]' only"))); }
+                self.take(Kind::LParen)?;
+                let inner = self.identifier()?;
+                if inner != "C" { return Err(self.fail(&format!("only '#[repr(C)]' is supported, found '#[repr({inner})]'"))); }
+                self.take(Kind::RParen)?;
+                self.take(Kind::RBracket)?;
+                if *self.current() != Kind::Struct {
+                    return Err(self.fail("'#[repr(C)]' applies to a struct declaration"));
+                }
+                repr_c = true;
+            }
+            if *self.current() == Kind::Struct { self.parse_struct_def(public, repr_c)?; continue; }
             if *self.current() == Kind::Enum { self.parse_enum_def(public)?; continue; }
             if *self.current() == Kind::Trait { self.skip_trait_def()?; continue; }
             if *self.current() == Kind::Impl { self.collect_impl(next_id)?; continue; }
@@ -146,6 +188,7 @@ impl Parser<'_> {
                 let name = self.identifier()?;
                 if !seen.insert(name.clone()) { return Err(self.fail(&format!("duplicate function '{name}'"))); }
                 self.take(Kind::LParen)?;
+                let sig_offset = self.tokens[self.pos.saturating_sub(1)].offset;
                 let mut types = Vec::new();
                 if *self.current() != Kind::RParen {
                     loop {
@@ -162,8 +205,12 @@ impl Parser<'_> {
                 self.take(Kind::Arrow)?;
                 let ret = self.return_annotation()?;
                 for ty in types.iter().chain(std::iter::once(&ret)) {
-                    if !matches!(ty, Type::Int | Type::Bool | Type::F64) {
-                        return Err(self.fail(&format!("'{}' cannot cross the C ABI in this slice; only i64, bool, and f64 can", ty.name())));
+                    if !self.c_abi_shape(ty, sig_offset) {
+                        let shown = match ty {
+                            Type::Struct(sid) => self.structs[*sid].name.clone(),
+                            _ => ty.name(),
+                        };
+                        return Err(self.error_at(sig_offset, &format!("'{shown}' cannot cross the C ABI; scalars, '#[repr(C)]' structs, and '*const T'/'*mut T' can")));
                     }
                 }
                 if name == "main" { return Err(self.fail("main cannot be an extern declaration")); }
@@ -766,6 +813,11 @@ impl Parser<'_> {
         let mut main_found = false;
         while *self.current() != Kind::Eof {
             self.take_pub();
+            // The attribute was validated (and its struct registered) by
+            // the signature pass; this pass just steps over the tokens.
+            if *self.current() == Kind::Hash {
+                self.pos += 7; // #[repr(C)]
+            }
             if *self.current() == Kind::Struct { self.skip_struct_def(); continue; }
             if *self.current() == Kind::Enum { self.skip_enum_def(); continue; }
             if *self.current() == Kind::Trait { self.skip_trait_def()?; continue; }

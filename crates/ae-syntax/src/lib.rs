@@ -6,7 +6,7 @@ pub enum Kind {
     Ident(String), Number(i64), Float(f64), Text(String), Fn, Let, Var, Mut, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang, Pipe,
     LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Dot, DotDot, Struct,
-    Enum, Match, ColonColon, FatArrow, Question, Trait, Impl, Unsafe, Const, As, Extern, Eof,
+    Enum, Match, ColonColon, FatArrow, Question, Trait, Impl, Unsafe, Const, As, Extern, Hash, Eof,
 }
 #[derive(Debug, Clone)]
 pub struct Token { pub kind: Kind, pub offset: usize, pub end: usize, pub line: usize, pub column: usize }
@@ -34,7 +34,7 @@ fn kind_name(kind: &Kind) -> &'static str {
         Kind::Equal => "Equal", Kind::Plus => "Plus", Kind::Minus => "Minus", Kind::Star => "Star",
         Kind::Slash => "Slash", Kind::Percent => "Percent", Kind::Dot => "Dot", Kind::DotDot => "DotDot",
         Kind::ColonColon => "ColonColon", Kind::FatArrow => "FatArrow", Kind::Question => "Question",
-        Kind::Trait => "Trait", Kind::Impl => "Impl", Kind::Unsafe => "Unsafe", Kind::Const => "Const", Kind::As => "As", Kind::Extern => "Extern", Kind::Eof => "Eof",
+        Kind::Trait => "Trait", Kind::Impl => "Impl", Kind::Unsafe => "Unsafe", Kind::Const => "Const", Kind::As => "As", Kind::Extern => "Extern", Kind::Hash => "Hash", Kind::Eof => "Eof",
     }
 }
 
@@ -252,7 +252,7 @@ fn lex_inner(source: &str, mut recovered: Option<&mut Vec<Diagnostic>>) -> Resul
                 '[' => Kind::LBracket, ']' => Kind::RBracket, ',' => Kind::Comma, ':' => Kind::Colon, '&' => Kind::Amp,
                 ';' => Kind::Semi, '=' => Kind::Equal, '+' => Kind::Plus, '-' => Kind::Minus,
                 '*' => Kind::Star, '/' => Kind::Slash, '%' => Kind::Percent, '<' => Kind::Less, '>' => Kind::Greater,
-                '!' => Kind::Bang, '.' => Kind::Dot, '?' => Kind::Question,
+                '!' => Kind::Bang, '.' => Kind::Dot, '?' => Kind::Question, '#' => Kind::Hash,
                 '|' => Kind::Pipe,
                 _ => {
                     let diagnostic = lex_error(source, start, "E0001", &format!("unexpected character {c:?}"));
@@ -330,11 +330,11 @@ mod diagnostic_tests {
 
     #[test]
     fn recovery_continues_after_complete_invalid_numeric_literals() {
-        let source = "// 中文\n9223372036854775808 @ 1e999 1e-999 #";
+        let source = "// 中文\n9223372036854775808 @ 1e999 1e-999";
         let errors = lex_with_diagnostics(source).unwrap_err();
         let codes: Vec<_> = errors.iter().map(|d| d.code.as_deref().unwrap()).collect();
-        assert_eq!(codes, ["E0005", "E0001", "E0007", "E0008", "E0001"]);
-        for (error, needle) in errors.iter().zip(["9223372036854775808", "@", "1e999", "1e-999", "#"]) {
+        assert_eq!(codes, ["E0005", "E0001", "E0007", "E0008"]);
+        for (error, needle) in errors.iter().zip(["9223372036854775808", "@", "1e999", "1e-999"]) {
             let span = &error.primary.as_ref().unwrap().span;
             assert_eq!(span.range.start, source.find(needle).unwrap());
             assert_eq!(span.line, 2);
@@ -364,13 +364,13 @@ mod diagnostic_tests {
 
     #[test]
     fn recovery_keeps_original_positions_and_stops_at_ambiguous_errors() {
-        let errors = lex_with_diagnostics("中 @\n\"bad\\q\" #").unwrap_err();
-        assert_eq!(errors.len(), 4);
+        let errors = lex_with_diagnostics("中 @\n\"bad\\q\"").unwrap_err();
+        assert_eq!(errors.len(), 3);
         let positions: Vec<_> = errors.iter().map(|d| {
             let span = &d.primary.as_ref().unwrap().span;
             (span.range.clone(), span.line, span.column)
         }).collect();
-        assert_eq!(positions, vec![(0..3, 1, 1), (4..5, 1, 3), (10..11, 2, 5), (14..15, 2, 9)]);
+        assert_eq!(positions, vec![(0..3, 1, 1), (4..5, 1, 3), (10..11, 2, 5)]);
         assert!(errors[2].message.contains("unsupported string escape"));
         assert!(lex_with_diagnostics("fn main() {} // @").is_ok());
         assert_eq!(lex_with_diagnostics(&"@".repeat(40)).unwrap_err().len(), 32);
