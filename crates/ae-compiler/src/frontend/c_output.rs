@@ -28,6 +28,10 @@ pub(super) fn c_type_field(ty: Type) -> String {
         Type::Closure(_) => "void".to_owned(),
         // Unreachable: no syntax for a function-typed field.
         Type::Fn(_) => "void".to_owned(),
+        // Unreachable: no syntax for a pointer-typed field (M2.12 pointers
+        // bind as locals only); the value keeps the pointer shape so a future
+        // slip prints valid C.
+        Type::Ptr(id) => format!("const {} *", c_type_field(ptr_pointee(id))),
     }
 }
 pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
@@ -71,6 +75,10 @@ pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         }
         Type::Array(_) if declaration => format!("const int64_t *v{id}"),
         Type::Array(_) => "const int64_t *".to_owned(),
+        // M2.12 slice 2: a pointer binds as a plain local (no release, no
+        // move tracking), so the declaration is the plain C pointer form.
+        Type::Ptr(pid) if declaration => format!("const {} *v{id}", c_type_field(ptr_pointee(pid))),
+        Type::Ptr(pid) => format!("const {} *", c_type_field(ptr_pointee(pid))),
     }
 }
 // Return type of a generated C function: the same spelling the expression

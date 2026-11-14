@@ -581,7 +581,9 @@ impl<'a> Parser<'a> {
                     // gate raw-pointer dereference and unsafe calls on being
                     // inside one.
                     self.pos += 1;
+                    self.unsafe_depth += 1;
                     let inner = self.block()?;
+                    self.unsafe_depth -= 1;
                     result.push(Statement::Unsafe(inner));
                 }
                 Kind::If => result.push(self.if_statement()?),

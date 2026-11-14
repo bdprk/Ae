@@ -159,7 +159,7 @@ impl Parser<'_> {
         let mut sub = Parser {
             file: self.file.clone(), source: self.source, tokens: Rc::clone(&self.tokens), shared_source: Rc::clone(&self.shared_source), pos: body_start,
             names: HashMap::new(), binding_ranges: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0,
-            loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0,
+            loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, unsafe_depth: 0,
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
@@ -366,6 +366,8 @@ fn walk_statements(statements: &[Statement], used: &mut std::collections::HashSe
 fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: &mut std::collections::HashSet<usize>) {
     match expr {
         Expr::Variable(id, ..) => { used.insert(*id); }
+        // A pointer takes the address of (or reads through) the slot (M2.12).
+        Expr::BorrowAs(e, ..) | Expr::DerefPtr(e, ..) => walk_expr(e, used, mutated),
         Expr::Index(id, _, _, _, _) | Expr::VecIndex(id, ..) | Expr::StrVecIndex(id, ..) => { used.insert(*id); }
         Expr::Tokens(id, ..) => { used.insert(*id); }
         Expr::Join(id, sep, ..) => { used.insert(*id); walk_expr(sep, used, mutated); }

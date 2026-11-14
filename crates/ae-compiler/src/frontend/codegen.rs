@@ -28,6 +28,17 @@ pub(super) fn c_float_literal(value: f64) -> String {
 
 pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> Emitted {
     let emitted = match expr {
+        // M2.12 slice 2: the address of addressable storage. The operand is a
+        // variable or a field of one, so the C is an address-of; the pointer
+        // itself is a plain value that neither moves nor releases.
+        Expr::BorrowAs(operand, ..) => {
+            let t = emit_expr(operand, out, next, false);
+            Emitted::value(format!("&({})", t.text), crate::frontend::mir::expr_type(expr))
+        }
+        Expr::DerefPtr(pointer, ..) => {
+            let t = emit_expr(pointer, out, next, false);
+            Emitted::value(format!("*({})", t.text), crate::frontend::mir::expr_type(expr))
+        }
         Expr::Number(n) => Emitted::value(format!("INT64_C({n})"), Type::Int),
         Expr::FloatLit(x) => Emitted::value(c_float_literal(*x), Type::F64),
         Expr::ToF64(value, line, column) => {

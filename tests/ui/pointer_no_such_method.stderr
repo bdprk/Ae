@@ -1,0 +1,1 @@
+ae: $DIR/pointer_no_such_method.ae:6:18: pointers have no method 'write'

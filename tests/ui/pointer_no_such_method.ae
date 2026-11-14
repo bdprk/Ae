@@ -1,0 +1,7 @@
+// A raw pointer's only operation in this slice is `deref` (M2.12 slice 2);
+// any other method name is rejected with the pointer's type in the message.
+fn main() {
+    var v = 42;
+    let p = &v as *const i64;
+    print(p.write(1));
+}
