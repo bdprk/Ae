@@ -1,0 +1,18 @@
+struct Doc { name: string, note: string }
+impl Doc {
+    fn rename(&mut self, to: string) -> i64 {
+        self.name = to;
+        return len(self.name);
+    }
+}
+fn main() {
+    var d = Doc { name: "alpha", note: "keep" };
+    let h = slice_view(d.name, 0, 2);
+    var i = 0;
+    while i < 2 {
+        let n = d.rename("beta");
+        print(n);
+        i = i + 1;
+    }
+    print(h);
+}
