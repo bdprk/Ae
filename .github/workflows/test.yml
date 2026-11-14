@@ -13,6 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo build and registry
+        uses: Swatinem/rust-cache@v2
       - name: Check C compiler
         run: gcc --version
       - name: Test verification scripts
