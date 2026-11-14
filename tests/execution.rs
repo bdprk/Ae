@@ -3553,6 +3553,30 @@ fn mir_drop_elision_keeps_live_and_unproven_releases() {
 }
 
 #[test]
+fn self_associated_call_on_plain_enum_resolves_through_the_impl_block() {
+    // ADR-0186 inside an enum impl block: `Self::constructor(...)` is the
+    // same lookup a bare `Shape::circle(...)` outside the block uses. The
+    // generic-enum path (ADR-0196) briefly swallowed this case and refused
+    // every plain enum, which only `verify_generated_c.py`'s example corpus
+    // caught. The rejection case must keep listing the real methods.
+    let dir = unique_temp_dir("self_assoc");
+    let source = dir.join("shapes.ae");
+    fs::write(&source, "enum Shape {\n    Circle(i64),\n    Rect(i64, i64),\n    Unit,\n}\nimpl Shape {\n    fn circle(r: i64) -> Shape { return Shape::Circle(r); }\n    fn grow(self, by: i64) -> Shape {\n        match self {\n            Shape::Circle(r) => { return Self::circle(r + by); }\n            Shape::Rect(w, h) => { return Shape::Rect(w + by, h + by); }\n            Shape::Unit => { return Shape::Unit; }\n        }\n    }\n    fn describe(self) -> string {\n        match self {\n            Shape::Circle(r) => { return \"circle r=\" + to_string(r); }\n            Shape::Rect(w, h) => { return \"rect \" + to_string(w) + \"x\" + to_string(h); }\n            Shape::Unit => { return \"unit\"; }\n        }\n    }\n}\nfn main() {\n    print(Shape::circle(2).grow(3).describe());\n}\n").unwrap();
+    let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).output().unwrap();
+    assert!(run.status.success(), "run failed: {}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "circle r=5\n");
+
+    let bad = dir.join("nosuch.ae");
+    fs::write(&bad, "enum E { A }\nimpl E {\n    fn make() -> E { return E::A; }\n    fn go() -> E { return Self::nope(); }\n}\nfn main() { let _ = E::make(); }\n").unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-c").arg(&bad).output().unwrap();
+    assert!(!rejected.status.success(), "Self::nope must not resolve");
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("has no associated function 'nope'"), "diagnostic names the method: {stderr}");
+    assert!(stderr.contains("go, make"), "diagnostic lists the impl's methods: {stderr}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn concat_reads_fields_and_equality_does_not_consume() {
     // ADR-0184 follow-up: a binary operator changes what the postfix chain
     // means, so the move check must not decide before the operator is seen.

@@ -179,17 +179,14 @@ impl Parser<'_> {
                             };
                             if next_is_variant {
                                 self.enum_literal(eid, name_offset)?
-                            } else {
+                            } else if let Some((gid, origin_args)) = self.generics.enum_origin.get(&eid).cloned() {
                                 // `Self::assoc(...)` on a generic enum:
                                 // resolve through the declaration's template
                                 // with the instantiation's own arguments.
                                 self.take(Kind::ColonColon)?;
                                 let method = self.identifier()?;
-                                let Some(&(gid, ref origin_args)) = self.generics.enum_origin.get(&eid) else {
-                                    return Err(self.error_at(name_offset, &format!("'{}' has no generic impl block", ename)));
-                                };
                                 let template = self.generics.defs[gid].name.clone();
-                                let origin: Vec<Type> = origin_args.clone();
+                                let origin: Vec<Type> = origin_args;
                                 let Some(gimpl) = self.generics.generic_impls.get(&template).cloned() else {
                                     return Err(self.error_at(name_offset, &format!("'{}' has no generic impl block", template)));
                                 };
@@ -204,6 +201,11 @@ impl Parser<'_> {
                                 let call_params = if has_receiver { params[1..].to_vec() } else { params.clone() };
                                 let call_args = self.call_arguments(&format!("{ename}::{method}"), &call_params)?;
                                 (Expr::Call(id, call_args, ret), ret)
+                            } else {
+                                // A plain enum's impl block: the same lookup a
+                                // bare `Shape::circle(...)` outside the impl
+                                // uses (ADR-0186).
+                                self.associated_call(&type_name, name_offset)?
                             }
                         } else {
                             self.associated_call(&type_name, name_offset)?
