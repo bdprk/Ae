@@ -24,6 +24,7 @@
 - [x] 12. 四路差分模糊测试例行化并扩展语法（分支内 move 字符串的 Mixed 形状），40 seeds 0 failures
 - [x] 13. 落地 borrow-checker-design §3 对抗矩阵（先探行为再写测试）：5 个 UI 拒绝例 + 1 个 run 正例，钉住 L0 基线供 L1 NLL 差分
 - [x] 14. emit-mir 打印 releases 精化结果（Frees 专用渲染 + drops pass 双视图同步 + 字面量类型修正），证据链闭合
+- [x] 15. emit-mir 具名 intrinsic 全量渲染：容器/文件/JSON/数学/路径等 ~60 种语句与表达式带操作数显示（push/store/sort/index/join/parse_int/math...），浮点与 bool 格式修正
 
 ## 日志
 - 2026-11-13 15:57 初始化 AGENT_PROGRESS.md，定位到 4 个失败的 execution 测试均由 enum_generic_impls.ae 的 receiver move 引起。
@@ -40,3 +41,4 @@
 - 2026-11-14 12:45 四路差分（MIR/drops vs tree vs release vs interp）40 seeds 全过；fuzzer 语法新增"分支内按值调用 move 字符串"形状（M2.4 Mixed 站点，seed 5 实测 kept_mixed=1），ADR-0204 证据同步更新。
 - 2026-11-14 13:15 落地 borrow-checker-design §3 对抗矩阵测试（M2.5 L0 基线）：别名对读写（§3.1）、last-use 后写入（§3.2）、last-use 后 move（§3.3）、视图逃逸（§3.6 反例）、元素借用后容器写入（§3.8）五个 UI 拒绝快照 + 别名/回边正例 run 测试；全部先经编译器实测探明行为与诊断文本再固化。cargo test 273 全绿。
 - 2026-11-14 13:50 emit-mir 补上 releases 渲染：Frees 从 stmt() 占位符改为 releases(v0 (string), ...) 专用 intrinsic；drops pass 同步改写 statements 与 bindings 两个视图（此前只改 statements，打印图会显示 C 里不存在的 release）；expr_type 给字符串形状表达式标注真实类型。新增 emit_mir_shows_which_releases_survive_drop_elaboration，ADR-0204 证据更新，cargo test 274 全绿。
+- 2026-11-14 14:20 emit-mir 具名渲染全量化：语句 catch-all 从裸 stmt() 改为带 slot+操作数的具名 intrinsic（push/pop/store/array/sort/reverse/put/assert/bind_payload/propagate/break/continue/print），表达式 catch-all 覆盖全部内建（index/join/split/slice_view/tokens/len/contains/parse_int/trim/math/文件与 JSON 族/map 族/时间/env/neg/not...），未处理形状保留裸占位符作为 tripwire；Float 操作数用 Debug 格式保住小数点；sort/reverse 的 bool 实为 strings 标志改编码进名字；math 调用打印源名与 f64 类型；Result 型内建 temp 标注真实枚举类型。cargo test 274 全绿，verify_generated_c 41 PASS。
