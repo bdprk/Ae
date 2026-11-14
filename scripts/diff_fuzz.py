@@ -3,8 +3,9 @@
 
 Generates random *well-typed* programs from a grammar of arithmetic,
 comparisons, control flow, strings (including one a branch moves into a
-by-value call, the mixed drop shape M2.4 keeps unproven), vectors, structs,
-enums, matches with payload bindings, and counted loops with `continue`; compiles each source
+by-value call, the mixed drop shape M2.4 keeps unproven), vectors with
+their mutation surface (push, indexed store, sort), structs, enums,
+matches with payload bindings, and counted loops with `continue`; compiles each source
 with every backend and optimization level — the MIR block-graph backend (the
 -O0 default, M2.3) and the structured tree emitter (`AE_CODEGEN=tree`),
 both at -O0, plus the optimized build; runs every binary; and asserts that
@@ -72,7 +73,22 @@ class Gen:
         """One statement, possibly introducing new variables. Returns lines."""
         if depth >= 3:
             return [f"print({self.int_expr(vars)});"]
-        kind = self.rnd() % 12
+        kind = self.rnd() % 13
+        if kind == 12:
+            # A vector with the full mutation surface: push, indexed store,
+            # sort, and reads. The MIR renders all of these as named
+            # intrinsics now, so the four-way differential exercises their
+            # lowering (index checks, sort determinism) on every seed.
+            name = f"vv{self.rnd() % 1000}"
+            return [
+                f"var {name} = vec[{self.int_expr(vars)}, {self.int_expr(vars)}];",
+                f"push({name}, {self.int_expr(vars)});",
+                f"{name}[0] = {self.int_expr(vars)};",
+                f"sort({name});",
+                f"print(len({name}));",
+                f"print({name}[0]);",
+                *self.statement(vars, depth + 1),
+            ]
         if kind == 11:
             # A string one branch consumes: the taken path moves it into a
             # by-value call, the untaken path leaves it live, so its scope-end
