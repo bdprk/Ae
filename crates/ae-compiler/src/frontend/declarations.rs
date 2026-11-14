@@ -182,7 +182,7 @@ impl Parser<'_> {
                 // A public signature may not name a type importers cannot see;
                 // catching it here beats a puzzling error at every call site.
                 if public { self.check_export_types(&name, &types, ret)?; }
-                let signature = Signature { id, params: types, ret, file: self.file.clone(), public };
+                let signature = Signature { id, params: types, ret, file: self.file.clone(), public, extern_c: false };
                 if self.functions.insert(name.clone(), signature).is_some() {
                     return Err(self.fail(&format!("duplicate function '{name}' (already defined in an imported file)")));
                 }
@@ -427,7 +427,7 @@ impl Parser<'_> {
             *next_id = self.generics.next_fn_id;
             self.id_order.push(id);
             self.generics.inherent.insert(key, MethodDef {
-                signature: Signature { id, params: types, ret, file: self.file.clone(), public: true },
+                signature: Signature { id, params: types, ret, file: self.file.clone(), public: true, extern_c: false },
                 receiver,
             });
             self.skip_balanced_braces()?;
@@ -616,7 +616,7 @@ impl Parser<'_> {
             *next_id = self.generics.next_fn_id;
             self.id_order.push(id);
             let mangled = format!("{}#{}#{}", trait_name, method, ty.name());
-            let signature = Signature { id, params: types, ret, file: self.file.clone(), public: true };
+            let signature = Signature { id, params: types, ret, file: self.file.clone(), public: true, extern_c: false };
             if self.functions.insert(mangled, signature).is_some() {
                 return Err(self.fail(&format!("duplicate impl method '{method}' for this type")));
             }

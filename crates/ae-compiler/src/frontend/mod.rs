@@ -36,6 +36,18 @@ enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRe
 thread_local! {
     static PTR_POINTEES: std::cell::RefCell<Vec<Type>> = const { std::cell::RefCell::new(Vec::new()) };
 }
+// The extern "C" registry (M2.12 slice 4): the id a call site carries maps
+// to the C symbol the declaration names. The code emitter and the interpreter
+// both read it; the parser fills it.
+thread_local! {
+    static EXTERN_NAMES: std::cell::RefCell<HashMap<usize, String>> = std::cell::RefCell::new(HashMap::new());
+}
+pub(super) fn register_extern(id: usize, c_name: String) {
+    EXTERN_NAMES.with(|map| { map.borrow_mut().insert(id, c_name); });
+}
+pub(super) fn extern_name(id: usize) -> Option<String> {
+    EXTERN_NAMES.with(|map| map.borrow().get(&id).cloned())
+}
 // Intern a pointee type; identical pointees share one id.
 pub(super) fn intern_pointee(pointee: Type) -> usize {
     PTR_POINTEES.with(|pointees| {
@@ -417,7 +429,7 @@ struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec
 // A function signature as seen by importers. `file` and `public` let a call
 // site reject a name that exists but was not exported (ADR-18).
 #[derive(Debug, Clone)]
-struct Signature { id: usize, params: Vec<Type>, ret: Type, file: String, public: bool }
+struct Signature { id: usize, params: Vec<Type>, ret: Type, file: String, public: bool, extern_c: bool }
 
 // The type an inherent impl block targets (ADR-0186). Both forms resolve
 // methods through the same (type, method) name space, and `Self` inside the
