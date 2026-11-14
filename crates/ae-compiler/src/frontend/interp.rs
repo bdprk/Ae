@@ -1358,7 +1358,8 @@ fn eval_expr(
         }
         Expr::TryCreateDir(path, ty, ..) => {
             let p = path_operand(eval_expr(env, path, locals, caller_locals, false))?;
-            match std::fs::create_dir(&p) {
+            // The runtime creates every missing level of the path.
+            match std::fs::create_dir_all(&p) {
                 Ok(()) => result_value(env, ty, true, vec![]),
                 Err(error) => result_value(env, ty, false, vec![Val::Str(format!("cannot create directory: {error}"))]),
             }
