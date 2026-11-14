@@ -33,7 +33,7 @@ use std::collections::HashMap;
 
 use super::*;
 use super::cfg::{build_cfg, CfgFunction, CfgTerminator};
-use super::movewalk::{expr_reads, statement_reads};
+use super::movewalk::{expr_reads, statement_move_effects, statement_reads};
 
 // Adjudicate the parser's deferred write-under-view-borrow conflicts (M2.5
 // L1): the parser no longer rejects a write to a string whose view may have
@@ -45,7 +45,7 @@ use super::movewalk::{expr_reads, statement_reads};
 // Every write to the base in the CFG is a deferred one (the parser defers
 // all of them when only view borrows are active), so one covered write
 // anywhere is reported at the first recorded conflict's site.
-pub(super) fn adjudicate_deferred(function: &Function, conflicts: &[(usize, usize, String)]) -> Result<(), String> {
+pub(super) fn adjudicate_deferred(function: &Function, conflicts: &[(usize, usize, String, &'static str)]) -> Result<(), String> {
     if conflicts.is_empty() { return Ok(()); }
     let graph = build_cfg(function);
     let view_borrows: Vec<(usize, usize)> = graph.blocks.iter()
@@ -78,15 +78,23 @@ pub(super) fn adjudicate_deferred(function: &Function, conflicts: &[(usize, usiz
             .flat_map(|succ| nll.live_in.get(succ).into_iter().flatten().copied())
             .collect();
         for (index, statement) in block.statements.iter().enumerate() {
-            let Some(written) = writes_slot(statement) else { continue };
+            // Both kinds of sites re-home or release the bytes a view points
+            // at: a write releases them in place; a move hands them to a new
+            // owner that may die before the view does. Either way the view
+            // must be dead by then — introduced before the statement
+            // dominates it and read on no later path.
+            let mut targets = std::collections::HashSet::new();
+            if let Some(written) = writes_slot(statement) { targets.insert(written); }
+            targets.extend(statement_move_effects(statement).moved);
+            if targets.is_empty() { continue; }
             let mut live_at_write = suffix[index + 1].clone();
             live_at_write.extend(&live_out);
             let covered = view_borrows.iter()
-                .any(|&(view, base)| base == written
+                .any(|&(view, base)| targets.contains(&base)
                     && view_covers_write(view, block.id, index, &introductions, &dom, &live_at_write));
             if covered {
-                let (_, _, name) = &conflicts[0];
-                return Err(format!("cannot assign to '{name}' while a view binding of it may still be read"));
+                let (_, _, name, verb) = &conflicts[0];
+                return Err(format!("cannot {verb} '{name}' while a view binding of it may still be read"));
             }
         }
     }
@@ -192,33 +200,37 @@ impl BorrowRegions {
                 .flat_map(|succ| nll.live_in.get(succ).into_iter().flatten().copied())
                 .collect();
             for (index, statement) in block.statements.iter().enumerate() {
-                if let Some(written) = writes_slot(statement) {
-                    // The strict rule the parser enforces: no write inside a
-                    // scope region.
-                    if scope_live.contains(&written) {
+                let mut targets = std::collections::HashSet::new();
+                if let Some(written) = writes_slot(statement) { targets.insert(written); }
+                targets.extend(statement_move_effects(statement).moved);
+                if targets.is_empty() { continue; }
+                // The strict rule the parser enforces: no write inside a
+                // scope region.
+                for written in &targets {
+                    if scope_live.contains(written) {
                         return Err(format!(
                             "internal: fn #{} block {} writes v{} while its scope borrow region is live; the parser's borrow registers and the CFG regions disagree",
                             function.id, block.id, written
                         ));
                     }
-                    // The L1 rule computed here: no write while a view of
-                    // the slot may still be read later on some path — for a
-                    // view whose introduction dominates the write. A view
-                    // created after the write looks at the new bytes; a
-                    // write off the introduction's path cannot dangle a read
-                    // the parser's definite-assignment rule already guards.
-                    let mut live_at_write = suffix[index + 1].clone();
-                    live_at_write.extend(&live_out);
-                    let covering: Vec<&(usize, usize)> = view_borrows.iter()
-                        .filter(|&&(view, base)| base == written
-                            && view_covers_write(view, block.id, index, &introductions, &dom, &live_at_write))
-                        .collect();
-                    if let Some(&(view, _)) = covering.first() {
-                        return Err(format!(
-                            "internal: fn #{} block {} writes v{} while its view v{} may still be read; the parser's move rules and the NLL regions disagree",
-                            function.id, block.id, written, view
-                        ));
-                    }
+                }
+                // The L1 rule computed here: no write or move while a view
+                // of the slot may still be read later on some path — for a
+                // view whose introduction dominates the statement. A view
+                // created after the statement looks at the new bytes.
+                let mut live_at_write = suffix[index + 1].clone();
+                live_at_write.extend(&live_out);
+                let covering: Vec<&(usize, usize)> = view_borrows.iter()
+                    .filter(|&&(view, base)| targets.contains(&base)
+                        && view_covers_write(view, block.id, index, &introductions, &dom, &live_at_write))
+                    .collect();
+                if let Some(&(view, _)) = covering.first() {
+                    return Err(format!(
+                        "internal: fn #{} block {} touches v{} while its view v{} may still be read; the parser's move rules and the NLL regions disagree",
+                        function.id, block.id,
+                        view_borrows.iter().find(|&&(v, _)| v == *view).map(|&(_, b)| b).unwrap_or(0),
+                        view
+                    ));
                 }
             }
         }

@@ -1,0 +1,11 @@
+// Borrow matrix §3.3 under L1 (M2.5): the flip side of the move allowance.
+// The view is still read after the move, and the buffer's new owner may die
+// before the view does — the deferred conflict is adjudicated on the graph
+// and rejected with the positioned NLL diagnostic.
+fn main() {
+    var s = "abcdef";
+    let a = slice_view(s, 0, 3);
+    let t = s;
+    print(t);
+    print(a);
+}
