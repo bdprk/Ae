@@ -23,6 +23,8 @@ enum Val {
     VecI(Vec<i64>),
     VecS(Vec<String>),
     VecF(Vec<f64>),
+    Map(HashMap<String, i64>),
+    MapF(HashMap<String, f64>),
     Struct(#[allow(dead_code)] usize, HashMap<String, Val>),
     Enum(#[allow(dead_code)] usize, usize, Vec<Val>),
     Closure(usize),
@@ -69,6 +71,42 @@ pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
         Flow::Exit(code) => Ok((env.out, code)),
         Flow::Trap(msg) => Err((env.out, msg)),
         Flow::Break | Flow::Continue(_) => Err((env.out, "internal: unwound loop control in main".to_owned())),
+    }
+}
+
+// The map a place names, resolved through the locals (and the caller's, for
+// a closure reading a captured map). Kind and storage must agree.
+enum MapVal<'a> {
+    MapI(&'a mut HashMap<String, i64>),
+    MapF(&'a mut HashMap<String, f64>),
+    Missing,
+}
+
+fn map_val_ref<'a>(
+    place: &MapPlace,
+    locals: &'a mut HashMap<usize, Val>,
+    caller_locals: &'a mut Option<&mut HashMap<usize, Val>>,
+) -> Result<MapVal<'a>, Flow> {
+    let slot: Option<&mut Val> = match place {
+        MapPlace::Var(id, _) => locals.get_mut(id),
+        MapPlace::Field(id, fname, _) => match locals.get_mut(id) {
+            Some(Val::Struct(_, fields)) => fields.get_mut(fname),
+            _ => None,
+        },
+    };
+    let slot = slot.or_else(|| match (place, caller_locals.as_deref_mut()) {
+        (MapPlace::Var(id, _), Some(caller)) => caller.get_mut(id),
+        (MapPlace::Field(id, fname, _), Some(caller)) => match caller.get_mut(id) {
+            Some(Val::Struct(_, fields)) => fields.get_mut(fname),
+            _ => None,
+        },
+        _ => None,
+    });
+    match (place, slot) {
+        (_, Some(Val::Map(m))) => Ok(MapVal::MapI(m)),
+        (_, Some(Val::MapF(m))) => Ok(MapVal::MapF(m)),
+        (_, Some(Val::Moved)) => Err(trap("use of moved map", 0, 0)),
+        _ => Ok(MapVal::Missing),
     }
 }
 
@@ -195,6 +233,50 @@ fn eval_stmts(
                     }
                     Some(Val::Moved) => return trap("use of moved vector", *line, *col),
                     _ => return Flow::Trap("internal: pop on non-vec".to_owned()),
+                }
+            }
+            // `m[key] = value;` (and the field form): the map owns the
+            // bytes, the key copies, and the value must match the map's
+            // value type — the same contract the runtime's put enforces.
+            Statement::MapPut(place, key_expr, value_expr, ..) => {
+                let key = match eval_expr(env, key_expr, locals, caller_locals, false) {
+                    Ok(Val::Str(k)) => k,
+                    Ok(_) => return Flow::Trap("internal: map key type".to_owned()),
+                    Err(f) => return f,
+                };
+                let int_value = match eval_expr(env, value_expr, locals, caller_locals, false) {
+                    Ok(Val::Int(n)) => Some(n),
+                    Ok(Val::Float(_)) => None,
+                    Err(f) => return f,
+                    _ => return Flow::Trap("internal: map value type".to_owned()),
+                };
+                let float_value = match eval_expr(env, value_expr, locals, caller_locals, false) {
+                    Ok(Val::Float(x)) => Some(x),
+                    _ => None,
+                };
+                match place {
+                    MapPlace::Var(id, MapKind::Int) => match locals.get_mut(id) {
+                        Some(Val::Map(m)) => { if let Some(n) = int_value { m.insert(key, n); } }
+                        _ => return Flow::Trap("internal: map put on non-map".to_owned()),
+                    },
+                    MapPlace::Var(id, MapKind::Float) => match locals.get_mut(id) {
+                        Some(Val::MapF(m)) => { if let Some(x) = float_value { m.insert(key, x); } }
+                        _ => return Flow::Trap("internal: map put on non-map".to_owned()),
+                    },
+                    MapPlace::Field(id, fname, MapKind::Int) => match locals.get_mut(id) {
+                        Some(Val::Struct(_, fields)) => match fields.get_mut(fname) {
+                            Some(Val::Map(m)) => { if let Some(n) = int_value { m.insert(key, n); } }
+                            _ => return Flow::Trap("internal: map put on non-map field".to_owned()),
+                        },
+                        _ => return Flow::Trap("internal: map put on non-struct".to_owned()),
+                    },
+                    MapPlace::Field(id, fname, MapKind::Float) => match locals.get_mut(id) {
+                        Some(Val::Struct(_, fields)) => match fields.get_mut(fname) {
+                            Some(Val::MapF(m)) => { if let Some(x) = float_value { m.insert(key, x); } }
+                            _ => return Flow::Trap("internal: map put on non-map field".to_owned()),
+                        },
+                        _ => return Flow::Trap("internal: map put on non-struct".to_owned()),
+                    },
                 }
             }
             Statement::VecStore(id, idx_expr, val_expr, line, col) => {
@@ -575,6 +657,8 @@ fn eval_expr(
                 Val::VecS(v) => Ok(Val::Int(v.len() as i64)),
                 Val::VecF(v) => Ok(Val::Int(v.len() as i64)),
                 Val::Array(v) => Ok(Val::Int(v.len() as i64)),
+                Val::Map(m) => Ok(Val::Int(m.len() as i64)),
+                Val::MapF(m) => Ok(Val::Int(m.len() as i64)),
                 Val::Moved => Err(trap("use of moved value", *line, *col)),
                 _ => Err(Flow::Trap("internal: len on unsupported value".to_owned())),
             }
@@ -628,6 +712,82 @@ fn eval_expr(
                 return Err(trap("string index splits a UTF-8 character", *line, *col));
             }
             Ok(Val::Str(base[s..e].to_owned()))
+        }
+        Expr::MapNew(_, _, kind) => match kind {
+            MapKind::Int => Ok(Val::Map(HashMap::new())),
+            MapKind::Float => Ok(Val::MapF(HashMap::new())),
+        },
+        // The map builtins the corpus uses: has/remove are predicates, inc
+        // inserts-or-increments and returns the new value, keys returns the
+        // key set in byte order — the same order the runtime sorts into.
+        Expr::MapHas(place, key, ..) => {
+            let key = match eval_expr(env, key, locals, caller_locals, false)? {
+                Val::Str(k) => k,
+                _ => return Err(Flow::Trap("internal: map key type".to_owned())),
+            };
+            match map_val_ref(place, locals, caller_locals)? {
+                MapVal::MapI(m) => Ok(Val::Bool(m.contains_key(&key))),
+                MapVal::MapF(m) => Ok(Val::Bool(m.contains_key(&key))),
+                _ => Err(Flow::Trap("internal: map has on non-map".to_owned())),
+            }
+        }
+        Expr::MapRemove(place, key, ..) => {
+            let key = match eval_expr(env, key, locals, caller_locals, false)? {
+                Val::Str(k) => k,
+                _ => return Err(Flow::Trap("internal: map key type".to_owned())),
+            };
+            match map_val_ref(place, locals, caller_locals)? {
+                MapVal::MapI(m) => Ok(Val::Bool(m.remove(&key).is_some())),
+                MapVal::MapF(m) => Ok(Val::Bool(m.remove(&key).is_some())),
+                _ => Err(Flow::Trap("internal: map remove on non-map".to_owned())),
+            }
+        }
+        Expr::MapInc(place, key, delta, ..) => {
+            // Both operands evaluate before the map resolves: the map borrow
+            // lasts to the end of the arm, and the operand evaluation needs
+            // the same locals.
+            let key = match eval_expr(env, key, locals, caller_locals, false)? {
+                Val::Str(k) => k,
+                _ => return Err(Flow::Trap("internal: map key type".to_owned())),
+            };
+            let int_delta = match eval_expr(env, delta, locals, caller_locals, false)? {
+                Val::Int(n) => Some(n),
+                Val::Float(_) => None,
+                _ => return Err(Flow::Trap("internal: map inc type".to_owned())),
+            };
+            let float_delta = match eval_expr(env, delta, locals, caller_locals, false)? {
+                Val::Float(x) => Some(x),
+                _ => None,
+            };
+            match map_val_ref(place, locals, caller_locals)? {
+                MapVal::MapI(m) => {
+                    let Some(n) = int_delta else { return Err(Flow::Trap("internal: map inc type".to_owned())) };
+                    let next = m.entry(key).or_insert(0).checked_add(n).ok_or_else(|| trap("integer overflow", 0, 0))?;
+                    Ok(Val::Int(next))
+                }
+                MapVal::MapF(m) => {
+                    let Some(x) = float_delta else { return Err(Flow::Trap("internal: map inc type".to_owned())) };
+                    let entry = m.entry(key).or_insert(0.0);
+                    *entry += x;
+                    Ok(Val::Float(*entry))
+                }
+                _ => Err(Flow::Trap("internal: map inc on non-map".to_owned())),
+            }
+        }
+        Expr::MapKeys(place, ..) => {
+            match map_val_ref(place, locals, caller_locals)? {
+                MapVal::MapI(m) => {
+                    let mut keys: Vec<String> = m.keys().cloned().collect();
+                    keys.sort();
+                    Ok(Val::VecS(keys))
+                }
+                MapVal::MapF(m) => {
+                    let mut keys: Vec<String> = m.keys().cloned().collect();
+                    keys.sort();
+                    Ok(Val::VecS(keys))
+                }
+                _ => Err(Flow::Trap("internal: keys on non-map".to_owned())),
+            }
         }
         Expr::Neg(inner, line, col) => {
             match eval_expr(env, inner, locals, caller_locals, false)? {

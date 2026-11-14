@@ -3504,6 +3504,41 @@ fn constant_array_indices_in_range_skip_the_bounds_check() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
+    // M2.11: the interpreter's map family — puts, incs (insert-or-
+    // increment), predicates, sorted keys, removals — must agree with the
+    // compiled backends line for line.
+    let dir = unique_temp_dir("interp_maps");
+    let source = dir.join("maps.ae");
+    fs::write(&source, "fn main() {
+    var counts = map_new();
+    counts[\"a\"] = 5;
+    let bumped = map_inc(counts, \"a\", 2);
+    print(bumped);
+    print(len(counts));
+    if map_has(counts, \"b\") { print(1); } else { print(0); }
+    let set = map_inc(counts, \"b\", 6);
+    print(set);
+    let ks = keys(counts);
+    print(ks[0]);
+    print(ks[1]);
+    print(len(ks));
+    let removed = map_remove(counts, \"b\");
+    print(removed);
+    print(len(counts));
+}
+").unwrap();
+    let interp = Command::new(env!("CARGO_BIN_EXE_ae")).args(["run", source.to_str().unwrap(), "--interp"]).output().unwrap();
+    assert!(interp.status.success(), "interp failed: {}", String::from_utf8_lossy(&interp.stderr));
+    let compiled = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).output().unwrap();
+    assert!(compiled.status.success(), "compiled failed: {}", String::from_utf8_lossy(&compiled.stderr));
+    let normalize = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace("\r\n", "\n");
+    assert_eq!(normalize(&interp.stdout), normalize(&compiled.stdout), "the interpreter and the compiled backend disagree");
+    assert_eq!(normalize(&interp.stdout), "7\n1\n0\n6\na\nb\n2\ntrue\n1\n");
+    fs::remove_dir_all(dir).unwrap();
+}
+
 fn mir_drop_elision_thins_propagate_error_path_releases() {
     // M2.4: a `?`'s releases ride the error path, which exits the function,
     // so the state to read them with is the one after the value evaluated.
