@@ -1,0 +1,22 @@
+// The ordered mirror (M2.5): the view read precedes the mut call, so it
+// sees the bytes intact — allowed, and nothing reads the view afterwards.
+struct Doc { name: string, note: string }
+
+impl Doc {
+    fn rename(&mut self, to: string) -> i64 {
+        self.name = to;
+        return len(self.name);
+    }
+}
+
+fn combine(a: i64, b: i64) -> i64 {
+    return a + b;
+}
+
+fn main() {
+    var d = Doc { name: "alpha", note: "keep" };
+    let head = slice_view(d.name, 0, 3);
+    let n = combine(len(head), d.rename("beta"));
+    print(n);
+    print(d.name);
+}

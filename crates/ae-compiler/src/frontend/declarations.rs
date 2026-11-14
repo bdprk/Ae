@@ -1071,7 +1071,18 @@ impl Parser<'_> {
                                 return Err(self.immutable_binding_error(self.fail(&format!("cannot borrow '{arg}' mutably: it was declared without 'var'")).with_code("E0103"), var));
                             }
                             if self.is_borrowed(var) {
-                                return Err(self.fail(&format!("cannot borrow '{arg}' mutably while it is borrowed in this statement")));
+                                // The callee may write any field of the lent
+                                // struct, so the call releases the viewed bytes
+                                // at the call point (M2.5): with only view
+                                // borrows active the conflict defers to the
+                                // graph's ordered adjudication, like the write
+                                // it is. Same-statement call or mut borrows keep
+                                // the on-sight rejection.
+                                if !self.only_view_borrows_active(var) {
+                                    return Err(self.fail(&format!("cannot borrow '{arg}' mutably while it is borrowed in this statement")));
+                                }
+                                let offset = self.tokens.get(self.pos.saturating_sub(1)).map(|t| t.offset).unwrap_or(0);
+                                self.deferred_write_conflicts.push((var, offset, arg.clone(), "mutate", None));
                             }
                             self.mut_borrows.push((var, self.scopes.len()));
                             args.push(Argument::Borrow(var, true));

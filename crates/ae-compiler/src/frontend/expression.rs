@@ -1065,7 +1065,19 @@ impl Parser<'_> {
                                     return Err(self.fail(&format!("'{fname}' borrows its receiver mutably, but the variable was declared without 'var'")));
                                 }
                                 if self.is_borrowed(id) {
-                                    return Err(self.fail(&format!("cannot borrow the receiver of '{fname}' mutably while it is borrowed in this statement")));
+                                    // The callee may write any field of the
+                                    // receiver, so the call releases the viewed
+                                    // bytes at the call point (M2.5): with only
+                                    // view borrows active the conflict defers
+                                    // to the graph's ordered adjudication, like
+                                    // the write it is. Same-statement call or
+                                    // mut borrows keep the on-sight rejection.
+                                    if !self.only_view_borrows_active(id) || !self.signature_in_release_tables(Some(signature_id)) {
+                                        return Err(self.fail(&format!("cannot borrow the receiver of '{fname}' mutably while it is borrowed in this statement")));
+                                    }
+                                    let offset = self.tokens.get(self.pos.saturating_sub(1)).map(|t| t.offset).unwrap_or(0);
+                                    let name = self.names.iter().find(|(_, (vid, _, _))| *vid == id).map(|(n, _)| n.clone()).unwrap_or_else(|| format!("v{id}"));
+                                    self.deferred_write_conflicts.push((id, offset, name, "mutate", None));
                                 }
                                 self.mut_borrows.push((id, self.scopes.len()));
                             } else {
