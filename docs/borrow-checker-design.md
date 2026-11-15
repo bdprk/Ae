@@ -2,6 +2,8 @@
 
 Status: **Designed** (2026-11-12); this document is a design, not an implementation commitment. Implementation and acceptance proceed according to the phases in §6, and every step must expand tests according to the checklist in `resource-model.md §9` before making any claims. The rules of evidence follow §22 of the proposal document.
 
+**Ladder progress (2026-11-15)**: L1 (NLL last-use regions) and L2 (field-granular places, views bind once, `&mut` lending calls as release sites) have landed through the M2.5 slices — see ADR-0205 and the implemented case list in §3.1. `&mut Struct` exists as the call-scoped exclusive borrow (ADR-0185), outside this ladder's Mut-loan phase. `unsafe`/raw pointers landed with M2.12 (ADR-0207); their interaction rule is in `resource-model.md §7`. L3/L4/L5 remain future work governed by this document.
+
 ## 0. What Questions This Document Answers
 
 Section 4 of `resource-model.md` records the **current implementation**: borrows are block-scoped read-only aliases, tracked by variable ID, prohibited from escaping, and lacking field granularity. While safe, this set of rules has limited expressiveness—parameterized containers (`fn first(v: &vec[T])`), storing borrows inside structs, returning borrows, and mutable borrows are all unsupported.
@@ -12,19 +14,19 @@ The goal of Stage C is to upgrade the restricted rules into a **general borrow c
 2. **Requiring no lifetime annotations from the user** is a goal, but not a pre-guarantee—if a class of programs requires annotations to be checked reliably, the design prefers adding annotations over relaxing checks;
 3. Every relaxation must be preceded by adversarial test cases and rejection tests before touching the implementation (§20.4 Rule 1).
 
-## 1. Current State Assessment (2026-11-12, Post-ADR-35/52/61)
+## 1. Current State Assessment (refreshed 2026-11-15, Post-ADR-0185/0205/0207)
 
 | Capability | Current Status | Evidence |
 |---|---|---|
 | Read-only borrow parameters | `&string`, `&vec`, `&vec[string]`, `&vec[f64]`, `&[i64; N]` | Full test suite |
 | Generic borrows | `&T` resolved via instantiation to one of the above four (ADR-35/36, ADR-61) | `generic_borrow.ae` |
-| Field borrows | Variable granularity only: `slice_view(p.name, …)` borrows `p` as a whole, writing to any field is rejected (ADR-52) | `field_view.ae` |
+| Field borrows | Field-granular since ADR-0205 L2: a field write only overlaps a view of that very field; nested fields and element fields stay rejected | `tests/ui` L2 cases |
 | Borrow escape | Prohibited: cannot return, cannot store via `let`, cannot enter containers | `resource-model.md` §4 |
-| Mutable borrows | Non-existent (container modifications are done via `push`/index assignment on owned values themselves) | — |
-| Borrow tracking | `(variable id, scope depth)`, reclaimed at block end | `borrows` in `frontend.rs` |
+| Mutable borrows | `&mut Struct` parameter / `&mut self` receiver: write-through for the call, exclusive while live, no upgrade from `&` (ADR-0185) | `struct_borrow.ae` |
+| Borrow tracking | Registry `(variable id, scope depth)` drives on-sight rejections; deferred view conflicts decided by NLL regions on the CFG (ADR-0205) | `borrows` in `frontend.rs` + the MIR block graph |
 | Lifetime annotations | None (un-borrowable escapes are the sole reason) | — |
 
-**Known Conservative Points** (behaviorally safe but overly restrictive): Field writes are intercepted as a whole by the "presence of a borrow on the struct"; borrow granularity does not include fields and elements; the `slice_view` chain cannot distinguish between "borrowing `p.name`" and "borrowing `p`".
+**Known Conservative Points** (behaviorally safe but overly restrictive, as of 2026-11-15): nested-field views (`a.b.c`) and fields of array/vector elements (`v[0].name`) stay rejected; borrows cannot escape (no returns, no storage); container elements stay un-borrowable; the generic `&T` call syntax varies with the instantiated shape (reliable only for `string` today).
 
 ## 2. Target Model
 
@@ -145,7 +147,7 @@ with the implementation; the list is the contract.
 - Lifetime **annotation syntax** (if L3 proves it necessary, discuss in a separate ADR; do not add it silently).
 - Interior mutability (e.g., `RefCell`) and shared ownership (`Rc`)—the deterministic release model does not support these; introducing them would invalidate §4.5.
 - Borrowing under concurrency (`Send`/`Sync`)—see the concurrency section in Phase C.
-- Interaction with `unsafe` (raw pointer borrows)—see the FFI phase.
+- Interaction with `unsafe` (raw pointer borrows)—**landed with M2.12 (ADR-0207)**: raw pointers are untracked addresses outside this model; a pointer to an owned value is rejected at the declaration (its borrow is untracked), and dereferencing back into the tracked world re-enters this document's checks from that point.
 
 ## 6. Progression Order and Acceptance Criteria
 
