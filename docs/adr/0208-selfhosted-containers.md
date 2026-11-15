@@ -38,3 +38,15 @@ Concretely, per container:
 ## Rollback
 
 The built-in families stay emitted and linked until their alias is removed (one-version grace), so any slice can revert by re-pointing the alias to the built-in — no data-format compatibility exists between the built-in container and the source one mid-migration, which is why the migration is per-domain (spec/stdlib.md §4.1) and each slice migrates its examples atomically.
+
+## Slice-2 Open Decision: the Element-Release Protocol (written before implementation)
+
+A `Vec[T]` over **scalars** (`i64`/`bool`/`f64`) needs no release hook — memcpy semantics, free the buffer, done. That shape can land as the first true source container, and per-instantiation checking keeps it sound.
+
+A `Vec[T]` over **owned elements** (`string`, nested containers) cannot: the generic body must call T's release routine, and the language has no protocol for that yet. Three candidate mechanisms, to be adjudicated in a dedicated ADR before the owned-element slice:
+
+1. **Struct-level constraints** (`struct Vec[T: Copy]`): constraints exist today only on functions (ADR-40's allowlist model); extending them to structs is a language change with its own coherence questions — and the current constraint model (built-in allowlists) cannot express "has a release routine" anyway.
+2. **Per-instance release hook**: each container instance carries a release-function pointer (the `ae_allocator` vtable-of-one pattern already in runtime.c) — no language change, but every element release goes through an indirect call and the hook's provenance needs compile-time enforcement.
+3. **Drop-trait dispatch** (the Rust model, plan M1.7's `Drop`): the honest end state, and the largest surface — drop elaboration (ADR-0204) would dispatch through a trait impl instead of per-type emitted routines.
+
+Until that decision, the migration inventory's owned-element rows (`vec[string]` → the eventual `Vec[string]`-shaped container) stay on the built-in implementations; the freeze list already prevents new hand-written families from accreting in the meantime.
