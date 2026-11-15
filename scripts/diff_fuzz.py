@@ -433,6 +433,36 @@ def _run_dump(runs: list[tuple[str, subprocess.CompletedProcess]]) -> str:
     return NL.join(blocks)
 
 
+CACHE_BYTE_BUDGET = 512 * 1024 * 1024
+
+
+def cache_is_over_budget(cache_dir: Path) -> bool:
+    total = 0
+    try:
+        for entry in cache_dir.rglob("*"):
+            if entry.is_file():
+                total += entry.stat().st_size
+                if total > CACHE_BYTE_BUDGET:
+                    return True
+    except OSError:
+        return False
+    return total > CACHE_BYTE_BUDGET
+
+
+def maybe_trim_cache(cache_dir: Path, state: dict) -> None:
+    # At most one size walk per 120s: the cache is keyed by distinct program
+    # shapes, so a duration run grows it without bound; dropping it only
+    # costs recompiles.
+    now = time.perf_counter()
+    if now - state["last"] < 120.0:
+        return
+    state["last"] = now
+    if cache_is_over_budget(cache_dir):
+        print("cache over 512M budget: dropping", flush=True)
+        shutil.rmtree(cache_dir, ignore_errors=True)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+
 def run_seed(seed: int, workdir: Path, cache_dir: Path, compile_timeout: int) -> dict:
     """One seed's four-way differential, fully isolated.
 
@@ -523,6 +553,7 @@ def main() -> int:
     started = time.perf_counter()
     results: dict[int, dict] = {}
     failures = 0
+    cache_state = {"last": 0.0}
 
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
@@ -564,6 +595,7 @@ def main() -> int:
                         failures += 0 if result["ok"] else 1
                         mark = "ok" if result["ok"] else "FAILURE"
                         print(f"seed {result['seed']}: {mark} ({result['lines']} lines)", flush=True)
+                maybe_trim_cache(cache_dir, cache_state)
             while futures:
                 done, _ = wait(futures, return_when=FIRST_COMPLETED)
                 for future in done:
@@ -573,6 +605,7 @@ def main() -> int:
                     failures += 0 if result["ok"] else 1
                     mark = "ok" if result["ok"] else "FAILURE"
                     print(f"seed {result['seed']}: {mark} ({result['lines']} lines)", flush=True)
+                maybe_trim_cache(cache_dir, cache_state)
 
         if args.save_corpus:
             corpus_dir = Path(args.save_corpus)
