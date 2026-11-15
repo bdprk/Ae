@@ -97,15 +97,25 @@ impl<'a> Parser<'a> {
     fn expr_has_unchecked_operation(&self, expr: &Expr) -> bool {
         match expr {
             Expr::DerefPtr(..) => true,
-            Expr::Call(_, args, _) | Expr::FnCall(_, args, _) => {
-                // The call's arguments are walked; the callee itself is NOT
-                // consulted here — the signature pass may not have run to
-                // completion when the statement parses, and a name-keyed
-                // lookup would race the pass order. The operations the block
-                // legalizes (deref, pointer store) are structural and cover
-                // the W0702 check; a call to a foreign fn inside an unsafe
-                // block is not flagged unnecessary today.
-                let _ = &self.functions;
+            Expr::Call(id, args, _) => {
+                // A call to a declared `extern "C" fn` or an `unsafe fn` is
+                // exactly what the block legalizes (the same test E0701
+                // applies at the call site). Both registries fill during the
+                // signature pass, which completes before any body parses, so
+                // the id-keyed lookup is order-safe here — including a call
+                // that textually precedes its declaration. `Expr::FnCall` is
+                // a call through a `fn(T) -> R` pointer whose id comes from
+                // the closure-signature interner, a different id space, and
+                // closures are never unsafe — no registry check there.
+                if crate::frontend::is_unsafe_fn(*id) || crate::frontend::is_extern_fn(*id) {
+                    return true;
+                }
+                args.iter().any(|arg| match arg {
+                    Argument::Value(e) | Argument::View(e) => self.expr_has_unchecked_operation(e),
+                    _ => false,
+                })
+            }
+            Expr::FnCall(_, args, _) => {
                 args.iter().any(|arg| match arg {
                     Argument::Value(e) | Argument::View(e) => self.expr_has_unchecked_operation(e),
                     _ => false,

@@ -3639,7 +3639,6 @@ fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
 }
 
 #[test]
-#[test]
 fn repr_c_layout_queries_and_extern_prototypes() {
     // M2.12 U8: `#[repr(C)]` pins a struct's layout — declaration
     // order, natural alignment, trailing padding — and the compile-time
@@ -3783,6 +3782,7 @@ fn unnecessary_unsafe_block_warns_without_failing_the_compile() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[allow(dead_code)] // kept as the documented M2.4 propagate-elision probe; superseded by the MIR differential suite
 fn mir_drop_elision_thins_propagate_error_path_releases() {
     // M2.4: a `?`'s releases ride the error path, which exits the function,
     // so the state to read them with is the one after the value evaluated.

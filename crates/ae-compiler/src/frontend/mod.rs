@@ -48,6 +48,13 @@ fn register_extern(id: usize, c_name: String, params: Vec<Type>, ret: Type) {
 fn extern_name(id: usize) -> Option<String> {
     EXTERN_NAMES.with(|map| map.borrow().get(&id).map(|(name, _, _)| name.clone()))
 }
+// Whether the id is a declared `extern "C" fn` (no body): calling one is the
+// unchecked operation the enclosing `unsafe` block exists to legalize, so
+// the W0702 scan consults this alongside `is_unsafe_fn`. Both registries
+// fill during the signature pass, which completes before any body parses.
+pub(super) fn is_extern_fn(id: usize) -> bool {
+    EXTERN_NAMES.with(|map| map.borrow().contains_key(&id))
+}
 // Every declared extern with its C signature, for the prototype emission.
 fn extern_declarations() -> Vec<(String, Vec<Type>, Type)> {
     EXTERN_NAMES.with(|map| map.borrow().values().cloned().collect())
