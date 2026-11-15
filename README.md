@@ -20,6 +20,7 @@ cargo run -- emit-c examples/hello.ae
 cargo run -- fmt examples/hello.ae
 cargo run -- test tests_demo/strings_test.ae   # Convention: fn test_<name>() -> i64, 0 for pass
 cargo run -- run examples/hello.ae
+cargo run -- run examples/heart.ae
 cargo run -- run examples/enums.ae
 cargo run -- run examples/concat.ae
 cargo run -- run examples/sum_numbers.ae -- file_path

@@ -1,0 +1,24 @@
+// Draw a heart with the implicit curve (x^2 + y^2 - 1)^3 - x^2 * y^3 <= 0.
+// The x step is half the y step because terminal cells are about twice as
+// tall as they are wide, keeping the shape undistorted.
+// Rows are built as string vectors: owned strings move on assignment, so
+// `line = line + ch` is rejected; join(parts, "") concatenates instead.
+fn main() {
+    var y = 1.2;
+    while y >= -0.95 {
+        var row = strvec_new();
+        var x = -1.35;
+        while x <= 1.35 {
+            let a = x * x + y * y - 1.0;
+            if a * a * a - x * x * y * y * y <= 0.0 {
+                push(row, "♥");
+            } else {
+                push(row, " ");
+            }
+            x = x + 0.05;
+        }
+        print(join(row, ""));
+        y = y - 0.1;
+    }
+    print("  AE ♥");
+}
