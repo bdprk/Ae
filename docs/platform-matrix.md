@@ -4,9 +4,9 @@ Status definitions: Verified = Native execution of all tests and generated C ver
 
 | Platform | Architecture | Status | Last Verified | C Toolchain | Minimum OS |
 |---|---|---|---|---|---|
-| Windows | x86-64 | Verified | 2026-11-10 (since v0.1.0) | MinGW-W64 GCC 16.2.0 (UCRT) | TBD (Tested on Windows 10.0.26300) |
-| Linux | x86-64 | Verified | 2026-11-11 | GCC 14.2.0 (Debian 13) | TBD (Tested on Debian 13, Kernel 6.18) |
-| Linux (Sanitizer) | x86-64 | Verified | 2026-11-11 | GCC `-fsanitize=address,undefined` | Same as above |
+| Windows | x86-64 | Verified | 2026-11-15 (cargo test all green incl. the W0702 registry fix, verify_generated_c 41/41) | MinGW-W64 GCC 16.2.0 (UCRT) | TBD (Tested on Windows 10.0.26300) |
+| Linux | x86-64 | Verified | 2026-11-15 (InstaBox evaluate-2 server run: cargo test 295 green, snapshots 3/3, differential 25547 seeds 0 failures) | GCC 14.2.0 (Debian 13) | TBD (Tested on Debian 13, Kernel 6.18.60) |
+| Linux (Sanitizer) | x86-64 | Verified | 2026-11-15 (evaluate-2: `verify_generated_c.py --sanitize --leak` 41/41, leak blocks=0) | GCC `-fsanitize=address,undefined` | Same as above |
 | macOS / ARM64 / Cross-compile | — | Unverified (Not in initial commitments) | — | — | — |
 
 ## Verification Contents
