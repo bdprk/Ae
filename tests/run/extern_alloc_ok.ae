@@ -1,0 +1,26 @@
+// ADR-0208 slice 1: the runtime allocator is reachable from AE source
+// through extern "C" declarations against the ae_std_* bridge wrappers
+// (runtime_ex.c) — the exact shapes the self-hosted containers are built on.
+// The wrappers carry int64_t signatures so the emitted prototypes match the
+// runtime definitions without dragging size_t into the type mapping, and the
+// accounting is the same path every built-in uses. The blocks contain only
+// extern calls: no warning fires (the W0702 registry fix covers this shape),
+// so this corpus's stderr stays empty under any cache state.
+/// Preconditions: size is a positive byte count; every returned block is
+/// released exactly once with ae_std_free; single-threaded context.
+extern "C" fn ae_std_alloc(size: i64, line: i64, column: i64) -> *mut i64;
+/// Preconditions: block came from ae_std_alloc (or is NULL) and is
+/// released exactly once.
+extern "C" fn ae_std_free(block: *mut i64);
+
+fn main() {
+    let first = unsafe { ae_std_alloc(32, 11, 22) };
+    let second = unsafe { ae_std_alloc(64, 12, 22) };
+    unsafe {
+        ae_std_free(first);
+        ae_std_free(second);
+    }
+    let third = unsafe { ae_std_alloc(16, 17, 22) };
+    unsafe { ae_std_free(third); }
+    print("allocated, released, reallocated, done");
+}
