@@ -36,6 +36,7 @@ import argparse
 import os
 import re
 import time
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -480,9 +481,19 @@ def run_seed(seed: int, workdir: Path, cache_dir: Path, compile_timeout: int) ->
         else:
             result["ok"] = True
             result["lines"] = len(outs[0].splitlines())
-    except (RuntimeError, subprocess.TimeoutExpired) as error:
+    except (RuntimeError, subprocess.TimeoutExpired, OSError) as error:
+        # OSError covers the environment failing under the seed (ENOSPC on a
+        # long duration run, tmpdir races): that seed fails, the run survives
+        # — a harness that dies on ENOSPC loses its whole segment summary.
         result["ok"] = False
         result["detail"] = str(error)
+    # The seed's directory (source, generated C, binaries) is dead weight
+    # once the verdict is decided; a duration run accumulates ~14.6k seeds
+    # per hour and a 16G root disk fills in exactly one segment without
+    # this cleanup (evaluate-2, 2026-11-15). The shared content cache in
+    # cache_dir stays: bounded by distinct program shapes, it is what
+    # keeps the compiles fast.
+    shutil.rmtree(seed_dir, ignore_errors=True)
     result["seconds"] = time.perf_counter() - started
     return result
 
