@@ -1,0 +1,41 @@
+# Changelog
+
+All notable, user-visible changes to the `ae` toolchain and the language it compiles are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the project has not cut a numbered release yet — everything below lives under **Unreleased** until the first tagged version. Internal work (test frameworks, ADRs, CI plumbing, the differential fuzzer) is listed only where a user can observe it.
+
+## [Unreleased]
+
+### Added — language
+
+- **`unsafe` blocks and `unsafe fn`** (M2.12, ADR-0207). Dereferencing a raw pointer and calling an `unsafe fn` require an enclosing `unsafe` block; an `unsafe fn` declaration requires a doc comment naming its preconditions. `unsafe fn` bodies do not behave like implicit `unsafe` blocks.
+- **Raw pointers** `*const T` / `*mut T`. Cast from a borrow with `&v as *const T` / `&mut v as *mut T`; read with `p.deref()` / `p.read()` and write with `p.write(value)` inside `unsafe`. A pointer to an owned value is rejected at the declaration — its borrow is untracked.
+- **`extern "C"` declarations** — call C symbols at link time (`extern "C" fn abs(v: i64) -> i64;`). Calling a declaration requires `unsafe`. The compiler emits a real C prototype for every declaration, so a foreign symbol works regardless of definition order.
+- **`#[no_mangle]` exposures** — C calls AE: `#[no_mangle] extern "C" fn ae_add(a: i64, b: i64) -> i64 { ... }` is emitted as an external symbol; its body is safe AE code.
+- **`#[repr(C)]` structs** — fixes field order and C padding rules; required for any struct crossing the FFI boundary by value. Rejected on generic structs and structs with owned fields. Layout is pinned by the compile-time queries `c_size_of[T]()` and `c_offset_of[T]("field")`, evaluated to constants.
+
+### Added — diagnostics
+
+- `E0700` — dereferencing a raw pointer outside `unsafe`.
+- `E0701` — calling an `unsafe fn` or an `extern "C"` declaration from safe code.
+- `E0703` — passing a non-`#[repr(C)]` struct across an `extern "C"` boundary.
+- `E0704` — an `unsafe fn` without a doc comment.
+- `W0702` — `unnecessary unsafe`: an `unsafe` block containing no unchecked operation (advisory; compilation succeeds).
+
+### Changed — borrow checking (M2.5, ADR-0205)
+
+- **NLL lifetimes**: a persistent view's lifetime now ends at its **last read** instead of the end of scope — whole-variable writes, moves, and `&mut` calls that happen after the view's last use compile; programs rejected under the old block-scoped rule may now be accepted.
+- **Field-granular places**: a field write only conflicts with a view of that very field (`p.note = "y";` while `p.name` is viewed is allowed).
+- **Views bind once**: a view binding is declare-only — mutable view bindings and view reassignment are rejected at parse time.
+- **`&mut` lending calls are release sites**: a call lending a struct mutably releases the viewed bytes of that struct at the call point, decided by the ordered release walk.
+
+### Changed — toolchain
+
+- **Frontend reuse cache** (ADR-0177): `build`/`run` store generated C per source-unit set keyed by SHA-256; rebuilding unchanged sources skips lexing, parsing, checking, and code generation entirely.
+- **Windows argv encoding**: program arguments are re-derived from the UTF-16 command line, so `args()` yields UTF-8 on every ANSI code page; Chinese and other non-ASCII paths passed on the command line work directly.
+- **Runtime traps are uniform**: a trap raised by the MIR interpreter prints the exact runtime format (prefix, position, message), and all four execution modes (interpreter / `-O0` / release tree / release MIR) must trap identically for the same program.
+
+### Fixed
+
+- `try_create_dir` in the MIR interpreter creates every missing path level.
+- Error-path releases survive a clean walk: the `?` propagate binding revives even when the move walk looks clean (ASan-verified leak fix).
+- `extern` prototype parameter names are numbered per index, so multi-parameter prototypes no longer collide.
+- Ten pre-existing compiler warnings eliminated (`PtrStore` unused parameters, dead fields, unnecessary `pub(super)`).
