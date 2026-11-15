@@ -3,24 +3,25 @@
 // (runtime_ex.c) — the exact shapes the self-hosted containers are built on.
 // The wrappers carry int64_t signatures so the emitted prototypes match the
 // runtime definitions without dragging size_t into the type mapping, and the
-// accounting is the same path every built-in uses. The blocks contain only
-// extern calls: no warning fires (the W0702 registry fix covers this shape),
-// so this corpus's stderr stays empty under any cache state.
+// accounting is the same path every built-in uses. The write-read-back makes
+// the raw memory observable; the block dereferences only inside unsafe, and
+// the extern calls keep the block non-decorative for W0702 under any cache
+// state. Bare calls are not statements, so the free wrapper returns the
+// block and the call sites bind it.
 /// Preconditions: size is a positive byte count; every returned block is
 /// released exactly once with ae_std_free; single-threaded context.
 extern "C" fn ae_std_alloc(size: i64, line: i64, column: i64) -> *mut i64;
 /// Preconditions: block came from ae_std_alloc (or is NULL) and is
-/// released exactly once.
-extern "C" fn ae_std_free(block: *mut i64);
+/// released exactly once; returns the block so call sites can bind it.
+extern "C" fn ae_std_free(block: *mut i64) -> *mut i64;
 
 fn main() {
-    let first = unsafe { ae_std_alloc(32, 11, 22) };
-    let second = unsafe { ae_std_alloc(64, 12, 22) };
     unsafe {
-        ae_std_free(first);
-        ae_std_free(second);
+        let slot = ae_std_alloc(32, 12, 22);
+        *slot = 40;
+        *slot = slot.deref() + 2;
+        print(slot.deref());
+        let released = ae_std_free(slot);
     }
-    let third = unsafe { ae_std_alloc(16, 17, 22) };
-    unsafe { ae_std_free(third); }
-    print("allocated, released, reallocated, done");
+    print("allocated, written, released, done");
 }

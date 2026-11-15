@@ -1839,4 +1839,7 @@ static int64_t ae_exposure_trampoline(int64_t a, int64_t b) {
 static int64_t *ae_std_alloc(int64_t size, int64_t line, int64_t column) {
     return ae_alloc((size_t)size, (size_t)line, (size_t)column);
 }
-static void ae_std_free(int64_t *block) { ae_free(block); }
+static int64_t *ae_std_free(int64_t *block) {
+    ae_free(block);
+    return block;
+}

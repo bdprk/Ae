@@ -100,6 +100,11 @@ pub(super) fn c_return(ty: Type) -> String {
         Type::MapF => "ae_mapf".to_owned(),
         Type::Struct(k) => format!("ae_t{k}"),
         Type::Enum(_, k) => format!("ae_e{k}"),
+        // A raw pointer return keeps its star: the extern-prototype contract
+        // must match the runtime definition exactly (ADR-0208's allocator
+        // bridge returns int64_t* from a void* wrapper).
+        Type::Ptr(id) => format!("const {} *", c_type_field(super::ptr_pointee(id))),
+        Type::PtrMut(id) => format!("{} *", c_type_field(super::ptr_pointee(id))),
         _ => "int64_t".to_owned(),
     }
 }
