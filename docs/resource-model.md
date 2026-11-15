@@ -6,10 +6,13 @@ This document is the **specification** for ownership and deallocation: it descri
 
 | Category | Type | Storage | Copy Semantics |
 | --- | --- | --- | --- |
-| Scalar | `i64`, `bool` | Stack | Copy |
-| Owned | `string`, `vec`, `vec[string]`, `map[string, i64]`, struct, enum | Stack handle + Heap buffer | Move (**No implicit copy**) |
-| Read-only Borrow | `&string` (view), `&vec`, `&vec[string]`, `&[i64; N]` | Stack pointer + length | Read-only alias, never deallocated |
+| Scalar | `i64`, `bool`, `f64` | Stack | Copy |
+| Owned | `string`, `vec`, `vec[string]`, `vec[f64]`, `map[string, i64]`, `map[string, f64]`, struct, enum | Stack handle + Heap buffer | Move (**No implicit copy**) |
+| Read-only Borrow | `&string` (view), `&vec`, `&vec[string]`, `&vec[f64]`, `&Struct`, `&[i64; N]` | Stack pointer + length | Read-only alias, never deallocated |
+| Exclusive Borrow | `&mut Struct` (parameter or `&mut self`, ADR-0185) | Stack pointer | Write-through for the call, exclusive while live |
 | Fixed Array | `[i64; N]` | Stack (inline) | Cannot be moved or copied as a whole |
+| Closure / `fn(T) -> R` | closure literal, function-typed parameter (ADR-0188/0189) | No storage (a name for a function id) | Not a value: cannot be stored, returned, or reassigned |
+| Raw Pointer | `*const T`, `*mut T` (M2.12) | Stack address | Copy, comparable; **untracked** — no ownership, no borrows |
 
 The criterion for "Owned" is `Type::owned()`: it determines exactly three things—whether assignment/passing moves the value, whether deallocation is inserted upon scope exit, and whether use-after-move is rejected. New types must define these three semantics simultaneously.
 
@@ -34,9 +37,10 @@ Moves occur at the following syntactic positions, and nowhere else:
 
 ## 4. Borrowing
 
-Borrowing is a **block-scoped** read-only alias with no independent storage:
+Borrowing is a read-only alias with no independent storage. Two mechanisms coexist since M2.5 (ADR-0205): borrows are *registered* as `(variable id, scope depth)` and reclaimed at block end — that registry drives the on-sight rejections (moves, writes, container mutation while borrowed) — while *deferred* conflicts between persistent views and whole-variable writes/moves are decided by the CFG's NLL last-use region for the view:
 
-- Sources: `&string`/`&vec`/`&vec[string]`/`&[i64; N]` parameters (parameters are borrows within the function body), `slice_view` views, `match` bindings, loop variables in `for x in v`, and built-in reads of string/vector arguments.
+- Sources: `&string`/`&vec`/`&vec[string]`/`&vec[f64]`/`&[i64; N]`/`&Struct` parameters (parameters are borrows within the function body), generic `&T` parameters (ADR-0184 family), `slice_view` views, `match` bindings, loop variables in `for x in v`, **borrow captures of a closure literal** (a persistent borrow on the outer variable for the closure's live range, ADR-0188), and built-in reads of string/vector arguments.
+- `&mut Struct` (ADR-0185) is the exclusive form: the callee writes fields through the pointer for the duration of the call; the lender must be a `var` bare struct variable, no other borrow may overlap the call, and a `&` borrow never upgrades to `&mut`. A `&mut` lending call is a release site for the viewed bytes of that struct (see below).
 - Borrows are recorded as `(variable id, scope depth)`; at the end of a block, borrows established within that block are reclaimed based on depth.
 - Prohibitions during a borrow: `push`/`pop`, index writes, field writes, pass-by-value, `return`, or establishing expressions that would move the variable—all report `cannot assign/modify/move ... while it is borrowed`. Determinations are based on **variable ID**, so writing to any field of a struct is blocked by the "borrow exists on struct" check (conservative but safe).
 - **Whole-variable writes to a view's base are flow-sensitive since M2.5 L1 (ADR-0205)**: the parser defers the conflict instead of rejecting it, and the CFG's NLL region for the view decides — since M2.5 L2 the places are field-granular: a field write only overlaps a view of that very field, so `p.note = "y";` while `p.name` is viewed is allowed. A write or move is rejected (`cannot assign/modify/move to '...' while a view binding of it may still be read`) only when the view was introduced before the write on every path (its introduction dominates the write) and can still be read later on some path. A write after the view's last use is allowed; a view created after the write reads the new bytes and never conflicts. Moves and the other borrow prohibitions keep the on-sight rejections (later L1 slices).
@@ -74,7 +78,14 @@ Deallocation of owned values is **deterministic and idempotent** (handles are cl
 
 ## 7. Concurrency and `unsafe`
 
-The current language has **no** concurrency, threads, shared mutable state, or `unsafe` blocks; therefore, "sendable/shareable" constraints are not required: any owned value can only be moved within a single thread. Introducing concurrency will require extending this document (defining which types are `Send`, which are `Sync`, and how locks interact with borrows) before implementation.
+The current language has **no** concurrency, threads, or shared mutable state, so "sendable/shareable" constraints are not required: any owned value lives within a single thread. Introducing concurrency will require extending this document (defining which types are `Send`, which are `Sync`, and how locks interact with borrows) before implementation.
+
+`unsafe` exists since M2.12 (`spec/unsafe.md`, ADR-0207): `unsafe {}` blocks, `unsafe fn`, raw pointers, `extern "C"` declarations/exposures, and `#[repr(C)]`. The boundary does not weaken this model — it sits beside it:
+
+- Raw pointers are untracked addresses: creating one from a reference is safe, reading or writing through one requires `unsafe`. They carry no ownership, so the move set and the borrow registry never see them.
+- Dereferencing into the tracked world (binding the pointee back to an owned variable) re-enters the checks of this document from that point.
+- The declaration-time guards are the safe-code shield: a pointer to an owned value is rejected (its borrow is untracked), so a dangling deref cannot be spelled in safe code; the interpreter's Moved-slot trap is the armed backstop for when pointer-to-owned lands.
+- Owned values crossing `extern "C"` are rejected in both directions (the C side cannot honor their release logic); `#[repr(C)]` structs — which are the legal crossing shape — carry no owned fields for the same reason.
 
 ## 8. Explicitly Non-Guaranteed Properties
 
