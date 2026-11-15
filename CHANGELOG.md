@@ -38,4 +38,5 @@ All notable, user-visible changes to the `ae` toolchain and the language it comp
 - `try_create_dir` in the MIR interpreter creates every missing path level.
 - Error-path releases survive a clean walk: the `?` propagate binding revives even when the move walk looks clean (ASan-verified leak fix).
 - `extern` prototype parameter names are numbered per index, so multi-parameter prototypes no longer collide.
+- `W0702` no longer fires on `unsafe` blocks whose unchecked operation is a call to an `unsafe fn` or an `extern "C"` declaration — the same operations E0701 legalizes. Previously the block was reported as decoration on any cold-cache build; warm frontend-cache hits masked it.
 - Ten pre-existing compiler warnings eliminated (`PtrStore` unused parameters, dead fields, unnecessary `pub(super)`).
