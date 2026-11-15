@@ -3764,6 +3764,25 @@ fn no_mangle_attribute_misuse_is_rejected() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn unnecessary_unsafe_block_warns_without_failing_the_compile() {
+    // M2.12 U4 (spec/unsafe.md W0702): an `unsafe` block whose body
+    // contains no unchecked operation is silent decoration — the compile
+    // carries a warning on stderr and still succeeds; a block with a raw
+    // dereference (nested here, to prove the recursive walk) stays
+    // silent.
+    let dir = unique_temp_dir("w0702");
+    let source = dir.join("w0702.ae");
+    fs::write(&source, "fn main() {\n    unsafe { print(1 + 2); }\n    var x = 41;\n    unsafe { let p = &x as *const i64; unsafe { print(p.deref()); } }\n}").unwrap();
+    // `run` builds and executes; the warning rides stderr either way.
+    let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).output().unwrap();
+    assert!(run.status.success(), "the compile still succeeds: {}", String::from_utf8_lossy(&run.stderr));
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(stderr.contains("warning: unnecessary unsafe block (W0702)"), "the decoration warns: {stderr}");
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "3\n41\n");
+    fs::remove_dir_all(dir).unwrap();
+}
+
 fn mir_drop_elision_thins_propagate_error_path_releases() {
     // M2.4: a `?`'s releases ride the error path, which exits the function,
     // so the state to read them with is the one after the value evaluated.
