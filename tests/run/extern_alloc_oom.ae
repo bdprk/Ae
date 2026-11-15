@@ -1,15 +1,17 @@
 // ADR-0208 slice 1: the failure path is deterministic — an allocation no
 // allocator can satisfy (i64-max bytes; glibc rejects sizes at PTRDIFF_MAX
 // and UCRT fails the heap request) comes back NULL inside ae_alloc and
-// terminates with the runtime's terminal diagnostic, carrying the line and
-// column the AE caller passed. The printed "before" line pins ordering:
-// exit(1) flushes stdout after the stderr diagnostic is written.
+// terminates with the runtime's terminal diagnostic. The diagnostic's
+// position is the line/column the AE caller passed as constants, so the
+// stderr snapshot is stable regardless of where the call sits.
 /// Preconditions: size is a positive byte count; blocks released exactly
 /// once with ae_std_free.
 extern "C" fn ae_std_alloc(size: i64, line: i64, column: i64) -> *mut i64;
 
 fn main() {
     print("before");
-    let block = unsafe { ae_std_alloc(9223372036854775807, 8, 5) };
+    unsafe {
+        let block = ae_std_alloc(9223372036854775807, 8, 5);
+    }
     print("unreachable");
 }
