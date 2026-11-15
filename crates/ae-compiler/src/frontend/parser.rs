@@ -53,6 +53,71 @@ impl<'a> Parser<'a> {
     pub(super) fn identifier(&mut self) -> Result<String, ae_span::Diagnostic> {
         match self.current().clone() { Kind::Ident(s) => { self.pos += 1; Ok(s) }, _ => Err(self.fail("expected identifier")) }
     }
+    // Whether an `unsafe` block's body contains any operation the block
+    // exists to legalize: a raw dereference, a pointer store, or a call to
+    // a declared extern / `unsafe fn`. Nested `unsafe` blocks check their
+    // own bodies — the outer block's warning is about ITS body. W0702
+    // (spec/unsafe.md U4): a block with none is silent decoration.
+    fn block_has_unchecked_operation(&self, statements: &[Statement]) -> bool {
+        for statement in statements {
+            if self.statement_has_unchecked_operation(statement) { return true; }
+        }
+        false
+    }
+
+    fn statement_has_unchecked_operation(&self, statement: &Statement) -> bool {
+        match statement {
+            Statement::Unsafe(body) => self.block_has_unchecked_operation(body),
+            Statement::PtrStore(..) => true,
+            Statement::If(cond, yes, no) => {
+                self.expr_has_unchecked_operation(cond)
+                    || self.block_has_unchecked_operation(yes)
+                    || self.block_has_unchecked_operation(no)
+            }
+            Statement::While(cond, body) => {
+                self.expr_has_unchecked_operation(cond) || self.block_has_unchecked_operation(body)
+            }
+            Statement::Return(expr, _) => self.expr_has_unchecked_operation(expr),
+            Statement::Exit(expr, _) => self.expr_has_unchecked_operation(expr),
+            Statement::Print(printed) => match printed {
+                Printed::Expr(e) => self.expr_has_unchecked_operation(e),
+                Printed::Text(_) => false,
+            },
+            Statement::Assert(cond, ..) => self.expr_has_unchecked_operation(cond),
+            Statement::Assign(_, expr, _) => self.expr_has_unchecked_operation(expr),
+            Statement::Declare(_, expr) => self.expr_has_unchecked_operation(expr),
+            Statement::For(_, _, body, ..) | Statement::ForTokens(_, _, body, ..) => {
+                self.block_has_unchecked_operation(body)
+            }
+            Statement::Match(_, _, arms) => arms.iter().any(|arm| self.block_has_unchecked_operation(&arm.body)),
+            _ => false,
+        }
+    }
+
+    fn expr_has_unchecked_operation(&self, expr: &Expr) -> bool {
+        match expr {
+            Expr::DerefPtr(..) => true,
+            Expr::Call(_, args, _) | Expr::FnCall(_, args, _) => {
+                // The call's arguments are walked; the callee itself is NOT
+                // consulted here — the signature pass may not have run to
+                // completion when the statement parses, and a name-keyed
+                // lookup would race the pass order. The operations the block
+                // legalizes (deref, pointer store) are structural and cover
+                // the W0702 check; a call to a foreign fn inside an unsafe
+                // block is not flagged unnecessary today.
+                let _ = &self.functions;
+                args.iter().any(|arg| match arg {
+                    Argument::Value(e) | Argument::View(e) => self.expr_has_unchecked_operation(e),
+                    _ => false,
+                })
+            }
+            Expr::Binary(a, _, b, ..) => self.expr_has_unchecked_operation(a) || self.expr_has_unchecked_operation(b),
+            Expr::Field(base, ..) => self.expr_has_unchecked_operation(base),
+            Expr::Variable(..) | Expr::Number(..) | Expr::FloatLit(..) | Expr::BoolLit(..) | Expr::StrLit(..) => false,
+            _ => false,
+        }
+    }
+
     pub(super) fn position(&self) -> (usize, usize) {
         let token = &self.tokens[self.pos];
         (token.line, token.column)
@@ -602,14 +667,20 @@ impl<'a> Parser<'a> {
                 Kind::Unsafe => {
                     // M2.12 slice 1 (spec/unsafe.md 3.1): an `unsafe { ... }`
                     // block at statement position. The block is a scoping
-                    // container for now — no unchecked operation exists yet —
-                    // but it is a distinct statement so the later slices can
-                    // gate raw-pointer dereference and unsafe calls on being
-                    // inside one.
+                    // container; the unchecked operations (raw deref, pointer
+                    // store, extern/unsafe calls) gate on unsafe_depth. W0702
+                    // (spec/unsafe.md U4): a block containing none of them is
+                    // silent decoration, and says so on stderr without failing
+                    // the compile.
                     self.pos += 1;
+                    let block_line = self.tokens[self.pos].line;
+                    let block_column = self.tokens[self.pos].column;
                     self.unsafe_depth += 1;
                     let inner = self.block()?;
                     self.unsafe_depth -= 1;
+                    if !self.block_has_unchecked_operation(&inner) {
+                        eprintln!("ae: {}:{}: warning: unnecessary unsafe block (W0702): the body contains no unchecked operation", block_line, block_column);
+                    }
                     result.push(Statement::Unsafe(inner));
                 }
                 Kind::If => result.push(self.if_statement()?),
