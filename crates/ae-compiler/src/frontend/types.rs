@@ -497,8 +497,32 @@ impl Parser<'_> {
         }
         Ok(())
     }
+    // `*const T` / `*mut T` in a type annotation. The pointee is any named
+    // type the cast grammar accepts; the pointer itself is an untracked
+    // address (ADR-0207), so the declaration check stays the C-ABI shape
+    // test — the pointee's ownership is the deref-side's problem (U11).
+    pub(super) fn pointer_type(&mut self) -> Result<Type, ae_span::Diagnostic> {
+        self.take(Kind::Star)?;
+        let mutable = match self.current() {
+            Kind::Mut => { self.pos += 1; true }
+            Kind::Const => { self.pos += 1; false }
+            _ => return Err(self.fail("expected 'const' or 'mut' after '*' in a pointer type")),
+        };
+        let pointee = self.named_type()?;
+        let id = super::intern_pointee(pointee);
+        Ok(if mutable { Type::PtrMut(id) } else { Type::Ptr(id) })
+    }
+
     // Arrays are borrowed read-only; strings and scalars pass by value.
     pub(super) fn parameter_type(&mut self) -> Result<Type, ae_span::Diagnostic> {
+        // `*const T` / `*mut T` in a type annotation (M2.12 slice 4's
+        // c_abi_shape already advertises the pointer forms; until now pointer
+        // types were only born in the cast grammar, so no annotation could
+        // spell one — extern "C" signatures return raw pointers, which
+        // ADR-0208's allocator bridge needs).
+        if *self.current() == Kind::Star {
+            return self.pointer_type();
+        }
         // `fn(T, U) -> R` (ADR-0189): a function value. Only non-capturing
         // closures can be passed as one; the signature is interned so two
         // closures of the same shape share the type.
@@ -668,6 +692,11 @@ impl Parser<'_> {
         // (ADR-0184) Returning a value is always sound, and callers re-borrow.
         if *self.current() == Kind::Amp {
             return Err(self.fail("a function cannot return a borrow; return an owned value and let callers borrow it themselves"));
+        }
+        // A raw pointer return is an untracked address (ADR-0207) — the C-ABI
+        // shape test, not the borrow rules, decides whether it may cross.
+        if *self.current() == Kind::Star {
+            return self.pointer_type();
         }
         self.named_type()
     }
