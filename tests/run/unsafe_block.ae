@@ -1,13 +1,21 @@
 // M2.12 slice 1 (spec/unsafe.md 3.1): an `unsafe { ... }` block is a scoping
 // container — the inner statements run inline, locals bind and die inside it,
-// and every backend emits the same program. No unchecked operation exists
-// yet, so the block changes nothing but the syntax.
+// and every backend emits the same program. The block dereferences a pointer
+// (the U1 shape, scalars only: a pointer to an owned value is rejected at the
+// declaration) so the block is never decorative — a decorative block would
+// make this corpus file's stderr depend on the frontend cache state (W0702
+// fires on a cold parse, vanishes on a warm hit), which no run snapshot can
+// pin. Warning-text expectations live in execution.rs over fresh temp
+// sources, and error diagnostics in tests/ui.
 fn main() {
-    var s = "hello";
+    var n = 41;
+    let p = &n as *const i64;
     unsafe {
-        print(s);
-        let inner = len(s);
+        let inner = p.deref() + 1;
         print(inner);
+        let block_local = "inside";
+        print(block_local);
     }
+    print(n);
     print("done");
 }
