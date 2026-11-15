@@ -380,6 +380,8 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         // Taking an address reads the slot and never moves it; dereferencing
         // reads the pointer variable (M2.12 slice 2).
         Expr::BorrowAs(e, ..) | Expr::DerefPtr(e, ..) => walk_expr(e, moved),
+        // Offsetting an address moves no value: the base stays put.
+        Expr::PtrOffset(e, ..) => walk_expr(e, moved),
         Expr::Variable(id, ..) => {
             // A moving context consumes the value; the caller decides which
             // reads are moves, so nothing is inserted here.

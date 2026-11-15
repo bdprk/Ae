@@ -297,6 +297,15 @@ impl<'a> TreePrinter<'a> {
                 out.push('*');
                 out.push_str(&self.expression_text(pointer));
             }
+            Expr::PtrOffset(pointer, count, bytewise, _, _) => {
+                let name = if *bytewise { "byte_offset" } else { "offset" };
+                out.push_str(name);
+                out.push('(');
+                out.push_str(&self.expression_text(pointer));
+                out.push_str(", ");
+                out.push_str(&self.expression_text(count));
+                out.push(')');
+            }
             Expr::ClosureLit(cid) => out.push_str(&format!("closure#{}", cid)),
             Expr::Binary(a, op, b, line, col, ty) => {
                 self.expression(a, out);

@@ -319,6 +319,10 @@ fn expr_intrinsic(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut Mi
         // the built-in reads.
         Expr::BorrowAs(e, ..) => ("borrow_as_ptr", vec![lower_operand(e, bindings, lowering)]),
         Expr::DerefPtr(e, ..) => ("deref_ptr", vec![lower_operand(e, bindings, lowering)]),
+        Expr::PtrOffset(e, c, bytewise, ..) => (
+            if *bytewise { "byte_offset" } else { "ptr_offset" },
+            vec![lower_operand(e, bindings, lowering), lower_operand(c, bindings, lowering)],
+        ),
         Expr::Len(e, ..) => ("len", vec![lower_operand(e, bindings, lowering)]),
         Expr::Index(id, len, index, ..) => ("index", vec![
             MirOperand::Place(MirPlace::Local(*id, Type::Array(*len))),
@@ -432,6 +436,8 @@ pub(super) fn expr_type(expr: &Expr) -> Type {
         // deref yields the pointee.
         Expr::BorrowAs(e, mutable, ..) => if *mutable { Type::PtrMut(crate::frontend::intern_pointee(expr_type(e))) } else { Type::Ptr(crate::frontend::intern_pointee(expr_type(e))) },
         Expr::DerefPtr(p, ..) => match expr_type(p) { Type::Ptr(id) => crate::frontend::ptr_pointee(id), other => other },
+        // Offsetting keeps the base's pointer type.
+        Expr::PtrOffset(p, ..) => expr_type(p),
         // Result-returning built-ins carry their result type; the printed
         // temp names the enum the program must match on.
         Expr::TryReadFile(_, ty, ..) | Expr::TryListDir(_, ty, ..) | Expr::ParseInt(_, ty, ..)
