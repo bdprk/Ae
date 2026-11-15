@@ -497,6 +497,11 @@ def main() -> int:
                         help="seconds before one compile is abandoned (and fails that seed)")
     parser.add_argument("--save-corpus", metavar="DIR",
                         help="write every generated program as DIR/seed_N.ae")
+    parser.add_argument("--duration", type=float, default=0,
+                        help="run for this many hours instead of --seeds seeds "
+                             "(the M2.13 24h acceptance mode); the seed stream "
+                             "continues past any count and the summary reports "
+                             "the seeds actually run")
     args = parser.parse_args()
 
     if not EXE.exists():
@@ -512,29 +517,51 @@ def main() -> int:
         workdir = Path(tmp)
         cache_dir = workdir / "cache"
         corpus: dict[int, str] = {}
-        seeds = list(range(args.start, args.start + args.seeds))
+        deadline = started + args.duration * 3600.0
+        seed = args.start
 
-        if jobs == 1:
-            for seed in seeds:
-                result = run_seed(seed, workdir, cache_dir, args.compile_timeout)
-                results[seed] = result
-                failures += 0 if result["ok"] else 1
-                mark = "ok" if result["ok"] else "FAILURE"
-                print(f"seed {seed}: {mark} ({result['lines']} lines)", flush=True)
-        else:
-            from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=jobs) as pool:
-                futures = {pool.submit(run_seed, seed, workdir, cache_dir, args.compile_timeout): seed for seed in seeds}
-                for future in futures:
-                    pass
-                from concurrent.futures import as_completed
-                for future in as_completed(futures):
+        def stream():
+            # Count-driven yields the planned range; duration-driven yields
+            # until the wall clock (M2.13) says stop — the seed number keeps
+            # climbing past any count.
+            while True:
+                if args.duration > 0:
+                    if time.perf_counter() >= deadline:
+                        return
+                elif seed - args.start >= args.seeds:
+                    return
+                yield seed
+
+        def run_one(current_seed):
+            return run_seed(current_seed, workdir, cache_dir, args.compile_timeout)
+
+        from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            futures = set()
+            for current_seed in stream():
+                futures.add(pool.submit(run_one, current_seed))
+                seed = current_seed + 1
+                # Bounded in-flight window: block until a worker finishes, so
+                # the print stream stays live and the deadline check governs
+                # scheduling rather than a huge backlog.
+                while len(futures) >= jobs * 2:
+                    done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        result = future.result()
+                        futures.discard(future)
+                        results[result["seed"]] = result
+                        failures += 0 if result["ok"] else 1
+                        mark = "ok" if result["ok"] else "FAILURE"
+                        print(f"seed {result['seed']}: {mark} ({result['lines']} lines)", flush=True)
+            while futures:
+                done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                for future in done:
                     result = future.result()
-                    seed = result["seed"]
-                    results[seed] = result
+                    futures.discard(future)
+                    results[result["seed"]] = result
                     failures += 0 if result["ok"] else 1
                     mark = "ok" if result["ok"] else "FAILURE"
-                    print(f"seed {seed}: {mark} ({result['lines']} lines)", flush=True)
+                    print(f"seed {result['seed']}: {mark} ({result['lines']} lines)", flush=True)
 
         if args.save_corpus:
             corpus_dir = Path(args.save_corpus)
