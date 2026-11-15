@@ -35,6 +35,20 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             let t = emit_expr(operand, out, next, false);
             Emitted::value(format!("&({})", t.text), crate::frontend::mir::expr_type(expr))
         }
+        Expr::PtrCast(operand, mutable, pointee_id, ..) => {
+            // ADR-0209 step A: a pointer reinterpretation — the same address
+            // through a new pointee's eyes. Nothing happens at runtime; the
+            // C cast is the whole story.
+            let inner = emit_expr(operand, out, next, false);
+            let pointee = crate::frontend::ptr_pointee(*pointee_id);
+            let ptr_c = if *mutable {
+                format!("{} *", c_type_field(pointee))
+            } else {
+                format!("const {} *", c_type_field(pointee))
+            };
+            let target_ty = if *mutable { Type::PtrMut(*pointee_id) } else { Type::Ptr(*pointee_id) };
+            Emitted::value(format!("({ptr_c})({})", inner.text), target_ty)
+        }
         Expr::PtrOffset(pointer, count, bytewise, ..) => {
             // ADR-0209 step A: pointer arithmetic. The element form rides C's
             // own scaling (base is a T*, so base + n advances n elements);

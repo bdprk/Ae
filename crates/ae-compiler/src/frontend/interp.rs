@@ -1896,6 +1896,14 @@ fn eval_expr(
             Expr::Variable(id, ..) => Ok(Val::Ptr(*id)),
             _ => Err(Flow::Trap("internal: pointer operand is not a variable".to_owned())),
         },
+        // ADR-0209 step A: a retag keeps the address and only changes the
+        // view — the slot model is type-erased, so the passthrough is exact
+        // for same-typed store/load pairs. Cross-type punning (store as i64,
+        // read as f64) has no interpreter model: the compiled backends
+        // reinterpret the bits, the slot hands back the stored value —
+        // corpus shapes avoid the punning, and the limitation is stated in
+        // the ADR rather than papered over.
+        Expr::PtrCast(operand, ..) => eval_expr(env, operand, locals, caller_locals, moving),
         // ADR-0209 step A: the interpreter's pointers are slots into the
         // frame, not addresses, so byte/element arithmetic has no model here
         // — the same story as extern calls (which trap by name). The

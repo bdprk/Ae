@@ -1079,6 +1079,41 @@ impl Parser<'_> {
         };
         // Postfix field access binds tighter than every operator.
         loop {
+            // `ptr as *const U` / `ptr as *mut U` (ADR-0209 step A): the only
+            // cast form. The operand must already be a pointer — value
+            // conversions are to_f64/to_i64's territory — and the retag keeps
+            // the address, so it is safe by itself; what the new view enables
+            // is the caller's business, and the U11 owned-pointee guard
+            // applies to the RESULT exactly as it does at a declaration.
+            if *self.current() == Kind::As {
+                if !matches!(&lhs.1, Type::Ptr(_) | Type::PtrMut(_)) {
+                    // Not a pointer: leave the `as` for the enclosing borrow
+                    // cast — the Amp prefix requires it right here, and its
+                    // own diagnostic fires when it is missing. A non-pointer
+                    // `as` at statement level surfaces as that statement's
+                    // syntax error. (Check by reference: the break path must
+                    // keep `lhs` intact for whatever follows the loop.)
+                    break;
+                }
+                let as_offset = self.tokens[self.pos].offset;
+                let (base, base_ty) = lhs;
+                self.pos += 1;
+                let target = self.pointer_type()?;
+                if let Type::Ptr(pid) | Type::PtrMut(pid) = &target {
+                    let pointee = super::ptr_pointee(*pid);
+                    if pointee.owned() {
+                        return Err(self.error_at(as_offset, "a pointer to an owned value is not supported yet; its borrow is not tracked, so safe code could dangle it by moving the value"));
+                    }
+                }
+                let mutable = matches!(target, Type::PtrMut(_));
+                let pointee_id = match &target {
+                    Type::Ptr(id) | Type::PtrMut(id) => *id,
+                    _ => unreachable!("pointer_type returns a pointer"),
+                };
+                let (line, column) = self.position();
+                lhs = (Expr::PtrCast(Box::new(base), mutable, pointee_id, line, column), target);
+                continue;
+            }
             if *self.current() != Kind::Dot { break; }
             self.pos += 1;
             let fname = self.identifier()?;

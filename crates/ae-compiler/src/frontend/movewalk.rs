@@ -382,6 +382,8 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         Expr::BorrowAs(e, ..) | Expr::DerefPtr(e, ..) => walk_expr(e, moved),
         // Offsetting an address moves no value: the base stays put.
         Expr::PtrOffset(e, ..) => walk_expr(e, moved),
+        // A retag moves no value either.
+        Expr::PtrCast(e, ..) => walk_expr(e, moved),
         Expr::Variable(id, ..) => {
             // A moving context consumes the value; the caller decides which
             // reads are moves, so nothing is inserted here.
