@@ -457,6 +457,15 @@ impl Parser<'_> {
                     // `size_of[Pair]()`, `offset_of[Pair]("field")`.
                     self.pos += 1;
                     let type_name = self.identifier()?;
+                    // A type parameter inside a generic body resolves through
+                    // the substitution table first (ADR-0209 step A): at
+                    // instantiation the body is re-parsed with T bound to the
+                    // concrete struct, so `c_size_of[T]()` must see through
+                    // it. An unsubstituted unknown name keeps today's error.
+                    let type_name = match self.subst.get(&type_name) {
+                        Some(Type::Struct(sid)) => self.structs[*sid].name.clone(),
+                        _ => type_name,
+                    };
                     let Some(&sid) = self.struct_names.get(&type_name) else {
                         return Err(self.fail(&format!("'{}' is not a struct; the layout queries name concrete structs", type_name)));
                     };
@@ -1079,6 +1088,24 @@ impl Parser<'_> {
             // the checker cannot validate is the unchecked operation the
             // block exists for.
             if let Type::Ptr(pointee_id) | Type::PtrMut(pointee_id) = base_ty {
+                // `byte_offset(n)` (ADR-0209 step A): move the address n bytes
+                // — no bounds reasoning (spec/unsafe.md 2.2), the result is
+                // the same pointer type at the new address. Creating the
+                // offset is unchecked address manipulation and gates on
+                // `unsafe` exactly like the deref it usually precedes.
+                if fname == "offset" || fname == "byte_offset" {
+                    if self.unsafe_depth == 0 {
+                        return Err(self.error_at(self.tokens[self.pos - 1].offset, "pointer arithmetic requires 'unsafe'"));
+                    }
+                    self.take(Kind::LParen)?;
+                    let (count, count_ty) = self.expression(0, false)?;
+                    if count_ty != Type::Int { return Err(self.fail(&format!("{fname} takes an i64 count"))); }
+                    self.take(Kind::RParen)?;
+                    let (line, column) = self.position();
+                    let bytewise = fname == "byte_offset";
+                    lhs = (Expr::PtrOffset(Box::new(base), Box::new(count), bytewise, line, column), base_ty);
+                    continue;
+                }
                 if fname != "deref" {
                     return Err(self.fail(&format!("pointers have no method '{fname}'")));
                 }

@@ -1,0 +1,26 @@
+// ADR-0209 step A: pointer arithmetic over the allocator bridge — element
+// offsets ride C's own scaling, byte offsets go through char* and back, and
+// all three views of the same buffer disagree on nothing. The extern calls
+// keep the block non-decorative for W0702 under any cache state.
+/// Preconditions: size is a positive byte count; every returned block is
+/// released exactly once with ae_std_free; single-threaded context.
+extern "C" fn ae_std_alloc(size: i64, line: i64, column: i64) -> *mut i64;
+/// Preconditions: block came from ae_std_alloc and is released exactly
+/// once; returns the block so call sites can bind it.
+extern "C" fn ae_std_free(block: *mut i64) -> *mut i64;
+
+fn main() {
+    unsafe {
+        let buf = ae_std_alloc(64, 12, 22);
+        *buf = 10;
+        let second = buf.offset(1);
+        *second = 20;
+        let third = buf.byte_offset(16);
+        *third = 30;
+        print(buf.deref());
+        print(second.deref());
+        print(third.deref());
+        let freed = ae_std_free(buf);
+    }
+    print("done");
+}

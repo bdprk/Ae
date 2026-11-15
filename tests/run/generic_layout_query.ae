@@ -1,0 +1,16 @@
+// ADR-0209 step A: the layout queries resolve a type parameter through the
+// instantiation's substitution table, so a generic body can learn its
+// element size — the piece a self-hosted Vec[T] builds its allocation on.
+// The concrete call and the generic body must agree with the C layout.
+#[repr(C)]
+struct Pair { a: i64, b: i64 }
+
+fn pair_size[T](p: T) -> i64 {
+    return c_size_of[T]();
+}
+
+fn main() {
+    let p = Pair { a: 1, b: 2 };
+    print(pair_size[Pair](p));
+    print(c_size_of[Pair]());
+}

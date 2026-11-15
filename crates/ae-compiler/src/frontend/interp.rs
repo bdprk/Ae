@@ -1896,6 +1896,12 @@ fn eval_expr(
             Expr::Variable(id, ..) => Ok(Val::Ptr(*id)),
             _ => Err(Flow::Trap("internal: pointer operand is not a variable".to_owned())),
         },
+        // ADR-0209 step A: the interpreter's pointers are slots into the
+        // frame, not addresses, so byte/element arithmetic has no model here
+        // — the same story as extern calls (which trap by name). The
+        // compiled backends run the arithmetic; the corpus pins their
+        // behavior without asserting interp agreement.
+        Expr::PtrOffset(..) => Err(Flow::Trap("pointer arithmetic cannot run in the interpreter; run the compiled program".to_owned())),
         Expr::DerefPtr(pointer, ..) => match eval_expr(env, pointer, locals, caller_locals, false)? {
             Val::Ptr(slot) => match locals.get(&slot).cloned() {
                 Some(Val::Moved) => Err(trap("reading through a pointer to a moved value", 0, 0)),

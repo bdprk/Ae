@@ -371,6 +371,8 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
         Expr::Variable(id, ..) => { used.insert(*id); }
         // A pointer takes the address of (or reads through) the slot (M2.12).
         Expr::BorrowAs(e, ..) | Expr::DerefPtr(e, ..) => walk_expr(e, used, mutated),
+        // Offsetting an address uses the base without consuming it.
+        Expr::PtrOffset(e, ..) => walk_expr(e, used, mutated),
         Expr::Index(id, _, _, _, _) | Expr::VecIndex(id, ..) | Expr::StrVecIndex(id, ..) => { used.insert(*id); }
         Expr::Tokens(id, ..) => { used.insert(*id); }
         Expr::Join(id, sep, ..) => { used.insert(*id); walk_expr(sep, used, mutated); }

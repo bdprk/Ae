@@ -35,6 +35,25 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             let t = emit_expr(operand, out, next, false);
             Emitted::value(format!("&({})", t.text), crate::frontend::mir::expr_type(expr))
         }
+        Expr::PtrOffset(pointer, count, bytewise, ..) => {
+            // ADR-0209 step A: pointer arithmetic. The element form rides C's
+            // own scaling (base is a T*, so base + n advances n elements);
+            // the byte form goes through char* and back. Both keep the
+            // base's pointer type.
+            let base = emit_expr(pointer, out, next, false);
+            let cnt = emit_expr(count, out, next, false);
+            let base_ty = crate::frontend::mir::expr_type(pointer);
+            let ptr_c = match base_ty {
+                Type::Ptr(id) | Type::PtrMut(id) => format!("{} *", c_type_field(crate::frontend::ptr_pointee(id))),
+                _ => "int64_t *".to_owned(),
+            };
+            let text = if *bytewise {
+                format!("({ptr_c})(((char *)({})) + (int64_t)({}))", base.text, cnt.text)
+            } else {
+                format!("({ptr_c})(({}) + (int64_t)({}))", base.text, cnt.text)
+            };
+            Emitted::value(text, base_ty)
+        }
         Expr::DerefPtr(pointer, ..) => {
             let t = emit_expr(pointer, out, next, false);
             Emitted::value(format!("*({})", t.text), crate::frontend::mir::expr_type(expr))
