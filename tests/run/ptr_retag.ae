@@ -1,0 +1,27 @@
+// ADR-0209 step A: the pointer reinterpretation — the same allocation seen
+// through an f64 view. The retag keeps the address and changes only the
+// pointee; the store and the read both go through the f64 view (the
+// interpreter's slot model is exact for same-typed store/load pairs; the
+// compiled backends reinterpret nothing here because both sides agree on
+// the view). Cross-type punning (store as i64, read as f64) is the
+// documented interpreter limitation, not a corpus shape.
+/// Preconditions: size is a positive byte count; every returned block is
+/// released exactly once with ae_std_free; single-threaded context.
+extern "C" fn ae_std_alloc(size: i64, line: i64, column: i64) -> *mut i64;
+/// Preconditions: block came from ae_std_alloc and is released exactly
+/// once; returns the block so call sites can bind it.
+extern "C" fn ae_std_free(block: *mut i64) -> *mut i64;
+
+fn main() {
+    unsafe {
+        let raw = ae_std_alloc(64, 12, 22);
+        let view = raw as *mut f64;
+        *view = 2.5;
+        print(view.deref());
+        let second = view.offset(1);
+        *second = 4.0;
+        print(second.deref());
+        let freed = ae_std_free(raw);
+    }
+    print("done");
+}

@@ -323,6 +323,10 @@ fn expr_intrinsic(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut Mi
             if *bytewise { "byte_offset" } else { "ptr_offset" },
             vec![lower_operand(e, bindings, lowering), lower_operand(c, bindings, lowering)],
         ),
+        Expr::PtrCast(e, mutable, pointee_id, ..) => (
+            if *mutable { "ptr_cast_mut" } else { "ptr_cast" },
+            vec![lower_operand(e, bindings, lowering)],
+        ),
         Expr::Len(e, ..) => ("len", vec![lower_operand(e, bindings, lowering)]),
         Expr::Index(id, len, index, ..) => ("index", vec![
             MirOperand::Place(MirPlace::Local(*id, Type::Array(*len))),
@@ -435,9 +439,17 @@ pub(super) fn expr_type(expr: &Expr) -> Type {
         // M2.12 slice 2: the address takes the pointee's pointer shape; a
         // deref yields the pointee.
         Expr::BorrowAs(e, mutable, ..) => if *mutable { Type::PtrMut(crate::frontend::intern_pointee(expr_type(e))) } else { Type::Ptr(crate::frontend::intern_pointee(expr_type(e))) },
-        Expr::DerefPtr(p, ..) => match expr_type(p) { Type::Ptr(id) => crate::frontend::ptr_pointee(id), other => other },
+        // Both pointer forms deref to their pointee — PtrMut was missing
+        // here, so a *mut f64 deref printed through the i64 printer (the
+        // slice-3 shapes were i64-only and matched the fallback by luck).
+        Expr::DerefPtr(p, ..) => match expr_type(p) { Type::Ptr(id) | Type::PtrMut(id) => crate::frontend::ptr_pointee(id), other => other },
         // Offsetting keeps the base's pointer type.
         Expr::PtrOffset(p, ..) => expr_type(p),
+        // A retag's type is the new pointer, taken from the variant's own
+        // fields — recursing on the same expression here would not terminate.
+        Expr::PtrCast(_, mutable, pointee_id, ..) => {
+            if *mutable { Type::PtrMut(*pointee_id) } else { Type::Ptr(*pointee_id) }
+        }
         // Result-returning built-ins carry their result type; the printed
         // temp names the enum the program must match on.
         Expr::TryReadFile(_, ty, ..) | Expr::TryListDir(_, ty, ..) | Expr::ParseInt(_, ty, ..)

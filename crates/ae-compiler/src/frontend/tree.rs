@@ -297,6 +297,14 @@ impl<'a> TreePrinter<'a> {
                 out.push('*');
                 out.push_str(&self.expression_text(pointer));
             }
+            Expr::PtrCast(operand, mutable, pointee_id, _, _) => {
+                out.push('(');
+                out.push_str(if *mutable { "*mut " } else { "*const " });
+                out.push_str(&crate::frontend::ptr_pointee(*pointee_id).name());
+                out.push_str(")(");
+                out.push_str(&self.expression_text(operand));
+                out.push(')');
+            }
             Expr::PtrOffset(pointer, count, bytewise, _, _) => {
                 let name = if *bytewise { "byte_offset" } else { "offset" };
                 out.push_str(name);
