@@ -8,3 +8,6 @@ examples/*.summary
 ae-report/
 ae-json/
 __pycache__/
+
+# isolated build dir for verifying changes while a fuzz segment owns target/
+target-window/
