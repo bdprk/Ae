@@ -5543,3 +5543,95 @@ fn main() {
     assert_eq!(mir_out, "1\n2\n4\n5\n6\n5\n-9\n7\n0\n7\n-1\n-2\n-1\n");
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn user_defined_drop_runs_on_scope_exit_and_respects_move() {
+    let dir = std::env::temp_dir().join("ae_test_user_drop");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let source = dir.join("main.ae");
+    std::fs::write(&source, r#"
+struct Guard {
+    id: i64,
+}
+
+impl Guard {
+    fn drop(&mut self) -> i64 {
+        print(self.id);
+        return 0;
+    }
+}
+
+fn take(g: Guard) -> i64 {
+    return 0;
+}
+
+fn early(flag: bool) -> i64 {
+    var a = Guard { id: 10 };
+    if flag {
+        return 1;
+    }
+    var b = Guard { id: 20 };
+    return 2;
+}
+
+fn main() {
+    if true {
+        var g1 = Guard { id: 1 };
+    }
+    var g2 = Guard { id: 2 };
+    var _r1 = take(g2);
+    var _r2 = early(true);
+}
+"#).unwrap();
+    let run = |mode: &str| Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", source.to_str().unwrap()])
+        .env("AE_CODEGEN", mode)
+        .output()
+        .unwrap();
+    let mir = run("mir");
+    assert!(mir.status.success(), "mir failed: {}", String::from_utf8_lossy(&mir.stderr));
+    let mir_out = String::from_utf8_lossy(&mir.stdout).replace("\r\n", "\n");
+    assert_eq!(mir_out, "1\n2\n10\n");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn user_defined_drop_rejects_direct_call_and_pub() {
+    let dir = std::env::temp_dir().join("ae_test_user_drop_neg");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let direct = dir.join("direct.ae");
+    std::fs::write(&direct, r#"
+struct G { id: i64 }
+impl G {
+    fn drop(&mut self) -> i64 { return 0; }
+}
+fn main() {
+    var g = G { id: 1 };
+    g.drop();
+}
+"#).unwrap();
+    let out1 = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["check", direct.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!out1.status.success(), "direct call to drop should be rejected");
+
+    let pub_drop = dir.join("pub_drop.ae");
+    std::fs::write(&pub_drop, r#"
+struct G { id: i64 }
+impl G {
+    pub fn drop(&mut self) -> i64 { return 0; }
+}
+fn main() {}
+"#).unwrap();
+    let out2 = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["check", pub_drop.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!out2.status.success(), "pub fn drop should be rejected");
+
+    let _ = std::fs::remove_dir_all(dir);
+}

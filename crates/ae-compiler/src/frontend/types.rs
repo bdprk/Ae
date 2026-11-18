@@ -430,7 +430,7 @@ impl Parser<'_> {
         }
         let display = format!("{}[{}]", def.name, args.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "));
         let sid = self.structs.len();
-        self.structs.push(StructDef { name: display, fields, file: def.file, public: def.public, repr_c: false });
+        self.structs.push(StructDef { name: display, fields, file: def.file, public: def.public, repr_c: false, drop_fn: None });
         self.generics.struct_done.insert(key, sid);
         // Remember which declaration and arguments produced this layout, so
         // method calls on the instantiation can resolve through its generic
@@ -493,7 +493,7 @@ impl Parser<'_> {
             }
             let id = self.structs.len();
             self.struct_names.insert(name.clone(), id);
-            self.structs.push(StructDef { name, fields: concrete, file: self.file.clone(), public, repr_c });
+            self.structs.push(StructDef { name, fields: concrete, file: self.file.clone(), public, repr_c, drop_fn: None });
         } else {
             if repr_c {
                 return Err(self.fail(&format!("'{}' is generic, so it has no single C layout; '#[repr(C)]' belongs on a concrete struct", name)));
