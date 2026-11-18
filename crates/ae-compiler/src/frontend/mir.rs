@@ -288,6 +288,14 @@ fn statement_intrinsic(statement: &Statement, bindings: &mut Vec<MirBinding>, lo
         // The `?`'s error-path releases ride inside the statement (the C
         // backend emits them where the error path exits); the continuing
         // path's operand is the unwrapped expression.
+        Statement::ResetTokens(cursor) => ("reset_tokens", vec![
+            MirOperand::Place(MirPlace::Local(*cursor, Type::Tokens)),
+        ]),
+        Statement::AdvanceTokens(cursor, element, advanced) => ("advance_tokens", vec![
+            MirOperand::Place(MirPlace::Local(*cursor, Type::Tokens)),
+            MirOperand::Place(MirPlace::Local(*element, Type::StrView)),
+            MirOperand::Place(MirPlace::Local(*advanced, Type::Bool)),
+        ]),
         Statement::TakePropagationPayload(subject, ty, _, binding) => {
             let mut operands = vec![MirOperand::Place(MirPlace::Local(*subject, *ty))];
             if let Some((id, ty)) = binding {
@@ -941,7 +949,14 @@ pub(super) fn validate(function: &MirFunction) -> Result<(), String> {
         }
         match &block.terminator {
             CfgTerminator::Goto(target) => if !ids.contains(target) { return Err(format!("internal: fn #{} block {} branches to missing block {}", function.id, block.id, target)); },
-            CfgTerminator::Branch(_, a, b) => if !ids.contains(a) || !ids.contains(b) { return Err(format!("internal: fn #{} block {} branches to missing blocks", function.id, block.id)); },
+            CfgTerminator::Branch(condition, yes, no) => {
+                if expr_type(condition) != Type::Bool {
+                    return Err(format!("internal: fn #{} block {} has a non-boolean branch condition", function.id, block.id));
+                }
+                if !ids.contains(yes) || !ids.contains(no) {
+                    return Err(format!("internal: fn #{} block {} branches to missing blocks", function.id, block.id));
+                }
+            }
             CfgTerminator::Switch(_, _, targets) => for t in targets { if !ids.contains(t) { return Err(format!("internal: fn #{} switch target missing", function.id)); } },
             CfgTerminator::Return(_) | CfgTerminator::Exit(_) | CfgTerminator::Unreachable => {}
         }

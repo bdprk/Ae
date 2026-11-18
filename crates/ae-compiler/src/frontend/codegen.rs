@@ -1270,6 +1270,14 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                 out.push_str(&format!("    v{var} = ae_add(v{var}, 1, {line}, {col});\n"));
                 out.push_str("    }\n");
             }
+            Statement::ResetTokens(cursor) => {
+                out.push_str(&format!("    ae_tokens_reset(&v{cursor});\n"));
+            }
+            Statement::AdvanceTokens(cursor, elem, advanced) => {
+                out.push_str(&format!(
+                    "    ae_strview v{elem};\n    bool v{advanced} = ae_tokens_next(&v{cursor}, &v{elem});\n"
+                ));
+            }
             Statement::ForTokens(cursor, elem, body, label, _line, _col) => {
                 // Restart the cursor so a second loop over the same binding
                 // behaves like the first; the element is a view into the base,

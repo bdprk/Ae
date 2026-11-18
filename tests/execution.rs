@@ -1629,7 +1629,7 @@ fn main() {
 }
 
 #[test]
-fn token_cursor_nested_under_a_range_uses_the_tree_backend() {
+fn token_cursor_nested_under_a_range_restarts_on_each_iteration() {
     let output = execute(r#"
 fn main() {
     let text = "a b";

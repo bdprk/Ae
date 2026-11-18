@@ -8,23 +8,9 @@
 //! statements carry the same releases, moves, and runtime backstops the tree
 //! emitter consumes, so the runtime behavior is identical by construction.
 //!
-//! Two lowering slices are not yet complete enough to drive codegen, and a
-//! function that contains one stays on the tree backend:
-//!
-//! - `for ... in tokens(...)`: the tree statement carries the cursor reset,
-//!   the per-iteration element binding, and the advance check; the CFG slice
-//!   branches on the cursor variable without them.
-//!
-//! `for` over a vector or a range and `match` are fully lowered (M2.3): the
-//! loop's head condition, hidden increment, and `continue` landing live in
-//! the graph as a real branch and a step block. Propagation branches on the result
-//! tag, and a match's payload
-//! bindings sit at the top of each arm block as `BindPayload` statements.
-//!
-//! Everything else — `if`, `while`, `break`, `continue`, early `return`,
-//! `exit`, `?` `assert`, containers, strings, structs, enums,
-//! closures — keeps its whole statement form in the block and is emitted by
-//! the same statement emitter the tree backend uses.
+//! Token iteration resets its cursor before entering the loop. The head
+//! advances the cursor and binds the next view before selecting an edge.
+
 use super::*;
 use super::cfg::CfgTerminator;
 use super::mir::{self, MirBlock, MirFunction};
@@ -35,31 +21,6 @@ use super::mir::{self, MirBlock, MirFunction};
 // rebuild of the decision logic.
 pub(super) fn enabled() -> bool {
     !matches!(std::env::var("AE_CODEGEN").as_deref(), Ok("tree"))
-}
-
-// A function may be emitted from MIR when no statement (at any depth) depends
-// on the lowering slices listed above.
-pub(super) fn supported(function: &Function) -> bool {
-    statements_supported(&function.body)
-}
-
-fn statements_supported(statements: &[Statement]) -> bool {
-    statements.iter().all(statement_supported)
-}
-
-fn statement_supported(statement: &Statement) -> bool {
-    match statement {
-        // The only tree statement the CFG slice cannot lower completely: the
-        // cursor reset, the per-iteration element binding, and the advance
-        // check have no block-graph form yet.
-        Statement::ForTokens(..) => false,
-        Statement::If(_, yes, no) => statements_supported(yes) && statements_supported(no),
-        Statement::While(_, body) | Statement::For(_, _, body, ..) | Statement::Unsafe(body) => {
-            statements_supported(body)
-        }
-        Statement::Match(_, _, arms) => arms.iter().all(|arm| statements_supported(&arm.body)),
-        _ => true,
-    }
 }
 
 // Emit one function body as labelled blocks. The caller owns the signature and
