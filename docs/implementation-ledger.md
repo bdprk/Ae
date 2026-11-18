@@ -9,11 +9,11 @@ Use this file with the architecture workbook. All boxes describe planned verific
 - [x] B03. Run cargo test --workspace on Windows. Record exit status and names of failing tests.
 - [x] B04. Repeat on Linux at the same revision. Label host-specific differences separately.
 - [x] B05. Run cargo run -- check examples/hello.ae and cargo run -- run examples/hello.ae. Capture diagnostics, bytes printed and process exit.
-- [ ] B06. Run cargo run -- emit-c examples/hello.ae. Identify generated entry point, runtime calls and linker inputs.
-- [ ] B07. Use examples/option_propagate.ae to trace the successful and early-return paths. Name the component responsible for disposing of each owned local.
-- [ ] B08. Trace a parser diagnostic from crates/ae-syntax or the active legacy parser to the CLI. Record the actual caller to distinguish extracted code from active code.
-- [ ] B09. Inspect scripts/compare_emit_c.py, scripts/snapshots.py and scripts/fmt_acceptance.py. Record their supported invocation and which baseline fixture each covers.
-- [ ] B10. Publish the baseline matrix with revision, command, target, expected, observed and reproduction path. Assign discrepancies before routing new code through the CLI.
+- [x] B06. Run cargo run -- emit-c examples/hello.ae. Identify generated entry point, runtime calls and linker inputs.
+- [x] B07. Use examples/option_propagate.ae to trace the successful and early-return paths. Name the component responsible for disposing of each owned local.
+- [x] B08. Trace a parser diagnostic from crates/ae-syntax or the active legacy parser to the CLI. Record the actual caller to distinguish extracted code from active code.
+- [x] B09. Inspect scripts/compare_emit_c.py, scripts/snapshots.py and scripts/fmt_acceptance.py. Record their supported invocation and which baseline fixture each covers.
+- [x] B10. Publish the baseline matrix with revision, command, target, expected, observed and reproduction path. Assign discrepancies before routing new code through the CLI.
 
 ## Execution rules
 
@@ -390,7 +390,11 @@ Debian 13 x86-64, InstaBox evaluate-2 (`rustc 1.99.0`, `cargo 1.99.0`, gcc 14.2.
 | M6.1.06 | `fmt_normalizes_keeps_semantics_and_is_idempotent`, `fmt_preserves_comment_and_string_bytes_end_to_end`. |
 | M6.1.07 | `doc_command_renders_comments_and_runs_fenced_examples`: failures point at the fence line, an unclosed fence is an error. |
 | M6.1.08 | `cli_exit_codes_distinguish_usage_compile_and_program_failures`: 0 success, 2 usage, 1 toolchain, program `exit(n)` passed through. |
+| B06 | Entry `int main(argc, argv)` → `ae_args_init`, body in `block_0`, `fflush(stdout)` guard in `block_tail`; runtime hooks (`ae_os_alloc/resize/release`, `ae_print_i64`) live in the same translation unit; link is `gcc -std=c11 -O0|-O2 program.c -o program` (+ `-lm` on POSIX). |
+| B07 | `upper`/`discard`/`count_numbers`/`keep_numbers` in `examples/option_propagate.ae`: each path has one owner; `emit-mir` reports a single `releases(...)` covering the eight option bindings in `main`. |
+| B08 | Missing semicolon → `expected Semi, found RBrace` at 3:1, `E0010`, exit 1; JSON mode emits the same location plus the code. Path: `ae-syntax` lexes cleanly, `parser::take` produces the diagnostic with code E0010, `frontend::compile_path` returns it as text, `main` prints it and exits 1. |
+| B09 | `scripts/snapshots.py` (`--suite`, `--bless`), `scripts/compare_emit_c.py` (`--baseline/--candidate`), `scripts/fmt_acceptance.py` (`--json`): invocation and coverage recorded in `bench/reports/2026-11-18-baseline-matrix.md`. |
+| B10 | `bench/reports/2026-11-18-baseline-matrix.md` publishes the matrix (revision, command, target, expected, observed, reproducer). |
 
-Still unverified in this revision: B06–B10 (emit-c anatomy, drop-path trace, diagnostic provenance, script inventory, published matrix),
-and everything from M0.1 onward that this table does not name.
+Baseline B01–B10 are verified at this revision. Still unverified: everything from M0.1 onward that this table does not name.
 
