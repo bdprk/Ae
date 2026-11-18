@@ -198,7 +198,7 @@ fn lower_expr(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut MirLow
             MirRvalue::Binary(lhs, op.clone(), rhs, expr_type(expr))
         }
         Expr::Call(id, args, ret) => MirRvalue::Call(*id, lower_args(args, bindings, lowering), *ret),
-        Expr::FnCall(id, args, ret) => MirRvalue::FnCall(*id, lower_args(args, bindings, lowering), *ret),
+        Expr::FnCall(id, args, ret, _) => MirRvalue::FnCall(*id, lower_args(args, bindings, lowering), *ret),
         Expr::ClosureLit(cid) => MirRvalue::ClosureLit(*cid),
         Expr::StructLit(sid, values) => MirRvalue::Aggregate(*sid, values.iter().map(|v| lower_expr(v, bindings, lowering)).collect()),
         Expr::EnumLit(name, eid, vidx, values) => MirRvalue::AdtAggregate(name, *eid, *vidx, values.iter().map(|v| lower_expr(v, bindings, lowering)).collect()),
@@ -461,7 +461,7 @@ pub(super) fn expr_type(expr: &Expr) -> Type {
         Expr::Variable(_, ty, ..) | Expr::Field(_, _, ty) | Expr::VecLit(_, ty, ..) => *ty,
         Expr::StructLit(sid, _) => Type::Struct(*sid),
         Expr::EnumLit(name, layout, ..) => Type::Enum(name, *layout),
-        Expr::Call(_, _, ty) | Expr::FnCall(_, _, ty) => *ty,
+        Expr::Call(_, _, ty) | Expr::FnCall(_, _, ty, _) => *ty,
         // The printed place types are evidence, so the string-shaped
         // expressions name their real types instead of the integer
         // catch-all (a string literal bound to `v0 (i64)` misleads).

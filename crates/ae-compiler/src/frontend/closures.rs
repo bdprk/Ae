@@ -231,7 +231,7 @@ impl Parser<'_> {
                 self.take(Kind::Colon)?;
                 let ty = self.callable_parameter_type()?;
                 let var_id = self.next_var; self.next_var += 1;
-                self.names.insert(param, (var_id, false, ty));
+                self.names.insert(param, (var_id, matches!(ty, Type::StructMut(_)), ty));
                 self.binding_ranges.insert(var_id, binding_range);
                 params.push((var_id, ty));
                 if *self.current() != Kind::Comma { break; }
@@ -389,7 +389,7 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
         // borrowed argument vector is a bare variable slot.
         Expr::RunCommand(prog, id, ..) => { walk_expr(prog, used, mutated); used.insert(*id); }
         Expr::Field(base, _, _) => walk_expr(base, used, mutated),
-        Expr::FnCall(slot, args, _) => {
+        Expr::FnCall(slot, args, ..) => {
             used.insert(*slot);
             for arg in args {
                 match arg {

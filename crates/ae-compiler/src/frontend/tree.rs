@@ -294,7 +294,7 @@ impl<'a> TreePrinter<'a> {
                 self.arguments(args, out);
                 out.push_str(&format!(") -> {}", ret.name()));
             }
-            Expr::FnCall(id, args, ret) => {
+            Expr::FnCall(id, args, ret, _) => {
                 out.push_str(&format!("v{}(", id));
                 self.arguments(args, out);
                 out.push_str(&format!(") -> {}", ret.name()));

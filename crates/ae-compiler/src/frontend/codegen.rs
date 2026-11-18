@@ -180,7 +180,7 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
                 Emitted::value(format!("v{id}"), *ty)
             }
         }
-        Expr::Call(id, args, ret) | Expr::FnCall(id, args, ret) => {
+        Expr::Call(id, args, ret) | Expr::FnCall(id, args, ret, _) => {
             let mut moves = Vec::new();
             // A read-only argument only borrows its value, so a temporary
             // (literal or `+` result) stays owned by this expression and is
