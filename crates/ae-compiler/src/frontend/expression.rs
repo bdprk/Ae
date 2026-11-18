@@ -1114,7 +1114,7 @@ impl Parser<'_> {
                     break;
                 }
                 let as_offset = self.tokens[self.pos].offset;
-                let (base, base_ty) = lhs;
+                let (base, _base_ty) = lhs;
                 self.pos += 1;
                 let target = self.pointer_type()?;
                 if let Type::Ptr(pid) | Type::PtrMut(pid) = &target {

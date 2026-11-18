@@ -323,7 +323,7 @@ fn expr_intrinsic(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut Mi
             if *bytewise { "byte_offset" } else { "ptr_offset" },
             vec![lower_operand(e, bindings, lowering), lower_operand(c, bindings, lowering)],
         ),
-        Expr::PtrCast(e, mutable, pointee_id, ..) => (
+        Expr::PtrCast(e, mutable, _pointee_id, ..) => (
             if *mutable { "ptr_cast_mut" } else { "ptr_cast" },
             vec![lower_operand(e, bindings, lowering)],
         ),
