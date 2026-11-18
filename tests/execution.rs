@@ -3746,6 +3746,8 @@ fn repr_c_layout_queries_and_extern_prototypes() {
 fn repr_c_attribute_guards_and_extern_struct_rejections() {
     // The attribute's three guards and the E0703 crossing rejection.
     let cases = [
+        ("#[repr(C)] struct Empty {} fn main() {}",
+         "must have at least one field"),
         ("fn size_of[T](v: &T) -> i64 { return len(v); } #[repr(C)] struct Boxed[V] { inner: V } fn main() {}",
          "is generic, so it has no single C layout"),
         ("#[repr(C)] struct Bad { name: string } fn main() {}",
