@@ -17,11 +17,12 @@
 //!
 //! `for` over a vector or a range and `match` are fully lowered (M2.3): the
 //! loop's head condition, hidden increment, and `continue` landing live in
-//! the graph as a real branch and a step block, and a match's payload
+//! the graph as a real branch and a step block. Propagation branches on the result
+//! tag, and a match's payload
 //! bindings sit at the top of each arm block as `BindPayload` statements.
 //!
 //! Everything else — `if`, `while`, `break`, `continue`, early `return`,
-//! `exit`, `?` propagation, `assert`, containers, strings, structs, enums,
+//! `exit`, `?` `assert`, containers, strings, structs, enums,
 //! closures — keeps its whole statement form in the block and is emitted by
 //! the same statement emitter the tree backend uses.
 use super::*;
