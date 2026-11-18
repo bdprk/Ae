@@ -80,6 +80,10 @@ extern "C" fn ae_add(a: i64, b: i64) -> i64 { return a + b; }
 - Without the attribute, layout is the compiler's choice (today: declaration order, natural alignment); `#[repr(C)]` is required for any struct crossing the FFI boundary in either direction.
 - The layout is pinned by a compile-time query pair, `c_size_of[T]()` and `c_offset_of[T]("field")` (each field's byte offset), evaluated in the parser to constants. The `c_` prefix keeps the pair distinct from the generic-borrow convention's user-definable `size_of[T]`; the names belong to the same `#[repr(C)]`/`extern "C"` family.
 
+#### Scalar size query
+
+`c_size_of[T]()` also accepts `i64`, `f64`, and `bool`, including when `T` is a generic parameter substituted with one of these types. Their sizes in the current x86-64 Windows and Linux C ABI model are respectively 8, 8, and 1 bytes, matching the existing scalar fields in `#[repr(C)]` layout calculation. `c_offset_of` remains limited to `#[repr(C)]` structs; scalars have no fields. Unknown types, owned types, and non-`#[repr(C)]` structs remain rejected. This query specifies size only, not alignment, allocator compatibility, or container soundness; other target ABIs require a separate verified layout model.
+
 ### 5.2 Diagnostics
 - Passing a non-`#[repr(C)]` struct across `extern "C"` is rejected: `'Pair' is not '#[repr(C)]'; the C ABI requires a fixed layout` (E0703).
 

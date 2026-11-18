@@ -3639,6 +3639,35 @@ fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
 }
 
 #[test]
+fn scalar_size_queries_in_generic_and_concrete_contexts() {
+    let dir = unique_temp_dir("scalar_size");
+    let source = dir.join("scalar_size.ae");
+    fs::write(&source, "fn size[T](v: T) -> i64 { return c_size_of[T](); }\nfn main() { print(c_size_of[i64]()); print(c_size_of[f64]()); print(c_size_of[bool]()); print(size[i64](1)); print(size[f64](1.0)); print(size[bool](true)); }\n").unwrap();
+    for mode in [None, Some("--interp"), Some("--release")] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_ae"));
+        command.arg("run").arg(&source);
+        if let Some(mode) = mode { command.arg(mode); }
+        let run = command.output().unwrap();
+        assert!(run.status.success(), "{mode:?}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "8\n8\n1\n8\n8\n1\n");
+    }
+    let cases = [
+        ("fn main() { print(c_offset_of[i64](\"x\")); }", "not a struct"),
+        ("fn main() { print(c_size_of[string]()); }", "not a struct"),
+        ("fn main() { print(c_size_of[Missing]()); }", "not a struct"),
+        ("fn size[T](v: T) -> i64 { return c_size_of[T](); } fn main() { print(size[string](\"x\")); }", "not a struct"),
+    ];
+    for (index, (text, expected)) in cases.iter().enumerate() {
+        let path = dir.join(format!("bad{index}.ae"));
+        fs::write(&path, text).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        assert!(!output.status.success(), "accepted: {text}");
+        assert!(String::from_utf8_lossy(&output.stderr).contains(expected), "{text}: {}", String::from_utf8_lossy(&output.stderr));
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn repr_c_layout_queries_and_extern_prototypes() {
     // M2.12 U8: `#[repr(C)]` pins a struct's layout — declaration
     // order, natural alignment, trailing padding — and the compile-time
