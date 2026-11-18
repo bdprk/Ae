@@ -351,7 +351,7 @@ fn walk_statements(statements: &[Statement], used: &mut std::collections::HashSe
             Statement::If(cond, yes, no) => { walk_expr(cond, used, mutated); walk_statements(yes, used, mutated); walk_statements(no, used, mutated); }
             Statement::While(cond, body) => { walk_expr(cond, used, mutated); walk_statements(body, used, mutated); }
             Statement::For(_, container, body, ..) => { used.insert(*container); walk_statements(body, used, mutated); }
-            Statement::ForTokens(_, base, body, ..) => { used.insert(*base); walk_statements(body, used, mutated); }
+            Statement::ForTokens(cursor, _, body, ..) => { used.insert(*cursor); walk_statements(body, used, mutated); }
             Statement::Match(subject, _, arms) => {
                 used.insert(*subject);
                 for arm in arms { walk_statements(&arm.body, used, mutated); }

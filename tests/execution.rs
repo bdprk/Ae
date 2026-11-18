@@ -3746,11 +3746,11 @@ fn closure_can_query_captured_map() {
 fn closure_captures_token_separator() {
     let dir = unique_temp_dir("closure_token_separator");
     let source = dir.join("capture.ae");
-    fs::write(&source, "fn main() { let text = \"a b\"; let separator = \" \"; let count = || -> i64 { let cursor = tokenize(text, separator); var total = 0; for part in cursor { total = total + 1; } return total; }; print(count()); }\n").unwrap();
+    fs::write(&source, "fn main() { let text = \"a b\"; let separator = \" \"; let count = || -> i64 { let cursor = tokenize(text, separator); var total = 0; for part in cursor { total = total + 1; } return total; }; print(count()); let more = \"c d\"; let cursor = tokenize(more, \" \"); let count_captured = || -> i64 { var total = 0; for part in cursor { total = total + 1; } return total; }; print(count_captured()); }\n").unwrap();
     for backend in ["tree", "mir"] {
         let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).env("AE_CODEGEN", backend).output().unwrap();
         assert!(run.status.success(), "{backend}: {}", String::from_utf8_lossy(&run.stderr));
-        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "2\n");
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "2\n2\n");
     }
     fs::remove_dir_all(dir).unwrap();
 }
