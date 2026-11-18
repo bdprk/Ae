@@ -595,6 +595,30 @@ pub fn compile(source: &str) -> Result<String, String> {
     let functions = parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut generics, &mut next_id)?;
     emit_program(Program { files: vec![functions], structs, enums }).map(|g| g.full)
 }
+/// One-paragraph explanation for each stable diagnostic code, shared by
+/// `ae explain` and any editor that wants the text without the compiler.
+/// Wrong code means the catalog must be updated, never that the code is reused.
+pub fn explain(code: &str) -> Option<&'static str> {
+    Some(match code {
+        "E0001" => "The source contains a byte that starts no token the lexer knows. Check for a stray symbol, a brace from another language, or a character that needs to be inside a string.",
+        "E0002" => "A string literal uses an escape the language does not define. The supported escapes are \\n, \\t, \\r, \\\\, and \\\".",
+        "E0003" => "A string literal is not closed before the end of the file. Add the missing quote.",
+        "E0004" => "A string literal contains a raw newline or NUL byte. Write \\n instead of a literal line break.",
+        "E0005" => "An integer literal does not fit in i64. Use a smaller constant or compute the value at run time.",
+        "E0006" => "A float literal does not parse as a finite decimal number. Check the digits and the exponent.",
+        "E0007" => "A float literal overflows to infinity. The value cannot be represented as an f64 constant.",
+        "E0008" => "A nonzero float literal is too small and would round to zero. Use a larger magnitude or a different unit.",
+        "E0101" => "A name is used that no binding in scope declares. Check the spelling and that the declaration is in an enclosing block, or before this use.",
+        "E0102" => "A value is used, borrowed, or assigned after ownership of it moved elsewhere. Clone or rebuild the value, or restructure the code so the moved value is not needed afterwards.",
+        "E0103" => "A binding declared with let is assigned or modified. Declare it with var if it is meant to change; parameters are also immutable.",
+        "E0104" => "Two bindings with the same name exist in one scope. Rename one of them; inner blocks may shadow, but a scope cannot bind a name twice.",
+        "E0700" => "A raw pointer is dereferenced or written outside an unsafe block. Wrap the operation in unsafe and document the invariant that makes it sound.",
+        "E0701" => "An unsafe fn or a declared extern is called outside an unsafe block. Wrap the call in unsafe; the caller takes responsibility for the function's preconditions.",
+        "E0704" => "An unsafe fn has no doc comment above it. Write a /// comment naming what the caller must guarantee (validity, aliasing, thread context); presence is checked, truth is the author's job.",
+        _ => return None,
+    })
+}
+
 pub fn compile_path(path: &Path) -> Result<String, String> {
     compile_path_parts(path).map(|(runtime, user)| runtime + &user)
 }
@@ -906,3 +930,46 @@ fn main() { print(f[i64](1, 2)); print(g[i64](3, 4)); print(h[bool](true, true))
         assert_eq!(&*text, source);
     }
 }
+
+#[cfg(test)]
+mod explain_tests {
+    use super::explain;
+    use std::collections::BTreeSet;
+
+    /// Every code the compiler or lexer assigns must have text to explain it.
+    /// The scan reads string literals shaped like a diagnostic code; a code that
+    /// exists only in a comment is ignored, a code assigned without an entry fails.
+    #[test]
+    fn every_assigned_code_has_an_explanation() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut pending = vec![root.join("src"), root.join("crates")];
+        let mut codes = BTreeSet::new();
+        while let Some(directory) = pending.pop() {
+            let Ok(entries) = std::fs::read_dir(&directory) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() { pending.push(path); continue; }
+                if path.extension().and_then(|ext| ext.to_str()) != Some("rs") { continue; }
+                let Ok(text) = std::fs::read_to_string(&path) else { continue };
+                let mut at = 0;
+                while let Some(found) = text[at..].find("\"E") {
+                    let start = at + found + 1;
+                    let rest = &text[start..];
+                    let bytes = rest.as_bytes();
+                    if bytes.len() > 5
+                        && bytes[1..5].iter().all(u8::is_ascii_digit)
+                        && !bytes[5].is_ascii_digit()
+                    {
+                        codes.insert(rest[..5].to_owned());
+                    }
+                    at = start;
+                }
+            }
+        }
+        assert!(codes.len() >= 10, "scan found too few codes: {codes:?}");
+        for code in codes {
+            assert!(explain(&code).is_some(), "no explanation registered for {code}");
+        }
+    }
+}
+

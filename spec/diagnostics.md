@@ -27,6 +27,11 @@ The following semantic codes are currently assigned where the corresponding chec
 | `E0102` | A value was used or borrowed after it was moved |
 | `E0103` | An immutable variable was assigned or modified |
 | `E0104` | A duplicate variable binding was declared |
+| `E0700` | A raw pointer operation appeared outside `unsafe` |
+| `E0701` | An `unsafe fn` or `extern` declaration was called outside `unsafe` |
+| `E0704` | An `unsafe fn` is declared without a doc comment naming its preconditions |
+
+`ae explain <CODE>` prints the stable explanation for a code; the text lives in the compiler next to the assignment sites, so a new code without an explanation is a build-time omission the catalog test catches.
 
 Every JSON diagnostic includes `suggestions`, an array of human-readable guidance strings. An empty array means no suggestion is available. Suggestions are not guaranteed edits and must not be applied automatically. The current implementation offers conditional guidance for unsupported string escapes (`E0002`) and immutable local or parameter bindings whose declarations are known (`E0103`); it does not infer the programmer's intent or suggest `var` for loop or pattern bindings.
 

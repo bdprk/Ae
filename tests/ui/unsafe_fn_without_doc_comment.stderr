@@ -1,0 +1,1 @@
+ae: $DIR/unsafe_fn_without_doc_comment.ae:2:1: an unsafe fn carries a doc comment naming its preconditions (what the caller must guarantee: validity, aliasing, thread context)
