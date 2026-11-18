@@ -385,6 +385,16 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
         // borrowed argument vector is a bare variable slot.
         Expr::RunCommand(prog, id, ..) => { walk_expr(prog, used, mutated); used.insert(*id); }
         Expr::Field(base, _, _) => walk_expr(base, used, mutated),
+        Expr::FnCall(slot, args, _) => {
+            used.insert(*slot);
+            for arg in args {
+                match arg {
+                    Argument::Value(e) | Argument::View(e) => walk_expr(e, used, mutated),
+                    Argument::Borrow(id, _) => { used.insert(*id); }
+                    Argument::FnPtr(_) => {}
+                }
+            }
+        }
         Expr::Call(_, args, _) => {
             for arg in args {
                 match arg {
@@ -405,7 +415,7 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
         Expr::MathCall(_, args, ..) => { for v in args { walk_expr(v, used, mutated); } }
         Expr::TryReadFile(a, ..) | Expr::TryListDir(a, ..) | Expr::PathExists(a, ..) | Expr::PathIsDir(a, ..) | Expr::ParseInt(a, ..) | Expr::PathName(a, ..) | Expr::PathParent(a, ..) | Expr::TryFileInfo(a, ..) | Expr::TryRemoveFile(a, ..) | Expr::TryRemoveDir(a, ..) | Expr::TryCreateDir(a, ..) | Expr::SetCwd(a, ..) | Expr::Env(a, ..) | Expr::ToI64(a, ..) => walk_expr(a, used, mutated),
         Expr::TryAppendFile(a, b, ..) => { walk_expr(a, used, mutated); walk_expr(b, used, mutated); }
-        Expr::Number(_) | Expr::FloatLit(_) | Expr::BoolLit(_) | Expr::StrLit(..) | Expr::Args(..) | Expr::ReadStdin(..) | Expr::Cwd(..) | Expr::StrVecNew(..) | Expr::F64VecNew(..) | Expr::NowMs | Expr::NowS | Expr::ClosureLit(_) | Expr::FnCall(..) | Expr::MapNew(..) => {}
+        Expr::Number(_) | Expr::FloatLit(_) | Expr::BoolLit(_) | Expr::StrLit(..) | Expr::Args(..) | Expr::ReadStdin(..) | Expr::Cwd(..) | Expr::StrVecNew(..) | Expr::F64VecNew(..) | Expr::NowMs | Expr::NowS | Expr::ClosureLit(_) | Expr::MapNew(..) => {}
     }
 }
 
