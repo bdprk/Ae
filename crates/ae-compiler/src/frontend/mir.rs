@@ -91,6 +91,8 @@ pub(super) enum MirRvalue {
 #[derive(Debug, Clone)]
 pub(super) enum MirOperand {
     Place(MirPlace),
+    Borrow { slot: usize, take_address: bool },
+    FnPtr(usize),
     Int(i64),
     Float(f64),
     Bool(bool),
@@ -248,8 +250,8 @@ fn base_place(base: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut MirLow
 fn lower_args(args: &[Argument], bindings: &mut Vec<MirBinding>, lowering: &mut MirLowering) -> Vec<MirOperand> {
     args.iter().map(|arg| match arg {
         Argument::Value(e) | Argument::View(e) => lower_operand(e, bindings, lowering),
-        Argument::Borrow(id, _) => MirOperand::Place(MirPlace::Local(*id, Type::Vec)),
-        Argument::FnPtr(_) => MirOperand::Int(0),
+        Argument::Borrow(slot, take_address) => MirOperand::Borrow { slot: *slot, take_address: *take_address },
+        Argument::FnPtr(id) => MirOperand::FnPtr(*id),
     }).collect()
 }
 
@@ -1037,6 +1039,11 @@ fn print_operand(operand: &MirOperand, out: &mut String) {
         // not `4`, which would read as an integer operand.
         MirOperand::Float(x) => out.push_str(&format!("{x:?}")),
         MirOperand::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        MirOperand::Borrow { slot, take_address } => {
+            let operation = if *take_address { "address_of" } else { "forward_borrow" };
+            out.push_str(&format!("{operation}(v{slot})"));
+        }
+        MirOperand::FnPtr(id) => out.push_str(&format!("fnptr#{id}")),
         MirOperand::Str(text, line, col) => out.push_str(&format!("{:?} @{}:{}", text, line, col)),
     }
 }
