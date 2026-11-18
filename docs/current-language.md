@@ -214,7 +214,7 @@ A user struct can be borrowed read-only: a parameter written `fn area(r: &Rect) 
   for token in cur { total = total + len(token); }
   ```
 
-  Each `for` loop restarts from the first token, so the same binding can be safely iterated multiple times.
+  Each `for` loop restarts from the first token, and keeps its own position. Sequential and nested loops can reuse the same binding.
 - **No `len`**: counting requires consuming the entire stream, which is exactly what the cursor aims to avoid; use `split` when counting is needed. Cursors cannot be used with `print`, stored in vectors or structs, or used as return values or arguments (type mismatches will trigger respective errors).
 - **The delimiter is copied into the cursor**, so temporary values can be passed (`tokenize(text, " ")`); the capacity is 16 bytes, and both empty delimiters and overly long delimiters trigger runtime errors at the call site.
 - **Elements are views**: if you want to retain a token, use `push(v, token)` (explicit copy); otherwise, it becomes invalid along with the base string after the iteration ends.

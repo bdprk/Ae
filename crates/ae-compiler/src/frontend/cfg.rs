@@ -70,6 +70,7 @@ pub(super) enum CfgTerminator {
 struct Lowering {
     blocks: Vec<CfgBlock>,
     next_block: usize,
+    next_synthetic: usize,
     // Loop stacks: break targets the exit; continue targets the block that
     // re-enters the loop's check — the head for `while`/`for .. in tokens`,
     // the step block (hidden increment) for a counted `for` (M2.3).
@@ -78,6 +79,12 @@ struct Lowering {
 }
 
 impl Lowering {
+    fn synthetic_local(&mut self) -> usize {
+        let id = usize::MAX - self.next_synthetic;
+        self.next_synthetic += 1;
+        id
+    }
+
     fn new_block(&mut self) -> usize {
         let id = self.next_block;
         self.next_block += 1;
@@ -190,13 +197,14 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             (exit, false)
         }
         Statement::ForTokens(cursor, element, body, ..) => {
-            lowering.block(current).statements.push(Statement::ResetTokens(*cursor));
+            let iteration = lowering.synthetic_local();
+            lowering.block(current).statements.push(Statement::ResetTokens(*cursor, iteration));
             let head = lowering.new_block();
             lowering.block(current).terminator = CfgTerminator::Goto(head);
             let body_block = lowering.new_block();
             let exit = lowering.new_block();
-            let advanced = usize::MAX - head;
-            lowering.block(head).statements.push(Statement::AdvanceTokens(*cursor, *element, advanced));
+            let advanced = lowering.synthetic_local();
+            lowering.block(head).statements.push(Statement::AdvanceTokens(*cursor, iteration, *element, advanced));
             let has_element = Expr::Variable(advanced, Type::Bool, 0, 0);
 
             lowering.block(head).terminator = CfgTerminator::Branch(has_element, body_block, exit);
@@ -246,8 +254,8 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
         Statement::Propagate(value, ty, fields, binding, frees) => {
             let Type::Enum(_, layout) = *ty else { unreachable!("propagation requires an enum") };
             // Source locals use dense increasing IDs. Compiler-generated slots
-            // occupy the opposite end of the ID space and are unique by block.
-            let subject = usize::MAX - current;
+            // occupy the opposite end of the ID space.
+            let subject = lowering.synthetic_local();
             let success = lowering.new_block();
             let failure = lowering.new_block();
             let entry = lowering.block(current);

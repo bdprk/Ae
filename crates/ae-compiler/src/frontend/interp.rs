@@ -25,7 +25,7 @@ enum Val {
     VecF(Vec<f64>),
     Map(HashMap<String, i64>),
     MapF(HashMap<String, f64>),
-    Tokens { base: String, sep: String, offset: usize },
+    Tokens { base: Rc<str>, sep: Rc<str> },
     Struct(#[allow(dead_code)] usize, HashMap<String, Val>),
     Enum(#[allow(dead_code)] usize, usize, Vec<Val>),
     Closure(usize),
@@ -560,46 +560,29 @@ fn eval_stmts(
             // bytes, the key copies, and the value must match the map's
             // value type — the same contract the runtime's put enforces.
             Statement::ForTokens(cursor, elem, body, ..) => {
-                // The cursor restarts so a second loop over the same binding
-                // behaves like the first (the C backend resets too). Each
-                // step yields the next token — a view in the C, a copy here,
-                // equivalent because the base cannot move while the cursor
-                // lives — and `continue` advances like the runtime's step
-                // label does.
-                match locals.get_mut(cursor) {
-                    Some(Val::Tokens { offset, .. }) => { *offset = 0; }
+                let (base, sep) = match locals.get(cursor) {
+                    Some(Val::Tokens { base, sep }) => (Rc::clone(base), Rc::clone(sep)),
                     _ => return Flow::Trap("internal: for-tokens cursor".to_owned()),
-                }
-                loop {
-                    let next = match locals.get(cursor) {
-                        Some(Val::Tokens { base, sep, offset }) => {
-                            // At (or past) the end — the tail token's
-                            // sentinel is base.len() + 1 — the iteration is
-                            // done. Otherwise the next separator bounds the
-                            // token, and a missing separator leaves the tail.
-                            if *offset >= base.len() {
-                                None
-                            } else {
-                                match base[*offset..].find(sep.as_str()) {
-                                    Some(rel) => Some((base[*offset..*offset + rel].to_owned(), *offset + rel + sep.len())),
-                                    None => Some((base[*offset..].to_owned(), base.len() + 1)),
-                                }
-                            }
+                };
+                let mut offset = 0;
+                while offset < base.len() {
+                    let rest = &base[offset..];
+                    let token = match rest.find(sep.as_ref()) {
+                        Some(relative) => {
+                            offset += relative + sep.len();
+                            &rest[..relative]
                         }
-                        _ => return Flow::Trap("internal: for-tokens cursor".to_owned()),
+                        None => {
+                            offset = base.len();
+                            rest
+                        }
                     };
-                    let Some((token, next_offset)) = next else { break };
-                    let next_offset = next_offset;
-                    locals.insert(*elem, Val::Str(token));
+                    locals.insert(*elem, Val::Str(token.to_owned()));
                     match eval_stmts(env, body, locals, caller_locals) {
                         Flow::Next | Flow::Continue(0) => {}
                         Flow::Continue(d) => return Flow::Continue(d - 1),
                         Flow::Break => break,
                         other => return other,
-                    }
-                    match locals.get_mut(cursor) {
-                        Some(Val::Tokens { offset, .. }) => { *offset = next_offset; }
-                        _ => return Flow::Trap("internal: for-tokens cursor".to_owned()),
                     }
                 }
             }
@@ -1166,7 +1149,7 @@ fn eval_expr(
                 };
                 (base, sep)
             };
-            Ok(Val::Tokens { base, sep, offset: 0 })
+            Ok(Val::Tokens { base: Rc::from(base), sep: Rc::from(sep) })
         }
         // The string builtins the run corpus uses. The split/lines/slice
         // semantics mirror the runtime's exactly: split retains empty

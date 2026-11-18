@@ -1270,10 +1270,10 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                 out.push_str(&format!("    v{var} = ae_add(v{var}, 1, {line}, {col});\n"));
                 out.push_str("    }\n");
             }
-            Statement::ResetTokens(cursor) => {
-                out.push_str(&format!("    ae_tokens_reset(&v{cursor});\n"));
+            Statement::ResetTokens(cursor, iteration) => {
+                out.push_str(&format!("    ae_tokens v{iteration} = v{cursor};\n    ae_tokens_reset(&v{iteration});\n"));
             }
-            Statement::AdvanceTokens(cursor, elem, advanced) => {
+            Statement::AdvanceTokens(_, cursor, elem, advanced) => {
                 out.push_str(&format!(
                     "    ae_strview v{elem};\n    bool v{advanced} = ae_tokens_next(&v{cursor}, &v{elem});\n"
                 ));
@@ -1282,10 +1282,10 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                 // Restart the cursor so a second loop over the same binding
                 // behaves like the first; the element is a view into the base,
                 // never a copy.
-                out.push_str(&format!("    ae_tokens_reset(&v{cursor});\n"));
+                out.push_str(&format!("    ae_tokens ae_cursor_{elem} = v{cursor};\n    ae_tokens_reset(&ae_cursor_{elem});\n"));
                 out.push_str("    while (1) {\n");
                 out.push_str(&format!("    ae_strview v{elem};\n"));
-                out.push_str(&format!("    if (!ae_tokens_next(&v{cursor}, &v{elem})) break;\n"));
+                out.push_str(&format!("    if (!ae_tokens_next(&ae_cursor_{elem}, &v{elem})) break;\n"));
                 emit_statements(body, out, next);
                 out.push_str(&format!("    ae_next_{label}: ;\n"));
                 out.push_str("    }\n");
