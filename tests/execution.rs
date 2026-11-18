@@ -6073,3 +6073,20 @@ fn main() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "false\n42\nfalse\n7\n42\ntrue\n");
 }
+
+#[test]
+fn pointer_write_arguments_execute_left_to_right() {
+    let output = execute(r#"
+fn combine(left: i64, right: i64) -> i64 { return left + right; }
+fn main() {
+    var value = 0;
+    unsafe {
+        let pointer = &mut value as *mut i64;
+        let _result = combine(ptr_write(pointer, 1), ptr_write(pointer, 2));
+    }
+    print(value);
+}
+"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "2\n");
+}

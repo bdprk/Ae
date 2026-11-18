@@ -50,9 +50,13 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             Emitted::value(format!("({ptr_c})({})", inner.text), target_ty)
         }
         Expr::PtrWrite(pointer, value, ..) => {
-            let p = emit_expr(pointer, out, next, false);
-            let v = emit_expr(value, out, next, true);
-            Emitted::value(format!("(*({}) = ({}), (int64_t)0)", p.text, v.text), Type::Int)
+            let pointer = emit_expr(pointer, out, next, false);
+            let address = *next; *next += 1;
+            out.push_str(&format!("    {}t{address} = {};\n", pointer.ty.c_temp(), pointer.text));
+            let value = emit_expr(value, out, next, true);
+            out.push_str(&format!("    *t{address} = {};\n", value.text));
+            null_moves(out, &value.moves);
+            Emitted::value("(int64_t)0".to_owned(), Type::Int)
         }
         Expr::PtrDropInPlace(pointer, pointee, ..) => {
             let p = emit_expr(pointer, out, next, false);
@@ -67,7 +71,9 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
                 Type::Enum(_, eid) => format!("(ae_e{eid}_release((ae_e{eid} *)({})), (int64_t)0)", p.text),
                 _ => format!("((void)({}), (int64_t)0)", p.text),
             };
-            Emitted::value(call, Type::Int)
+            let result = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{result} = {call};\n"));
+            Emitted::value(format!("t{result}"), Type::Int)
         }
         Expr::PtrOffset(pointer, count, bytewise, ..) => {
             // ADR-0209 step A: pointer arithmetic. The element form rides C's
