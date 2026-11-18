@@ -41,7 +41,7 @@ posix = "1.0"
 
 Pass a package directory or its ae.toml path to check, run, build, emit-c, emit-tree, emit-cfg, or emit-mir. Omit the source argument to use the nearest ae.toml in the working directory or its parents. The entry is src/main.ae relative to the manifest. check --json and run --interp use the same entry. The ae field accepts a major.minor floor with optional patch. Local path dependencies can appear in a target table. The native toolchain selects tables for its own OS and architecture. Conflicting declarations for the same active alias are rejected. Build with local dependencies requires a current ae.lock.
 
-ae new DIRECTORY creates a package with version 0.1.0 and a compatibility floor matching the installed compiler. It takes the package name from the final directory component and creates src/main.ae. The directory must be new, and its parent must exist.
+ae new DIRECTORY creates a package with version 0.1.0 and a compatibility floor matching the installed compiler. It takes the package name from the final directory component and creates src/main.ae. The directory must be new, and its parent must exist. ae init [DIRECTORY] scaffolds in a directory that already exists: it writes the manifest, creates src/, and writes src/main.ae only when that file is absent, so adopting a directory of sources never overwrites them; a directory that already has ae.toml is refused. The package name comes from the directory in both cases.
 
 ae deps accepts a package path or discovers the nearest manifest. It follows path dependencies relative to each declaring manifest, lists dependencies before their dependents and prints each canonical package once. Cycles report the chain of manifests. Registry and git dependencies remain future work.
 

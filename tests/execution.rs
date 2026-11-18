@@ -6471,6 +6471,44 @@ fn new_scaffolds_a_runnable_package_without_overwriting() {
 }
 
 #[test]
+fn init_scaffolds_into_an_existing_directory_without_overwriting_sources() {
+    let dir = unique_temp_dir("init_package");
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let init = |cwd: &std::path::Path, target: Option<&str>| {
+        let mut command = Command::new(cli);
+        command.current_dir(cwd).arg("init");
+        if let Some(target) = target { command.arg(target); }
+        command.output().unwrap()
+    };
+    let plain = dir.join("plain-tool");
+    fs::create_dir(&plain).unwrap();
+    let created = init(&plain, None);
+    assert!(created.status.success(), "{}", String::from_utf8_lossy(&created.stderr));
+    let output = Command::new(cli).current_dir(&plain).arg("run").output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "Hello, AE!\n");
+
+    let manifest = fs::read(plain.join("ae.toml")).unwrap();
+    let again = init(&plain, None);
+    let stderr = String::from_utf8_lossy(&again.stderr);
+    assert!(!again.status.success() && stderr.contains("already contains ae.toml"), "{stderr}");
+    assert_eq!(fs::read(plain.join("ae.toml")).unwrap(), manifest);
+
+    let existing = dir.join("existing-tool");
+    fs::create_dir_all(existing.join("src")).unwrap();
+    fs::write(existing.join("src/main.ae"), "fn main() { print(7); }").unwrap();
+    let adopted = init(&dir, Some("existing-tool"));
+    assert!(adopted.status.success(), "{}", String::from_utf8_lossy(&adopted.stderr));
+    let output = Command::new(cli).current_dir(&existing).arg("run").output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "7\n");
+
+    let missing = init(&dir, Some("absent-tool"));
+    let stderr = String::from_utf8_lossy(&missing.stderr);
+    assert!(!missing.status.success() && stderr.contains("init needs an existing directory"), "{stderr}");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn package_deps_visits_local_diamond_once_and_rejects_cycles() {
     let dir = unique_temp_dir("package_dependency_graph");
     let write_manifest = |name: &str, dependencies: &str| {
