@@ -161,9 +161,60 @@ pub(super) fn update_lock(manifest: &Path) -> Result<(), String> {
 
 struct Manifest {
     name: String,
-    version: String,
+    version: Version,
     dependencies: toml::Table,
     digest: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Version {
+    major: u64,
+    minor: u64,
+    patch: u64,
+}
+
+impl Version {
+    fn parse(text: &str, allow_missing_patch: bool) -> Option<Self> {
+        let (major, minor, patch) = parse_version(text, allow_missing_patch)?;
+        Some(Self { major, minor, patch })
+    }
+}
+
+impl std::fmt::Display for Version {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "{}.{}.{}", self.major, self.minor, self.patch)
+    }
+}
+
+/// An MVS-compatible caret requirement: 0.3 admits 0.3.x but not 0.4.0.
+struct Requirement {
+    text: String,
+    minimum: Version,
+    ceiling: Version,
+}
+
+impl Requirement {
+    fn parse(text: &str) -> Option<Self> {
+        let minimum = Version::parse(text, true)?;
+        let ceiling = if minimum.major > 0 {
+            Version { major: minimum.major + 1, minor: 0, patch: 0 }
+        } else if minimum.minor > 0 {
+            Version { major: 0, minor: minimum.minor + 1, patch: 0 }
+        } else {
+            Version { major: 0, minor: 0, patch: minimum.patch + 1 }
+        };
+        Some(Self { text: text.to_owned(), minimum, ceiling })
+    }
+
+    fn contains(&self, version: Version) -> bool {
+        version >= self.minimum && version < self.ceiling
+    }
+}
+
+impl std::fmt::Display for Requirement {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.text)
+    }
 }
 
 fn read_manifest(manifest: &Path) -> Result<Manifest, String> {
@@ -180,21 +231,19 @@ fn read_manifest(manifest: &Path) -> Result<Manifest, String> {
         return Err(fail(PACKAGE_NAME_ERROR));
     }
 
-    let version = field("version")?;
-    if parse_version(version, false).is_none() {
-        return Err(fail("package.version must be a three-component version such as 0.1.0"));
-    }
+    let version = Version::parse(field("version")?, false)
+        .ok_or_else(|| fail("package.version must be a three-component version such as 0.1.0"))?;
     let floor = field("ae")?;
-    let minimum = parse_version(floor, true).ok_or_else(|| {
+    let minimum = Version::parse(floor, true).ok_or_else(|| {
         fail("package.ae must be a toolchain version such as 0.1 or 0.1.1")
     })?;
-    let current = env!("CARGO_PKG_VERSION");
-    if minimum > parse_version(current, false).expect("the compiler has a numeric release version") {
+    let current = Version::parse(env!("CARGO_PKG_VERSION"), false)
+        .expect("the compiler has a numeric release version");
+    if minimum > current {
         return Err(fail(&format!("package requires AE {floor} or later, installed version is {current}")));
     }
 
     let name = name.to_owned();
-    let version = version.to_owned();
     let mut dependencies = match document.remove("dependencies") {
         None => toml::Table::new(),
         Some(toml::Value::Table(table)) => table,
@@ -244,14 +293,14 @@ pub(super) fn describe_graph(root: &Path) -> Result<String, String> {
 #[derive(Default)]
 struct PathGraph {
     visiting: Vec<PathBuf>,
-    visited: std::collections::HashSet<PathBuf>,
+    visited: std::collections::HashMap<PathBuf, Version>,
     output: String,
     imports: ae_compiler::frontend::PackageImports,
     manifests: Vec<(PathBuf, String)>,
 }
 
 impl PathGraph {
-    fn visit(&mut self, manifest: &Path) -> Result<(), String> {
+    fn visit(&mut self, manifest: &Path) -> Result<Version, String> {
         use std::fmt::Write;
         let path = manifest.canonicalize().map_err(|error| format!("{}: {error}", manifest.display()))?;
         if let Some(start) = self.visiting.iter().position(|ancestor| ancestor == &path) {
@@ -259,8 +308,8 @@ impl PathGraph {
                 .map(|member| member.display().to_string()).collect::<Vec<_>>().join(" -> ");
             return Err(format!("package dependency cycle: {cycle}"));
         }
-        if self.visited.contains(&path) {
-            return Ok(());
+        if let Some(version) = self.visited.get(&path) {
+            return Ok(*version);
         }
         if self.visiting.len() == 128 {
             return Err(format!("{}: package dependency nesting exceeds 128 levels", manifest.display()));
@@ -271,8 +320,21 @@ impl PathGraph {
         let mut edges = Vec::new();
         let mut imports = std::collections::BTreeMap::new();
         for (alias, dependency) in package.dependencies {
-            let relative = dependency.as_table().filter(|table| table.len() == 1)
-                .and_then(|table| table.get("path")).and_then(toml::Value::as_str);
+            let table = dependency.as_table().ok_or_else(|| {
+                format!("{}: dependency resolution for '{alias}' requires a nonempty path table", path.display())
+            })?;
+            let mut relative = None;
+            let mut requirement = None;
+            for (key, value) in table {
+                match key.as_str() {
+                    "path" => relative = value.as_str(),
+                    "version" => {
+                        let text = value.as_str().ok_or_else(|| format!("{}: dependency '{alias}' version must be a string", path.display()))?;
+                        requirement = Some(Requirement::parse(text).ok_or_else(|| format!("{}: dependency '{alias}' version '{text}' must be a major.minor version such as 0.3", path.display()))?);
+                    }
+                    other => return Err(format!("{}: dependency '{alias}' has unsupported key '{other}'", path.display())),
+                }
+            }
             let relative = relative.filter(|value| !value.is_empty()).ok_or_else(|| {
                 format!("{}: dependency resolution for '{alias}' requires a nonempty path table", path.display())
             })?;
@@ -281,20 +343,26 @@ impl PathGraph {
                 return Err(format!("{}: dependency '{alias}' path must be relative to its manifest", path.display()));
             }
             let dependency = path.parent().expect("a canonical file has a parent").join(source).join(MANIFEST);
-            self.visit(&dependency)?;
             let canonical = dependency.canonicalize().map_err(|error| format!("{}: {error}", dependency.display()))?;
+            let version = self.visit(&canonical)?;
+            if let Some(requirement) = requirement {
+                if !requirement.contains(version) {
+                    return Err(format!("{}: dependency '{alias}' requires version {requirement} but {} is {version}",
+                        path.display(), canonical.display()));
+                }
+            }
             imports.insert(alias.clone(), canonical.with_file_name("src").join("lib.ae"));
             edges.push((alias, relative.to_owned()));
         }
         self.visiting.pop();
         self.imports.insert(path.with_file_name("src"), imports);
-        self.visited.insert(path.clone());
+        self.visited.insert(path.clone(), package.version);
         self.manifests.push((path.clone(), package.digest));
         writeln!(self.output, "{} {} ({})", package.name, package.version, path.display()).unwrap();
         for (alias, relative) in edges {
             writeln!(self.output, "  {alias} -> {relative}").unwrap();
         }
-        Ok(())
+        Ok(package.version)
     }
 }
 

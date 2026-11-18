@@ -6501,6 +6501,45 @@ fn package_deps_visits_local_diamond_once_and_rejects_cycles() {
 }
 
 #[test]
+fn path_dependency_versions_must_satisfy_caret_requirements() {
+    let dir = unique_temp_dir("package_version_constraints");
+    let write = |name: &str, version: &str, dependencies: &str| {
+        let package = dir.join(name);
+        fs::create_dir_all(&package).unwrap();
+        fs::write(package.join("ae.toml"), format!(
+            "[package]\nname = '{name}'\nversion = '{version}'\nae = '0.1'\n\n[dependencies]\n{dependencies}"
+        )).unwrap();
+    };
+    write("app", "0.1.0", "lib = { path = '../lib', version = '0.3' }");
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let deps = || Command::new(cli).current_dir(dir.join("app")).arg("deps").output().unwrap();
+    for (version, satisfied) in [("0.3.0", true), ("0.3.9", true), ("0.2.9", false), ("0.4.0", false)] {
+        write("lib", version, "");
+        let output = deps();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if satisfied {
+            assert!(output.status.success(), "{version}: {stderr}");
+            assert!(String::from_utf8_lossy(&output.stdout).contains(&format!("lib {version}")), "{version}");
+        } else {
+            assert!(!output.status.success(), "{version}");
+            assert!(stderr.contains(&format!("requires version 0.3 but")) && stderr.contains(version), "{version}: {stderr}");
+        }
+    }
+    write("lib", "0.3.0", "");
+    for (declaration, message) in [
+        ("lib = { path = '../lib', version = '0.3.x' }", "must be a major.minor version"),
+        ("lib = { path = '../lib', version = 3 }", "version must be a string"),
+        ("lib = { path = '../lib', registry = 'x' }", "unsupported key 'registry'"),
+    ] {
+        write("app", "0.1.0", declaration);
+        let output = deps();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success() && stderr.contains(message), "{declaration}: {stderr}");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn local_library_packages_compile_through_declared_aliases() {
     let dir = unique_temp_dir("package_library_imports");
     for (name, file, source, dependency) in [

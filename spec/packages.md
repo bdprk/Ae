@@ -35,6 +35,7 @@ posix = "1.0"
 ```
 
 - `[package]` requires `name` (lowercase, `[a-z0-9_-]`, ≤64 bytes), `version` (three-number semver, no prerelease in this cycle), and the `ae` floor.
+- A path dependency table accepts `path` and an optional `version` caret range (`0.3` admits `0.3.0` through `0.3.9` but not `0.4.0`; `0.0.3` admits only `0.0.3`). Resolution rejects a dependency whose manifest version falls outside the range, naming the alias, the requirement and the version found; unknown dependency keys are rejected rather than ignored.
 - Registry dependencies take an MVS range; git deps pin a `rev` (branch/tag names are rejected — the lockfile must be reproducible without consulting the remote's mutable state); path deps are for in-repo development and are **rejected in `publish`**.
 - Platform-conditional dependencies select per target; the condition subset is `{windows, unix, x86_64, arm64}` until M7 needs more.
 
