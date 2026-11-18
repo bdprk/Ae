@@ -380,8 +380,13 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         // Taking an address reads the slot and never moves it; dereferencing
         // reads the pointer variable (M2.12 slice 2).
         Expr::BorrowAs(e, ..) | Expr::DerefPtr(e, ..) => walk_expr(e, moved),
-        // Offsetting an address moves no value: the base stays put.
-        Expr::PtrOffset(e, ..) => walk_expr(e, moved),
+        // The pointer itself is only read; the count can contain calls and
+        // therefore reads or moves of its own, after evaluating the base.
+        Expr::PtrOffset(base, count, ..) => {
+            let base_result = walk_expr(base, moved);
+            let count_result = walk_expr(count, moved);
+            base_result.or(count_result)
+        }
         // A retag moves no value either.
         Expr::PtrCast(e, ..) => walk_expr(e, moved),
         Expr::Variable(id, ..) => {
@@ -511,4 +516,21 @@ fn walk_moving_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usize> {
         return moved.read(*id);
     }
     walk_expr(expr, moved)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pointer_offset_walks_base_and_count_in_order() {
+        let expr = Expr::PtrOffset(
+            Box::new(Expr::Variable(1, Type::Int, 0, 0)),
+            Box::new(Expr::Call(0, vec![Argument::Value(Expr::Variable(2, Type::String, 0, 0))], Type::Int)),
+            false, 0, 0,
+        );
+        assert_eq!(expr_reads(&expr), vec![1, 2]);
+        let effects = statement_move_effects(&Statement::Declare(3, expr));
+        assert_eq!(effects.moved, vec![2]);
+    }
 }
