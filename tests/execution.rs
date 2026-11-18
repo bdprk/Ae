@@ -6448,3 +6448,24 @@ fn package_manifest_selects_entry_and_validates_metadata() {
     }
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn new_scaffolds_a_runnable_package_without_overwriting() {
+    let dir = unique_temp_dir("new_package");
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let project = dir.join("sample-tool");
+    let created = Command::new(cli).arg("new").arg(&project).output().unwrap();
+    assert!(created.status.success(), "{}", String::from_utf8_lossy(&created.stderr));
+    let manifest = fs::read(project.join("ae.toml")).unwrap();
+    let output = Command::new(cli).current_dir(&project).arg("run").output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "Hello, AE!\n");
+
+    let source = project.join("src/main.ae");
+    fs::write(&source, "fn main() {}").unwrap();
+    let retry = Command::new(cli).arg("new").arg(&project).output().unwrap();
+    assert!(!retry.status.success());
+    assert_eq!(fs::read_to_string(source).unwrap(), "fn main() {}");
+    assert_eq!(fs::read(project.join("ae.toml")).unwrap(), manifest);
+    fs::remove_dir_all(dir).unwrap();
+}
