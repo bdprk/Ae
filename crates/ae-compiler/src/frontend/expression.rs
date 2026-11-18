@@ -450,6 +450,19 @@ impl Parser<'_> {
                             (Expr::Len(Box::new(operand), line, col), Type::Int)
                         }
                     }
+                } else if name == "ptr_drop_in_place" && *self.current() == Kind::LParen {
+                    if self.unsafe_depth == 0 {
+                        return Err(self.error_at(name_offset, "ptr_drop_in_place is an unsafe operation; wrap it in an 'unsafe { ... }' block"));
+                    }
+                    self.pos += 1;
+                    let (ptr_expr, ptr_ty) = self.expression(0, false)?;
+                    self.take(Kind::RParen)?;
+                    let Type::PtrMut(pid) = ptr_ty else {
+                        return Err(self.error_at(name_offset, "ptr_drop_in_place expects a '*mut T' pointer"));
+                    };
+                    let pointee = super::ptr_pointee(pid);
+                    let (line, column) = self.position();
+                    (Expr::PtrDropInPlace(Box::new(ptr_expr), pointee, line, column), Type::Int)
                 } else if (name == "c_size_of" || name == "c_align_of" || name == "c_offset_of") && *self.current() == Kind::LBracket {
                     // The layout query pair (M2.12 U8): compile-time
                     // constants over a `#[repr(C)]` struct, so a layout

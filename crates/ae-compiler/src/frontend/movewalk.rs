@@ -388,7 +388,7 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
             base_result.or(count_result)
         }
         // A retag moves no value either.
-        Expr::PtrCast(e, ..) => walk_expr(e, moved),
+        Expr::PtrCast(e, ..) | Expr::PtrDropInPlace(e, ..) => walk_expr(e, moved),
         Expr::Variable(id, ..) => {
             // A moving context consumes the value; the caller decides which
             // reads are moves, so nothing is inserted here.
