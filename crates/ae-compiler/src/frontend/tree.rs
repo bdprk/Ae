@@ -462,7 +462,7 @@ impl<'a> TreePrinter<'a> {
                     self.expression(e, out);
                 }
                 Argument::Borrow(id, takes_address) => out.push_str(&format!("{}v{}", if *takes_address { "&" } else { "" }, id)),
-                Argument::FnPtr(cid) => out.push_str(&format!("closure#{}", cid)),
+                Argument::FnPtr(id) => out.push_str(&format!("fnptr#{id}")),
             }
         }
     }

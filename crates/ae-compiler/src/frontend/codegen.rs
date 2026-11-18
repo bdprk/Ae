@@ -198,7 +198,7 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
                 // The function pointer goes into the argument list directly:
                 // a temporary of function type would need C's parenthesized
                 // declarator form, which the temp template cannot print.
-                Argument::FnPtr(cid) => format!("ae_fn_{}", crate::frontend::closures::closure_fn_id(*cid)),
+                Argument::FnPtr(id) => format!("ae_fn_{id}"),
             }).collect::<Vec<_>>().join(", ");
             let t = *next; *next += 1;
             let callee = if matches!(expr, Expr::FnCall(..)) {

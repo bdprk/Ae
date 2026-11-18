@@ -1170,6 +1170,49 @@ impl Parser<'_> {
     }
     // The argument list of a call, starting at '(' (ADR-31 shares it between
     // ordinary calls and generic instantiations).
+    fn function_value_argument(&mut self, callee: &str, position: usize, sig: usize) -> Result<Argument, ae_span::Diagnostic> {
+        let expected = Type::Fn(sig);
+        let (params, returns) = super::closures::fn_sig(sig);
+        if let Kind::Ident(name) = self.current() {
+            let ends_argument = self.tokens.get(self.pos + 1)
+                .is_some_and(|token| matches!(token.kind, Kind::Comma | Kind::RParen));
+            if ends_argument && !self.names.contains_key(name) {
+                if let Some(function) = self.functions.get(name) {
+                    if !function.public && function.file != self.file {
+                        return Err(self.fail(&format!("function '{name}' is private to {}", function.file)));
+                    }
+                    if function.extern_c || crate::frontend::is_unsafe_fn(function.id) {
+                        return Err(self.fail(&format!("function '{name}' cannot be passed as a safe function value")));
+                    }
+                    if function.params != params || function.ret != returns {
+                        return Err(self.fail(&format!("argument {position} to '{callee}' requires a function of type {}, but '{name}' has a different signature", expected.name())));
+                    }
+                    let id = function.id;
+                    self.pos += 1;
+                    return Ok(Argument::FnPtr(id));
+                }
+            }
+        }
+
+        let (value, ty) = self.expression(0, false)?;
+        if ty == expected {
+            return Ok(Argument::Value(value));
+        }
+        let cid = match (value, ty) {
+            (Expr::ClosureLit(cid), _) | (Expr::Variable(..), Type::Closure(cid)) => cid,
+            _ => return Err(self.fail(&format!("argument {position} to '{callee}' requires a function value or non-capturing closure of type {}, found {}", expected.name(), ty.name()))),
+        };
+        let def = &self.generics.closures[cid];
+        if !def.value_captures.is_empty() || !def.borrow_captures.is_empty() {
+            return Err(self.fail("a closure with captures cannot be passed as a function value; make it parameter-only or bind its inputs as arguments"));
+        }
+        if def.params != params || def.ret != returns {
+            let got = format!("fn({}) -> {}", def.params.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "), def.ret.name());
+            return Err(self.fail(&format!("argument {position} to '{callee}' must be a closure of type {}, found {}", expected.name(), got)));
+        }
+        Ok(Argument::FnPtr(def.fn_id))
+    }
+
     pub(super) fn call_arguments(&mut self, name: &str, types: &[Type]) -> Result<Vec<Argument>, ae_span::Diagnostic> {
         self.pos += 1;
         let mut args = Vec::new();
@@ -1212,25 +1255,7 @@ impl Parser<'_> {
                     if actual != Type::Array(len) { return Err(self.fail(&format!("argument requires array of length {len}"))); }
                     args.push(Argument::Borrow(var, false));
                 } else if let Type::Fn(sig) = expected {
-                    let (value, ty) = self.expression(0, false)?;
-                    if ty == expected {
-                        args.push(Argument::Value(value));
-                    } else {
-                        let cid = match (value, ty) {
-                            (Expr::ClosureLit(cid), _) | (Expr::Variable(..), Type::Closure(cid)) => cid,
-                            _ => return Err(self.fail(&format!("argument {} to '{name}' requires a function value or non-capturing closure of type {}, found {}", args.len() + 1, expected.name(), ty.name()))),
-                        };
-                        let def = &self.generics.closures[cid];
-                        if !def.value_captures.is_empty() || !def.borrow_captures.is_empty() {
-                            return Err(self.fail("a closure with captures cannot be passed as a function value; make it parameter-only or bind its inputs as arguments"));
-                        }
-                        let (fn_params, fn_ret) = super::closures::fn_sig(sig);
-                        if def.params != fn_params || def.ret != fn_ret {
-                            let got = format!("fn({}) -> {}", def.params.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "), def.ret.name());
-                            return Err(self.fail(&format!("argument {} to '{name}' must be a closure of type {}, found {}", args.len() + 1, expected.name(), got)));
-                        }
-                        args.push(Argument::FnPtr(cid));
-                    }
+                    args.push(self.function_value_argument(name, args.len() + 1, sig)?);
                 } else if let Type::StructRef(sid) = expected {
                     // `&Struct` (ADR-0184) borrows a bare struct variable for
                     // the duration of the call, exactly like the container
