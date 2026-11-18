@@ -3,6 +3,35 @@ use std::path::{Path, PathBuf};
 
 const MANIFEST: &str = "ae.toml";
 
+const PACKAGE_NAME_ERROR: &str = "package.name must have 1 to 64 lowercase letters, digits, underscores or hyphens";
+
+fn valid_name(name: &str) -> bool {
+    !name.is_empty() && name.len() <= 64 && name.bytes().all(|byte| {
+        byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
+    })
+}
+
+pub(super) fn create_project(directory: &Path) -> Result<(), String> {
+    let name = directory.file_name().and_then(|name| name.to_str())
+        .filter(|name| valid_name(name)).ok_or(PACKAGE_NAME_ERROR)?;
+    let manifest = format!(
+        "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nae = \"{}\"\n",
+        env!("CARGO_PKG_VERSION"),
+    );
+
+    fn create_file(path: &Path, content: &str) -> Result<(), String> {
+        use std::io::Write;
+        let mut file = fs::File::create_new(path).map_err(|error| format!("{}: {error}", path.display()))?;
+        file.write_all(content.as_bytes()).map_err(|error| format!("{}: {error}", path.display()))
+    }
+
+    fs::create_dir(directory).map_err(|error| format!("{}: {error}", directory.display()))?;
+    let source = directory.join("src");
+    fs::create_dir(&source).map_err(|error| format!("{}: {error}", source.display()))?;
+    create_file(&source.join("main.ae"), "fn main() {\n    print(\"Hello, AE!\");\n}\n")?;
+    create_file(&directory.join(MANIFEST), &manifest)
+}
+
 pub(super) fn discover_manifest() -> Result<PathBuf, String> {
     let current = std::env::current_dir().map_err(|error| format!("cannot read current directory: {error}"))?;
     for directory in current.ancestors() {
@@ -32,10 +61,8 @@ pub(super) fn entry_path(input: &Path) -> Result<PathBuf, String> {
         .ok_or_else(|| fail(&format!("package.{key} must be a string")));
 
     let name = field("name")?;
-    if name.is_empty() || name.len() > 64 || !name.bytes().all(|byte| {
-        byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
-    }) {
-        return Err(fail("package.name must have 1 to 64 lowercase letters, digits, underscores or hyphens"));
+    if !valid_name(name) {
+        return Err(fail(PACKAGE_NAME_ERROR));
     }
 
     let version = field("version")?;
