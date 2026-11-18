@@ -229,15 +229,7 @@ impl Parser<'_> {
                 }
                 if RESERVED.contains(&param.as_str()) { return Err(self.fail(&format!("'{param}' is a built-in name and cannot be a closure parameter"))); }
                 self.take(Kind::Colon)?;
-                let ty = if *self.current() == Kind::Amp {
-                    let ty = self.parameter_type()?;
-                    if ty != Type::StrView {
-                        return Err(self.fail("closure parameters support only &string borrows"));
-                    }
-                    ty
-                } else {
-                    self.named_type()?
-                };
+                let ty = self.callable_parameter_type()?;
                 let var_id = self.next_var; self.next_var += 1;
                 self.names.insert(param, (var_id, false, ty));
                 self.binding_ranges.insert(var_id, binding_range);
