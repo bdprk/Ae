@@ -93,7 +93,7 @@ pub(super) enum MirOperand {
     Int(i64),
     Float(f64),
     Bool(bool),
-    Str(&'static str, usize, usize),
+    Str(Rc<str>, usize, usize),
 }
 
 #[derive(Debug)]
@@ -182,7 +182,7 @@ fn lower_expr(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut MirLow
         Expr::Number(n) => MirRvalue::Use(MirOperand::Int(*n)),
         Expr::FloatLit(x) => MirRvalue::Use(MirOperand::Float(*x)),
         Expr::BoolLit(b) => MirRvalue::Use(MirOperand::Bool(*b)),
-        Expr::StrLit(text, line, col) => MirRvalue::Use(MirOperand::Str(Box::leak(text.clone().into_boxed_str()), *line, *col)),
+        Expr::StrLit(text, line, col) => MirRvalue::Use(MirOperand::Str(Rc::from(text.as_str()), *line, *col)),
         Expr::Variable(id, ty, ..) => MirRvalue::Use(MirOperand::Place(MirPlace::Local(*id, *ty))),
         Expr::Field(base, fname, fty) => MirRvalue::Use(MirOperand::Place(MirPlace::Field(Box::new(base_place(base, bindings, lowering)), fname.clone(), *fty))),
         Expr::Binary(a, op, b, ..) => {
@@ -214,7 +214,7 @@ fn lower_operand(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut Mir
         Expr::Number(n) => MirOperand::Int(*n),
         Expr::FloatLit(x) => MirOperand::Float(*x),
         Expr::BoolLit(b) => MirOperand::Bool(*b),
-        Expr::StrLit(text, line, col) => MirOperand::Str(Box::leak(text.clone().into_boxed_str()), *line, *col),
+        Expr::StrLit(text, line, col) => MirOperand::Str(Rc::from(text.as_str()), *line, *col),
         Expr::Variable(id, ty, ..) => MirOperand::Place(MirPlace::Local(*id, *ty)),
         other => {
             let rvalue = lower_expr(other, bindings, lowering);
@@ -277,7 +277,7 @@ fn statement_intrinsic(statement: &Statement, bindings: &mut Vec<MirBinding>, lo
         Statement::Reverse(id, strings, ..) => (if *strings { "reverse_strings" } else { "reverse" }, vec![MirOperand::Place(MirPlace::Local(*id, if *strings { Type::StrVec } else { Type::Vec }))]),
         Statement::MapPut(place, key, value, ..) => ("put", vec![map_place_operand(place), lower_operand(key, bindings, lowering), lower_operand(value, bindings, lowering)]),
         Statement::Assert(condition, ..) => ("assert", vec![lower_operand(condition, bindings, lowering)]),
-        Statement::Print(Printed::Text(text)) => ("print", vec![MirOperand::Str(Box::leak(text.clone().into_boxed_str()), 0, 0)]),
+        Statement::Print(Printed::Text(text)) => ("print", vec![MirOperand::Str(Rc::from(text.as_str()), 0, 0)]),
         // The match subject rides the switch terminator, so the payload
         // binding's operands are the binding itself and the variant indices.
         Statement::BindPayload(bid, _, variant, index, ty) => ("bind_payload", vec![
@@ -407,7 +407,7 @@ fn expr_intrinsic(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut Mi
         // the source spelling, and the operands are the call's arguments.
         Expr::MathCall(index, args, ..) => {
             let mut operands: Vec<MirOperand> = args.iter().map(|a| lower_operand(a, bindings, lowering)).collect();
-            operands.insert(0, MirOperand::Str(super::MATH_FNS[*index as usize].0, 0, 0));
+            operands.insert(0, MirOperand::Str(Rc::from(super::MATH_FNS[*index as usize].0), 0, 0));
             ("math", operands)
         }
         _ => ("expr", vec![]),
