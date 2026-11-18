@@ -6409,3 +6409,34 @@ fn main() {
     }
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn package_manifest_selects_entry_and_validates_metadata() {
+    let dir = unique_temp_dir("package_manifest");
+    fs::create_dir(dir.join("src")).unwrap();
+    fs::write(dir.join("src/main.ae"), "fn main() { print(42); }").unwrap();
+    let manifest = dir.join("ae.toml");
+    let valid = "[package]\nname = 'sample-tool'\nversion = '0.1.0'\nae = '0.1'\n";
+    fs::write(&manifest, valid).unwrap();
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let output = Command::new(cli).arg("run").arg(&dir).output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
+
+    let checked = Command::new(cli).args(["check", "--json"]).arg(&manifest).output().unwrap();
+    assert!(checked.status.success(), "{}", String::from_utf8_lossy(&checked.stdout));
+    assert_eq!(String::from_utf8_lossy(&checked.stdout).trim(), "[]");
+    for (source, message) in [
+        (valid.replace("sample-tool", "UpperCase"), "package.name"),
+        (valid.replace("0.1.0", "0.1"), "package.version"),
+        (valid.replace("'0.1'", "'99.0'"), "requires AE 99.0"),
+        (format!("{valid}\n[dependencies]\nutil = '1.0'\n"), "dependency resolution"),
+        ("[package\n".to_owned(), "TOML"),
+    ] {
+        fs::write(&manifest, source).unwrap();
+        let checked = Command::new(cli).arg("check").arg(&manifest).output().unwrap();
+        let stderr = String::from_utf8_lossy(&checked.stderr);
+        assert!(!checked.status.success() && stderr.contains(message), "{stderr}");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}

@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 ae-compiler = { path = "crates/ae-compiler" }
+toml = { version = "1", default-features = false, features = ["parse", "serde"] }
 
 [workspace]
 members = ["crates/ae-compiler", "crates/ae-syntax", "crates/ae-span"]
