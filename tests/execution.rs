@@ -5806,3 +5806,46 @@ fn main() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn compound_assignment_operators() {
+    let dir = std::env::temp_dir().join("ae_test_compound_assign");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let source = dir.join("main.ae");
+    std::fs::write(&source, r#"
+fn main() {
+    var x = 10;
+    x += 5;
+    x -= 3;
+    x *= 2;
+    x /= 4;
+    print(x);
+
+    var f = 1.5;
+    f += 2.5;
+    f *= 2.0;
+    print(f);
+
+    var s = "hello";
+    s += " world";
+    print(s);
+}
+"#).unwrap();
+    let run = |mode: &str| Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", source.to_str().unwrap()])
+        .env("AE_CODEGEN", mode)
+        .output()
+        .unwrap();
+    let mir = run("mir");
+    let tree = run("tree");
+    assert!(mir.status.success(), "mir failed: {}", String::from_utf8_lossy(&mir.stderr));
+    assert!(tree.status.success(), "tree failed: {}", String::from_utf8_lossy(&tree.stderr));
+    let mir_out = String::from_utf8_lossy(&mir.stdout).replace("\r\n", "\n");
+    let tree_out = String::from_utf8_lossy(&tree.stdout).replace("\r\n", "\n");
+    assert_eq!(mir_out, tree_out);
+    assert_eq!(mir_out, "6\n8.0\nhello world\n");
+
+    let _ = std::fs::remove_dir_all(dir);
+}

@@ -618,6 +618,29 @@ impl<'a> Parser<'a> {
                         if self.is_borrowed(id) {
                             self.deferred_write_conflicts.push((id, name_offset, name.clone(), "assign to", None));
                         }
+                        let compound_op = match *self.current() {
+                            Kind::PlusEqual => Some(Kind::Plus),
+                            Kind::MinusEqual => Some(Kind::Minus),
+                            Kind::StarEqual => Some(Kind::Star),
+                            Kind::SlashEqual => Some(Kind::Slash),
+                            _ => None,
+                        };
+                        if let Some(op) = compound_op {
+                            if !matches!(ty, Type::Int | Type::F64) && !(op == Kind::Plus && ty == Type::String) {
+                                return Err(self.fail(&format!("compound assignment is not supported for type '{}'", ty.name())));
+                            }
+                            self.pos += 1;
+                            let (line, col) = self.position();
+                            let (rhs, rhs_ty) = self.expression(0, false)?;
+                            self.take(Kind::Semi)?;
+                            if rhs_ty != ty {
+                                return Err(self.fail(&format!("cannot assign a {} value to {} variable '{name}'", rhs_ty.name(), ty.name())));
+                            }
+                            let lhs_var = Expr::Variable(id, ty, line, col);
+                            let value = Expr::Binary(Box::new(lhs_var), op, Box::new(rhs), line, col, ty);
+                            result.push(Statement::Assign(id, value, false));
+                            continue;
+                        }
                         self.take(Kind::Equal)?;
                         // A view slot never re-points (M2.5): the region math
                         // has no kills, so a reassigned view would both
