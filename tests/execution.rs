@@ -5725,3 +5725,72 @@ fn main() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn self_hosted_vec_with_destructor_and_ptr_drop_in_place() {
+    let dir = std::env::temp_dir().join("ae_test_self_hosted_vec");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let source = dir.join("main.ae");
+    std::fs::write(&source, r#"
+extern "C" fn ae_std_alloc(size: i64, line: i64, column: i64) -> *mut i64;
+extern "C" fn ae_std_free(block: *mut i64) -> *mut i64;
+
+#[repr(C)]
+struct Elem {
+    id: i64,
+}
+
+impl Elem {
+    fn drop(&mut self) -> i64 {
+        print(self.id);
+        return 0;
+    }
+}
+
+struct MyVec[T] {
+    ptr: *mut i64,
+    len: i64,
+}
+
+impl MyVec[T] {
+    fn new() -> MyVec[T] {
+        var elem_size = c_size_of[T]();
+        unsafe {
+            var raw = ae_std_alloc(elem_size * 2, 1, 1);
+            return MyVec[T] { ptr: raw, len: 0 };
+        }
+    }
+
+    fn drop(&mut self) -> i64 {
+        unsafe {
+            var base = self.ptr as *mut T;
+            var i = 0;
+            while i < self.len {
+                var elem_ptr = base.offset(i);
+                var _d = ptr_drop_in_place(elem_ptr);
+                i = i + 1;
+            }
+            var _f = ae_std_free(self.ptr);
+        }
+        return 0;
+    }
+}
+
+fn main() {
+    var v = MyVec[Elem]::new();
+    print(v.len);
+}
+"#).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", source.to_str().unwrap()])
+        .env("AE_CODEGEN", "mir")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "mir failed: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
+    assert_eq!(stdout, "0\n");
+
+    let _ = std::fs::remove_dir_all(dir);
+}
