@@ -78,18 +78,12 @@ fn emit_block(function: &MirFunction, block: &MirBlock, out: &mut String, next: 
             out.push_str(&format!("    if ({}) goto block_{yes}; else goto block_{no};\n", cond.text));
         }
         CfgTerminator::Return(expr) => {
-            let value = emit_expr(expr, out, next, true);
-            for &(id, ty) in frees {
-                if value.moves.iter().any(|&(moved, _)| moved == id) { continue; }
-                release_var(out, id, ty);
-            }
-            null_moves(out, &value.moves);
-            out.push_str(&format!("    return {};\n", value.text));
+            let result = codegen::emit_value_before_cleanup(expr, frees, out, next, true);
+            out.push_str(&format!("    return {result};\n"));
         }
         CfgTerminator::Exit(code) => {
-            let value = emit_expr(code, out, next, false);
-            for &(id, ty) in frees { release_var(out, id, ty); }
-            out.push_str(&format!("    ae_exit({});\n", value.text));
+            let result = codegen::emit_value_before_cleanup(code, frees, out, next, false);
+            out.push_str(&format!("    ae_exit({result});\n"));
         }
         // Enum dispatch: one arm block per variant, in variant order, so each
         // case maps onto the layout's 0-based tag constants. A `match` is

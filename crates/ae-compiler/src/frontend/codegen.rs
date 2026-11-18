@@ -1009,19 +1009,38 @@ fn emit_propagation_payload(out: &mut String, subject: &str, layout: usize, fiel
     out.push_str(&format!("    ae_e{layout}_forfeit(&{subject});\n"));
 }
 
+pub(super) fn emit_value_before_cleanup(
+    expr: &Expr,
+    frees: &[(usize, Type)],
+    out: &mut String,
+    next: &mut usize,
+    moving: bool,
+) -> String {
+    let value = emit_expr(expr, out, next, moving);
+    // An inline value can still refer to storage a destructor can modify.
+    let result = if frees.is_empty() {
+        value.text
+    } else {
+        let id = *next;
+        *next += 1;
+        out.push_str(&format!("    {}t{id} = {};\n", value.ty.c_temp(), value.text));
+        format!("t{id}")
+    };
+    for &(id, ty) in frees {
+        if !value.moves.iter().any(|&(moved, _)| moved == id) {
+            release_var(out, id, ty);
+        }
+    }
+    null_moves(out, &value.moves);
+    result
+}
+
 pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
     for stmt in stmts {
         match stmt {
-            Statement::Return(e, frees) => {
-                let t = emit_expr(e, out, next, true);
-                // A slot the return expression moved out of no longer owns its
-                // buffer; releasing it would free the returned value's memory.
-                for &(id, ty) in frees {
-                    if t.moves.iter().any(|&(m, _)| m == id) { continue; }
-                    release_var(out, id, ty);
-                }
-                null_moves(out, &t.moves);
-                out.push_str(&format!("    return {};\n", t.text));
+            Statement::Return(expr, frees) => {
+                let result = emit_value_before_cleanup(expr, frees, out, next, true);
+                out.push_str(&format!("    return {result};\n"));
             }
             Statement::Declare(id, e) => {
                 // A closure binding names its generated function and stores
@@ -1168,9 +1187,8 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
             }
             Statement::Print(printed) => emit_print(printed, out, next),
             Statement::Exit(code, frees) => {
-                let value = emit_expr(code, out, next, false);
-                for &(id, ty) in frees { release_var(out, id, ty); }
-                out.push_str(&format!("    ae_exit({});\n", value.text));
+                let result = emit_value_before_cleanup(code, frees, out, next, false);
+                out.push_str(&format!("    ae_exit({result});\n"));
             }
             Statement::Assert(condition, line, col) => {
                 let t = emit_expr(condition, out, next, false);
