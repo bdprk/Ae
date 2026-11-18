@@ -6284,3 +6284,24 @@ fn main() {{}}
     }
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn local_noncapturing_closures_and_function_parameters_can_be_forwarded() {
+    let dir = unique_temp_dir("function_forwarding");
+    let path = dir.join("main.ae");
+    fs::write(&path, r#"
+fn apply(f: fn(i64) -> i64, x: i64) -> i64 { return f(x); }
+fn forward(f: fn(i64) -> i64, x: i64) -> i64 { return apply(f, x); }
+fn main() {
+    let increment = |x: i64| -> i64 { return x + 1; };
+    print(forward(increment, 41));
+}
+"#).unwrap();
+    let cli = env!("CARGO_BIN_EXE_ae");
+    for flags in [&[][..], &["--interp"][..]] {
+        let output = Command::new(cli).arg("run").arg(&path).args(flags).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
