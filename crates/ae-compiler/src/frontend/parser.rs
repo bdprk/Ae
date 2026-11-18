@@ -460,7 +460,7 @@ impl<'a> Parser<'a> {
                     } else if let Type::Array(len) = ty {
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
                         let (index, index_ty) = self.expression(0, false)?;
-                        if index_ty != Type::Int { return Err(self.fail("array index must be an integer")); }
+                        if index_ty != Type::Int { return Err(self.fail("array index must be an integer").with_code("E0201")); }
                         self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
                         let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
                         if value_ty != Type::Int { return Err(self.fail("array elements must be i64")); }
@@ -702,7 +702,7 @@ impl<'a> Parser<'a> {
                     self.pos += 1;
                     let (value, ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
                     if matches!(ty, Type::Closure(_)) { return Err(self.fail("a closure cannot be returned: it has no storage, and its captures live in this frame")); }
-                    if ty != self.return_type { return Err(self.fail(&format!("return type must be {}", self.return_type.name()))); }
+                    if ty != self.return_type { return Err(self.fail(&format!("return type must be {}", self.return_type.name())).with_code("E0204")); }
                     // Every live owned value that is not returned is released.
                     result.push(Statement::Return(value, self.live_owned()));
                 }
@@ -757,7 +757,7 @@ impl<'a> Parser<'a> {
                     let loop_offset = self.tokens[self.pos].offset;
                     self.pos += 1;
                     let (condition, ty) = self.expression(0, false)?;
-                    if ty != Type::Bool { return Err(self.fail("condition must be a boolean expression")); }
+                    if ty != Type::Bool { return Err(self.fail("condition must be a boolean expression").with_code("E0205")); }
                     if self.loop_depth >= 64 { return Err(self.fail("loop nesting limit exceeded (64)")); }
                     self.loop_depth += 1;
                     let base = self.scopes.len();
@@ -937,7 +937,7 @@ impl<'a> Parser<'a> {
     pub(super) fn if_statement(&mut self) -> Result<Statement, ae_span::Diagnostic> {
         self.pos += 1;
         let (condition, ty) = self.expression(0, false)?;
-        if ty != Type::Bool { return Err(self.fail("condition must be a boolean expression")); }
+        if ty != Type::Bool { return Err(self.fail("condition must be a boolean expression").with_code("E0205")); }
         let snapshot = self.moved.clone();
         let yes = self.block()?;
         let after_yes = std::mem::replace(&mut self.moved, snapshot.clone());

@@ -111,7 +111,7 @@ impl Parser<'_> {
                 self.pos += 1;
                 // Operands bind tighter than any binary operator: -a * b is (-a) * b.
                 let (operand, ty) = self.expression(10, false)?;
-                if !matches!(ty, Type::Int | Type::F64) { return Err(self.fail("unary '-' requires an i64 or f64 operand")); }
+                if !matches!(ty, Type::Int | Type::F64) { return Err(self.fail("unary '-' requires an i64 or f64 operand").with_code("E0203")); }
                 (Expr::Neg(Box::new(operand), line, column), ty)
             }
             Kind::Bang => {
@@ -1099,7 +1099,7 @@ impl Parser<'_> {
                     if let Type::Array(len) = ty {
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
                         let (index, index_ty) = self.expression(0, false)?;
-                        if index_ty != Type::Int { return Err(self.fail("array index must be an integer")); }
+                        if index_ty != Type::Int { return Err(self.fail("array index must be an integer").with_code("E0201")); }
                         self.take(Kind::RBracket)?;
                         (Expr::Index(id, len, Box::new(index), line, col), Type::Int)
                     } else if (ty == Type::StrVec || ty == Type::StrVecRef) && *self.current() == Kind::LBracket {
@@ -1481,7 +1481,7 @@ impl Parser<'_> {
                         _ => false,
                     };
                     if !comparable {
-                        return Err(self.fail("comparison requires two i64, two f64, or two strings/views with == or !="));
+                        return Err(self.fail("comparison requires two i64, two f64, or two strings/views with == or !=").with_code("E0202"));
                     }
                     // String/view equality gets a dedicated node so emission
                     // never confuses it with C pointer comparison.
@@ -1518,7 +1518,7 @@ impl Parser<'_> {
                         }
                         Type::F64
                     } else {
-                        if lhs_ty != Type::Int || rhs_ty != Type::Int { return Err(self.fail("arithmetic requires integer operands")); }
+                        if lhs_ty != Type::Int || rhs_ty != Type::Int { return Err(self.fail("arithmetic requires integer operands").with_code("E0203")); }
                         Type::Int
                     }
                 }
