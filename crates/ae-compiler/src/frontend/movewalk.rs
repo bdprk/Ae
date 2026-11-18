@@ -416,7 +416,8 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
             }
             None
         }
-        Expr::FnCall(_, args, _) => {
+        Expr::FnCall(slot, args, _) => {
+            if let Some(violation) = moved.read(*slot) { return Some(violation); }
             for arg in args {
                 match arg {
                     // A `FnCall`'s callee is a variable and fn types cannot
@@ -478,18 +479,27 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
             base_result.or(index_result)
         }
         Expr::Len(a, ..) | Expr::Neg(a, ..) | Expr::Not(a) | Expr::ReadFile(a, ..) | Expr::Bytes(a, ..) | Expr::Trim(a, ..) | Expr::Lines(a, ..) | Expr::Utf8Len(a, ..) | Expr::ToString(a, ..) | Expr::FloatToString(a, ..) | Expr::ToF64(a, ..) | Expr::ParseInt(a, ..) | Expr::TryReadFile(a, ..) | Expr::TryListDir(a, ..) | Expr::PathExists(a, ..) | Expr::PathIsDir(a, ..) | Expr::PathName(a, ..) | Expr::PathParent(a, ..) | Expr::TryFileInfo(a, ..) | Expr::TryRemoveFile(a, ..) | Expr::TryRemoveDir(a, ..) | Expr::TryCreateDir(a, ..) | Expr::SetCwd(a, ..) | Expr::Env(a, ..) | Expr::ToI64(a, ..) => walk_expr(a, moved),
-        Expr::Tokens(_, _, sep, ..) => walk_expr(sep, moved),
+        Expr::Tokens(id, _, sep, ..) => {
+            let base = moved.read(*id);
+            let separator = walk_expr(sep, moved);
+            base.or(separator)
+        }
         Expr::StrEq(a, b, _) | Expr::Contains(a, b, ..) | Expr::Split(a, b, ..) | Expr::WriteFile(a, b, ..) | Expr::Slice(a, b, ..) | Expr::TryWriteFile(a, b, ..) | Expr::TryCopyFile(a, b, ..) | Expr::TryRenamePath(a, b, ..) | Expr::PathJoin(a, b, ..) | Expr::StartsWith(a, b) | Expr::EndsWith(a, b) | Expr::CountLinesWith(a, b, ..) | Expr::Find(a, b, ..) | Expr::JsonGet(a, b, ..) | Expr::JsonInt(a, b, ..) | Expr::JsonBool(a, b, ..) | Expr::JsonLen(a, b, ..) | Expr::TryAppendFile(a, b, ..) | Expr::Utf8Prefix(a, b, ..) => {
             let left = walk_expr(a, moved);
             let right = walk_expr(b, moved);
             left.or(right)
         }
-        Expr::SliceView(_, _, start, end, ..) => {
+        Expr::SliceView(id, _, start, end, ..) => {
+            let base = moved.read(*id);
             let left = walk_expr(start, moved);
             let right = walk_expr(end, moved);
-            left.or(right)
+            base.or(left).or(right)
         }
-        Expr::Join(_, sep, ..) => walk_expr(sep, moved),
+        Expr::Join(id, sep, ..) => {
+            let base = moved.read(*id);
+            let separator = walk_expr(sep, moved);
+            base.or(separator)
+        }
         Expr::MapGet(_, key, ..) | Expr::MapHas(_, key, ..) | Expr::MapRemove(_, key, ..) => walk_expr(key, moved),
         Expr::MapInc(_, key, delta, ..) => {
             let key_walk = walk_expr(key, moved);
@@ -505,7 +515,11 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         }
         // map_keys borrows its map; run_command borrows its argument vector.
         Expr::MapKeys(place, ..) => { let _ = place; None }
-        Expr::RunCommand(_, vid, ..) => moved.read(*vid),
+        Expr::RunCommand(program, vid, ..) => {
+            let program_result = walk_expr(program, moved);
+            let args_result = moved.read(*vid);
+            program_result.or(args_result)
+        }
         Expr::ClosureLit(_) | Expr::NowMs | Expr::NowS | Expr::Args(..) | Expr::ReadStdin(..) | Expr::Cwd(..) | Expr::StrVecNew(..) | Expr::F64VecNew(..) | Expr::MapNew(..) | Expr::JsonHas(..) => None,
         // Literals and constants own nothing and reference nothing.
         Expr::Number(_) | Expr::FloatLit(_) | Expr::BoolLit(_) | Expr::StrLit(..) => None,
@@ -535,6 +549,19 @@ mod tests {
             Expr::StrVecIndex(1, index(), 0, 0, false),
         ];
         for expr in expressions { assert_eq!(expr_reads(&expr), vec![1, 2]); }
+    }
+
+    #[test]
+    fn compound_expressions_read_all_source_slots() {
+        let var = |id| Box::new(Expr::Variable(id, Type::Int, 0, 0));
+        let expressions = [
+            (Expr::FnCall(1, vec![Argument::Value(*var(2))], Type::Int), vec![1, 2]),
+            (Expr::Tokens(1, None, var(2), 0, 0), vec![1, 2]),
+            (Expr::SliceView(1, None, var(2), var(3), 0, 0), vec![1, 2, 3]),
+            (Expr::Join(1, var(2), 0, 0), vec![1, 2]),
+            (Expr::RunCommand(var(1), 2, Type::Int, 0, 0), vec![1, 2]),
+        ];
+        for (expr, expected) in expressions { assert_eq!(expr_reads(&expr), expected); }
     }
 
     #[test]
