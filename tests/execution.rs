@@ -3639,6 +3639,19 @@ fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
 }
 
 #[test]
+fn closure_captures_vector_and_index_expression() {
+    let dir = unique_temp_dir("closure_index_capture");
+    let source = dir.join("capture.ae");
+    fs::write(&source, "fn main() { let values = vec[10, 42]; let index = 1; let get = || -> i64 { return values[index]; }; print(get()); }\n").unwrap();
+    for backend in ["tree", "mir"] {
+        let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).env("AE_CODEGEN", backend).output().unwrap();
+        assert!(run.status.success(), "{backend}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "42\n");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn closure_captures_function_value_and_its_argument() {
     let dir = unique_temp_dir("closure_function_capture");
     let source = dir.join("capture.ae");
