@@ -110,13 +110,13 @@ impl Parser<'_> {
                 let (line, column) = self.position();
                 self.pos += 1;
                 // Operands bind tighter than any binary operator: -a * b is (-a) * b.
-                let (operand, ty) = self.expression(6, false)?;
+                let (operand, ty) = self.expression(10, false)?;
                 if !matches!(ty, Type::Int | Type::F64) { return Err(self.fail("unary '-' requires an i64 or f64 operand")); }
                 (Expr::Neg(Box::new(operand), line, column), ty)
             }
             Kind::Bang => {
                 self.pos += 1;
-                let (operand, ty) = self.expression(6, false)?;
+                let (operand, ty) = self.expression(10, false)?;
                 if ty != Type::Bool { return Err(self.fail("'!' requires a boolean operand")); }
                 (Expr::Not(Box::new(operand)), Type::Bool)
             }
