@@ -2,6 +2,8 @@
 
 Status definitions: Verified = Native execution of all tests and generated C verification passed; Restricted = Partially passed; Unverified = No native evidence.
 
+2026-11-18 follow-up: commit `c0c8fbe` was verified on the existing Linux evaluate-2 sandbox using an isolated `git archive` whose SHA-256 matched the local archive (`7198dc5b857911bd37bbabc53974ec5d42ac0ff2543595542ba326c2e171f616`). `cargo test --workspace --locked` passed, including 234 execution tests and the separate-C-translation-unit nested FFI test. `python3 scripts/verify_generated_c.py --sanitize --leak` exited successfully, with 41 examples passing and zero reported live allocation blocks. Windows `cargo test --workspace --locked` passed on the same source revision locally. GitHub Actions for this revision did not start because the account reported a payment or spending-limit problem; these results are direct runs, not CI results. The sanitizer script's example corpus is not a proof of all unsafe code.
+
 | Platform | Architecture | Status | Last Verified | C Toolchain | Minimum OS |
 |---|---|---|---|---|---|
 | Windows | x86-64 | Verified | 2026-11-15 (cargo test all green incl. the W0702 registry fix, verify_generated_c 41/41) | MinGW-W64 GCC 16.2.0 (UCRT) | TBD (Tested on Windows 10.0.26300) |
