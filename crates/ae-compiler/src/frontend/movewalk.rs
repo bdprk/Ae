@@ -276,7 +276,7 @@ pub(super) fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker)
             if let Some(violation) = walk_expr(value, moved) { return Some(violation); }
             None
         }
-        Statement::FieldStore(_, _, _, value, _) => walk_expr(value, moved),
+        Statement::FieldStore(_, _, _, value, _) => walk_moving_expr(value, moved),
         Statement::Print(printed) => match printed {
             Printed::Expr(e) => walk_expr(e, moved),
             Printed::Text(_) => None,
@@ -582,6 +582,12 @@ mod tests {
             (Expr::MapKeys(place(), 0, 0), vec![1]),
         ];
         for (expr, expected) in expressions { assert_eq!(expr_reads(&expr), expected); }
+    }
+
+    #[test]
+    fn owned_field_assignment_consumes_its_value() {
+        let statement = Statement::FieldStore(1, "value".to_owned(), Type::String, Expr::Variable(2, Type::String, 0, 0), false);
+        assert_eq!(statement_move_effects(&statement).moved, vec![2]);
     }
 
     #[test]
