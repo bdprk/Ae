@@ -425,7 +425,8 @@ pub(super) fn expr_type(expr: &Expr) -> Type {
         Expr::BoolLit(..) | Expr::StrEq(..) | Expr::Contains(..) => Type::Bool,
         Expr::Variable(_, ty, ..) | Expr::Field(_, _, ty) | Expr::VecLit(_, ty, ..) => *ty,
         Expr::StructLit(sid, _) => Type::Struct(*sid),
-        Expr::EnumLit(name, ..) => Type::Enum(name, 0),
+        Expr::EnumLit(name, layout, ..) => Type::Enum(name, *layout),
+        Expr::Call(_, _, ty) | Expr::FnCall(_, _, ty) => *ty,
         // The printed place types are evidence, so the string-shaped
         // expressions name their real types instead of the integer
         // catch-all (a string literal bound to `v0 (i64)` misleads).
