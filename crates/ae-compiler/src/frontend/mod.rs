@@ -310,7 +310,7 @@ fn map_element_ty(kind: MapKind) -> Type {
     if kind == MapKind::Float { Type::F64 } else { Type::Int }
 }
 #[derive(Debug, Clone)]
-enum Argument { Value(Expr), Borrow(usize, bool), View(Expr), FnPtr(usize) } // Borrow bool: pass &slot vs array (decays); View: read-only string borrow; FnPtr: a closure literal's generated function, inline (ADR-0189)
+enum Argument { Value(Expr), Borrow(usize, bool), View(Expr), FnPtr(usize) } // Borrow bool: pass &slot vs array (decays); View: read-only string borrow; FnPtr: an internal function ID (ADR-0189)
 #[derive(Debug, Clone)]
 enum Printed { Expr(Expr), Text(String) }
 #[derive(Debug, Clone)]

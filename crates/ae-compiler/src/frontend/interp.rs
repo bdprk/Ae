@@ -1969,7 +1969,7 @@ fn invoke_call(
                     read_var(locals, caller_locals, *slot, 0, 0)?
                 }
             }
-            Argument::FnPtr(cid) => Val::FnPtr(closures::closure_fn_id(*cid)),
+            Argument::FnPtr(id) => Val::FnPtr(*id),
         };
         callee_locals.insert(*param_id, val);
     }
