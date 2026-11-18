@@ -426,6 +426,27 @@ fn parse_version(value: &str, allow_missing_patch: bool) -> Option<(u64, u64, u6
     (parts.next().is_none()).then_some((major, minor, patch))
 }
 
+/// Resolves a recorded dependency path against the canonical package
+/// directory. The base carries a Windows verbatim (`\\?\`) prefix after
+/// canonicalization, and the OS refuses to fold `..` inside verbatim paths, so
+/// `base.join(recorded).canonicalize()` would fail for `../name` entries; the
+/// `..` components are folded lexically instead.
+fn resolve_recorded_path(base: &Path, recorded: &str) -> PathBuf {
+    let recorded = Path::new(recorded);
+    if recorded.is_absolute() {
+        return recorded.to_path_buf();
+    }
+    let mut resolved = base.to_path_buf();
+    for component in recorded.components() {
+        match component {
+            std::path::Component::ParentDir => { resolved.pop(); }
+            std::path::Component::CurDir => {}
+            _ => resolved.push(component.as_os_str()),
+        }
+    }
+    resolved
+}
+
 /// Path from one canonical directory to another, using `/` separators so the
 /// manifest reads the same on both platforms.
 fn relative_directory(from: &Path, to: &Path) -> Result<String, String> {
@@ -520,19 +541,20 @@ pub(super) fn add_dependency(input: &Path, target: &Path) -> Result<String, Stri
     }
     let package = read_manifest(&target_manifest)?;
     let alias = package.name.clone();
+    let target_directory = target_manifest.parent().expect("a canonical manifest has a parent");
 
     let source = fs::read_to_string(&manifest).map_err(|error| format!("{}: {error}", manifest.display()))?;
     let current = read_manifest(&manifest)?;
     if let Some(value) = current.dependencies.get(&alias) {
         let existing = value.as_table().and_then(|table| table.get("path")).and_then(toml::Value::as_str);
-        let same = existing.map(|path| root.join(path).canonicalize().ok() == Some(target_manifest.clone()))
-            .unwrap_or(false);
+        let same = existing.map(|recorded| {
+            resolve_recorded_path(root, recorded).canonicalize().ok() == Some(target_directory.to_owned())
+        }).unwrap_or(false);
         if same {
             return Ok(format!("'{alias}' is already declared"));
         }
         return Err(format!("{MANIFEST}: dependency '{alias}' is already declared with a different source"));
     }
-    let target_directory = target_manifest.parent().expect("a canonical manifest has a parent");
     let relative = relative_directory(root, target_directory)?;
     let line = format!("{alias} = {{ path = {} }}", toml_string(&relative));
     let updated = insert_dependency_line(&source, &line);
@@ -541,7 +563,12 @@ pub(super) fn add_dependency(input: &Path, target: &Path) -> Result<String, Stri
     Ok(format!("added dependency '{alias}' at {relative}"))
 }
 
-/// Removes a dependency by alias and refreshes the lockfile.
+/// Removes a dependency by alias. The manifest edit is all-or-nothing; the
+/// lockfile refresh is best-effort because the package's own sources may still
+/// import the removed alias, and those imports have to be edited before the
+/// package compiles and a fresh lock can be built. A failed refresh leaves the
+/// old lock in place, so the next build reports it as stale instead of
+/// silently trusting an outdated graph.
 pub(super) fn remove_dependency(input: &Path, alias: &str) -> Result<String, String> {
     let manifest = manifest_path(input)
         .ok_or_else(|| format!("{} is not a package directory or {MANIFEST}", input.display()))?
@@ -557,7 +584,11 @@ pub(super) fn remove_dependency(input: &Path, alias: &str) -> Result<String, Str
             manifest.display()));
     }
     fs::write(&manifest, updated).map_err(|error| format!("{}: {error}", manifest.display()))?;
-    update_lock(&manifest)?;
-    Ok(format!("removed dependency '{alias}'"))
+    match update_lock(&manifest) {
+        Ok(()) => Ok(format!("removed dependency '{alias}'")),
+        Err(error) => Ok(format!("removed dependency '{alias}'\n\
+            ae.lock is now stale ({error});\n\
+            run 'ae update' after removing imports of '{alias}'")),
+    }
 }
 

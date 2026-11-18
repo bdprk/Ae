@@ -6662,6 +6662,94 @@ fn test_answer() -> i64 {
 }
 
 #[test]
+fn add_and_remove_manage_manifest_dependencies_and_the_lockfile() {
+    let dir = unique_temp_dir("package_add_remove");
+    let app = dir.join("app");
+    for (package, source) in [
+        ("app", "use \"@math\";\nfn main() { print(answer()); }\n"),
+        ("math", "pub fn answer() -> i64 { return 42; }\n"),
+    ] {
+        let root = dir.join(package);
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("ae.toml"), format!(
+            "[package]\nname = '{package}'\nversion = '0.1.0'\nae = '0.1'\n"
+        )).unwrap();
+        let file = if package == "app" { "main.ae" } else { "lib.ae" };
+        fs::write(root.join("src").join(file), source).unwrap();
+    }
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let in_app = |args: &[&str]| Command::new(cli).current_dir(&app).args(args).output().unwrap();
+
+    // Adding an undeclared dependency edits the manifest and refreshes the
+    // lock, so an ordinary build works without a separate update step.
+    let added = in_app(&["add", "../math"]);
+    assert!(added.status.success(), "{}", String::from_utf8_lossy(&added.stderr));
+    assert!(String::from_utf8_lossy(&added.stdout).contains("added dependency 'math' at ../math"));
+    let manifest = fs::read_to_string(app.join("ae.toml")).unwrap();
+    assert!(manifest.contains("[dependencies]\nmath = { path = \"../math\" }"), "{manifest}");
+    assert!(app.join("ae.lock").exists());
+    let run = in_app(&["run"]);
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "42\n");
+
+    // Re-adding the same source is idempotent. The recorded `../math` must
+    // resolve to the same directory on every platform (Windows canonicalizes
+    // to verbatim paths that do not fold `..`).
+    let again = in_app(&["add", "../math"]);
+    assert!(again.status.success(), "{}", String::from_utf8_lossy(&again.stderr));
+    assert!(String::from_utf8_lossy(&again.stdout).contains("is already declared"));
+    assert_eq!(fs::read_to_string(app.join("ae.toml")).unwrap(), manifest);
+
+    // The same package name from another directory is a different source.
+    let other = dir.join("other");
+    fs::create_dir_all(other.join("src")).unwrap();
+    fs::write(other.join("ae.toml"), "[package]\nname = 'math'\nversion = '0.1.0'\nae = '0.1'\n").unwrap();
+    fs::write(other.join("src/lib.ae"), "pub fn answer() -> i64 { return 0; }\n").unwrap();
+    let conflict = in_app(&["add", "../other"]);
+    let conflict_error = String::from_utf8_lossy(&conflict.stderr);
+    assert!(!conflict.status.success()
+        && conflict_error.contains("already declared with a different source"), "{conflict_error}");
+
+    // Rejections happen before the manifest is touched.
+    let before = fs::read_to_string(app.join("ae.toml")).unwrap();
+    let self_add = in_app(&["add", "."]);
+    assert!(!self_add.status.success()
+        && String::from_utf8_lossy(&self_add.stderr).contains("a package cannot depend on itself"));
+    let missing = in_app(&["remove", "nope"]);
+    assert!(!missing.status.success()
+        && String::from_utf8_lossy(&missing.stderr).contains("no dependency named 'nope'"));
+    assert_eq!(fs::read_to_string(app.join("ae.toml")).unwrap(), before);
+
+    // Removing a dependency whose alias is still imported succeeds (the
+    // manifest edit is the requested change) and reports the stale lock; the
+    // next run fails closed on the unknown import.
+    let removed = in_app(&["remove", "math"]);
+    assert!(removed.status.success(), "{}", String::from_utf8_lossy(&removed.stderr));
+    let removed_output = String::from_utf8_lossy(&removed.stdout);
+    assert!(removed_output.contains("removed dependency 'math'") && removed_output.contains("stale"), "{removed_output}");
+    let manifest = fs::read_to_string(app.join("ae.toml")).unwrap();
+    assert!(!manifest.contains("math"), "{manifest}");
+    let broken = in_app(&["run"]);
+    assert!(!broken.status.success()
+        && String::from_utf8_lossy(&broken.stderr).contains("unknown package dependency 'math'"));
+
+    // Once the import is gone too, `ae update` rebuilds the lock without
+    // the removed dependency and the package runs again.
+    fs::write(app.join("src/main.ae"), "fn main() { print(7); }\n").unwrap();
+    let update = in_app(&["update"]);
+    assert!(update.status.success(), "{}", String::from_utf8_lossy(&update.stderr));
+    let lock = fs::read_to_string(app.join("ae.lock")).unwrap();
+    assert!(!lock.contains("../math"), "{lock}");
+    let run = in_app(&["run"]);
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "7\n");
+    let removed_twice = in_app(&["remove", "math"]);
+    assert!(!removed_twice.status.success()
+        && String::from_utf8_lossy(&removed_twice.stderr).contains("no dependency named 'math'"));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn package_target_tables_load_only_the_active_local_dependency() {
     let dir = unique_temp_dir("package_targets");
     let app = dir.join("app");
