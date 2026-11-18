@@ -425,3 +425,139 @@ fn parse_version(value: &str, allow_missing_patch: bool) -> Option<(u64, u64, u6
     };
     (parts.next().is_none()).then_some((major, minor, patch))
 }
+
+/// Path from one canonical directory to another, using `/` separators so the
+/// manifest reads the same on both platforms.
+fn relative_directory(from: &Path, to: &Path) -> Result<String, String> {
+    let from_parts: Vec<_> = from.components().collect();
+    let to_parts: Vec<_> = to.components().collect();
+    let shared = from_parts.iter().zip(&to_parts).take_while(|(a, b)| a == b).count();
+    if shared == 0 {
+        return Err(format!("cannot express {} relative to {}", to.display(), from.display()));
+    }
+    let mut parts = vec!["..".to_owned(); from_parts.len() - shared];
+    for component in &to_parts[shared..] {
+        let text = component.as_os_str().to_str()
+            .ok_or_else(|| format!("cannot write a non-UTF-8 dependency path: {}", to.display()))?;
+        parts.push(text.to_owned());
+    }
+    Ok(if parts.is_empty() { ".".to_owned() } else { parts.join("/") })
+}
+
+fn toml_string(text: &str) -> String {
+    let mut out = String::from("\"");
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Inserts one dependency line at the top of `[dependencies]`, creating the
+/// section when the manifest has none. The rest of the file keeps its text.
+fn insert_dependency_line(source: &str, line: &str) -> String {
+    let mut out = String::new();
+    let mut inserted = false;
+    for existing in source.lines() {
+        out.push_str(existing);
+        out.push('\n');
+        if !inserted && existing.trim() == "[dependencies]" {
+            out.push_str(line);
+            out.push('\n');
+            inserted = true;
+        }
+    }
+    if !inserted {
+        if !out.ends_with('\n') { out.push('\n'); }
+        out.push_str("\n[dependencies]\n");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+fn dependency_key(line: &str) -> Option<&str> {
+    let line = line.trim();
+    if line.starts_with('#') || line.starts_with('[') { return None; }
+    let (key, _) = line.split_once('=')?;
+    Some(key.trim())
+}
+
+fn remove_dependency_line(source: &str, alias: &str) -> (String, bool) {
+    let mut out = String::new();
+    let mut in_dependencies = false;
+    let mut removed = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') { in_dependencies = trimmed == "[dependencies]"; }
+        if in_dependencies && dependency_key(line) == Some(alias) {
+            removed = true;
+            continue;
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    (out, removed)
+}
+
+/// Adds a path dependency named after the target package. The manifest text is
+/// edited in place (only the `[dependencies]` section grows) and the lockfile is
+/// refreshed so an ordinary build keeps working.
+pub(super) fn add_dependency(input: &Path, target: &Path) -> Result<String, String> {
+    let manifest = manifest_path(input)
+        .ok_or_else(|| format!("{} is not a package directory or {MANIFEST}", input.display()))?
+        .canonicalize().map_err(|error| format!("{}: {error}", input.display()))?;
+    let root = manifest.parent().expect("a canonical manifest has a parent");
+    let target_manifest = if target.is_dir() { target.join(MANIFEST) } else { target.to_owned() };
+    let target_manifest = target_manifest.canonicalize()
+        .map_err(|error| format!("{}: {error}", target_manifest.display()))?;
+    if target_manifest == manifest {
+        return Err(format!("{}: a package cannot depend on itself", manifest.display()));
+    }
+    let package = read_manifest(&target_manifest)?;
+    let alias = package.name.clone();
+
+    let source = fs::read_to_string(&manifest).map_err(|error| format!("{}: {error}", manifest.display()))?;
+    let current = read_manifest(&manifest)?;
+    if let Some(value) = current.dependencies.get(&alias) {
+        let existing = value.as_table().and_then(|table| table.get("path")).and_then(toml::Value::as_str);
+        let same = existing.map(|path| root.join(path).canonicalize().ok() == Some(target_manifest.clone()))
+            .unwrap_or(false);
+        if same {
+            return Ok(format!("'{alias}' is already declared"));
+        }
+        return Err(format!("{MANIFEST}: dependency '{alias}' is already declared with a different source"));
+    }
+    let target_directory = target_manifest.parent().expect("a canonical manifest has a parent");
+    let relative = relative_directory(root, target_directory)?;
+    let line = format!("{alias} = {{ path = {} }}", toml_string(&relative));
+    let updated = insert_dependency_line(&source, &line);
+    fs::write(&manifest, updated).map_err(|error| format!("{}: {error}", manifest.display()))?;
+    update_lock(&manifest)?;
+    Ok(format!("added dependency '{alias}' at {relative}"))
+}
+
+/// Removes a dependency by alias and refreshes the lockfile.
+pub(super) fn remove_dependency(input: &Path, alias: &str) -> Result<String, String> {
+    let manifest = manifest_path(input)
+        .ok_or_else(|| format!("{} is not a package directory or {MANIFEST}", input.display()))?
+        .canonicalize().map_err(|error| format!("{}: {error}", input.display()))?;
+    let source = fs::read_to_string(&manifest).map_err(|error| format!("{}: {error}", manifest.display()))?;
+    let current = read_manifest(&manifest)?;
+    if !current.dependencies.contains_key(alias) {
+        return Err(format!("{}: no dependency named '{alias}'", manifest.display()));
+    }
+    let (updated, removed) = remove_dependency_line(&source, alias);
+    if !removed {
+        return Err(format!("{}: dependency '{alias}' is written in a form this command does not edit; remove it by hand",
+            manifest.display()));
+    }
+    fs::write(&manifest, updated).map_err(|error| format!("{}: {error}", manifest.display()))?;
+    update_lock(&manifest)?;
+    Ok(format!("removed dependency '{alias}'"))
+}
+
