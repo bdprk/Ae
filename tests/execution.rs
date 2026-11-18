@@ -5857,3 +5857,41 @@ fn main() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn bitwise_operators_and_precedence() {
+    let dir = std::env::temp_dir().join("ae_test_bitwise");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let source = dir.join("main.ae");
+    std::fs::write(&source, r#"
+fn main() {
+    var a = 12;
+    var b = 10;
+    print(a & b);
+    print(a | b);
+    print(a ^ b);
+    print(1 << 4);
+    print(32 >> 2);
+    print(1 | 2 ^ 3 & 6);
+}
+"#).unwrap();
+    let run = |mode: &str| Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", source.to_str().unwrap()])
+        .env("AE_CODEGEN", mode)
+        .output()
+        .unwrap();
+    let mir = run("mir");
+    let tree = run("tree");
+    assert!(mir.status.success(), "mir failed: {}", String::from_utf8_lossy(&mir.stderr));
+    assert!(tree.status.success(), "tree failed: {}", String::from_utf8_lossy(&tree.stderr));
+    let mir_out = String::from_utf8_lossy(&mir.stdout).replace("\r\n", "\n");
+    let tree_out = String::from_utf8_lossy(&tree.stdout).replace("\r\n", "\n");
+    assert_eq!(mir_out, tree_out);
+    // 12 & 10 = 8; 12 | 10 = 14; 12 ^ 10 = 6; 1 << 4 = 16; 32 >> 2 = 8;
+    // 1 | (2 ^ (3 & 6)) = 1 | (2 ^ 2) = 1 | 0 = 1
+    assert_eq!(mir_out, "8\n14\n6\n16\n8\n1\n");
+
+    let _ = std::fs::remove_dir_all(dir);
+}

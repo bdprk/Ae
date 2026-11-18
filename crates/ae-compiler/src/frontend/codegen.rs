@@ -902,6 +902,11 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
                 Kind::Star => format!("ae_mul({}, {}, {line}, {column})", l.text, r.text),
                 Kind::Slash => format!("ae_div({}, {}, {line}, {column})", l.text, r.text),
                 Kind::Percent => format!("ae_mod({}, {}, {line}, {column})", l.text, r.text),
+                Kind::Pipe => format!("({} | {})", l.text, r.text),
+                Kind::Caret => format!("({} ^ {})", l.text, r.text),
+                Kind::Amp => format!("({} & {})", l.text, r.text),
+                Kind::Shl => format!("((int64_t)((uint64_t)({}) << (({}) & 63)))", l.text, r.text),
+                Kind::Shr => format!("({} >> (({}) & 63))", l.text, r.text),
                 _ => unreachable!(),
             };
             let ty = if matches!(op, Kind::EqEq | Kind::NotEq | Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq) {
