@@ -877,8 +877,30 @@ pub(super) fn validate(function: &MirFunction) -> Result<(), String> {
     if function.blocks.first().map(|block| block.id) != Some(0) || ids.len() != function.blocks.len() {
         return Err(format!("internal: fn #{} has a missing entry block or duplicate block IDs", function.id));
     }
+    let mut all_temps = HashSet::new();
+    let mut defined = HashSet::new();
+    let mut used = HashSet::new();
     for block in &function.blocks {
+        defined.clear();
         for binding in &block.bindings {
+            used.clear();
+            collect_rvalue_temps(&binding.rvalue, &mut used);
+            if let MirPlace::Field(base, ..) = &binding.target {
+                collect_place_temps(base, &mut used);
+            }
+            if let Some(id) = used.difference(&defined).min() {
+                return Err(format!(
+                    "internal: fn #{} block {} uses undefined temporary t{id}",
+                    function.id, block.id,
+                ));
+            }
+            if let MirPlace::Temp(id, _) = binding.target {
+                if !all_temps.insert(id) {
+                    return Err(format!("internal: fn #{} defines temporary t{id} twice", function.id));
+                }
+                defined.insert(id);
+            }
+
             let returns = match &binding.rvalue {
                 MirRvalue::Call(_, _, ty) | MirRvalue::FnCall(_, _, ty) => ty,
                 _ => continue,
@@ -1043,6 +1065,35 @@ mod validation_tests {
         let error = validate(&function).unwrap_err();
         assert!(error.contains("call result of type bool to a place of type i64"), "{error}");
         function.blocks[0].bindings[0].target = MirPlace::Temp(0, Type::Bool);
+        assert!(validate(&function).is_ok());
+    }
+
+    #[test]
+    fn rejects_a_temporary_used_before_its_definition() {
+        let mut function = MirFunction {
+            id: 0,
+            is_main: false,
+            params: vec![],
+            returns: Type::Int,
+            blocks: vec![MirBlock {
+                id: 0,
+                statements: vec![],
+                bindings: vec![
+                    MirBinding {
+                        target: MirPlace::Temp(1, Type::Int),
+                        rvalue: MirRvalue::Use(MirOperand::Place(MirPlace::Temp(0, Type::Int))),
+                    },
+                    MirBinding {
+                        target: MirPlace::Temp(0, Type::Int),
+                        rvalue: MirRvalue::Use(MirOperand::Int(42)),
+                    },
+                ],
+                terminator: CfgTerminator::Return(Expr::Number(0)),
+            }],
+        };
+        let error = validate(&function).unwrap_err();
+        assert!(error.contains("uses undefined temporary t0"), "{error}");
+        function.blocks[0].bindings.swap(0, 1);
         assert!(validate(&function).is_ok());
     }
 }
