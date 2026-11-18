@@ -186,9 +186,10 @@ fn merge_predecessors(function: &MirFunction, block_id: usize, out_states: &Hash
 }
 
 fn join_states(a: &State, b: &State) -> State {
-    let mut joined = a.clone();
-    for (&id, &right) in b {
-        let left = joined.get(&id).copied().unwrap_or(DropState::Uninit);
+    let mut joined = State::new();
+    for &id in a.keys().chain(b.keys()) {
+        let left = a.get(&id).copied().unwrap_or(DropState::Uninit);
+        let right = b.get(&id).copied().unwrap_or(DropState::Uninit);
         joined.insert(id, join(left, right));
     }
     joined
@@ -337,4 +338,22 @@ fn rewrite_list(list: Vec<(usize, Type)>, state: &mut State, stats: &mut DropSta
         }
     }
     kept
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn join_treats_missing_slots_as_uninitialized_on_either_side() {
+        let live = State::from([(7, DropState::Live)]);
+        let absent = State::new();
+        for (left, right) in [(&live, &absent), (&absent, &live)] {
+            assert_eq!(join_states(left, right).get(&7), Some(&DropState::Mixed));
+        }
+        let dropped = State::from([(7, DropState::Dropped)]);
+        for (left, right) in [(&dropped, &absent), (&absent, &dropped)] {
+            assert_eq!(join_states(left, right).get(&7), Some(&DropState::Mixed));
+        }
+    }
 }
