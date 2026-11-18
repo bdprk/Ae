@@ -40,7 +40,7 @@ The compiler's reserved-name registry (`RESERVED`, `crates/ae-compiler/src/front
 | Environment & process | `env`, `args`, `cwd`, `set_cwd`, `read_stdin`, `run_command`, **[keep]** `exit` | `std::env` / `std::process` — `env::get(name)?`, `env::args()`, `process::run(cmd)` |
 | Output | **[keep]** `print` (as `print`/`println`, the console bridge), `assert` (moves to the `test` convention) | `std::fmt` for the interpolation form `"{x:>8.2}"` (M1.12, compile-time parsed) |
 | JSON | `json_get`, `json_int`, `json_bool`, `json_len`, `json_has` | `std::json` — `json::get(doc, "$.a.b")` survives until derive-based serialization (M3.3) replaces it |
-| FFI layout | **[keep]** `c_size_of`, `c_offset_of` | stays with the `#[repr(C)]` family (`spec/unsafe.md` §5) — not a stdlib item |
+| FFI layout | **[keep]** `c_size_of`, `c_align_of`, `c_offset_of` | stays with the `#[repr(C)]` family (`spec/unsafe.md` §5) — not a stdlib item |
 
 The nine preset result enums (`ReadResult` … `FloatResult`) and the shape-compatible custom-enum contract dissolve into `Result[T, E]` + `Option[T]` (M1.11): fallible built-ins return `Result[T, std::io::Error]`-shaped values, `?` propagates the one generic type, and the one-family-per-function restriction disappears with it.
 

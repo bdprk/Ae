@@ -7,7 +7,7 @@ Proposed (2026-11-15); implementation status reviewed 2026-11-18. Step A has lan
 ## Implementation audit (2026-11-18)
 
 - Pointer offset, byte offset, and pointer reinterpretation are implemented, with compiled-path examples in `tests/run/ptr_offset.ae` and `tests/run/ptr_retag.ae`. The interpreter explicitly traps on pointer arithmetic; the compiled examples do not establish interpreter agreement for this surface.
-- Generic substitution for `c_size_of` supports the scalar types `i64`, `f64`, and `bool` as well as `#[repr(C)]` structs. The scalar and generic-scalar cases are covered by `scalar_size_queries_in_generic_and_concrete_contexts`; the struct case is exercised by `tests/run/generic_layout_query.ae`. Alignment queries remain a separate prerequisite.
+- Generic substitution for `c_size_of` and `c_align_of` supports the scalar types `i64`, `f64`, and `bool` as well as `#[repr(C)]` structs. The scalar and generic-scalar size cases are covered by `scalar_size_queries_in_generic_and_concrete_contexts`; `c_alignment_matches_the_native_c_compiler` compares sizes, alignments and a field offset against the host C compiler. The struct generic size case is exercised by `tests/run/generic_layout_query.ae`.
 - The allocator bridge is present in `runtime_ex.c` and exercised by `tests/run/extern_alloc_ok.ae`. These facts do not establish automatic cleanup, safe ownership transfer, or a complete generic container.
 - The four walls in the Context section describe the proposal's original baseline, not the current tree. The statements that a scalar `Vec[T]` is writable today and that its acceptance corpus is differential-covered are objectives, not verified current results.
 

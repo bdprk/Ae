@@ -450,7 +450,7 @@ impl Parser<'_> {
                             (Expr::Len(Box::new(operand), line, col), Type::Int)
                         }
                     }
-                } else if (name == "c_size_of" || name == "c_offset_of") && *self.current() == Kind::LBracket {
+                } else if (name == "c_size_of" || name == "c_align_of" || name == "c_offset_of") && *self.current() == Kind::LBracket {
                     // The layout query pair (M2.12 U8): compile-time
                     // constants over a `#[repr(C)]` struct, so a layout
                     // regression fails a test rather than an FFI session.
@@ -463,21 +463,21 @@ impl Parser<'_> {
                     // concrete struct, so `c_size_of[T]()` must see through
                     // it. An unsubstituted unknown name keeps today's error.
                     let scalar = match self.subst.get(&type_name) {
-                        Some(Type::Int | Type::F64) => Some(8),
-                        Some(Type::Bool) => Some(1),
-                        Some(_) => None,
+                        Some(ty) => ty.scalar_c_layout(),
                         None => match type_name.as_str() {
-                            "i64" | "f64" => Some(8),
-                            "bool" => Some(1),
+                            "i64" => Type::Int.scalar_c_layout(),
+                            "f64" => Type::F64.scalar_c_layout(),
+                            "bool" => Type::Bool.scalar_c_layout(),
                             _ => None,
                         },
                     };
-                    if name == "c_size_of" && scalar.is_some() {
+                    if name != "c_offset_of" && scalar.is_some() {
                         self.take(Kind::RBracket)?;
                         self.take(Kind::LParen)?;
-                        if *self.current() != Kind::RParen { return Err(self.fail("size_of takes no arguments; write size_of[Type]()")); }
+                        if *self.current() != Kind::RParen { return Err(self.fail(&format!("{name} takes no arguments; write {name}[Type]()"))); }
                         self.pos += 1;
-                        self.value_number(scalar.unwrap())
+                        let (size, align) = scalar.unwrap();
+                        self.value_number(if name == "c_align_of" { align } else { size })
                     } else {
                         let type_name = match self.subst.get(&type_name) {
                             Some(Type::Struct(sid)) => self.structs[*sid].name.clone(),
@@ -491,13 +491,13 @@ impl Parser<'_> {
                         }
                         self.take(Kind::RBracket)?;
                         self.take(Kind::LParen)?;
-                        let value = if name == "c_size_of" {
-                            if *self.current() != Kind::RParen { return Err(self.fail("size_of takes no arguments; write size_of[Struct]()")); }
+                        let value = if name == "c_size_of" || name == "c_align_of" {
+                            if *self.current() != Kind::RParen { return Err(self.fail(&format!("{name} takes no arguments; write {name}[Struct]()"))); }
                             self.pos += 1;
-                            let Some((size, _, _)) = self.structs[sid].c_layout(&self.structs) else {
+                            let Some((size, align, _)) = self.structs[sid].c_layout(&self.structs) else {
                                 return Err(self.fail("internal: a repr(C) struct without a layout"));
                             };
-                            self.value_number(size)
+                            self.value_number(if name == "c_align_of" { align } else { size })
                         } else {
                             let (field, field_ty) = self.expression(0, false)?;
                             if !matches!(field_ty, Type::String) { return Err(self.fail("offset_of's field is written as a string literal")); }

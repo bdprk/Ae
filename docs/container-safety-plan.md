@@ -12,7 +12,7 @@ Introduce `u8` with its own explicit conversion and arithmetic specification bef
 
 ## Current evidence and gaps
 
-1. `c_size_of` supports the current scalars (`i64`, `f64`, `bool`) and substituted scalar parameters, as well as `#[repr(C)]` structs. The scalar query uses the same x86-64 ABI assumptions as the existing struct-layout calculation. Alignment queries and a verified layout model for other targets remain open; do not assume all elements have `i64` alignment.
+1. `c_size_of` and `c_align_of` support the current scalars (`i64`, `f64`, `bool`) and substituted scalar parameters, as well as `#[repr(C)]` structs. They use the same x86-64 ABI assumptions as the existing struct-layout calculation. A regression test compares a mixed struct and the scalars against the host C compiler. A verified layout model for other targets remains open; do not assume all elements have `i64` alignment.
 2. `runtime_ex.c` contains allocator and free bridges; `tests/run/extern_alloc_ok.ae` demonstrates one explicit allocation and free. It does not demonstrate cleanup on move, overwrite, scope exit, error propagation or partial initialization.
 3. `frontend/interp.rs` explicitly traps on pointer arithmetic. Four-way agreement cannot currently validate an allocation-based container. Record compiled backend and sanitizer coverage separately; do not count an expected interpreter trap as a successful execution comparison.
 4. MIR drop elaboration removes redundant existing releases. It does not by itself prove that a user-defined raw-buffer wrapper is owned, non-copyable, or invokes a destructor. The current `Copy` constraint is limited to generic functions (`spec/generics.md`), so the admissibility of every container instantiation needs enforcement rather than a comment.
