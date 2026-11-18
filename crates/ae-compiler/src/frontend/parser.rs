@@ -47,11 +47,11 @@ impl<'a> Parser<'a> {
         }
     }
     pub(super) fn take(&mut self, expected: Kind) -> Result<(), ae_span::Diagnostic> {
-        if *self.current() != expected { return Err(self.fail(&format!("expected {expected:?}, found {:?}", self.current()))); }
+        if *self.current() != expected { return Err(self.fail(&format!("expected {expected:?}, found {:?}", self.current())).with_code("E0010")); }
         self.pos += 1; Ok(())
     }
     pub(super) fn identifier(&mut self) -> Result<String, ae_span::Diagnostic> {
-        match self.current().clone() { Kind::Ident(s) => { self.pos += 1; Ok(s) }, _ => Err(self.fail("expected identifier")) }
+        match self.current().clone() { Kind::Ident(s) => { self.pos += 1; Ok(s) }, _ => Err(self.fail("expected identifier").with_code("E0010")) }
     }
     // Whether an `unsafe` block's body contains any operation the block
     // exists to legalize: a raw dereference, a pointer store, or a call to
@@ -920,7 +920,7 @@ impl<'a> Parser<'a> {
                         // print borrows its value; only `+` consumes strings.
                         let (value, ty) = self.expression(0, false)?;
                         if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView) {
-                            return Err(self.fail(&format!("cannot print a value of type {}", ty.name())));
+                            return Err(self.fail(&format!("cannot print a value of type {}", ty.name())).with_code("E0206"));
                         }
                         Printed::Expr(value)
                     };

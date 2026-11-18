@@ -23,6 +23,8 @@ The following semantic codes are currently assigned where the corresponding chec
 
 | Code | Meaning |
 |---|---|
+| `E0010` | The parser expected a specific token and found another |
+| `E0011` | The parser expected an expression |
 | `E0101` | An unknown variable was referenced |
 | `E0102` | A value was used or borrowed after it was moved |
 | `E0103` | An immutable variable was assigned or modified |
@@ -32,6 +34,8 @@ The following semantic codes are currently assigned where the corresponding chec
 | `E0203` | An arithmetic operand is neither `i64` nor `f64` |
 | `E0204` | A returned value does not match the declared return type |
 | `E0205` | A condition is not `bool` |
+| `E0206` | `print` received a value it cannot format |
+| `E0207` | An unknown function or method was called |
 | `E0700` | A raw pointer operation appeared outside `unsafe` |
 | `E0701` | An `unsafe fn` or `extern` declaration was called outside `unsafe` |
 | `E0704` | An `unsafe fn` is declared without a doc comment naming its preconditions |
