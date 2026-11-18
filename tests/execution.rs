@@ -6317,8 +6317,10 @@ fn named_functions_can_be_passed_with_a_matching_safe_signature() {
     let apply = "fn apply(f: fn(i64) -> i64, x: i64) -> i64 { return f(x); }";
     fs::write(&path, format!(r#"
 {apply}
-fn main() {{ print(apply(double, 21)); }}
+fn main() {{ print(apply(double, 21)); print(apply(callback, 40)); }}
 fn double(x: i64) -> i64 {{ return x + x; }}
+#[no_mangle]
+extern "C" fn callback(x: i64) -> i64 {{ return x + 2; }}
 "#)).unwrap();
     let cli = env!("CARGO_BIN_EXE_ae");
     let graph = Command::new(cli).arg("emit-mir").arg(&path).output().unwrap();
@@ -6328,7 +6330,7 @@ fn double(x: i64) -> i64 {{ return x + x; }}
     for flags in [&[][..], &["--interp"][..]] {
         let output = Command::new(cli).arg("run").arg(&path).args(flags).output().unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-        assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
+        assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n42\n");
     }
     for (definition, expected) in [
         ("fn candidate(x: bool) -> i64 { return 0; }", "different signature"),
