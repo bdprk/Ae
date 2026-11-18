@@ -1851,6 +1851,11 @@ fn eval_expr(
                         if y == 0 { return Err(trap("division by zero", *line, *col)); }
                         x.checked_div(y).map(Val::Int).ok_or_else(|| trap("integer overflow", *line, *col))
                     }
+                    Kind::Pipe => Ok(Val::Int(x | y)),
+                    Kind::Caret => Ok(Val::Int(x ^ y)),
+                    Kind::Amp => Ok(Val::Int(x & y)),
+                    Kind::Shl => Ok(Val::Int(x.wrapping_shl((y as u32) & 63))),
+                    Kind::Shr => Ok(Val::Int(x.wrapping_shr((y as u32) & 63))),
                     Kind::Percent => {
                         if y == 0 { return Err(trap("division by zero", *line, *col)); }
                         x.checked_rem(y).map(Val::Int).ok_or_else(|| trap("integer overflow", *line, *col))

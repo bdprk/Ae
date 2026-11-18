@@ -1445,11 +1445,13 @@ impl Parser<'_> {
         loop {
             let (prec, op) = match self.current() {
                 Kind::Or => (1u8, Kind::Or), Kind::And => (2, Kind::And),
-                Kind::EqEq => (3, Kind::EqEq), Kind::NotEq => (3, Kind::NotEq),
-                Kind::Less => (3, Kind::Less), Kind::LessEq => (3, Kind::LessEq),
-                Kind::Greater => (3, Kind::Greater), Kind::GreaterEq => (3, Kind::GreaterEq),
-                Kind::Plus => (4, Kind::Plus), Kind::Minus => (4, Kind::Minus),
-                Kind::Star => (5, Kind::Star), Kind::Slash => (5, Kind::Slash), Kind::Percent => (5, Kind::Percent),
+                Kind::Pipe => (3, Kind::Pipe), Kind::Caret => (4, Kind::Caret), Kind::Amp => (5, Kind::Amp),
+                Kind::EqEq => (6, Kind::EqEq), Kind::NotEq => (6, Kind::NotEq),
+                Kind::Less => (6, Kind::Less), Kind::LessEq => (6, Kind::LessEq),
+                Kind::Greater => (6, Kind::Greater), Kind::GreaterEq => (6, Kind::GreaterEq),
+                Kind::Shl => (7, Kind::Shl), Kind::Shr => (7, Kind::Shr),
+                Kind::Plus => (8, Kind::Plus), Kind::Minus => (8, Kind::Minus),
+                Kind::Star => (9, Kind::Star), Kind::Slash => (9, Kind::Slash), Kind::Percent => (9, Kind::Percent),
                 _ => break,
             };
             if prec < min { break; }
@@ -1469,6 +1471,10 @@ impl Parser<'_> {
                 Kind::And | Kind::Or => {
                     if lhs_ty != Type::Bool || rhs_ty != Type::Bool { return Err(self.fail(&format!("'{}' requires boolean operands", if op == Kind::And { "&&" } else { "||" }))); }
                     Type::Bool
+                }
+                Kind::Pipe | Kind::Caret | Kind::Amp | Kind::Shl | Kind::Shr => {
+                    if lhs_ty != Type::Int || rhs_ty != Type::Int { return Err(self.fail("bitwise operator requires i64 operands")); }
+                    Type::Int
                 }
                 Kind::EqEq | Kind::NotEq | Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq => {
                     let comparable = match (lhs_ty, rhs_ty) {

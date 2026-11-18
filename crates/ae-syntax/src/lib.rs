@@ -5,7 +5,7 @@ use ae_span::{Diagnostic, SourceFile};
 pub enum Kind {
     Ident(String), Number(i64), Float(f64), Text(String), Fn, Let, Var, Mut, Print, If, Else, While, For, In, Return, Break, Continue, Assert, True, False, Use,
     EqEq, NotEq, Less, LessEq, Greater, GreaterEq, And, Or, Bang, Pipe,
-    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, PlusEqual, MinusEqual, StarEqual, SlashEqual, PercentEqual, Dot, DotDot, Struct,
+    LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Arrow, Amp, Semi, Equal, Plus, Minus, Star, Slash, Percent, Caret, Shl, Shr, PlusEqual, MinusEqual, StarEqual, SlashEqual, PercentEqual, Dot, DotDot, Struct,
     Enum, Match, ColonColon, FatArrow, Question, Trait, Impl, Unsafe, Const, As, Extern, Hash, Eof,
 }
 #[derive(Debug, Clone)]
@@ -32,7 +32,7 @@ fn kind_name(kind: &Kind) -> &'static str {
         Kind::LBracket => "LBracket", Kind::RBracket => "RBracket", Kind::Comma => "Comma",
         Kind::Colon => "Colon", Kind::Arrow => "Arrow", Kind::Amp => "Amp", Kind::Semi => "Semi",
         Kind::Equal => "Equal", Kind::Plus => "Plus", Kind::Minus => "Minus", Kind::Star => "Star",
-        Kind::PlusEqual => "PlusEqual", Kind::MinusEqual => "MinusEqual", Kind::StarEqual => "StarEqual", Kind::SlashEqual => "SlashEqual", Kind::PercentEqual => "PercentEqual",
+        Kind::PlusEqual => "PlusEqual", Kind::MinusEqual => "MinusEqual", Kind::StarEqual => "StarEqual", Kind::SlashEqual => "SlashEqual", Kind::PercentEqual => "PercentEqual", Kind::Caret => "Caret", Kind::Shl => "Shl", Kind::Shr => "Shr",
         Kind::Slash => "Slash", Kind::Percent => "Percent", Kind::Dot => "Dot", Kind::DotDot => "DotDot",
         Kind::ColonColon => "ColonColon", Kind::FatArrow => "FatArrow", Kind::Question => "Question",
         Kind::Trait => "Trait", Kind::Impl => "Impl", Kind::Unsafe => "Unsafe", Kind::Const => "Const", Kind::As => "As", Kind::Extern => "Extern", Kind::Hash => "Hash", Kind::Eof => "Eof",
@@ -284,7 +284,7 @@ fn lex_inner(source: &str, mut recovered: Option<&mut Vec<Diagnostic>>) -> Resul
                 '(' => Kind::LParen, ')' => Kind::RParen, '{' => Kind::LBrace, '}' => Kind::RBrace,
                 '[' => Kind::LBracket, ']' => Kind::RBracket, ',' => Kind::Comma, ':' => Kind::Colon, '&' => Kind::Amp,
                 ';' => Kind::Semi, '=' => Kind::Equal, '+' => if bytes.get(i) == Some(&b'=') { i += 1; Kind::PlusEqual } else { Kind::Plus }, '-' => if bytes.get(i) == Some(&b'=') { i += 1; Kind::MinusEqual } else { Kind::Minus },
-                '*' => if bytes.get(i) == Some(&b'=') { i += 1; Kind::StarEqual } else { Kind::Star }, '/' => if bytes.get(i) == Some(&b'=') { i += 1; Kind::SlashEqual } else { Kind::Slash }, '%' => if bytes.get(i) == Some(&b'=') { i += 1; Kind::PercentEqual } else { Kind::Percent }, '<' => Kind::Less, '>' => Kind::Greater,
+                '*' => if bytes.get(i) == Some(&b'=') { i += 1; Kind::StarEqual } else { Kind::Star }, '/' => if bytes.get(i) == Some(&b'=') { i += 1; Kind::SlashEqual } else { Kind::Slash }, '%' => if bytes.get(i) == Some(&b'=') { i += 1; Kind::PercentEqual } else { Kind::Percent }, '<' => if bytes.get(i) == Some(&b'<') { i += 1; Kind::Shl } else { Kind::Less }, '>' => if bytes.get(i) == Some(&b'>') { i += 1; Kind::Shr } else { Kind::Greater }, '^' => Kind::Caret,
                 '!' => Kind::Bang, '.' => Kind::Dot, '?' => Kind::Question, '#' => Kind::Hash,
                 '|' => Kind::Pipe,
                 _ => {
