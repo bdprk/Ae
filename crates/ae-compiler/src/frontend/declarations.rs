@@ -489,9 +489,17 @@ impl Parser<'_> {
             // `pub` is accepted and means nothing here: a method is exactly as
             // visible as the type it belongs to, so the marker would promise
             // something the type itself does not grant.
-            self.take_pub();
+            let is_pub = self.take_pub();
             self.take(Kind::Fn)?;
             let method = self.identifier()?;
+            if method == "drop" {
+                if is_pub {
+                    return Err(self.fail("destructor 'drop' cannot be marked 'pub'; only compiler-generated drop glue may invoke it"));
+                }
+                if !matches!(target, ImplTarget::Struct(_)) {
+                    return Err(self.fail("destructor 'drop' is only supported on structs in this version"));
+                }
+            }
             if method == "main" { return Err(self.fail("a method cannot be named main")); }
             if RESERVED.contains(&method.as_str()) {
                 return Err(self.fail(&format!("'{method}' is a built-in name and cannot be a method")));
@@ -569,10 +577,18 @@ impl Parser<'_> {
             if matches!(ret, Type::StructRef(_) | Type::StructMut(_)) {
                 return Err(self.fail("a method cannot return a borrow; return a value that outlives the borrow instead, or take the borrow again at the call site"));
             }
+            if method == "drop" {
+                if !matches!(receiver, Some(Type::StructMut(_))) || types.len() != 1 || ret != Type::Int {
+                    return Err(self.fail("destructor 'drop' must have signature 'fn drop(&mut self) -> i64'"));
+                }
+            }
             self.generics.next_fn_id = self.generics.next_fn_id.max(*next_id);
             let id = self.generics.next_fn_id;
             self.generics.next_fn_id += 1;
             *next_id = self.generics.next_fn_id;
+            if method == "drop" {
+                self.structs[sid_of(&target)].drop_fn = Some(id);
+            }
             self.id_order.push(id);
             self.generics.inherent.insert(key, MethodDef {
                 signature: Signature { id, params: types, ret, file: self.file.clone(), public: true, extern_c: false },

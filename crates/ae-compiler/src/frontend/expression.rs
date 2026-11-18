@@ -1216,6 +1216,9 @@ impl Parser<'_> {
                     } else { None }
                 } else { None };
                 let (call_id, receiver_ty, ret, full_params) = if let Some(method) = self.generics.inherent.get(&key).cloned() {
+                    if key.ends_with("#drop") {
+                        return Err(self.error_at(call_offset, "explicit call to destructor 'drop' is not allowed; drop is invoked automatically when a value goes out of scope"));
+                    }
                     (method.signature.id, method.receiver, method.signature.ret, method.signature.params.clone())
                 } else if let Some(instance) = generic {
                     let (id, params, ret) = instance;

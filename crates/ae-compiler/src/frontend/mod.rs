@@ -339,7 +339,7 @@ fn returns(stmts: &[Statement]) -> bool {
     })
 }
 #[derive(Debug, Clone)]
-struct StructDef { name: String, fields: Vec<(String, Type)>, file: String, public: bool, repr_c: bool }
+struct StructDef { name: String, fields: Vec<(String, Type)>, file: String, public: bool, repr_c: bool, drop_fn: Option<usize> }
 
 impl StructDef {
     // The C layout of a `#[repr(C)]` struct: each field sits at its natural

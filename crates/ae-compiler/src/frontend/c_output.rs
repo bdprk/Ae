@@ -495,6 +495,9 @@ pub(super) fn emit_program(program: Program) -> Result<GeneratedC, String> {
             layout.push_str(&format!("    {} {};\n", c_type_field(*ty), n));
         }
         let mut release = String::new();
+        if let Some(drop_id) = def.drop_fn {
+            release.push_str(&format!("    ae_fn_{drop_id}(v);\n"));
+        }
         let mut forfeit = String::new();
         for (n, ty) in &def.fields {
             match ty {
@@ -538,6 +541,9 @@ pub(super) fn emit_program(program: Program) -> Result<GeneratedC, String> {
             }
         }
         out.push_str(&format!("\ntypedef struct {{\n{layout}}} ae_t{sid};\n"));
+        if let Some(drop_id) = def.drop_fn {
+            out.push_str(&format!("static int64_t ae_fn_{drop_id}(ae_t{sid} *v);\n"));
+        }
         out.push_str(&format!("static void ae_t{sid}_release(ae_t{sid} *v) {{\n{release}}}\n"));
         out.push_str(&format!("static void ae_t{sid}_forfeit(ae_t{sid} *v) {{\n{forfeit}}}\n"));
     }
