@@ -6830,3 +6830,43 @@ fn one_program_cannot_link_two_versions_of_the_same_package() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+
+#[test]
+fn doc_command_renders_comments_and_runs_fenced_examples() {
+    let dir = unique_temp_dir("doc_command");
+    let file = dir.join("doc.ae");
+    fs::write(&file, "/// Doubles a value.\n///\n/// ```ae\n/// fn main() { print(2); }\n/// ```\npub fn double(x: i64) -> i64 { return x * 2; }\n\nfn main() { print(double(1)); }\n").unwrap();
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let rendered = Command::new(cli).arg("doc").arg(&file).output().unwrap();
+    assert!(rendered.status.success(), "{}", String::from_utf8_lossy(&rendered.stderr));
+    let text = String::from_utf8_lossy(&rendered.stdout);
+    assert!(text.contains("# doc.ae"), "{text}");
+    assert!(text.contains("## `pub fn double(x: i64) -> i64`"), "{text}");
+    assert!(text.contains("Doubles a value."), "{text}");
+
+    let tested = Command::new(cli).args(["doc", "--test"]).arg(&file).output().unwrap();
+    assert!(tested.status.success(), "{}", String::from_utf8_lossy(&tested.stderr));
+    assert!(String::from_utf8_lossy(&tested.stdout).contains("ok: doc example"), "{}", String::from_utf8_lossy(&tested.stdout));
+
+    let broken = dir.join("broken.ae");
+    fs::write(&broken, "/// ```ae\n/// fn main() { let x: i64 = true; }\n/// ```\nfn main() {}\n").unwrap();
+    let failed = Command::new(cli).args(["doc", "--test"]).arg(&broken).output().unwrap();
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert_eq!(failed.status.code(), Some(1));
+    assert!(stderr.contains("broken.ae:1") && stderr.contains("doc example failed"), "{stderr}");
+
+    let unclosed = dir.join("unclosed.ae");
+    fs::write(&unclosed, "/// ```ae\n/// fn main() {}\nfn main() {}\n").unwrap();
+    let leak = Command::new(cli).args(["doc", "--test"]).arg(&unclosed).output().unwrap();
+    let stderr = String::from_utf8_lossy(&leak.stderr);
+    assert_eq!(leak.status.code(), Some(1));
+    assert!(stderr.contains("unclosed.ae: line 1: doc-comment code fence is never closed"), "{stderr}");
+
+    let silent = dir.join("silent.ae");
+    fs::write(&silent, "fn main() {}\n").unwrap();
+    let empty = Command::new(cli).args(["doc", "--test"]).arg(&silent).output().unwrap();
+    assert!(empty.status.success());
+    assert!(String::from_utf8_lossy(&empty.stdout).contains("no doc examples"));
+    fs::remove_dir_all(dir).unwrap();
+}
+

@@ -5,7 +5,7 @@ use frontend::compile_path;
 mod package;
 mod frontend_cache;
 
-const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae init [directory]\n       ae update [project]\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae init [directory]\n       ae doc [--test] [source.ae|project]\n       ae update [project]\n       ae version";
 
 /// A toolchain failure with the exit code it maps to. Usage errors exit 2 and
 /// everything else exits 1, so a script can tell "you called it wrong" from
@@ -369,9 +369,9 @@ fn cache_command(subcommand: Option<&OsString>) -> Result<u8, String> {
 fn run(args: Vec<OsString>) -> Result<u8, Failure> {
     if args.is_empty() { return Err(Failure::usage(USAGE)); }
     let cmd = args[0].to_str().ok_or(Failure::usage("command must be UTF-8"))?.to_owned();
-    const COMMANDS: [&str; 15] = [
+    const COMMANDS: [&str; 16] = [
         "check", "emit-c", "emit-tree", "emit-cfg", "emit-mir", "run", "build", "test",
-        "fmt", "cache", "new", "init", "update", "deps", "version",
+        "fmt", "cache", "new", "init", "update", "deps", "version", "doc",
     ];
     if !COMMANDS.contains(&cmd.as_str()) {
         return Err(Failure::usage(format!("unknown command: {cmd}\n{USAGE}")));
@@ -389,6 +389,21 @@ fn run(args: Vec<OsString>) -> Result<u8, Failure> {
         package::create_project(directory)?;
         println!("created package in {}", directory.display());
         return Ok(0);
+    }
+    if cmd == "doc" {
+        let mut test = false;
+        let mut rest: Vec<&OsString> = Vec::new();
+        for arg in args.iter().skip(1) {
+            if arg.to_str() == Some("--test") { test = true; } else { rest.push(arg); }
+        }
+        if rest.len() > 1 { return Err(Failure::usage(USAGE)); }
+        let entry = match rest.first() {
+            Some(input) => package::entry_path(Path::new(input))?,
+            None => package::entry_path(&package::discover_manifest()?)?,
+        };
+        let source = fs::read_to_string(&entry.path)
+            .map_err(|error| format!("{}: {error}", entry.path.display()))?;
+        return if test { doc_test(&entry.path, &source) } else { doc_render(&entry.path, &source) };
     }
     if cmd == "init" {
         if args.len() > 2 { return Err(Failure::usage(USAGE)); }
@@ -555,6 +570,66 @@ fn run(args: Vec<OsString>) -> Result<u8, Failure> {
         run_source(&cmd, &input, output, &program_args, release, &import_key, lock.filter(|_| cmd == "build"))
     })
     .map_err(Failure::from)
+}
+
+/// Renders doc comments as Markdown: one section per block, headed by the
+/// declaration the block sits above. Text is passed through unchanged so a
+/// doc comment can use any Markdown the author wants.
+fn doc_render(path: &Path, source: &str) -> Result<u8, Failure> {
+    let blocks = ae_syntax::doc_blocks(source);
+    if blocks.is_empty() {
+        println!("{}: no doc comments", path.display());
+        return Ok(0);
+    }
+    let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    println!("# {name}\n");
+    for block in blocks {
+        if !block.declaration.is_empty() {
+            println!("## `{}`\n", block.declaration);
+        }
+        println!("{}", block.text);
+    }
+    Ok(0)
+}
+
+/// Compiles and runs every fenced example in the file's doc comments. Each
+/// example is a complete program; a failure names the file and the line of the
+/// opening fence, not the generated temporary file.
+fn doc_test(path: &Path, source: &str) -> Result<u8, Failure> {
+    let examples = ae_syntax::doc_examples(source)
+        .map_err(|error| format!("{}: {error}", path.display()))?;
+    if examples.is_empty() {
+        println!("{}: no doc examples", path.display());
+        return Ok(0);
+    }
+    let mut failures = 0;
+    for example in &examples {
+        let directory = TempDir::create(&env::temp_dir())?;
+        let file = directory.0.join("doc-example.ae");
+        let outcome = fs::write(&file, &example.source)
+            .map_err(|error| format!("{}: {error}", file.display()))
+            .and_then(|()| frontend::compile_path(&file))
+            .and_then(|c| build_c(&c, &directory.0, false, false))
+            .and_then(|exe| Command::new(&exe).output()
+                .map_err(|error| format!("cannot start doc example: {error}")));
+        match outcome {
+            Ok(output) if output.status.success() => {
+                println!("ok: doc example at {}:{}", path.display(), example.line);
+            }
+            Ok(output) => {
+                failures += 1;
+                let code = output.status.code()
+                    .map_or_else(|| "abnormally".to_owned(), |code| code.to_string());
+                eprintln!("{}:{}: doc example exited with {}", path.display(), example.line, code);
+            }
+            Err(error) => {
+                failures += 1;
+                eprintln!("{}:{}: doc example failed: {error}", path.display(), example.line);
+            }
+        }
+    }
+    println!("{}: {} doc example(s), {} failed", path.display(), examples.len(), failures);
+    Ok(if failures == 0 { 0 } else { 1 })
 }
 
 fn run_tests(input: &Path, filter: Option<&str>, use_interp: bool) -> Result<u8, String> {

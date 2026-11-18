@@ -20,6 +20,8 @@ cargo run -- check examples/hello.ae
 cargo run -- check --json examples/hello.ae   # For editors: stdout is exactly a JSON array
 cargo run -- emit-c examples/hello.ae
 cargo run -- fmt examples/hello.ae
+cargo run -- doc examples/hello.ae            # Render /// doc comments as Markdown
+cargo run -- doc --test examples/hello.ae     # Compile and run fenced examples in doc comments
 cargo run -- test tests_demo/strings_test.ae   # Convention: fn test_<name>() -> i64, 0 for pass
 cargo run -- run examples/hello.ae
 cargo run -- run examples/heart.ae
