@@ -576,12 +576,12 @@ fn else_if_chains_evaluate_in_order() {
 }
 #[test]
 fn booleans_and_short_circuit_evaluation_are_correct() {
-    let source = "fn show(x: i64) -> bool { print(x); return true; } fn main() { var hit = false; hit = show(1) && show(2); print(hit); hit = show(3) && false; print(hit); hit = false && show(4); print(hit); hit = true || show(5); print(hit); hit = show(6) || show(7); print(hit); hit = !hit; print(hit); }";
+    let source = "fn show(x: i64) -> bool { print(x); return true; } fn main() { var hit = false; hit = show(1) && show(2); print(hit); hit = show(3) && false; print(hit); hit = false && show(4); print(hit); hit = true || show(5); print(hit); hit = show(6) || show(7); print(hit); hit = !hit; print(hit); let initial = false || show(8); hit = initial; hit = hit && show(9); print(hit); }";
     let output = execute(source);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     // show(1), show(2) both run; show(3) runs and decides; false skips show(4);
     // true skips show(5); show(6) decides so show(7) is skipped.
-    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "1\n2\ntrue\n3\nfalse\nfalse\ntrue\n6\ntrue\nfalse\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "1\n2\ntrue\n3\nfalse\nfalse\ntrue\n6\ntrue\nfalse\n8\n9\ntrue\n");
 }
 #[test]
 fn bool_functions_and_params_round_trip() {
@@ -6001,7 +6001,7 @@ fn mir_preserves_trapping_conditions_with_identical_successors() {
 fn emit_mir_keeps_short_circuit_rhs_inside_the_lazy_operand() {
     let dir = unique_temp_dir("mir_short_circuit");
     let source = dir.join("short_circuit.ae");
-    fs::write(&source, "fn show(x: i64) -> bool { print(x); return true; } fn main() { let hit = false && show(9); print(hit); }").unwrap();
+    fs::write(&source, "fn show(x: i64) -> bool { print(x); return true; } fn identity(x: bool) -> bool { return x; } fn main() { let hit = identity(false && show(9)); print(hit); }").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-mir").arg(&source).output().unwrap();
     fs::remove_dir_all(dir).unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));

@@ -137,10 +137,40 @@ fn lower_condition(condition: &Expr, entry: usize, yes: usize, no: usize, loweri
     }
 }
 
+fn lower_boolean_value(condition: &Expr, current: usize, lowering: &mut Lowering) -> (usize, Expr) {
+    let result = lowering.synthetic_local();
+    lowering.block(current).statements.push(Statement::Declare(result, Expr::BoolLit(false)));
+    let yes = lowering.new_block();
+    let join = lowering.new_block();
+    lower_condition(condition, current, yes, join, lowering);
+    let taken = lowering.block(yes);
+    taken.statements.push(Statement::Assign(result, Expr::BoolLit(true), false));
+    taken.terminator = CfgTerminator::Goto(join);
+    (join, Expr::Variable(result, Type::Bool, 0, 0))
+}
+
+fn is_short_circuit(expression: &Expr) -> bool {
+    match expression {
+        Expr::Binary(_, Kind::And | Kind::Or, ..) => true,
+        Expr::Not(operand) => is_short_circuit(operand),
+        _ => false,
+    }
+}
+
 // Lower one statement; returns the continuation block and whether every
 // path through it ended unconditionally.
 fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowering) -> (usize, bool) {
     match statement {
+        Statement::Declare(id, value) if is_short_circuit(value) => {
+            let (join, value) = lower_boolean_value(value, current, lowering);
+            lowering.block(join).statements.push(Statement::Declare(*id, value));
+            (join, false)
+        }
+        Statement::Assign(id, value, release_old) if is_short_circuit(value) => {
+            let (join, value) = lower_boolean_value(value, current, lowering);
+            lowering.block(join).statements.push(Statement::Assign(*id, value, *release_old));
+            (join, false)
+        }
         Statement::If(cond, yes, no) => {
             let then_block = lowering.new_block();
             let else_block = lowering.new_block();
