@@ -3639,6 +3639,22 @@ fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
 }
 
 #[test]
+fn string_vector_assignment_reads_old_element_before_replacement() {
+    let dir = unique_temp_dir("strvec_self_assignment");
+    let source = dir.join("assign.ae");
+    fs::write(&source, "fn main() { var values = strvec_new(); push(values, \"hello\"); push(values, \"world\"); values[0] = values[0]; print(values[0]); values[1] = values[0]; print(values[1]); values[0] = \"new\"; print(values[0]); }\n").unwrap();
+    for backend in ["tree", "mir"] {
+        let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).env("AE_CODEGEN", backend).output().unwrap();
+        assert!(run.status.success(), "{backend}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "hello\nhello\nnew\n");
+    }
+    let interp = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).arg("--interp").output().unwrap();
+    assert!(interp.status.success(), "interp: {}", String::from_utf8_lossy(&interp.stderr));
+    assert_eq!(String::from_utf8_lossy(&interp.stdout).replace("\r\n", "\n"), "hello\nhello\nnew\n");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn field_assignment_evaluates_rhs_before_releasing_old_value() {
     let dir = unique_temp_dir("field_self_reference");
     let source = dir.join("field.ae");
