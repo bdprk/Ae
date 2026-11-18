@@ -189,14 +189,17 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             lowering.block(step).terminator = CfgTerminator::Goto(head);
             (exit, false)
         }
-        Statement::ForTokens(var, base, body, ..) => {
+        Statement::ForTokens(cursor, element, body, ..) => {
+            lowering.block(current).statements.push(Statement::ResetTokens(*cursor));
             let head = lowering.new_block();
             lowering.block(current).terminator = CfgTerminator::Goto(head);
             let body_block = lowering.new_block();
             let exit = lowering.new_block();
-            let counter = Expr::Variable(*var, Type::Int, 0, 0);
-            let _ = base;
-            lowering.block(head).terminator = CfgTerminator::Branch(counter, body_block, exit);
+            let advanced = usize::MAX - head;
+            lowering.block(head).statements.push(Statement::AdvanceTokens(*cursor, *element, advanced));
+            let has_element = Expr::Variable(advanced, Type::Bool, 0, 0);
+
+            lowering.block(head).terminator = CfgTerminator::Branch(has_element, body_block, exit);
             lowering.loop_exits.push(exit);
             lowering.loop_continues.push(head);
             let (after_body, _) = lower_statements(body, body_block, lowering);

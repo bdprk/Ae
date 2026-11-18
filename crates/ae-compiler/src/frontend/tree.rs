@@ -201,6 +201,10 @@ impl<'a> TreePrinter<'a> {
             }
             // CFG-only (M2.3): a match arm's payload binding, printed where
             // the lowering placed it — the top of the arm's block.
+            Statement::ResetTokens(cursor) => self.line(&format!("reset token cursor v{cursor}")),
+            Statement::AdvanceTokens(cursor, element, advanced) => {
+                self.line(&format!("v{advanced}: bool = advance cursor v{cursor} into v{element}"));
+            }
             Statement::TakePropagationPayload(subject, ty, _, binding) => {
                 let destination = match binding {
                     Some((id, ty)) => format!(" into v{id}: {}", ty.name()),
