@@ -498,20 +498,16 @@ pub(super) fn emit_program(program: Program) -> Result<GeneratedC, String> {
         let mut forfeit = String::new();
         let mut activate = "((void)0)".to_owned();
         if let Some(drop_id) = def.drop_fn {
-            if def.repr_c {
-                release.push_str(&format!("    ae_fn_{drop_id}(v);\n"));
-            } else {
-                let mut live = "ae_live".to_owned();
-                while def.fields.iter().any(|(name, _)| name == &live) {
-                    live.push('_');
-                }
-                layout.push_str(&format!("    bool {live};\n"));
-                activate = format!("((value).{live} = true)");
-                release.push_str(&format!(
-                    "    if (!v->{live}) return;\n    v->{live} = false;\n    ae_fn_{drop_id}(v);\n"
-                ));
-                forfeit.push_str(&format!("    v->{live} = false;\n"));
+            let mut live = "ae_live".to_owned();
+            while def.fields.iter().any(|(name, _)| name == &live) {
+                live.push('_');
             }
+            layout.push_str(&format!("    bool {live};\n"));
+            activate = format!("((value).{live} = true)");
+            release.push_str(&format!(
+                "    if (!v->{live}) return;\n    v->{live} = false;\n    ae_fn_{drop_id}(v);\n"
+            ));
+            forfeit.push_str(&format!("    v->{live} = false;\n"));
         }
         out.push_str(&format!("\n#define AE_T{sid}_ACTIVATE(value) {activate}\n"));
         for (n, ty) in &def.fields {
