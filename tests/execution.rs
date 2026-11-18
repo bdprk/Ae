@@ -3920,6 +3920,8 @@ fn repr_c_layout_queries_and_extern_prototypes() {
 fn repr_c_attribute_guards_and_extern_struct_rejections() {
     // The attribute's three guards and the E0703 crossing rejection.
     let cases = [
+        ("#[repr(C)] struct Guard { id: i64 } impl Guard { fn drop(&mut self) -> i64 { return 0; } } fn main() {}",
+         "a #[repr(C)] struct cannot define a destructor"),
         ("#[repr(C)] struct Empty {} fn main() {}",
          "must have at least one field"),
         ("struct Boxed[T] { value: T } #[repr(C)] struct Outer { item: Boxed[i64] } fn main() {}",

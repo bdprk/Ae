@@ -591,7 +591,11 @@ impl Parser<'_> {
             self.generics.next_fn_id += 1;
             *next_id = self.generics.next_fn_id;
             if method == "drop" {
-                self.structs[sid_of(&target)].drop_fn = Some(id);
+                let sid = sid_of(&target);
+                if self.structs[sid].repr_c {
+                    return Err(self.fail("a #[repr(C)] struct cannot define a destructor"));
+                }
+                self.structs[sid].drop_fn = Some(id);
             }
             self.id_order.push(id);
             self.generics.inherent.insert(key, MethodDef {
