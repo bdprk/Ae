@@ -13,6 +13,7 @@ pub mod interp;
 mod expression;
 mod types;
 mod declarations;
+pub use loader::{PackageImports, with_package_imports};
 mod loader;
 use loader::{load_program, parse_source};
 pub use loader::{check_path, check_path_diagnostic, describe_path, FrontendDiagnostic, FrontendError, SourceUnit};

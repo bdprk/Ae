@@ -437,9 +437,9 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         // Editor diagnostics: one structured array on stdout, nothing else.
         // Success prints `[]`; lexical recovery may return multiple errors.
         let started = Instant::now();
-        let report = match source.and_then(|path| package::entry_path(&path))
+        let report = match source.and_then(|path| package::entry_path(&path, true))
             .map_err(frontend::FrontendError::Legacy)
-            .and_then(|input| frontend::check_path_diagnostic(&input)) {
+            .and_then(|(input, imports)| frontend::with_package_imports(imports, || frontend::check_path_diagnostic(&input))) {
             Ok(()) => "[]".to_owned(),
             Err(frontend::FrontendError::Legacy(message)) => format!("[{}]", diagnostic_json(&message)),
             Err(frontend::FrontendError::Diagnostic(diagnostic)) => format!("[{}]", structured_diagnostic_json(&diagnostic)),
@@ -484,9 +484,9 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
     // existing scripts pass it.
     let interp_run = cmd == "run" && args.len() == 3 && args.last().and_then(|a| a.to_str()) == Some("--interp");
     if interp_run {
-        let input = package::entry_path(Path::new(&args[1]))?;
+        let (input, imports) = package::entry_path(Path::new(&args[1]), cmd != "build")?;
         let input = input.as_path();
-        match frontend::interpret_path(input) {
+        match frontend::with_package_imports(imports, || frontend::interpret_path(input)) {
             Ok((out, code)) => {
                 print!("{out}");
                 return Ok(code);
@@ -513,8 +513,21 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" | "run" | "build" => return Err(USAGE.into()),
         _ => return Err(format!("unknown command: {cmd}\n{USAGE}")),
     };
-    let input = package::entry_path(Path::new(&args[1]))?;
-    let input = input.as_path();
+    let (input, imports) = package::entry_path(Path::new(&args[1]), cmd != "build")?;
+    let package_imports = !imports.is_empty();
+    frontend::with_package_imports(imports, || {
+        run_source(&cmd, &input, output, &program_args, release, package_imports)
+    })
+}
+
+fn run_source(
+    cmd: &str,
+    input: &Path,
+    output: Option<PathBuf>,
+    program_args: &[OsString],
+    release: bool,
+    package_imports: bool,
+) -> Result<u8, String> {
     let started = Instant::now();
     if cmd == "emit-mir" {
         let mir = frontend::mir_path(input)?;
@@ -545,7 +558,7 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
     // previous build, the frontend work is skipped entirely. `emit-c` and
     // `check` always run the frontend, because their output *is* the
     // frontend's answer.
-    let cacheable = matches!(cmd.as_str(), "build" | "run");
+    let cacheable = !package_imports && matches!(cmd, "build" | "run");
     let c = match if cacheable { frontend_cache::lookup(&cache_root(), input) } else { None } {
         Some(hit) => {
             if timings_enabled() {
@@ -557,7 +570,7 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         None => {
             let tracked = frontend::compile_path_tracked(input)?;
             let c = format!("{}{}", tracked.runtime, tracked.user);
-            let key = frontend_cache::store(&cache_root(), input, &tracked);
+            let key = if package_imports { None } else { frontend_cache::store(&cache_root(), input, &tracked) };
             if timings_enabled() {
                 if cacheable {
                     eprintln!("ae frontend-cache: miss (key {})", key.unwrap_or_else(|| "not stored".into()));
@@ -569,12 +582,12 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
             c
         }
     };
-    match cmd.as_str() {
+    match cmd {
         "emit-c" => { print!("{c}"); Ok(0) },
         "run" => {
             let dir = TempDir::create(&env::temp_dir())?;
             let exe = build_c(&c, &dir.0, release, true)?;
-            let status = Command::new(&exe).args(&program_args).status().map_err(|e| format!("cannot start program: {e}"))?;
+            let status = Command::new(&exe).args(program_args).status().map_err(|e| format!("cannot start program: {e}"))?;
             Ok(status.code().and_then(|n| u8::try_from(n).ok()).unwrap_or(1))
         }
         "build" => {
@@ -603,6 +616,7 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         }
         _ => unreachable!(),
     }
+
 }
 
 fn main() -> ExitCode {

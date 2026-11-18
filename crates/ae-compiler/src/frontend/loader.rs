@@ -1,7 +1,44 @@
 use super::*;
+use std::path::PathBuf;
 
 // Leading `use "path";` headers. Parsed from tokens before the Parser owns
 // the shared function table, so imports can be loaded depth-first.
+pub type PackageImports = std::collections::BTreeMap<PathBuf, std::collections::BTreeMap<String, PathBuf>>;
+
+thread_local! {
+    static PACKAGE_IMPORTS: std::cell::RefCell<PackageImports> = Default::default();
+}
+
+pub fn with_package_imports<T>(imports: PackageImports, action: impl FnOnce() -> T) -> T {
+    struct Restore(PackageImports);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            PACKAGE_IMPORTS.with(|active| active.replace(std::mem::take(&mut self.0)));
+        }
+    }
+
+    let _restore = Restore(PACKAGE_IMPORTS.with(|active| active.replace(imports)));
+    action()
+}
+
+fn resolve_import(file: &Path, canonical: &Path, import: &str) -> Result<PathBuf, FrontendError> {
+    let Some(alias) = import.strip_prefix('@') else {
+        return Ok(file.parent().unwrap_or(Path::new(".")).join(import));
+    };
+    PACKAGE_IMPORTS.with(|active| {
+        let imports = active.borrow();
+        if imports.is_empty() {
+            return Ok(file.parent().unwrap_or(Path::new(".")).join(import));
+        }
+        imports.iter()
+            .filter(|(root, _)| canonical.starts_with(root))
+            .max_by_key(|(root, _)| root.components().count())
+            .and_then(|(_, aliases)| aliases.get(alias))
+            .cloned()
+            .ok_or_else(|| FrontendError::Legacy(format!("{}: unknown package dependency '{alias}'", file.display())))
+    })
+}
+
 fn scan_uses(file: &str, source: &str, tokens: &[Token]) -> Result<Vec<String>, ae_span::Diagnostic> {
     let mut uses = Vec::new();
     let mut pos = 0;
@@ -226,8 +263,8 @@ fn load_file(path: &Path, root: &Path, visited: &mut HashMap<std::path::PathBuf,
     while let Some(frame) = stack.last_mut() {
         if let Some(import) = frame.uses.get(frame.next_import) {
             frame.next_import += 1;
-            let parent = frame.path.parent().unwrap_or(Path::new("."));
-            let child = parent.join(import);
+
+            let child = resolve_import(&frame.path, &frame.canonical, import)?;
             if let Some(next) = begin_file(&child, visited, false)? { stack.push(next); }
             continue;
         }
@@ -386,7 +423,7 @@ fn collect_import_lex_errors(entry: &Path) -> Vec<ae_span::Diagnostic> {
     while let Some(frame) = stack.last_mut() {
         if let Some(import) = frame.uses.get(frame.next_import) {
             frame.next_import += 1;
-            let child = frame.path.parent().unwrap_or(Path::new(".")).join(import);
+            let Ok(child) = resolve_import(&frame.path, &frame.canonical, import) else { continue; };
             let canonical = std::fs::canonicalize(&child).ok();
             let was_visited = canonical.as_ref().is_some_and(|path| visited.contains_key(path));
             match begin_file(&child, &mut visited, false) {

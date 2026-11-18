@@ -53,15 +53,19 @@ pub(super) fn manifest_path(input: &Path) -> Option<PathBuf> {
     }
 }
 
-pub(super) fn entry_path(input: &Path) -> Result<PathBuf, String> {
+pub(super) fn entry_path(input: &Path, allow_dependencies: bool) -> Result<(PathBuf, ae_compiler::frontend::PackageImports), String> {
     let Some(manifest) = manifest_path(input) else {
-        return Ok(input.to_owned());
+        return Ok((input.to_owned(), Default::default()));
     };
     let package = read_manifest(&manifest)?;
+    let mut graph = PathGraph::default();
     if !package.dependencies.is_empty() {
-        return Err(format!("{}: package dependency resolution is not implemented yet for compilation", manifest.display()));
+        if !allow_dependencies {
+            return Err(format!("{}: package dependency resolution for build requires lockfile support", manifest.display()));
+        }
+        graph.visit(&manifest)?;
     }
-    Ok(manifest.with_file_name("src").join("main.ae"))
+    Ok((manifest.with_file_name("src").join("main.ae"), graph.imports))
 }
 
 struct Manifest {
@@ -121,6 +125,7 @@ struct PathGraph {
     visiting: Vec<PathBuf>,
     visited: std::collections::HashSet<PathBuf>,
     output: String,
+    imports: ae_compiler::frontend::PackageImports,
 }
 
 impl PathGraph {
@@ -142,11 +147,12 @@ impl PathGraph {
         let package = read_manifest(&path)?;
         self.visiting.push(path.clone());
         let mut edges = Vec::new();
+        let mut imports = std::collections::BTreeMap::new();
         for (alias, dependency) in package.dependencies {
             let relative = dependency.as_table().filter(|table| table.len() == 1)
                 .and_then(|table| table.get("path")).and_then(toml::Value::as_str);
             let relative = relative.filter(|value| !value.is_empty()).ok_or_else(|| {
-                format!("{}: dependency '{alias}' requires a nonempty path table", path.display())
+                format!("{}: dependency resolution for '{alias}' requires a nonempty path table", path.display())
             })?;
             let source = Path::new(relative);
             if source.has_root() || matches!(source.components().next(), Some(std::path::Component::Prefix(_))) {
@@ -154,9 +160,12 @@ impl PathGraph {
             }
             let dependency = path.parent().expect("a canonical file has a parent").join(source).join(MANIFEST);
             self.visit(&dependency)?;
+            let canonical = dependency.canonicalize().map_err(|error| format!("{}: {error}", dependency.display()))?;
+            imports.insert(alias.clone(), canonical.with_file_name("src").join("lib.ae"));
             edges.push((alias, relative.to_owned()));
         }
         self.visiting.pop();
+        self.imports.insert(path.with_file_name("src"), imports);
         self.visited.insert(path.clone());
         writeln!(self.output, "{} {} ({})", package.name, package.version, path.display()).unwrap();
         for (alias, relative) in edges {
