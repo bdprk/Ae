@@ -634,9 +634,15 @@ fn thread_edges(blocks: &mut [MirBlock]) -> bool {
 // real side effect (§2.2 Rule 7: optimizations must not change behavior).
 fn condition_is_pure(expr: &Expr) -> bool {
     match expr {
-        Expr::Number(..) | Expr::FloatLit(..) | Expr::BoolLit(..) | Expr::StrLit(..) => true,
-        Expr::Variable(..) | Expr::Field(..) => true,
-        Expr::Binary(a, _, b, ..) => condition_is_pure(a) && condition_is_pure(b),
+        Expr::Number(..) | Expr::FloatLit(..) | Expr::BoolLit(..) => true,
+        Expr::Variable(_, Type::Int | Type::Bool | Type::F64, ..) => true,
+        Expr::Not(value) => condition_is_pure(value),
+        Expr::Binary(left, op, right, ..) => {
+            // Arithmetic can trap on overflow or division by zero.
+            matches!(op, Kind::And | Kind::Or | Kind::EqEq | Kind::NotEq
+                | Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq)
+                && condition_is_pure(left) && condition_is_pure(right)
+        }
         _ => false,
     }
 }

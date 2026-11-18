@@ -5987,3 +5987,12 @@ fn main() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
 }
+
+#[test]
+fn mir_preserves_trapping_conditions_with_identical_successors() {
+    let output = execute("fn main() { let zero = 0; if 1 / zero == 0 {} print(42); }");
+    assert!(!output.status.success(), "the condition must still be evaluated");
+    assert!(output.stdout.is_empty());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("division by zero"), "{error}");
+}
