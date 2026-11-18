@@ -6763,3 +6763,37 @@ fn lockfile_is_independent_of_dependency_order_and_working_directory() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+
+#[test]
+fn cli_exit_codes_distinguish_usage_compile_and_program_failures() {
+    let dir = unique_temp_dir("exit_codes");
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let usage = Command::new(cli).output().unwrap();
+    assert_eq!(usage.status.code(), Some(2));
+    assert!(usage.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&usage.stderr).starts_with("ae: usage: ae"), "{}", String::from_utf8_lossy(&usage.stderr));
+
+    let unknown = Command::new(cli).arg("bogus").output().unwrap();
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown command: bogus"));
+
+    let missing = Command::new(cli).args(["check", "absent-file.ae"]).output().unwrap();
+    assert_eq!(missing.status.code(), Some(1), "an unreadable input is a toolchain failure, like rustc");
+    assert!(missing.stdout.is_empty() && !missing.stderr.is_empty());
+
+    let broken = dir.join("broken.ae");
+    fs::write(&broken, "fn main() { let x: i64 = true; }").unwrap();
+    let rejected = Command::new(cli).arg("check").arg(&broken).output().unwrap();
+    assert_eq!(rejected.status.code(), Some(1));
+    assert!(rejected.stdout.is_empty() && !rejected.stderr.is_empty());
+
+    let exiting = dir.join("exiting.ae");
+    fs::write(&exiting, "fn main() { print(1); exit(7); }").unwrap();
+    for flags in [&[][..], &["--interp"][..]] {
+        let run = Command::new(cli).arg("run").arg(&exiting).args(flags).output().unwrap();
+        assert_eq!(run.status.code(), Some(7), "{flags:?}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "1\n");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
