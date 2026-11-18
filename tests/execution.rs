@@ -6098,8 +6098,7 @@ fn function_values_borrow_and_release_temporary_string_arguments() {
     fs::write(&path, r#"
 fn apply(f: fn(&string) -> i64) -> i64 {
     let suffix = "b";
-    let result = f("a" + suffix);
-    return result;
+    return f("a" + suffix);
 }
 
 fn main() {
