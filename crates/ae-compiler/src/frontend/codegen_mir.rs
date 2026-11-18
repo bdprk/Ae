@@ -64,7 +64,7 @@ fn statement_supported(statement: &Statement) -> bool {
 
 // Emit one function body as labelled blocks. The caller owns the signature and
 // the trailing backstops; this writes everything between them.
-pub(super) fn emit_function_body(function: &Function, out: &mut String) {
+pub(super) fn emit_function_body(function: &Function, out: &mut String) -> Result<(), String> {
     let mut mir = mir::lower_function(function);
     // The same optimization pipeline the printer uses: constant folding and
     // CFG simplification decide which blocks are live. A pruned block is
@@ -74,6 +74,7 @@ pub(super) fn emit_function_body(function: &Function, out: &mut String) {
     // unnecessary and keeps every release it cannot prove redundant, where
     // the idempotent release itself decides at runtime.
     mir::elaborate_drops(&mut mir);
+    mir::validate(&mir)?;
     let mut next = 0usize;
     let mut needs_tail = false;
     for block in &mir.blocks {
@@ -89,6 +90,7 @@ pub(super) fn emit_function_body(function: &Function, out: &mut String) {
     if needs_tail {
         out.push_str("  block_tail: ;\n");
     }
+    Ok(())
 }
 
 fn emit_block(function: &MirFunction, block: &MirBlock, out: &mut String, next: &mut usize, needs_tail: &mut bool) {

@@ -867,16 +867,32 @@ fn collect_place_temps(place: &MirPlace, used: &mut HashSet<usize>) {
     }
 }
 
-// The MIR's own invariants: every binding's rvalue operands that are places
-// reference declared locals or earlier temporaries in the same block, and
-// every block's terminator carries valid targets. A violation is a lowering
-// bug (the printer is the reference consumer).
-fn validate(function: &MirFunction) -> Result<(), String> {
+// Check block identity, successor references and the declared type of each
+// call result before a consumer uses the optimized graph.
+pub(super) fn validate(function: &MirFunction) -> Result<(), String> {
     // Unreachable-block elimination leaves the surviving ids sparse, so a
     // target is valid when it names a surviving block, not when it indexes
     // the block vector.
     let ids: HashSet<usize> = function.blocks.iter().map(|block| block.id).collect();
+    if function.blocks.first().map(|block| block.id) != Some(0) || ids.len() != function.blocks.len() {
+        return Err(format!("internal: fn #{} has a missing entry block or duplicate block IDs", function.id));
+    }
     for block in &function.blocks {
+        for binding in &block.bindings {
+            let returns = match &binding.rvalue {
+                MirRvalue::Call(_, _, ty) | MirRvalue::FnCall(_, _, ty) => ty,
+                _ => continue,
+            };
+            let target = match &binding.target {
+                MirPlace::Local(_, ty) | MirPlace::Field(_, _, ty) | MirPlace::Temp(_, ty) => ty,
+            };
+            if target != returns {
+                return Err(format!(
+                    "internal: fn #{} block {} assigns a call result of type {} to a place of type {}",
+                    function.id, block.id, returns.name(), target.name(),
+                ));
+            }
+        }
         match &block.terminator {
             CfgTerminator::Goto(target) => if !ids.contains(target) { return Err(format!("internal: fn #{} block {} branches to missing block {}", function.id, block.id, target)); },
             CfgTerminator::Branch(_, a, b) => if !ids.contains(a) || !ids.contains(b) { return Err(format!("internal: fn #{} block {} branches to missing blocks", function.id, block.id)); },
@@ -1000,5 +1016,33 @@ fn print_operands(args: &[MirOperand], out: &mut String) {
     for (index, arg) in args.iter().enumerate() {
         if index > 0 { out.push_str(", "); }
         print_operand(arg, out);
+    }
+}
+
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_a_call_result_with_the_wrong_destination_type() {
+        let mut function = MirFunction {
+            id: 0,
+            is_main: false,
+            params: vec![],
+            returns: Type::Int,
+            blocks: vec![MirBlock {
+                id: 0,
+                statements: vec![],
+                bindings: vec![MirBinding {
+                    target: MirPlace::Temp(0, Type::Int),
+                    rvalue: MirRvalue::Call(1, vec![], Type::Bool),
+                }],
+                terminator: CfgTerminator::Return(Expr::Number(0)),
+            }],
+        };
+        let error = validate(&function).unwrap_err();
+        assert!(error.contains("call result of type bool to a place of type i64"), "{error}");
+        function.blocks[0].bindings[0].target = MirPlace::Temp(0, Type::Bool);
+        assert!(validate(&function).is_ok());
     }
 }
