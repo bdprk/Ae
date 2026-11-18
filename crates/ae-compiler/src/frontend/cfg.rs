@@ -240,6 +240,26 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             let joined = join_all(&joins, lowering);
             (joined, all_ended)
         }
+        Statement::Propagate(value, ty, fields, binding, frees) => {
+            let Type::Enum(_, layout) = *ty else { unreachable!("propagation requires an enum") };
+            // Source locals use dense increasing IDs. Compiler-generated slots
+            // occupy the opposite end of the ID space and are unique by block.
+            let subject = usize::MAX - current;
+            let success = lowering.new_block();
+            let failure = lowering.new_block();
+            let entry = lowering.block(current);
+            entry.statements.push(Statement::Declare(subject, value.clone()));
+            entry.terminator = CfgTerminator::Switch(subject, layout, vec![success, failure]);
+            let failed = lowering.block(failure);
+            if !frees.is_empty() {
+                failed.statements.push(Statement::Frees(frees.clone()));
+            }
+            failed.terminator = CfgTerminator::Return(Expr::Variable(subject, *ty, 0, 0));
+            lowering.block(success).statements.push(
+                Statement::TakePropagationPayload(subject, *ty, fields.clone(), *binding),
+            );
+            (success, false)
+        }
         Statement::Return(expr, frees) => {
             // The release annotations ride the return: they are statements
             // the lowering keeps in order, then the return edge.

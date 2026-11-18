@@ -5622,6 +5622,15 @@ fn main() {
     assert!(mir.status.success(), "mir failed: {}", String::from_utf8_lossy(&mir.stderr));
     let mir_out = String::from_utf8_lossy(&mir.stdout).replace("\r\n", "\n");
     assert_eq!(mir_out, "1\n2\n10\n42\n30\n30\n");
+    let graph = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("emit-mir")
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(graph.status.success(), "{}", String::from_utf8_lossy(&graph.stderr));
+    let graph = String::from_utf8_lossy(&graph.stdout);
+    assert!(graph.contains("switch v"), "{graph}");
+    assert!(graph.contains("take_propagation_payload"), "{graph}");
     let _ = std::fs::remove_dir_all(dir);
 }
 

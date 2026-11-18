@@ -1004,6 +1004,19 @@ pub(super) fn emit_print(printed: &Printed, out: &mut String, next: &mut usize) 
         }
     }
 }
+fn emit_propagation_payload(out: &mut String, subject: &str, layout: usize, fields: &[Type], binding: Option<(usize, Type)>) {
+    if let Some((id, ty)) = binding {
+        out.push_str(&format!("    {}v{id} = {subject}.u.v0.p0;\n", ty.c_temp()));
+    } else {
+        for (index, field) in fields.iter().enumerate() {
+            if field.owned() {
+                release_member(out, &format!("{subject}.u.v0.p{index}"), *field);
+            }
+        }
+    }
+    out.push_str(&format!("    ae_e{layout}_forfeit(&{subject});\n"));
+}
+
 pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut usize) {
     for stmt in stmts {
         match stmt {
@@ -1215,16 +1228,7 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                     release_var(out, id, vty);
                 }
                 out.push_str(&format!("        return {};\n    }}\n", t.text));
-                match binding {
-                    Some((id, pty)) => out.push_str(&format!("    {}v{id} = {}.u.v0.p0;\n", pty.c_temp(), t.text)),
-                    None => {
-                        for (index, field) in fields.iter().enumerate() {
-                            if !field.owned() { continue; }
-                            release_member(out, &format!("{}.u.v0.p{index}", t.text), *field);
-                        }
-                    }
-                }
-                out.push_str(&format!("    ae_e{eid}_forfeit(&{});\n", t.text));
+                emit_propagation_payload(out, &t.text, eid, fields, *binding);
             }
             // Arms become an if/else chain rather than a C switch: a `break`
             // in an arm body must leave the enclosing loop, which a switch
@@ -1248,6 +1252,10 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
             // bindings at the top of the arm's block. The parser never emits
             // one into the tree, so this arm runs only when the MIR backend
             // emits a match's arm blocks.
+            Statement::TakePropagationPayload(subject, ty, fields, binding) => {
+                let Type::Enum(_, layout) = *ty else { unreachable!("propagation requires an enum") };
+                emit_propagation_payload(out, &format!("v{subject}"), layout, fields, *binding);
+            }
             Statement::BindPayload(bid, subject, variant, index, pty) => {
                 emit_payload_binding(out, *bid, *subject, *variant, *index, pty.clone());
             }

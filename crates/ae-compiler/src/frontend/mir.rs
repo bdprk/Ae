@@ -288,7 +288,13 @@ fn statement_intrinsic(statement: &Statement, bindings: &mut Vec<MirBinding>, lo
         // The `?`'s error-path releases ride inside the statement (the C
         // backend emits them where the error path exits); the continuing
         // path's operand is the unwrapped expression.
-        Statement::Propagate(expr, ..) => ("propagate", vec![lower_operand(expr, bindings, lowering)]),
+        Statement::TakePropagationPayload(subject, ty, _, binding) => {
+            let mut operands = vec![MirOperand::Place(MirPlace::Local(*subject, *ty))];
+            if let Some((id, ty)) = binding {
+                operands.push(MirOperand::Place(MirPlace::Local(*id, *ty)));
+            }
+            ("take_propagation_payload", operands)
+        }
         Statement::Break => ("break", vec![]),
         Statement::Continue(label) => ("continue", label.iter().map(|l| MirOperand::Int(*l as i64)).collect()),
         // Control shapes never survive into a MIR block; a bare placeholder

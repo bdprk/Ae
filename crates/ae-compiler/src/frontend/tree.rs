@@ -201,6 +201,13 @@ impl<'a> TreePrinter<'a> {
             }
             // CFG-only (M2.3): a match arm's payload binding, printed where
             // the lowering placed it — the top of the arm's block.
+            Statement::TakePropagationPayload(subject, ty, _, binding) => {
+                let destination = match binding {
+                    Some((id, ty)) => format!(" into v{id}: {}", ty.name()),
+                    None => " and discard it".to_owned(),
+                };
+                self.line(&format!("take success payload of v{subject}: {}{destination}", ty.name()));
+            }
             Statement::BindPayload(bid, subject, variant, index, ty) => {
                 self.line(&format!("bind v{bid} = payload #{index} of v{subject}::#{variant} ({})", ty.name()));
             }

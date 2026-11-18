@@ -357,7 +357,7 @@ fn walk_statements(statements: &[Statement], used: &mut std::collections::HashSe
                 for arm in arms { walk_statements(&arm.body, used, mutated); }
             }
             // CFG-only (M2.3): a payload binding reads its subject.
-            Statement::BindPayload(_, subject, ..) => { used.insert(*subject); }
+            Statement::BindPayload(_, subject, ..) | Statement::TakePropagationPayload(subject, ..) => { used.insert(*subject); }
             Statement::MapPut(place, key, value, _, _) => { record_place(place, used, mutated); walk_expr(key, used, mutated); walk_expr(value, used, mutated); }
             Statement::Propagate(expr, _, _, _, _) => walk_expr(expr, used, mutated),
             Statement::Exit(code, _) => walk_expr(code, used, mutated),
