@@ -632,9 +632,17 @@ impl Parser<'_> {
         let mut methods: Vec<GenericImplMethod> = Vec::new();
         while *self.current() != Kind::RBrace {
             if *self.current() == Kind::Eof { return Err(self.fail("expected '}' before end of file")); }
-            self.take_pub();
+            let is_pub = self.take_pub();
             self.take(Kind::Fn)?;
             let method = self.identifier()?;
+            if method == "drop" {
+                if is_pub {
+                    return Err(self.fail("destructor 'drop' cannot be marked 'pub'; only compiler-generated drop glue may invoke it"));
+                }
+                if !is_struct {
+                    return Err(self.fail("destructor 'drop' is only supported on structs in this version"));
+                }
+            }
             if method == "main" { return Err(self.fail("a method cannot be named main")); }
             if RESERVED.contains(&method.as_str()) {
                 return Err(self.fail(&format!("'{method}' is a built-in name and cannot be a method")));

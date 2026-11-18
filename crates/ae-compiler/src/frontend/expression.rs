@@ -1234,6 +1234,9 @@ impl Parser<'_> {
                     }
                     (method.signature.id, method.receiver, method.signature.ret, method.signature.params.clone())
                 } else if let Some(instance) = generic {
+                    if key.ends_with("#drop") {
+                        return Err(self.error_at(call_offset, "explicit call to destructor 'drop' is not allowed; drop is invoked automatically when a value goes out of scope"));
+                    }
                     let (id, params, ret) = instance;
                     let def_name = match sid {
                         Some(struct_sid) => match base_ty {
