@@ -6041,3 +6041,35 @@ fn main() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "0\n1\n2\n");
 }
+
+#[test]
+fn short_circuit_returns_compute_the_value_before_scope_cleanup() {
+    let output = execute(r#"
+struct Guard { id: i64 }
+impl Guard {
+    fn drop(&mut self) -> i64 {
+        print(self.id);
+        return 0;
+    }
+}
+
+fn mark(id: i64) -> bool {
+    print(id);
+    return true;
+}
+
+fn guarded(run: bool) -> bool {
+    let guard = Guard { id: 42 };
+    return run && mark(7);
+}
+
+fn main() {
+    assert(true || mark(99));
+    print(false && mark(100));
+    print(guarded(false));
+    print(guarded(true));
+}
+"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "false\n42\nfalse\n7\n42\ntrue\n");
+}
