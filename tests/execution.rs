@@ -6228,3 +6228,31 @@ fn main() {}
     let stderr = String::from_utf8_lossy(&checked.stderr);
     assert!(stderr.contains("while a view binding of it may still be read"), "{stderr}");
 }
+
+#[test]
+fn forwarded_mutable_borrows_cannot_alias_call_arguments() {
+    let dir = unique_temp_dir("forwarded_mut_alias");
+    let path = dir.join("main.ae");
+    for (second_type, second_argument) in [
+        ("&mut Pair", "&mut pair"),
+        ("&Pair", "&pair"),
+    ] {
+        for (signature, arguments) in [
+            (format!("&mut Pair, {second_type}"), format!("&mut pair, {second_argument}")),
+            (format!("{second_type}, &mut Pair"), format!("{second_argument}, &mut pair")),
+        ] {
+            fs::write(&path, format!(r#"
+struct Pair {{ value: i64 }}
+fn forward(f: fn({signature}) -> i64, pair: &mut Pair) -> i64 {{
+    return f({arguments});
+}}
+fn main() {{}}
+"#)).unwrap();
+            let checked = Command::new(env!("CARGO_BIN_EXE_ae"))
+                .arg("check").arg(&path).output().unwrap();
+            let stderr = String::from_utf8_lossy(&checked.stderr);
+            assert!(!checked.status.success() && stderr.contains("borrowed in this statement"), "{stderr}");
+        }
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
