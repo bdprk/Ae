@@ -472,7 +472,11 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
             }
             None
         }
-        Expr::Index(_, _, index, ..) | Expr::VecIndex(_, index, ..) | Expr::StrVecIndex(_, index, ..) => walk_expr(index, moved),
+        Expr::Index(id, _, index, ..) | Expr::VecIndex(id, index, ..) | Expr::StrVecIndex(id, index, ..) => {
+            let base_result = moved.read(*id);
+            let index_result = walk_expr(index, moved);
+            base_result.or(index_result)
+        }
         Expr::Len(a, ..) | Expr::Neg(a, ..) | Expr::Not(a) | Expr::ReadFile(a, ..) | Expr::Bytes(a, ..) | Expr::Trim(a, ..) | Expr::Lines(a, ..) | Expr::Utf8Len(a, ..) | Expr::ToString(a, ..) | Expr::FloatToString(a, ..) | Expr::ToF64(a, ..) | Expr::ParseInt(a, ..) | Expr::TryReadFile(a, ..) | Expr::TryListDir(a, ..) | Expr::PathExists(a, ..) | Expr::PathIsDir(a, ..) | Expr::PathName(a, ..) | Expr::PathParent(a, ..) | Expr::TryFileInfo(a, ..) | Expr::TryRemoveFile(a, ..) | Expr::TryRemoveDir(a, ..) | Expr::TryCreateDir(a, ..) | Expr::SetCwd(a, ..) | Expr::Env(a, ..) | Expr::ToI64(a, ..) => walk_expr(a, moved),
         Expr::Tokens(_, _, sep, ..) => walk_expr(sep, moved),
         Expr::StrEq(a, b, _) | Expr::Contains(a, b, ..) | Expr::Split(a, b, ..) | Expr::WriteFile(a, b, ..) | Expr::Slice(a, b, ..) | Expr::TryWriteFile(a, b, ..) | Expr::TryCopyFile(a, b, ..) | Expr::TryRenamePath(a, b, ..) | Expr::PathJoin(a, b, ..) | Expr::StartsWith(a, b) | Expr::EndsWith(a, b) | Expr::CountLinesWith(a, b, ..) | Expr::Find(a, b, ..) | Expr::JsonGet(a, b, ..) | Expr::JsonInt(a, b, ..) | Expr::JsonBool(a, b, ..) | Expr::JsonLen(a, b, ..) | Expr::TryAppendFile(a, b, ..) | Expr::Utf8Prefix(a, b, ..) => {
@@ -521,6 +525,17 @@ fn walk_moving_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn indexed_access_reads_container_and_index() {
+        let index = || Box::new(Expr::Variable(2, Type::Int, 0, 0));
+        let expressions = [
+            Expr::Index(1, 3, index(), 0, 0),
+            Expr::VecIndex(1, index(), 0, 0, false, Type::Int),
+            Expr::StrVecIndex(1, index(), 0, 0, false),
+        ];
+        for expr in expressions { assert_eq!(expr_reads(&expr), vec![1, 2]); }
+    }
 
     #[test]
     fn pointer_offset_walks_base_and_count_in_order() {

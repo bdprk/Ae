@@ -378,7 +378,10 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
         }
         // A retag uses the base without consuming it.
         Expr::PtrCast(e, ..) => walk_expr(e, used, mutated),
-        Expr::Index(id, _, _, _, _) | Expr::VecIndex(id, ..) | Expr::StrVecIndex(id, ..) => { used.insert(*id); }
+        Expr::Index(id, _, index, ..) | Expr::VecIndex(id, index, ..) | Expr::StrVecIndex(id, index, ..) => {
+            used.insert(*id);
+            walk_expr(index, used, mutated);
+        }
         Expr::Tokens(id, ..) => { used.insert(*id); }
         Expr::Join(id, sep, ..) => { used.insert(*id); walk_expr(sep, used, mutated); }
         // The call's program name is an expression like any other; the
