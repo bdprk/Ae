@@ -3639,6 +3639,19 @@ fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
 }
 
 #[test]
+fn closure_captures_function_value_and_its_argument() {
+    let dir = unique_temp_dir("closure_function_capture");
+    let source = dir.join("capture.ae");
+    fs::write(&source, "fn apply(f: fn(i64) -> i64, x: i64) -> i64 { let call = || -> i64 { return f(x); }; return call(); }\nfn main() { print(apply(|n: i64| -> i64 { return n + 1; }, 41)); }\n").unwrap();
+    for backend in ["tree", "mir"] {
+        let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).env("AE_CODEGEN", backend).output().unwrap();
+        assert!(run.status.success(), "{backend}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "42\n");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn closure_captures_pointer_offset_count() {
     let dir = unique_temp_dir("closure_pointer_count");
     let source = dir.join("capture.ae");
