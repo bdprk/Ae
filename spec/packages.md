@@ -44,7 +44,7 @@ ae new DIRECTORY creates a package with version 0.1.0 and a compatibility floor 
 
 ae deps accepts a package path or discovers the nearest manifest. It follows path dependencies relative to each declaring manifest, lists dependencies before their dependents and prints each canonical package once. Cycles report the chain of manifests. Registry, git, and target-specific dependencies remain future work.
 
-Use `use "@alias";` to load a declared path dependency's src/lib.ae. Each import resolves against the declaring package's direct dependency table. The existing compiler module rules apply to symbols loaded from those files. Check, run and emit commands support library imports. Source cache reuse is disabled for these projects until the manifest graph participates in cache keys.
+Use `use "@alias";` to load a declared path dependency's src/lib.ae. Each import resolves against the declaring package's direct dependency table. The existing compiler module rules apply to symbols loaded from those files. Check, run and emit commands support library imports. Frontend cache reuse checks both the resolved import map and all previously loaded source hashes. Locked builds verify their lockfile even when the frontend cache hits.
 
 ## 3. Lockfile (`ae.lock`)
 

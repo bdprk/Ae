@@ -523,9 +523,9 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         _ => return Err(format!("unknown command: {cmd}\n{USAGE}")),
     };
     let package::PackageEntry { path: input, imports, lock } = package::entry_path(Path::new(&args[1]))?;
-    let package_imports = !imports.is_empty();
+    let import_key = sha256::hex(format!("{imports:?}").as_bytes());
     frontend::with_package_imports(imports, || {
-        run_source(&cmd, &input, output, &program_args, release, package_imports, lock.filter(|_| cmd == "build"))
+        run_source(&cmd, &input, output, &program_args, release, &import_key, lock.filter(|_| cmd == "build"))
     })
 }
 
@@ -535,7 +535,7 @@ fn run_source(
     output: Option<PathBuf>,
     program_args: &[OsString],
     release: bool,
-    package_imports: bool,
+    import_key: &str,
     lock: Option<package::PackageLock>,
 ) -> Result<u8, String> {
     let started = Instant::now();
@@ -568,9 +568,10 @@ fn run_source(
     // previous build, the frontend work is skipped entirely. `emit-c` and
     // `check` always run the frontend, because their output *is* the
     // frontend's answer.
-    let cacheable = !package_imports && matches!(cmd, "build" | "run");
-    let c = match if cacheable { frontend_cache::lookup(&cache_root(), input) } else { None } {
+    let cacheable = matches!(cmd, "build" | "run");
+    let c = match if cacheable { frontend_cache::lookup(&cache_root(), input, import_key) } else { None } {
         Some(hit) => {
+            if let Some(lock) = &lock { lock.verify(&hit.units)?; }
             if timings_enabled() {
                 eprintln!("ae frontend-cache: hit (key {})", hit.key);
                 eprintln!("ae timing: frontend_and_codegen_ms=0.000 (frontend cache hit)");
@@ -581,7 +582,7 @@ fn run_source(
             let tracked = frontend::compile_path_tracked(input)?;
             if let Some(lock) = &lock { lock.verify(&tracked.units)?; }
             let c = format!("{}{}", tracked.runtime, tracked.user);
-            let key = if package_imports { None } else { frontend_cache::store(&cache_root(), input, &tracked) };
+            let key = frontend_cache::store(&cache_root(), input, import_key, &tracked);
             if timings_enabled() {
                 if cacheable {
                     eprintln!("ae frontend-cache: miss (key {})", key.unwrap_or_else(|| "not stored".into()));

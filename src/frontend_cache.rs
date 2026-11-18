@@ -24,7 +24,7 @@ const FORMAT: &str = "1";
 /// compiler keeps its version number during development, so the executable's
 /// own size and modification time are part of the identity: without them a
 /// codegen fix in the working tree would keep serving yesterday's C.
-fn tool_identity() -> String {
+fn tool_identity(imports: &str) -> String {
     let exe = std::env::current_exe().ok();
     let (len, stamp) = match exe.as_deref().and_then(|p| fs::metadata(p).ok()) {
         Some(meta) => (
@@ -36,7 +36,7 @@ fn tool_identity() -> String {
         ),
         None => (0, 0),
     };
-    format!("{} {len} {stamp} codegen:{}", env!("CARGO_PKG_VERSION"), frontend::codegen_mode())
+    format!("{} {len} {stamp} codegen:{} imports:{imports}", env!("CARGO_PKG_VERSION"), frontend::codegen_mode())
 }
 
 /// Canonical form of the entry file, used both to name the entry directory and
@@ -71,20 +71,21 @@ pub struct Hit {
     pub c: String,
     /// Query key of the entry that was served, for timing output.
     pub key: String,
+    pub units: Vec<frontend::SourceUnit>,
 }
 
 /// Returns the cached C for `root` when every recorded source unit still hashes
 /// to its recorded digest and the stored C still matches its own hash. Any
 /// doubt — unreadable file, short entry, changed byte, different compiler — is
 /// a miss, which the caller resolves by compiling from source.
-pub fn lookup(cache_root: &Path, root: &Path) -> Option<Hit> {
+pub fn lookup(cache_root: &Path, root: &Path, imports: &str) -> Option<Hit> {
     let canonical = canonical_root(root)?;
     let dir = entry_dir(cache_root, &canonical);
     let text = fs::read_to_string(dir.join("entry")).ok()?;
     let mut lines = text.lines();
 
     if lines.next()? != format!("format {FORMAT}").as_str() { return None; }
-    let tool = tool_identity();
+    let tool = tool_identity(imports);
     if lines.next()? != format!("tool {tool}").as_str() { return None; }
     let recorded_root = lines.next()?.strip_prefix("root ")?;
     if recorded_root != canonical.to_string_lossy().as_ref() { return None; }
@@ -112,16 +113,16 @@ pub fn lookup(cache_root: &Path, root: &Path) -> Option<Hit> {
     let bytes = fs::read(&c_path).ok()?;
     if sha256::hex(&bytes) != c_digest { return None; }
     let c = String::from_utf8(bytes).ok()?;
-    Some(Hit { c, key })
+    Some(Hit { c, key, units })
 }
 
 /// Publishes an entry. Best effort by design: a failed cache write must never
 /// turn a successful compile into a failed build, so every error here is
 /// swallowed and the next build simply misses.
-pub fn store(cache_root: &Path, root: &Path, tracked: &frontend::TrackedC) -> Option<String> {
+pub fn store(cache_root: &Path, root: &Path, imports: &str, tracked: &frontend::TrackedC) -> Option<String> {
     let canonical = canonical_root(root)?;
     let dir = entry_dir(cache_root, &canonical);
-    let tool = tool_identity();
+    let tool = tool_identity(imports);
     let key = query_key(&tracked.units, &tool);
     let c = format!("{}{}", tracked.runtime, tracked.user);
     let c_digest = sha256::hex(c.as_bytes());
@@ -202,8 +203,8 @@ mod tests {
         let src = tmp.path().join("main.ae");
         write(&src, "fn main() { print(\"hi\") }");
         let t = tracked(&[&src], "/*runtime*//*user*/");
-        let key = store(tmp.path(), &src, &t).expect("stored");
-        let hit = lookup(tmp.path(), &src).expect("hit");
+        let key = store(tmp.path(), &src, "", &t).expect("stored");
+        let hit = lookup(tmp.path(), &src, "").expect("hit");
         assert_eq!(hit.c, "/*runtime*//*user*/");
         assert_eq!(hit.key, key);
     }
@@ -213,9 +214,9 @@ mod tests {
         let tmp = TempDir::new();
         let src = tmp.path().join("main.ae");
         write(&src, "fn main() { print(1) }");
-        store(tmp.path(), &src, &tracked(&[&src], "c")).unwrap();
+        store(tmp.path(), &src, "", &tracked(&[&src], "c")).unwrap();
         write(&src, "fn main() { print(2) }");
-        assert!(lookup(tmp.path(), &src).is_none());
+        assert!(lookup(tmp.path(), &src, "").is_none());
     }
 
     #[test]
@@ -225,9 +226,9 @@ mod tests {
         let lib = tmp.path().join("lib.ae");
         write(&src, "use \"lib.ae\";");
         write(&lib, "pub fn f() -> i64 { return 1 }");
-        store(tmp.path(), &src, &tracked(&[&src, &lib], "c")).unwrap();
+        store(tmp.path(), &src, "", &tracked(&[&src, &lib], "c")).unwrap();
         fs::remove_file(&lib).unwrap();
-        assert!(lookup(tmp.path(), &src).is_none());
+        assert!(lookup(tmp.path(), &src, "").is_none());
     }
 
     #[test]
@@ -235,10 +236,10 @@ mod tests {
         let tmp = TempDir::new();
         let src = tmp.path().join("main.ae");
         write(&src, "fn main() { print(1) }");
-        store(tmp.path(), &src, &tracked(&[&src], "compiled")).unwrap();
+        store(tmp.path(), &src, "", &tracked(&[&src], "compiled")).unwrap();
         let dir = entry_dir(tmp.path(), &canonical_root(&src).unwrap());
         fs::write(dir.join("program.c"), "tampered").unwrap();
-        assert!(lookup(tmp.path(), &src).is_none());
+        assert!(lookup(tmp.path(), &src, "").is_none());
     }
 
     #[test]
@@ -246,13 +247,13 @@ mod tests {
         let tmp = TempDir::new();
         let src = tmp.path().join("main.ae");
         write(&src, "fn main() { print(1) }");
-        store(tmp.path(), &src, &tracked(&[&src], "c")).unwrap();
+        store(tmp.path(), &src, "", &tracked(&[&src], "c")).unwrap();
         let dir = entry_dir(tmp.path(), &canonical_root(&src).unwrap());
         let entry = fs::read_to_string(dir.join("entry")).unwrap();
-        let old = format!("tool {}\n", tool_identity());
+        let old = format!("tool {}\n", tool_identity(""));
         assert!(entry.contains(&old));
         fs::write(dir.join("entry"), entry.replace(&old, "tool 0 0 0\n")).unwrap();
-        assert!(lookup(tmp.path(), &src).is_none());
+        assert!(lookup(tmp.path(), &src, "").is_none());
     }
 
     #[test]
@@ -262,8 +263,8 @@ mod tests {
         let other = tmp.path().join("other.ae");
         write(&src, "fn main() { print(1) }");
         write(&other, "fn main() { print(1) }");
-        store(tmp.path(), &src, &tracked(&[&src], "c")).unwrap();
-        assert!(lookup(tmp.path(), &other).is_none());
+        store(tmp.path(), &src, "", &tracked(&[&src], "c")).unwrap();
+        assert!(lookup(tmp.path(), &other, "").is_none());
     }
 
     #[test]

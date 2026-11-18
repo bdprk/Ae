@@ -6522,8 +6522,15 @@ fn local_library_packages_compile_through_declared_aliases() {
         assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
     }
     let app = dir.join("app");
+    let cache = dir.join("cache");
+    let native_run = || Command::new(cli).current_dir(&app)
+        .env("AE_CACHE", &cache).env("AE_TIMINGS", "1").arg("run").output().unwrap();
+    assert!(native_run().status.success());
+    let cached = native_run();
+    assert!(cached.status.success());
+    assert!(String::from_utf8_lossy(&cached.stderr).contains("frontend-cache: hit"));
     let executable = app.join("tool.exe");
-    let build = || Command::new(cli).current_dir(&app).args(["build", "-o"]).arg(&executable).output().unwrap();
+    let build = || Command::new(cli).current_dir(&app).env("AE_CACHE", &cache).args(["build", "-o"]).arg(&executable).output().unwrap();
     let missing = build();
     assert!(!missing.status.success() && String::from_utf8_lossy(&missing.stderr).contains("Run ae update"));
     let update = || Command::new(cli).current_dir(&app).arg("update").output().unwrap();
@@ -6536,6 +6543,7 @@ fn local_library_packages_compile_through_declared_aliases() {
 
     let dependency = dir.join("base/src/lib.ae");
     fs::write(&dependency, "pub fn base() -> i64 { return 41; }").unwrap();
+    assert!(native_run().status.success());
     let stale = build();
     let stderr = String::from_utf8_lossy(&stale.stderr);
     assert!(!stale.status.success() && stderr.contains("is stale") && stderr.contains("../base/src/lib.ae"), "{stderr}");
@@ -6546,6 +6554,17 @@ fn local_library_packages_compile_through_declared_aliases() {
     let result = Command::new(&executable).output().unwrap();
     assert!(result.status.success());
     assert_eq!(String::from_utf8_lossy(&result.stdout).replace("\r\n", "\n"), "43\n");
+    let alternate = dir.join("alternate");
+    fs::create_dir_all(alternate.join("src")).unwrap();
+    fs::write(alternate.join("ae.toml"), "[package]\nname = 'alternate'\nversion = '0.1.0'\nae = '0.1'\n").unwrap();
+    fs::write(alternate.join("src/lib.ae"), "pub fn base() -> i64 { return 100; }").unwrap();
+    let manifest = dir.join("math/ae.toml");
+    let contents = fs::read_to_string(&manifest).unwrap().replace("'../base'", "'../alternate'");
+    fs::write(manifest, contents).unwrap();
+    let remapped = native_run();
+    assert!(remapped.status.success(), "{}", String::from_utf8_lossy(&remapped.stderr));
+    assert!(String::from_utf8_lossy(&remapped.stderr).contains("frontend-cache: miss"));
+    assert_eq!(String::from_utf8_lossy(&remapped.stdout).replace("\r\n", "\n"), "102\n");
     fs::write(dir.join("app/src/main.ae"), "use \"@base\"; fn main() {}").unwrap();
     let checked = Command::new(cli).current_dir(dir.join("app")).args(["check", "--json"]).output().unwrap();
     let report = String::from_utf8_lossy(&checked.stdout);
