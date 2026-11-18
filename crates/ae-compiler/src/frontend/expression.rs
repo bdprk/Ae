@@ -450,6 +450,24 @@ impl Parser<'_> {
                             (Expr::Len(Box::new(operand), line, col), Type::Int)
                         }
                     }
+                } else if name == "ptr_write" && *self.current() == Kind::LParen {
+                    if self.unsafe_depth == 0 {
+                        return Err(self.error_at(name_offset, "ptr_write is an unsafe operation; wrap it in an 'unsafe { ... }' block"));
+                    }
+                    self.pos += 1;
+                    let (ptr_expr, ptr_ty) = self.expression(0, false)?;
+                    self.take(Kind::Comma)?;
+                    let (val_expr, val_ty) = self.expression(0, true)?;
+                    self.take(Kind::RParen)?;
+                    let Type::PtrMut(pid) = ptr_ty else {
+                        return Err(self.error_at(name_offset, "ptr_write expects a '*mut T' pointer as its first argument"));
+                    };
+                    let pointee = super::ptr_pointee(pid);
+                    if val_ty != pointee {
+                        return Err(self.error_at(name_offset, &format!("ptr_write value type mismatch: expected '{}', got '{}'", pointee.name(), val_ty.name())));
+                    }
+                    let (line, column) = self.position();
+                    (Expr::PtrWrite(Box::new(ptr_expr), Box::new(val_expr), pointee, line, column), Type::Int)
                 } else if name == "ptr_drop_in_place" && *self.current() == Kind::LParen {
                     if self.unsafe_depth == 0 {
                         return Err(self.error_at(name_offset, "ptr_drop_in_place is an unsafe operation; wrap it in an 'unsafe { ... }' block"));

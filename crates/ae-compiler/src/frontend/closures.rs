@@ -372,7 +372,7 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
         // A pointer takes the address of (or reads through) the slot (M2.12).
         Expr::BorrowAs(e, ..) | Expr::DerefPtr(e, ..) => walk_expr(e, used, mutated),
         // Both the pointer and its offset can reference captured values.
-        Expr::PtrOffset(base, count, ..) => {
+        Expr::PtrOffset(base, count, ..) | Expr::PtrWrite(base, count, ..) => {
             walk_expr(base, used, mutated);
             walk_expr(count, used, mutated);
         }

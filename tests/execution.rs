@@ -5763,6 +5763,16 @@ impl MyVec[T] {
         }
     }
 
+    fn append(&mut self, val: T) -> i64 {
+        unsafe {
+            var base = self.ptr as *mut T;
+            var slot = base.offset(self.len);
+            var _w = ptr_write(slot, val);
+            self.len = self.len + 1;
+        }
+        return 0;
+    }
+
     fn drop(&mut self) -> i64 {
         unsafe {
             var base = self.ptr as *mut T;
@@ -5779,7 +5789,9 @@ impl MyVec[T] {
 }
 
 fn main() {
-    var v = MyVec[Elem]::new();
+    var v = MyVec[i64]::new();
+    var _p1 = v.append(101);
+    var _p2 = v.append(202);
     print(v.len);
 }
 "#).unwrap();
@@ -5790,7 +5802,7 @@ fn main() {
         .unwrap();
     assert!(out.status.success(), "mir failed: {}", String::from_utf8_lossy(&out.stderr));
     let stdout = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
-    assert_eq!(stdout, "0\n");
+    assert_eq!(stdout, "2\n");
 
     let _ = std::fs::remove_dir_all(dir);
 }

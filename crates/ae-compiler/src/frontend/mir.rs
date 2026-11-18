@@ -328,6 +328,7 @@ fn expr_intrinsic(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut Mi
             vec![lower_operand(e, bindings, lowering)],
         ),
         Expr::PtrDropInPlace(e, ..) => ("ptr_drop_in_place", vec![lower_operand(e, bindings, lowering)]),
+        Expr::PtrWrite(p, v, ..) => ("ptr_write", vec![lower_operand(p, bindings, lowering), lower_operand(v, bindings, lowering)]),
         Expr::Len(e, ..) => ("len", vec![lower_operand(e, bindings, lowering)]),
         Expr::Index(id, len, index, ..) => ("index", vec![
             MirOperand::Place(MirPlace::Local(*id, Type::Array(*len))),
@@ -446,7 +447,7 @@ pub(super) fn expr_type(expr: &Expr) -> Type {
         Expr::DerefPtr(p, ..) => match expr_type(p) { Type::Ptr(id) | Type::PtrMut(id) => crate::frontend::ptr_pointee(id), other => other },
         // Offsetting keeps the base's pointer type.
         Expr::PtrOffset(p, ..) => expr_type(p),
-        Expr::PtrDropInPlace(..) => Type::Int,
+        Expr::PtrDropInPlace(..) | Expr::PtrWrite(..) => Type::Int,
         // A retag's type is the new pointer, taken from the variant's own
         // fields — recursing on the same expression here would not terminate.
         Expr::PtrCast(_, mutable, pointee_id, ..) => {
