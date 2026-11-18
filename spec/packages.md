@@ -62,6 +62,7 @@ For local packages, ae update loads the application and writes ae.lock atomicall
 ## 4. Resolution (MVS)
 
 - Input: the root manifest plus, for each candidate version, its own requirements — transitively, cycle-checked (dependency cycles are rejected at resolution with the cycle path).
+- One name, one version: two manifests declaring the same package name at different versions are rejected, naming both manifests — a program cannot link two versions of one package, and the second copy would otherwise silently shadow the first. The same name at the same version reached through different paths is tolerated; each copy compiles from its own sources.
 - Selection: for each package, take the **minimum version satisfying every requirement** that mentions it. The lockfile pins exactly these.
 - `ae update` re-resolves and rewrites the lock (bumping within ranges); `ae add pkg@ver` adds the requirement and resolves in the same pass.
 
