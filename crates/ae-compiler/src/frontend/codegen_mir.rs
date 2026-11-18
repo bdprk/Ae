@@ -53,7 +53,10 @@ fn statement_supported(statement: &Statement) -> bool {
         // check have no block-graph form yet.
         Statement::ForTokens(..) => false,
         Statement::If(_, yes, no) => statements_supported(yes) && statements_supported(no),
-        Statement::While(_, body) => statements_supported(body),
+        Statement::While(_, body) | Statement::For(_, _, body, ..) | Statement::Unsafe(body) => {
+            statements_supported(body)
+        }
+        Statement::Match(_, _, arms) => arms.iter().all(|arm| statements_supported(&arm.body)),
         _ => true,
     }
 }

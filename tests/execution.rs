@@ -1629,6 +1629,21 @@ fn main() {
 }
 
 #[test]
+fn token_cursor_nested_under_a_range_uses_the_tree_backend() {
+    let output = execute(r#"
+fn main() {
+    let text = "a b";
+    for i in 0..2 {
+        let cursor = tokenize(text, " ");
+        for part in cursor { print(part); }
+    }
+}
+"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "a\nb\na\nb\n");
+}
+
+#[test]
 fn tokens_reject_a_base_that_moves_is_written_or_is_a_temporary() {
     // The cursor borrows its base for the scope, so the base cannot be moved,
     // reassigned or have its field written while the cursor is alive; a
