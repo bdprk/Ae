@@ -6256,3 +6256,31 @@ fn main() {{}}
     }
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn forwarded_method_receivers_cannot_alias_borrowed_arguments() {
+    let dir = unique_temp_dir("forwarded_receiver_alias");
+    let path = dir.join("main.ae");
+    for (receiver, other_type, argument) in [
+        ("&mut self", "&mut Pair", "&mut pair"),
+        ("&mut self", "&Pair", "&pair"),
+        ("&self", "&mut Pair", "&mut pair"),
+    ] {
+        fs::write(&path, format!(r#"
+struct Pair {{ value: i64 }}
+impl Pair {{
+    fn combine({receiver}, other: {other_type}) -> i64 {{
+        return self.value + other.value;
+    }}
+}}
+fn forward(pair: &mut Pair) -> i64 {{
+    return pair.combine({argument});
+}}
+fn main() {{}}
+"#)).unwrap();
+        let checked = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        let stderr = String::from_utf8_lossy(&checked.stderr);
+        assert!(!checked.status.success() && stderr.contains("borrowed in this statement"), "{stderr}");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}

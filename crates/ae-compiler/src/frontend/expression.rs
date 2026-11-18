@@ -1293,7 +1293,7 @@ impl Parser<'_> {
                     let params = full_params[1..].to_vec();
                     let mut args = self.call_arguments(&format!("{struct_name}.{fname}"), &params)?;
                     match (&base, base_ty) {
-                        (Expr::Variable(id, ..), Type::Struct(_)) => {
+                        (Expr::Variable(id, ..), Type::Struct(_) | Type::StructMut(_)) => {
                             let id = *id;
                             if self.moved.contains(&id) {
                                 return Err(moved_value_hint(self.binding_label(self.fail(&format!("cannot borrow the receiver of '{fname}' because it was moved")).with_code("E0102"), id)));
@@ -1329,7 +1329,7 @@ impl Parser<'_> {
                                     self.call_borrows.push((id, self.scopes.len()));
                                 }
                             }
-                            args.insert(0, Argument::Borrow(id, true));
+                            args.insert(0, Argument::Borrow(id, matches!(base_ty, Type::Struct(_))));
                         }
                         (Expr::Variable(id, ..), Type::StructRef(_)) => {
                             // A borrow parameter forwards its pointer; the
@@ -1337,11 +1337,6 @@ impl Parser<'_> {
                             if wants_mut {
                                 return Err(self.fail(&format!("'{fname}' borrows its receiver mutably, which a read-only borrow cannot grant; call it on the owned variable")));
                             }
-                            args.insert(0, Argument::Borrow(*id, false));
-                        }
-                        (Expr::Variable(id, ..), Type::StructMut(_)) => {
-                            // A mutable borrow forwards its pointer for either
-                            // receiver form: writing shrinks to reading freely.
                             args.insert(0, Argument::Borrow(*id, false));
                         }
                         _ => return Err(self.fail(&format!("'{fname}' borrows its receiver, so the receiver must be a bare struct variable; bind the value to a variable first"))),
