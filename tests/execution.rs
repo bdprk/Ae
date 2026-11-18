@@ -6118,3 +6118,34 @@ fn main() {
     assert_eq!(tail.lines().find(|line| !line.trim().is_empty()).map(str::trim),
         Some(format!("ae_str_release(&{temporary});").as_str()));
 }
+
+#[test]
+fn function_values_borrow_all_vector_shapes() {
+    let dir = unique_temp_dir("indirect_vector_borrow");
+    let path = dir.join("main.ae");
+    fs::write(&path, r#"
+fn apply(f: fn(&vec, &vec[string], &vec[f64]) -> i64) -> i64 {
+    let numbers = vec[40];
+    let words = split("one two", " ");
+    let floats = vec[0.5];
+    let result = f(&numbers, &words, &floats);
+    print(numbers[0]);
+    print(words[1]);
+    print(floats[0] > 0.0);
+    return result;
+}
+
+fn main() {
+    print(apply(|numbers: &vec, words: &vec[string], floats: &vec[f64]| -> i64 {
+        return numbers[0] + len(words) + len(floats);
+    }));
+}
+"#).unwrap();
+    let cli = env!("CARGO_BIN_EXE_ae");
+    for flags in [&[][..], &["--interp"][..]] {
+        let output = Command::new(cli).arg("run").arg(&path).args(flags).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "40\ntwo\ntrue\n43\n");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}

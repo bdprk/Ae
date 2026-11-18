@@ -528,6 +528,18 @@ impl Parser<'_> {
     }
 
     // Arrays are borrowed read-only; strings and scalars pass by value.
+    pub(super) fn callable_parameter_type(&mut self) -> Result<Type, ae_span::Diagnostic> {
+        if *self.current() != Kind::Amp {
+            return self.named_type();
+        }
+        let ty = self.parameter_type()?;
+        if matches!(ty, Type::StrView | Type::VecRef | Type::StrVecRef | Type::VecFRef) {
+            Ok(ty)
+        } else {
+            Err(self.fail("callable parameters support only string and vector borrows"))
+        }
+    }
+
     pub(super) fn parameter_type(&mut self) -> Result<Type, ae_span::Diagnostic> {
         // `*const T` / `*mut T` in a type annotation (M2.12 slice 4's
         // c_abi_shape already advertises the pointer forms; until now pointer
@@ -547,16 +559,7 @@ impl Parser<'_> {
             if *self.current() != Kind::RParen {
                 loop {
                     if params.len() >= 8 { return Err(self.fail("function type parameter limit exceeded (8)")); }
-                    let param = if *self.current() == Kind::Amp {
-                        let ty = self.parameter_type()?;
-                        if ty != Type::StrView {
-                            return Err(self.fail("function types support only &string borrowed parameters"));
-                        }
-                        ty
-                    } else {
-                        self.named_type()?
-                    };
-                    params.push(param);
+                    params.push(self.callable_parameter_type()?);
                     if *self.current() != Kind::Comma { break; }
                     self.pos += 1;
                 }

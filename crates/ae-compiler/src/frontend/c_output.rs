@@ -67,7 +67,10 @@ pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         // parens, the way C requires.
         Type::Fn(sig) => {
             let (params, ret) = crate::frontend::closures::fn_sig(sig);
-            let c_params = if params.is_empty() { "void".to_owned() } else { params.iter().map(|t| t.c_temp().trim_end().to_owned()).collect::<Vec<_>>().join(", ") };
+            let c_params = if params.is_empty() { "void".to_owned() } else { params.iter().map(|t| match t {
+                Type::VecRef | Type::StrVecRef | Type::VecFRef => c_type(*t, 0, false),
+                _ => t.c_temp().trim_end().to_owned(),
+            }).collect::<Vec<_>>().join(", ") };
             if declaration {
                 format!("{} (*v{id})({})", ret.c_temp().trim_end(), c_params)
             } else {
