@@ -6098,7 +6098,8 @@ fn function_values_borrow_and_release_temporary_string_arguments() {
     fs::write(&path, r#"
 fn apply(f: fn(&string) -> i64) -> i64 {
     let suffix = "b";
-    return f("a" + suffix);
+    let result = f("a" + suffix);
+    return result;
 }
 
 fn main() {
@@ -6108,6 +6109,10 @@ fn main() {
     let cli = env!("CARGO_BIN_EXE_ae");
     let output = Command::new(cli).arg("run").arg(&path).output().unwrap();
     let c = Command::new(cli).arg("emit-c").arg(&path).output().unwrap();
+    let mir = Command::new(cli).arg("emit-mir").arg(&path).output().unwrap();
+    assert!(mir.status.success(), "{}", String::from_utf8_lossy(&mir.stderr));
+    let mir = String::from_utf8_lossy(&mir.stdout);
+    assert!(mir.lines().any(|line| line.contains("(string view) = string_view(")), "{mir}");
     fs::remove_dir_all(dir).unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "2\n");

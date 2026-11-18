@@ -249,7 +249,19 @@ fn base_place(base: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut MirLow
 
 fn lower_args(args: &[Argument], bindings: &mut Vec<MirBinding>, lowering: &mut MirLowering) -> Vec<MirOperand> {
     args.iter().map(|arg| match arg {
-        Argument::Value(e) | Argument::View(e) => lower_operand(e, bindings, lowering),
+        Argument::Value(e) => lower_operand(e, bindings, lowering),
+        Argument::View(e) => {
+            let value = lower_operand(e, bindings, lowering);
+            if expr_type(e) == Type::StrView {
+                return value;
+            }
+            let target = lowering.fresh(Type::StrView);
+            bindings.push(MirBinding {
+                target: target.clone(),
+                rvalue: MirRvalue::Intrinsic("string_view", vec![value], Type::StrView),
+            });
+            MirOperand::Place(target)
+        }
         Argument::Borrow(slot, take_address) => MirOperand::Borrow { slot: *slot, take_address: *take_address },
         Argument::FnPtr(id) => MirOperand::FnPtr(*id),
     }).collect()
