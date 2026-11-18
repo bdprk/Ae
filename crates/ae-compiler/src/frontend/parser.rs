@@ -542,7 +542,7 @@ impl<'a> Parser<'a> {
                             // (the same rule the scalar assignment uses).
                             let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
                             if value_ty != fty { return Err(self.fail(&format!("field '{}' must be {}", fname, fty.name()))); }
-                            result.push(Statement::FieldStore(id, fname, fty, value, true));
+                            result.push(Statement::FieldStore(id, fname, fty, value, ty));
                             continue;
                         }
                         return Err(self.fail(&format!("cannot assign to '{name}' itself through a '&mut' borrow; write its fields instead")));
@@ -609,7 +609,7 @@ impl<'a> Parser<'a> {
                                 let base_var = Expr::Variable(id, ty, line, col);
                                 let lhs_field = Expr::Field(Box::new(base_var), fname.clone(), fty);
                                 let value = Expr::Binary(Box::new(lhs_field), op, Box::new(rhs), line, col, fty);
-                                result.push(Statement::FieldStore(id, fname, fty, value, false));
+                                result.push(Statement::FieldStore(id, fname, fty, value, ty));
                                 continue;
                             }
                             self.take(Kind::Equal)?;
@@ -617,7 +617,7 @@ impl<'a> Parser<'a> {
                             // field owns the bytes afterwards.
                             let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
                             if value_ty != fty { return Err(self.fail(&format!("field '{}' must be {}", fname, fty.name()))); }
-                            result.push(Statement::FieldStore(id, fname, fty, value, false));
+                            result.push(Statement::FieldStore(id, fname, fty, value, ty));
                             continue;
                         }
                         // Whole-struct assignment moves a fresh value in.

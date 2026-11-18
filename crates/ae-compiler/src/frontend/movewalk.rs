@@ -597,7 +597,7 @@ mod tests {
 
     #[test]
     fn owned_field_assignment_consumes_its_value() {
-        let statement = Statement::FieldStore(1, "value".to_owned(), Type::String, Expr::Variable(2, Type::String, 0, 0), false);
+        let statement = Statement::FieldStore(1, "value".to_owned(), Type::String, Expr::Variable(2, Type::String, 0, 0), Type::Struct(0));
         assert_eq!(statement_move_effects(&statement).moved, vec![2]);
     }
 

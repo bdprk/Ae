@@ -135,9 +135,9 @@ impl<'a> TreePrinter<'a> {
                 let value_text = self.expression_text(value);
                 self.line(&format!("v{}[{}] = {} @ {}:{}", id, index_text, value_text, line, col));
             }
-            Statement::FieldStore(id, fname, fty, value, through_pointer) => {
+            Statement::FieldStore(id, fname, fty, value, base_ty) => {
                 let value_text = self.expression_text(value);
-                let access = if *through_pointer { "->" } else { "." };
+                let access = if matches!(base_ty, Type::StructMut(_)) { "->" } else { "." };
                 self.line(&format!("v{}{}{} = {} (field {})", id, access, fname, value_text, fty.name()));
             }
             Statement::Sort(id, ascending, line, col) => {
