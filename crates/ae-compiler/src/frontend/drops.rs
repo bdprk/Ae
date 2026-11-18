@@ -72,7 +72,15 @@ pub(super) struct DropStats {
 }
 
 pub(super) fn elaborate(function: &mut MirFunction) -> DropStats {
-    let states = entry_states(function);
+    let rounds = function.blocks.len().saturating_mul(4).saturating_add(8);
+    elaborate_with_round_limit(function, rounds)
+}
+
+fn elaborate_with_round_limit(function: &mut MirFunction, rounds: usize) -> DropStats {
+    let Some(states) = entry_states(function, rounds) else {
+        // An incomplete dataflow result cannot justify removing any release.
+        return DropStats::default();
+    };
     let mut stats = DropStats::default();
     for block in &mut function.blocks {
         let mut state: State = states.get(&block.id).cloned().unwrap_or_default();
@@ -139,8 +147,8 @@ fn sync_releases_binding(bindings: &mut Vec<MirBinding>, original: &[usize], kep
 // Per-block state on entry, to a fixed point. `Uninit` is the default for
 // every slot a state does not name, so the entry state names only the owned
 // parameters (live on entry).
-fn entry_states(function: &MirFunction) -> HashMap<usize, State> {
-    let Some(entry) = function.blocks.first().map(|block| block.id) else { return HashMap::new() };
+fn entry_states(function: &MirFunction, rounds: usize) -> Option<HashMap<usize, State>> {
+    let Some(entry) = function.blocks.first().map(|block| block.id) else { return Some(HashMap::new()) };
     let mut initial = State::new();
     for &(id, ty) in &function.params {
         if ty.owned() { initial.insert(id, DropState::Live); }
@@ -151,7 +159,6 @@ fn entry_states(function: &MirFunction) -> HashMap<usize, State> {
     // states. States only move up the lattice (`Mixed` is the top), so the
     // iteration terminates; the round bound is a guard against a lowering bug
     // introducing a cycle the lattice cannot absorb, not the real limit.
-    let rounds = function.blocks.len() * 4 + 8;
     for _ in 0..rounds {
         let mut changed = false;
         for block in &function.blocks {
@@ -167,9 +174,9 @@ fn entry_states(function: &MirFunction) -> HashMap<usize, State> {
                 changed = true;
             }
         }
-        if !changed { return in_states; }
+        if !changed { return Some(in_states); }
     }
-    in_states
+    None
 }
 
 fn merge_predecessors(function: &MirFunction, block_id: usize, out_states: &HashMap<usize, State>) -> State {
@@ -343,6 +350,22 @@ fn rewrite_list(list: Vec<(usize, Type)>, state: &mut State, stats: &mut DropSta
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn incomplete_analysis_does_not_rewrite_releases() {
+        let mut function = MirFunction {
+            id: 0, is_main: false, params: vec![], returns: Type::Int,
+            blocks: vec![super::super::mir::MirBlock {
+                id: 0,
+                statements: vec![Statement::Frees(vec![(7, Type::String)])],
+                bindings: vec![],
+                terminator: CfgTerminator::Unreachable,
+            }],
+        };
+        let stats = elaborate_with_round_limit(&mut function, 0);
+        assert_eq!(stats.elided_uninit, 0);
+        assert!(matches!(&function.blocks[0].statements[..], [Statement::Frees(items)] if items.len() == 1 && items[0].0 == 7));
+    }
 
     #[test]
     fn join_treats_missing_slots_as_uninitialized_on_either_side() {
