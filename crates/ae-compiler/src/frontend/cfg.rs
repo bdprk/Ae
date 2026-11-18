@@ -318,13 +318,28 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             );
             (success, false)
         }
+        Statement::Print(Printed::Expr(value)) if is_short_circuit(value) => {
+            let (join, value) = lower_boolean_value(value, current, lowering);
+            lowering.block(join).statements.push(Statement::Print(Printed::Expr(value)));
+            (join, false)
+        }
+        Statement::Assert(value, line, column) if is_short_circuit(value) => {
+            let (join, value) = lower_boolean_value(value, current, lowering);
+            lowering.block(join).statements.push(Statement::Assert(value, *line, *column));
+            (join, false)
+        }
         Statement::Return(expr, frees) => {
+            let (current, value) = if is_short_circuit(expr) {
+                lower_boolean_value(expr, current, lowering)
+            } else {
+                (current, expr.clone())
+            };
             // The release annotations ride the return: they are statements
             // the lowering keeps in order, then the return edge.
             if !frees.is_empty() {
                 lowering.block(current).statements.push(Statement::Frees(frees.clone()));
             }
-            lowering.block(current).terminator = CfgTerminator::Return((*expr).clone());
+            lowering.block(current).terminator = CfgTerminator::Return(value);
             (lowering.new_block(), true)
         }
         Statement::Exit(code, frees) => {
