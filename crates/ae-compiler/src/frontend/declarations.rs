@@ -1240,7 +1240,7 @@ impl Parser<'_> {
                     let arg = self.identifier()?;
                     let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown variable '{arg}'")).with_code("E0101"))?;
                     match actual {
-                        Type::Struct(owned_sid) if owned_sid == sid => {
+                        Type::Struct(actual_sid) | Type::StructMut(actual_sid) if actual_sid == sid => {
                             if self.moved.contains(&var) { return Err(moved_value_hint(self.binding_label(self.fail(&format!("cannot borrow '{arg}' because it was moved")).with_code("E0102"), var))); }
                             if self.mut_borrows.iter().any(|&(bid, _)| bid == var) {
                                 return Err(self.fail(&format!("cannot borrow '{arg}' while it is mutably borrowed in this statement")));
@@ -1251,16 +1251,13 @@ impl Parser<'_> {
                             if !self.is_borrowed(var) {
                                 self.call_borrows.push((var, self.scopes.len()));
                             }
-                            args.push(Argument::Borrow(var, true));
+                            args.push(Argument::Borrow(var, matches!(actual, Type::Struct(_))));
                         }
                         // A borrow parameter forwards its pointer unchanged:
                         // the callee's reads are already covered by the borrow
                         // the caller received. A mutable borrow may shrink to
                         // a read-only one; the reverse is not allowed.
                         Type::StructRef(forwarded_sid) if forwarded_sid == sid => {
-                            args.push(Argument::Borrow(var, false));
-                        }
-                        Type::StructMut(forwarded_sid) if forwarded_sid == sid => {
                             args.push(Argument::Borrow(var, false));
                         }
                         other => return Err(self.fail(&format!("argument must be {}, found {}", expected.name(), other.name()))),
@@ -1278,7 +1275,7 @@ impl Parser<'_> {
                     let arg = self.identifier()?;
                     let (var, mutable, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown variable '{arg}'")).with_code("E0101"))?;
                     match actual {
-                        Type::Struct(owned_sid) if owned_sid == sid => {
+                        Type::Struct(actual_sid) | Type::StructMut(actual_sid) if actual_sid == sid => {
                             if self.moved.contains(&var) { return Err(moved_value_hint(self.binding_label(self.fail(&format!("cannot borrow '{arg}' because it was moved")).with_code("E0102"), var))); }
                             if !mutable {
                                 return Err(self.immutable_binding_error(self.fail(&format!("cannot borrow '{arg}' mutably: it was declared without 'var'")).with_code("E0103"), var));
@@ -1298,11 +1295,7 @@ impl Parser<'_> {
                                 self.deferred_write_conflicts.push((var, offset, arg.clone(), "mutate", None));
                             }
                             self.mut_borrows.push((var, self.scopes.len()));
-                            args.push(Argument::Borrow(var, true));
-                        }
-                        // A mutable borrow parameter forwards its pointer.
-                        Type::StructMut(forwarded_sid) if forwarded_sid == sid => {
-                            args.push(Argument::Borrow(var, false));
+                            args.push(Argument::Borrow(var, matches!(actual, Type::Struct(_))));
                         }
                         other => return Err(self.fail(&format!("argument must be {}, found {}", expected.name(), other.name()))),
                     }
