@@ -6469,3 +6469,33 @@ fn new_scaffolds_a_runnable_package_without_overwriting() {
     assert_eq!(fs::read(project.join("ae.toml")).unwrap(), manifest);
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn package_deps_visits_local_diamond_once_and_rejects_cycles() {
+    let dir = unique_temp_dir("package_dependency_graph");
+    let write_manifest = |name: &str, dependencies: &str| {
+        let package = dir.join(name);
+        fs::create_dir_all(&package).unwrap();
+        fs::write(package.join("ae.toml"), format!(
+            "[package]\nname = '{name}'\nversion = '0.1.0'\nae = '0.1'\n\n[dependencies]\n{dependencies}"
+        )).unwrap();
+    };
+    write_manifest("app", "left = { path = '../left' }\nright = { path = '../right' }");
+    write_manifest("left", "shared = { path = '../shared' }");
+    write_manifest("right", "shared = { path = '../shared' }");
+    write_manifest("shared", "");
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let run = || Command::new(cli).current_dir(dir.join("app")).arg("deps").output().unwrap();
+    let output = run();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let order: Vec<_> = stdout.lines().filter(|line| !line.starts_with(' '))
+        .map(|line| line.split_whitespace().next().unwrap()).collect();
+    assert_eq!(order, ["shared", "left", "right", "app"]);
+
+    write_manifest("shared", "app = { path = '../app' }");
+    let cycle = run();
+    let error = String::from_utf8_lossy(&cycle.stderr);
+    assert!(!cycle.status.success() && error.contains("dependency cycle") && error.matches("ae.toml").count() == 4, "{error}");
+    fs::remove_dir_all(dir).unwrap();
+}
