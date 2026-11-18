@@ -300,8 +300,9 @@ pub(super) fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker)
             if let Some(violation) = walk_statements_reads(body, moved) { return Some(violation); }
             None
         }
-        Statement::ForTokens(_, base, body, ..) => {
-            if let Some(violation) = moved.read(*base) { return Some(violation); }
+        Statement::ForTokens(cursor, element, body, ..) => {
+            if let Some(violation) = moved.read(*cursor) { return Some(violation); }
+            moved.revive(*element);
             if let Some(violation) = walk_statements_reads(body, moved) { return Some(violation); }
             None
         }

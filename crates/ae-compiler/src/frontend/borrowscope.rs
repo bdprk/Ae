@@ -553,7 +553,7 @@ fn dominators(function: &CfgFunction) -> Vec<std::collections::HashSet<usize>> {
 fn introduce_borrows(statement: &Statement, live: &mut std::collections::HashSet<usize>) {
     match statement {
         Statement::For(_, container, ..) => { live.insert(*container); }
-        Statement::ForTokens(_, base, ..) => { live.insert(*base); }
+        Statement::ForTokens(cursor, ..) => { live.insert(*cursor); }
         Statement::Match(subject, ..) => { live.insert(*subject); }
         // A payload binding (M2.3) borrows from the subject: views and
         // borrows read the enum, so its region covers the arm's block.
