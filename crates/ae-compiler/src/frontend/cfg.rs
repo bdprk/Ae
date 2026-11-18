@@ -329,10 +329,14 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             (join, false)
         }
         Statement::Return(expr, frees) => {
-            let (current, value) = if is_short_circuit(expr) {
-                lower_boolean_value(expr, current, lowering)
-            } else {
-                (current, expr.clone())
+            let (current, value) = match expr {
+                Expr::Call(_, _, ty) | Expr::FnCall(_, _, ty, _) => {
+                    let result = lowering.synthetic_local();
+                    lowering.block(current).statements.push(Statement::Declare(result, expr.clone()));
+                    (current, Expr::Variable(result, *ty, 0, 0))
+                }
+                _ if is_short_circuit(expr) => lower_boolean_value(expr, current, lowering),
+                _ => (current, expr.clone()),
             };
             // The release annotations ride the return: they are statements
             // the lowering keeps in order, then the return edge.
