@@ -6009,3 +6009,35 @@ fn emit_mir_keeps_short_circuit_rhs_inside_the_lazy_operand() {
     assert!(mir.contains("false && lazy { fn#0(9) -> bool }"), "{mir}");
     assert!(!mir.contains("= fn#0(9)"), "{mir}");
 }
+
+#[test]
+fn short_circuit_conditions_preserve_loop_and_branch_edges() {
+    let dir = unique_temp_dir("mir_short_circuit_edges");
+    let path = dir.join("main.ae");
+    fs::write(&path, r#"
+fn show(x: i64) -> bool {
+    print(x);
+    return true;
+}
+
+fn main() {
+    var i = 0;
+    while i < 2 && show(i) {
+        i = i + 1;
+        continue;
+    }
+    if !(i == 2 || show(99)) { print(100); }
+    print(i);
+}
+"#).unwrap();
+
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let graph = Command::new(cli).arg("emit-mir").arg(&path).output().unwrap();
+    let output = Command::new(cli).arg("run").arg(&path).output().unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    assert!(graph.status.success(), "{}", String::from_utf8_lossy(&graph.stderr));
+    let graph = String::from_utf8_lossy(&graph.stdout);
+    assert_eq!(graph.matches("branch fn#0(").count(), 2, "{graph}");
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "0\n1\n2\n");
+}
