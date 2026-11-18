@@ -5,7 +5,7 @@ use frontend::compile_path;
 mod package;
 mod frontend_cache;
 
-const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test <source.ae> [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae update [project]\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae update [project]\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -375,7 +375,7 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
                 rest.push(arg);
             }
         }
-        if rest.is_empty() || rest.len() > 2 { return Err(USAGE.into()); }
+        if rest.len() > 2 { return Err(USAGE.into()); }
         let filter = match rest.get(1).and_then(|a| a.to_str()) {
             Some(filter) => Some(filter.to_owned()),
             // A non-UTF-8 filter cannot match any UTF-8 test name; say so
@@ -383,32 +383,16 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
             None if rest.len() == 2 => return Err("test filter must be valid UTF-8".into()),
             None => None,
         };
-        let started = Instant::now();
-        // The staged copy is dropped (and deleted) on every path below.
-        let program = harness::prepare(Path::new(rest[0]), filter.as_deref())?;
-        if use_interp {
-            match frontend::interpret_path(&program.staging) {
-                Ok((out, code)) => {
-                    print!("{out}");
-                    if timings_enabled() {
-                        eprintln!("ae timing: test_interp_ms={:.3} tests={}", started.elapsed().as_secs_f64() * 1000.0, program.tests.len());
-                    }
-                    return Ok(code);
-                }
-                Err((out, msg)) => {
-                    print!("{out}");
-                    return Err(msg);
-                }
-            }
+        let input = match rest.first() {
+            Some(input) => PathBuf::from(input),
+            None => package::discover_manifest()?,
+        };
+        let is_package = package::manifest_path(&input).is_some();
+        let package::PackageEntry { mut path, imports, .. } = package::entry_path(&input)?;
+        if is_package {
+            path.set_file_name("test.ae");
         }
-        let c = compile_path(&program.staging)?;
-        let dir = TempDir::create(&env::temp_dir())?;
-        let exe = build_c(&c, &dir.0, false, true)?;
-        let status = Command::new(&exe).status().map_err(|e| format!("cannot start test program: {e}"))?;
-        if timings_enabled() {
-            eprintln!("ae timing: test_ms={:.3} tests={}", started.elapsed().as_secs_f64() * 1000.0, program.tests.len());
-        }
-        return Ok(status.code().and_then(|n| u8::try_from(n).ok()).unwrap_or(1));
+        return frontend::with_package_imports(imports, || run_tests(&path, filter.as_deref(), use_interp));
     }
     if cmd == "update" {
         let manifest = match &args[1..] {
@@ -527,6 +511,35 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
     frontend::with_package_imports(imports, || {
         run_source(&cmd, &input, output, &program_args, release, &import_key, lock.filter(|_| cmd == "build"))
     })
+}
+
+fn run_tests(input: &Path, filter: Option<&str>, use_interp: bool) -> Result<u8, String> {
+    let started = Instant::now();
+    // The staged copy is dropped (and deleted) on every path below.
+    let program = harness::prepare(input, filter)?;
+    if use_interp {
+        match frontend::interpret_path(&program.staging) {
+            Ok((out, code)) => {
+                print!("{out}");
+                if timings_enabled() {
+                    eprintln!("ae timing: test_interp_ms={:.3} tests={}", started.elapsed().as_secs_f64() * 1000.0, program.tests.len());
+                }
+                return Ok(code);
+            }
+            Err((out, msg)) => {
+                print!("{out}");
+                return Err(msg);
+            }
+        }
+    }
+    let c = compile_path(&program.staging)?;
+    let dir = TempDir::create(&env::temp_dir())?;
+    let exe = build_c(&c, &dir.0, false, true)?;
+    let status = Command::new(&exe).status().map_err(|e| format!("cannot start test program: {e}"))?;
+    if timings_enabled() {
+        eprintln!("ae timing: test_ms={:.3} tests={}", started.elapsed().as_secs_f64() * 1000.0, program.tests.len());
+    }
+    return Ok(status.code().and_then(|n| u8::try_from(n).ok()).unwrap_or(1));
 }
 
 fn run_source(

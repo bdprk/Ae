@@ -46,6 +46,8 @@ ae deps accepts a package path or discovers the nearest manifest. It follows pat
 
 Use `use "@alias";` to load a declared path dependency's src/lib.ae. Each import resolves against the declaring package's direct dependency table. The existing compiler module rules apply to symbols loaded from those files. Check, run and emit commands support library imports. Frontend cache reuse checks both the resolved import map and all previously loaded source hashes. Locked builds verify their lockfile even when the frontend cache hits.
 
+For an application package, ae test reads src/test.ae and uses the same dependency aliases as src/main.ae. Test entry files use the existing test harness convention and omit main. The --interp option runs the same tests in the interpreter.
+
 ## 3. Lockfile (`ae.lock`)
 
 For local packages, ae update loads the application and writes ae.lock atomically. The current format records SHA-256 for each manifest in dependency order and for each source file loaded by the compiler. Paths are relative to the package root. Build checks these records against the loaded inputs before invoking the C compiler. Check and run permit working changes without updating the lock. A dependency-free project can build without a lock.
