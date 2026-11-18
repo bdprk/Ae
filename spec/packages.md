@@ -1,6 +1,6 @@
 # Package Management Specification (M3.4 / M3.6 target)
 
-Status: The CLI reads dependency-free manifests. Sections describing dependency resolution, lockfiles, and registry operations specify future milestones.
+Status: The CLI builds dependency-free packages and inspects local path dependency graphs. Compilation with dependencies, lockfiles, version resolution, and registry operations specify future milestones.
 
 ## 1. Design Rules
 
@@ -38,9 +38,11 @@ posix = "1.0"
 - Registry dependencies take an MVS range; git deps pin a `rev` (branch/tag names are rejected — the lockfile must be reproducible without consulting the remote's mutable state); path deps are for in-repo development and are **rejected in `publish`**.
 - Platform-conditional dependencies select per target; the condition subset is `{windows, unix, x86_64, arm64}` until M7 needs more.
 
-Pass a package directory or its ae.toml path to check, run, build, emit-c, emit-tree, emit-cfg, or emit-mir. Omit the source argument to use the nearest ae.toml in the working directory or its parents. The entry is src/main.ae relative to the manifest. check --json and run --interp use the same entry. The ae field accepts a major.minor floor with optional patch. The CLI rejects nonempty dependencies and target tables until the corresponding resolution rules are implemented.
+Pass a package directory or its ae.toml path to check, run, build, emit-c, emit-tree, emit-cfg, or emit-mir. Omit the source argument to use the nearest ae.toml in the working directory or its parents. The entry is src/main.ae relative to the manifest. check --json and run --interp use the same entry. The ae field accepts a major.minor floor with optional patch. Compilation currently rejects nonempty dependencies and target tables.
 
 ae new DIRECTORY creates a package with version 0.1.0 and a compatibility floor matching the installed compiler. It takes the package name from the final directory component and creates src/main.ae. The directory must be new, and its parent must exist.
+
+ae deps accepts a package path or discovers the nearest manifest. It follows path dependencies relative to each declaring manifest, lists dependencies before their dependents and prints each canonical package once. Cycles report the chain of manifests. Registry, git, and target-specific dependencies remain future work.
 
 ## 3. Lockfile (`ae.lock`)
 

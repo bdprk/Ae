@@ -43,18 +43,37 @@ pub(super) fn discover_manifest() -> Result<PathBuf, String> {
     Err(format!("no {MANIFEST} found in {} or its parent directories", current.display()))
 }
 
-pub(super) fn entry_path(input: &Path) -> Result<PathBuf, String> {
-    let manifest = if input.is_dir() {
-        input.join(MANIFEST)
+pub(super) fn manifest_path(input: &Path) -> Option<PathBuf> {
+    if input.is_dir() {
+        Some(input.join(MANIFEST))
     } else if input.file_name().is_some_and(|name| name == MANIFEST) {
-        input.to_owned()
+        Some(input.to_owned())
     } else {
+        None
+    }
+}
+
+pub(super) fn entry_path(input: &Path) -> Result<PathBuf, String> {
+    let Some(manifest) = manifest_path(input) else {
         return Ok(input.to_owned());
     };
+    let package = read_manifest(&manifest)?;
+    if !package.dependencies.is_empty() {
+        return Err(format!("{}: package dependency resolution is not implemented yet for compilation", manifest.display()));
+    }
+    Ok(manifest.with_file_name("src").join("main.ae"))
+}
 
+struct Manifest {
+    name: String,
+    version: String,
+    dependencies: toml::Table,
+}
+
+fn read_manifest(manifest: &Path) -> Result<Manifest, String> {
     let fail = |message: &str| format!("{}: {message}", manifest.display());
     let source = fs::read_to_string(&manifest).map_err(|error| fail(&error.to_string()))?;
-    let document = source.parse::<toml::Table>().map_err(|error| fail(&error.to_string()))?;
+    let mut document = source.parse::<toml::Table>().map_err(|error| fail(&error.to_string()))?;
     let package = document.get("package").and_then(toml::Value::as_table)
         .ok_or_else(|| fail("expected a [package] table"))?;
     let field = |key| package.get(key).and_then(toml::Value::as_str)
@@ -81,14 +100,70 @@ pub(super) fn entry_path(input: &Path) -> Result<PathBuf, String> {
     if document.contains_key("target") {
         return Err(fail("target-specific dependencies are not implemented yet"));
     }
-    if let Some(dependencies) = document.get("dependencies") {
-        let dependencies = dependencies.as_table().ok_or_else(|| fail("expected a [dependencies] table"))?;
-        if !dependencies.is_empty() {
-            return Err(fail("package dependency resolution is not implemented yet"));
-        }
-    }
+    let name = name.to_owned();
+    let version = version.to_owned();
+    let dependencies = match document.remove("dependencies") {
+        None => toml::Table::new(),
+        Some(toml::Value::Table(table)) => table,
+        Some(_) => return Err(fail("expected a [dependencies] table")),
+    };
+    Ok(Manifest { name, version, dependencies })
+}
 
-    Ok(manifest.with_file_name("src").join("main.ae"))
+pub(super) fn describe_graph(root: &Path) -> Result<String, String> {
+    let mut graph = PathGraph::default();
+    graph.visit(root)?;
+    Ok(graph.output)
+}
+
+#[derive(Default)]
+struct PathGraph {
+    visiting: Vec<PathBuf>,
+    visited: std::collections::HashSet<PathBuf>,
+    output: String,
+}
+
+impl PathGraph {
+    fn visit(&mut self, manifest: &Path) -> Result<(), String> {
+        use std::fmt::Write;
+        let path = manifest.canonicalize().map_err(|error| format!("{}: {error}", manifest.display()))?;
+        if let Some(start) = self.visiting.iter().position(|ancestor| ancestor == &path) {
+            let cycle = self.visiting[start..].iter().chain(std::iter::once(&path))
+                .map(|member| member.display().to_string()).collect::<Vec<_>>().join(" -> ");
+            return Err(format!("package dependency cycle: {cycle}"));
+        }
+        if self.visited.contains(&path) {
+            return Ok(());
+        }
+        if self.visiting.len() == 128 {
+            return Err(format!("{}: package dependency nesting exceeds 128 levels", manifest.display()));
+        }
+
+        let package = read_manifest(&path)?;
+        self.visiting.push(path.clone());
+        let mut edges = Vec::new();
+        for (alias, dependency) in package.dependencies {
+            let relative = dependency.as_table().filter(|table| table.len() == 1)
+                .and_then(|table| table.get("path")).and_then(toml::Value::as_str);
+            let relative = relative.filter(|value| !value.is_empty()).ok_or_else(|| {
+                format!("{}: dependency '{alias}' requires a nonempty path table", path.display())
+            })?;
+            let source = Path::new(relative);
+            if source.has_root() || matches!(source.components().next(), Some(std::path::Component::Prefix(_))) {
+                return Err(format!("{}: dependency '{alias}' path must be relative to its manifest", path.display()));
+            }
+            let dependency = path.parent().expect("a canonical file has a parent").join(source).join(MANIFEST);
+            self.visit(&dependency)?;
+            edges.push((alias, relative.to_owned()));
+        }
+        self.visiting.pop();
+        self.visited.insert(path.clone());
+        writeln!(self.output, "{} {} ({})", package.name, package.version, path.display()).unwrap();
+        for (alias, relative) in edges {
+            writeln!(self.output, "  {alias} -> {relative}").unwrap();
+        }
+        Ok(())
+    }
 }
 
 fn parse_version(value: &str, allow_missing_patch: bool) -> Option<(u64, u64, u64)> {

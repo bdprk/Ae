@@ -5,7 +5,7 @@ use frontend::compile_path;
 mod package;
 mod frontend_cache;
 
-const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test <source.ae> [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae new <directory>\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test <source.ae> [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -411,8 +411,16 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         return Ok(status.code().and_then(|n| u8::try_from(n).ok()).unwrap_or(1));
     }
     if cmd == "deps" {
-        if args.len() != 2 { return Err(USAGE.into()); }
-        print!("{}", frontend::describe_path(Path::new(&args[1]))?);
+        let manifest = match &args[1..] {
+            [] => Some(package::discover_manifest()?),
+            [input] => package::manifest_path(Path::new(input)),
+            _ => return Err(USAGE.into()),
+        };
+        let description = match manifest {
+            Some(manifest) => package::describe_graph(&manifest)?,
+            None => frontend::describe_path(Path::new(&args[1]))?,
+        };
+        print!("{description}");
         return Ok(0);
     }
     // `check --json <file>` is the documented spelling; `check <file> --json`
