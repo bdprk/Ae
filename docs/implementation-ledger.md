@@ -4,11 +4,11 @@ Use this file with the architecture workbook. All boxes describe planned verific
 
 ## Start here
 
-- [ ] B01. At the project root run git rev-parse HEAD and git status -sb. Save the revision and local changes with the baseline.
-- [ ] B02. Record rustc -Vv, cargo -V, the configured C compiler version and OS/architecture for each host.
-- [ ] B03. Run cargo test --workspace on Windows. Record exit status and names of failing tests.
-- [ ] B04. Repeat on Linux at the same revision. Label host-specific differences separately.
-- [ ] B05. Run cargo run -- check examples/hello.ae and cargo run -- run examples/hello.ae. Capture diagnostics, bytes printed and process exit.
+- [x] B01. At the project root run git rev-parse HEAD and git status -sb. Save the revision and local changes with the baseline.
+- [x] B02. Record rustc -Vv, cargo -V, the configured C compiler version and OS/architecture for each host.
+- [x] B03. Run cargo test --workspace on Windows. Record exit status and names of failing tests.
+- [x] B04. Repeat on Linux at the same revision. Label host-specific differences separately.
+- [x] B05. Run cargo run -- check examples/hello.ae and cargo run -- run examples/hello.ae. Capture diagnostics, bytes printed and process exit.
 - [ ] B06. Run cargo run -- emit-c examples/hello.ae. Identify generated entry point, runtime calls and linker inputs.
 - [ ] B07. Use examples/option_propagate.ae to trace the successful and early-return paths. Name the component responsible for disposing of each owned local.
 - [ ] B08. Trace a parser diagnostic from crates/ae-syntax or the active legacy parser to the CLI. Record the actual caller to distinguish extracted code from active code.
@@ -289,14 +289,14 @@ Integration gate: Clean and incremental builds agree after body, interface and t
 
 Entry dependency: M3.3.
 
-- [ ] M6.1.01. **Unify project discovery.** Run from package root and nested directory and resolve the same manifest.
-- [ ] M6.1.02. **check.** Check an invalid program with no emitted executable and stable diagnostics.
-- [ ] M6.1.03. **build.** Build offline from lockfile and locate artifact by target and profile.
-- [ ] M6.1.04. **run.** Pass arguments after the separator and propagate child exit status.
-- [ ] M6.1.05. **test discovery.** Discover tests deterministically and return failure for a failing assertion.
-- [ ] M6.1.06. **fmt idempotence.** Format twice and compare bytes, including comments and recovered trivia where supported.
-- [ ] M6.1.07. **doc tests.** Compile fenced runnable examples and attribute failures to document lines.
-- [ ] M6.1.08. **consistent exit codes.** Pin stdout, stderr and exit codes for usage, compile and program failures.
+- [x] M6.1.01. **Unify project discovery.** Run from package root and nested directory and resolve the same manifest.
+- [x] M6.1.02. **check.** Check an invalid program with no emitted executable and stable diagnostics.
+- [x] M6.1.03. **build.** Build offline from lockfile and locate artifact by target and profile.
+- [x] M6.1.04. **run.** Pass arguments after the separator and propagate child exit status.
+- [x] M6.1.05. **test discovery.** Discover tests deterministically and return failure for a failing assertion.
+- [x] M6.1.06. **fmt idempotence.** Format twice and compare bytes, including comments and recovered trivia where supported.
+- [x] M6.1.07. **doc tests.** Compile fenced runnable examples and attribute failures to document lines.
+- [x] M6.1.08. **consistent exit codes.** Pin stdout, stderr and exit codes for usage, compile and program failures.
 
 Integration gate: Fresh user creates, tests, documents and ships a package using one executable.
 
@@ -366,4 +366,31 @@ Entry dependency: M8.1.
 - [ ] M8.2.05. **validate real deployments.** Record CLI, web service and proxy deployment versions, observation periods and incident outcomes.
 
 Integration gate: Signed release manifest, reproducible evidence and three qualifying deployments per charter.
+
+
+---
+
+## Verified 2026-11-18 — revision 15321cf
+
+Hosts: Windows 11 x86-64 (`rustc 1.99.1`, `cargo 1.99.1`, gcc 16.2.0 MinGW-W64 UCRT);
+Debian 13 x86-64, InstaBox evaluate-2 (`rustc 1.99.0`, `cargo 1.99.0`, gcc 14.2.0).
+
+| Item | Evidence |
+|---|---|
+| B01 | `git rev-parse HEAD` = 15321cf, clean tree at the time of the run. |
+| B02 | Toolchain versions above; Linux probe recorded in `bench/reports/2026-11-18-linux-baseline.md`. |
+| B03 | `cargo test --workspace` on Windows: 10 bin + 280 execution + 3 run snapshots + 43 compiler (including the diagnostic-catalog test) + 2 span + 23 syntax, 0 failures. |
+| B04 | Same revision on Debian 13: 280 execution + 43 JSON + 3 run snapshots, 0 failures; no host-specific skips. |
+| B05 | `ae check examples/hello.ae` exit 0, `ae run examples/hello.ae` prints `42` and exits 0. |
+| M6.1.01 | `package_manifest_selects_entry_and_validates_metadata` (nested directory), `lockfile_is_independent_of_dependency_order_and_working_directory` (build from `src/deep/more`). |
+| M6.1.02 | `cli_exit_codes_distinguish_usage_compile_and_program_failures`: a rejected program exits 1 with empty stdout and writes no artifact. |
+| M6.1.03 | `local_library_packages_compile_through_declared_aliases`: a missing lock stops the build with `Run ae update`; the verified lock builds offline (path dependencies only, no network). |
+| M6.1.04 | `run_forwards_program_arguments_after_double_dash`, `program_arguments_arrive_as_utf8_on_every_platform`. |
+| M6.1.05 | `harness::tests::synthesized_main_runs_tests_in_order_and_propagates_failures`. |
+| M6.1.06 | `fmt_normalizes_keeps_semantics_and_is_idempotent`, `fmt_preserves_comment_and_string_bytes_end_to_end`. |
+| M6.1.07 | `doc_command_renders_comments_and_runs_fenced_examples`: failures point at the fence line, an unclosed fence is an error. |
+| M6.1.08 | `cli_exit_codes_distinguish_usage_compile_and_program_failures`: 0 success, 2 usage, 1 toolchain, program `exit(n)` passed through. |
+
+Still unverified in this revision: B06–B10 (emit-c anatomy, drop-path trace, diagnostic provenance, script inventory, published matrix),
+and everything from M0.1 onward that this table does not name.
 
