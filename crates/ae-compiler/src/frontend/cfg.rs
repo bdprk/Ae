@@ -120,6 +120,23 @@ fn lower_statements(statements: &[Statement], entry: usize, lowering: &mut Lower
     (current, ended)
 }
 
+fn lower_condition(condition: &Expr, entry: usize, yes: usize, no: usize, lowering: &mut Lowering) {
+    match condition {
+        Expr::Binary(left, Kind::And, right, ..) => {
+            let rhs = lowering.new_block();
+            lower_condition(left, entry, rhs, no, lowering);
+            lower_condition(right, rhs, yes, no, lowering);
+        }
+        Expr::Binary(left, Kind::Or, right, ..) => {
+            let rhs = lowering.new_block();
+            lower_condition(left, entry, yes, rhs, lowering);
+            lower_condition(right, rhs, yes, no, lowering);
+        }
+        Expr::Not(inner) => lower_condition(inner, entry, no, yes, lowering),
+        other => lowering.block(entry).terminator = CfgTerminator::Branch(other.clone(), yes, no),
+    }
+}
+
 // Lower one statement; returns the continuation block and whether every
 // path through it ended unconditionally.
 fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowering) -> (usize, bool) {
@@ -127,7 +144,7 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
         Statement::If(cond, yes, no) => {
             let then_block = lowering.new_block();
             let else_block = lowering.new_block();
-            lowering.block(current).terminator = CfgTerminator::Branch((*cond).clone(), then_block, else_block);
+            lower_condition(cond, current, then_block, else_block, lowering);
             let (after_then, ended_then) = lower_statements(yes, then_block, lowering);
             let (after_else, ended_else) = lower_statements(no, else_block, lowering);
             let joined = join(after_then, after_else, lowering);
@@ -144,7 +161,7 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             lowering.block(current).terminator = CfgTerminator::Goto(head);
             let body_block = lowering.new_block();
             let exit = lowering.new_block();
-            lowering.block(head).terminator = CfgTerminator::Branch((*cond).clone(), body_block, exit);
+            lower_condition(cond, head, body_block, exit, lowering);
             lowering.loop_exits.push(exit);
             lowering.loop_continues.push(head);
             let (after_body, _) = lower_statements(body, body_block, lowering);
