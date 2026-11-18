@@ -533,10 +533,10 @@ impl Parser<'_> {
             return self.named_type();
         }
         let ty = self.parameter_type()?;
-        if matches!(ty, Type::StrView | Type::VecRef | Type::StrVecRef | Type::VecFRef | Type::StructRef(_) | Type::Array(_)) {
+        if matches!(ty, Type::StrView | Type::VecRef | Type::StrVecRef | Type::VecFRef | Type::StructRef(_) | Type::StructMut(_) | Type::Array(_)) {
             Ok(ty)
         } else {
-            Err(self.fail("callable parameters require read-only borrows"))
+            Err(self.fail("unsupported borrowed parameter type for a callable"))
         }
     }
 

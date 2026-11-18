@@ -194,10 +194,13 @@ impl MoveTracker for ReleaseTracker<'_> {
     fn revive(&mut self, _id: usize) {}
     fn mut_release(&mut self, sig: usize, position: usize, slot: usize) {
         if self.mut_sigs.get(&sig).is_some_and(|positions| positions.contains(&position)) {
-            if let Some(views) = self.views_by_base.get(&slot) {
-                self.released_views.extend(views.iter().copied());
-                self.released_bases.insert(slot);
-            }
+            self.release_borrowed_base(slot);
+        }
+    }
+    fn release_borrowed_base(&mut self, slot: usize) {
+        if let Some(views) = self.views_by_base.get(&slot) {
+            self.released_views.extend(views.iter().copied());
+            self.released_bases.insert(slot);
         }
     }
 }

@@ -6180,3 +6180,51 @@ fn main() {
     }
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn function_values_forward_mutable_struct_borrows_and_check_live_views() {
+    let dir = unique_temp_dir("indirect_mut_borrow");
+    let path = dir.join("main.ae");
+    let declarations = r#"
+struct Entry { text: string }
+
+fn apply(f: fn(&mut Entry) -> i64, entry: &mut Entry) -> i64 {
+    return f(&mut entry);
+}
+"#;
+    fs::write(&path, format!("{declarations}{}", r#"
+fn main() {
+    var entry = Entry { text: "before" };
+    let _result = apply(|item: &mut Entry| -> i64 {
+        item.text = "after";
+        return 0;
+    }, &mut entry);
+    print(entry.text);
+}
+"#)).unwrap();
+    let cli = env!("CARGO_BIN_EXE_ae");
+    for flags in [&[][..], &["--interp"][..]] {
+        let output = Command::new(cli).arg("run").arg(&path).args(flags).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "after\n");
+    }
+
+    fs::write(&path, r#"
+struct Entry { text: string }
+
+fn bad(f: fn(&mut Entry) -> i64) -> i64 {
+    var entry = Entry { text: "before" };
+    let view = slice_view(entry.text, 0, 1);
+    let result = f(&mut entry);
+    print(view);
+    return result;
+}
+
+fn main() {}
+"#).unwrap();
+    let checked = Command::new(cli).arg("check").arg(&path).output().unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    assert!(!checked.status.success());
+    let stderr = String::from_utf8_lossy(&checked.stderr);
+    assert!(stderr.contains("while a view binding of it may still be read"), "{stderr}");
+}

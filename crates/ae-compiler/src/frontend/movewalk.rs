@@ -149,6 +149,7 @@ pub(super) trait MoveTracker {
     // evaluation order (M2.5). The default no-op keeps the move walkers
     // unchanged; the borrow adjudication is the consumer.
     fn mut_release(&mut self, _sig: usize, _position: usize, _slot: usize) {}
+    fn release_borrowed_base(&mut self, _slot: usize) {}
 }
 
 // Checks every read against the moved set; a violation is the id returned.
@@ -442,17 +443,20 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
             }
             None
         }
-        Expr::FnCall(slot, args, _) => {
+        Expr::FnCall(slot, args, _, sig) => {
             if let Some(violation) = moved.read(*slot) { return Some(violation); }
-            for arg in args {
+            for (position, arg) in args.iter().enumerate() {
                 match arg {
-                    // A `FnCall`'s callee is a variable and fn types cannot
-                    // carry `&mut` (ADR-0189), so its borrows are reads only.
+
                     Argument::Value(e) => {
                         if let Some(violation) = walk_moving_expr(e, moved) { return Some(violation); }
                     }
                     Argument::View(e) => { if let Some(violation) = walk_expr(e, moved) { return Some(violation); } }
                     Argument::Borrow(id, _) => {
+                        let (params, _) = super::closures::fn_sig(*sig);
+                        if matches!(params.get(position), Some(Type::StructMut(_))) {
+                            moved.release_borrowed_base(*id);
+                        }
                         if let Some(violation) = moved.read(*id) { return Some(violation); }
                     }
                     Argument::FnPtr(_) => {}
@@ -586,7 +590,7 @@ mod tests {
     fn compound_expressions_read_all_source_slots() {
         let var = |id| Box::new(Expr::Variable(id, Type::Int, 0, 0));
         let expressions = [
-            (Expr::FnCall(1, vec![Argument::Value(*var(2))], Type::Int), vec![1, 2]),
+            (Expr::FnCall(1, vec![Argument::Value(*var(2))], Type::Int, 0), vec![1, 2]),
             (Expr::Tokens(1, None, var(2), 0, 0), vec![1, 2]),
             (Expr::SliceView(1, None, var(2), var(3), 0, 0), vec![1, 2, 3]),
             (Expr::Join(1, var(2), 0, 0), vec![1, 2]),

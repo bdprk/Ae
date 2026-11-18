@@ -1909,7 +1909,7 @@ fn eval_expr(
             _ => Err(Flow::Trap("internal: deref of a non-pointer".to_owned())),
         },
         Expr::Call(fn_id, args, _) => invoke_call(env, *fn_id, args, locals, caller_locals),
-        Expr::FnCall(var_id, args, _) => {
+        Expr::FnCall(var_id, args, ..) => {
             let target_fn = match read_var(locals, caller_locals, *var_id, 0, 0)? {
                 Val::FnPtr(fid) => fid,
                 Val::Closure(cid) => closures::closure_fn_id(cid),

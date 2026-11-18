@@ -118,7 +118,7 @@ impl<'a> Parser<'a> {
                     _ => false,
                 })
             }
-            Expr::FnCall(_, args, _) => {
+            Expr::FnCall(_, args, ..) => {
                 args.iter().any(|arg| match arg {
                     Argument::Value(e) | Argument::View(e) => self.expr_has_unchecked_operation(e),
                     _ => false,

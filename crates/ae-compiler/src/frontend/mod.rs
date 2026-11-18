@@ -275,7 +275,7 @@ enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Bo
     // (ADR-0188): the declaration emits no C, and the call site reads the
     // captures at the moment of the call. Passed as a function value, the
     // emitted pointer is the literal's function id (ADR-0189).
-    ClosureLit(usize), FnCall(usize, Vec<Argument>, Type),
+    ClosureLit(usize), FnCall(usize, Vec<Argument>, Type, usize),
     // A raw pointer (M2.12 slice 2/3): `&expr as *const T` and
     // `&mut expr as *mut T` take the address of a local; the bool records
     // mutability. `p.deref()` reads through it, inside `unsafe` only.
