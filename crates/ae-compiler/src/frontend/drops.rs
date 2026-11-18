@@ -83,7 +83,7 @@ fn elaborate_with_round_limit(function: &mut MirFunction, rounds: usize) -> Drop
     };
     let mut stats = DropStats::default();
     for block in &mut function.blocks {
-        let mut state: State = states.get(&block.id).cloned().unwrap_or_default();
+        let Some(mut state) = states.get(&block.id).cloned() else { continue };
         if std::env::var_os("AE_DROP_DEBUG").is_some() { eprintln!("DEBUG fn#{} block{} entry={state:?} statements={:?}", function.id, block.id, block.statements.iter().map(|s| format!("{s:?}").chars().take(120).collect::<String>()).collect::<Vec<_>>()); }
         let statements = std::mem::take(&mut block.statements);
         let mut kept = Vec::with_capacity(statements.len());
@@ -162,7 +162,13 @@ fn entry_states(function: &MirFunction, rounds: usize) -> Option<HashMap<usize, 
     for _ in 0..rounds {
         let mut changed = false;
         for block in &function.blocks {
-            let incoming = if block.id == entry { initial.clone() } else { merge_predecessors(function, block.id, &out_states) };
+            let incoming = if block.id == entry {
+                initial.clone()
+            } else if let Some(state) = merge_predecessors(function, block.id, &out_states) {
+                state
+            } else {
+                continue;
+            };
             let mut exit = incoming.clone();
             transfer_statements(&block.statements, &mut exit);
             if in_states.get(&block.id) != Some(&incoming) {
@@ -179,17 +185,17 @@ fn entry_states(function: &MirFunction, rounds: usize) -> Option<HashMap<usize, 
     None
 }
 
-fn merge_predecessors(function: &MirFunction, block_id: usize, out_states: &HashMap<usize, State>) -> State {
+fn merge_predecessors(function: &MirFunction, block_id: usize, out_states: &HashMap<usize, State>) -> Option<State> {
     let mut merged: Option<State> = None;
     for block in &function.blocks {
         if !terminator_targets(&block.terminator).contains(&block_id) { continue; }
-        let exit = out_states.get(&block.id).cloned().unwrap_or_default();
+        let Some(exit) = out_states.get(&block.id).cloned() else { continue };
         merged = Some(match merged {
             None => exit,
             Some(joined) => join_states(&joined, &exit),
         });
     }
-    merged.unwrap_or_default()
+    merged
 }
 
 fn join_states(a: &State, b: &State) -> State {
@@ -350,6 +356,42 @@ fn rewrite_list(list: Vec<(usize, Type)>, state: &mut State, stats: &mut DropSta
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unvisited_backedge_does_not_poison_live_loop_state() {
+        use super::super::mir::MirBlock;
+        let function = MirFunction {
+            id: 0, is_main: false, params: vec![(7, Type::String)], returns: Type::Int,
+            blocks: vec![
+                MirBlock { id: 0, statements: vec![], bindings: vec![], terminator: CfgTerminator::Goto(1) },
+                MirBlock { id: 1, statements: vec![], bindings: vec![], terminator: CfgTerminator::Branch(Expr::BoolLit(true), 1, 2) },
+                MirBlock { id: 2, statements: vec![], bindings: vec![], terminator: CfgTerminator::Unreachable },
+            ],
+        };
+        let states = entry_states(&function, 20).expect("dataflow must converge");
+        assert_eq!(states[&1].get(&7), Some(&DropState::Live));
+        assert_eq!(states[&2].get(&7), Some(&DropState::Live));
+    }
+
+    #[test]
+    fn later_predecessor_is_joined_and_unreachable_block_is_preserved() {
+        use super::super::mir::MirBlock;
+        let mut function = MirFunction {
+            id: 0, is_main: false, params: vec![(7, Type::String)], returns: Type::Int,
+            blocks: vec![
+                MirBlock { id: 0, statements: vec![], bindings: vec![], terminator: CfgTerminator::Branch(Expr::BoolLit(true), 1, 2) },
+                MirBlock { id: 1, statements: vec![], bindings: vec![], terminator: CfgTerminator::Goto(3) },
+                MirBlock { id: 3, statements: vec![], bindings: vec![], terminator: CfgTerminator::Unreachable },
+                MirBlock { id: 2, statements: vec![Statement::Frees(vec![(7, Type::String)])], bindings: vec![], terminator: CfgTerminator::Goto(3) },
+                MirBlock { id: 4, statements: vec![Statement::Frees(vec![(8, Type::String)])], bindings: vec![], terminator: CfgTerminator::Unreachable },
+            ],
+        };
+        let states = entry_states(&function, 30).expect("dataflow must converge");
+        assert_eq!(states[&3].get(&7), Some(&DropState::Mixed));
+        assert!(!states.contains_key(&4));
+        elaborate(&mut function);
+        assert!(matches!(&function.blocks[4].statements[..], [Statement::Frees(items)] if items[0].0 == 8));
+    }
 
     #[test]
     fn incomplete_analysis_does_not_rewrite_releases() {
