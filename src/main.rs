@@ -5,7 +5,7 @@ use frontend::compile_path;
 mod package;
 mod frontend_cache;
 
-const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test <source.ae> [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test <source.ae> [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae update [project]\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -410,6 +410,15 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         }
         return Ok(status.code().and_then(|n| u8::try_from(n).ok()).unwrap_or(1));
     }
+    if cmd == "update" {
+        let manifest = match &args[1..] {
+            [] => package::discover_manifest()?,
+            [input] => package::manifest_path(Path::new(input)).ok_or("expected a package directory or ae.toml")?,
+            _ => return Err(USAGE.into()),
+        };
+        package::update_lock(&manifest)?;
+        return Ok(0);
+    }
     if cmd == "deps" {
         let manifest = match &args[1..] {
             [] => Some(package::discover_manifest()?),
@@ -437,9 +446,9 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         // Editor diagnostics: one structured array on stdout, nothing else.
         // Success prints `[]`; lexical recovery may return multiple errors.
         let started = Instant::now();
-        let report = match source.and_then(|path| package::entry_path(&path, true))
+        let report = match source.and_then(|path| package::entry_path(&path))
             .map_err(frontend::FrontendError::Legacy)
-            .and_then(|(input, imports)| frontend::with_package_imports(imports, || frontend::check_path_diagnostic(&input))) {
+            .and_then(|entry| frontend::with_package_imports(entry.imports, || frontend::check_path_diagnostic(&entry.path))) {
             Ok(()) => "[]".to_owned(),
             Err(frontend::FrontendError::Legacy(message)) => format!("[{}]", diagnostic_json(&message)),
             Err(frontend::FrontendError::Diagnostic(diagnostic)) => format!("[{}]", structured_diagnostic_json(&diagnostic)),
@@ -484,7 +493,7 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
     // existing scripts pass it.
     let interp_run = cmd == "run" && args.len() == 3 && args.last().and_then(|a| a.to_str()) == Some("--interp");
     if interp_run {
-        let (input, imports) = package::entry_path(Path::new(&args[1]), cmd != "build")?;
+        let package::PackageEntry { path: input, imports, .. } = package::entry_path(Path::new(&args[1]))?;
         let input = input.as_path();
         match frontend::with_package_imports(imports, || frontend::interpret_path(input)) {
             Ok((out, code)) => {
@@ -513,10 +522,10 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" | "run" | "build" => return Err(USAGE.into()),
         _ => return Err(format!("unknown command: {cmd}\n{USAGE}")),
     };
-    let (input, imports) = package::entry_path(Path::new(&args[1]), cmd != "build")?;
+    let package::PackageEntry { path: input, imports, lock } = package::entry_path(Path::new(&args[1]))?;
     let package_imports = !imports.is_empty();
     frontend::with_package_imports(imports, || {
-        run_source(&cmd, &input, output, &program_args, release, package_imports)
+        run_source(&cmd, &input, output, &program_args, release, package_imports, lock.filter(|_| cmd == "build"))
     })
 }
 
@@ -527,6 +536,7 @@ fn run_source(
     program_args: &[OsString],
     release: bool,
     package_imports: bool,
+    lock: Option<package::PackageLock>,
 ) -> Result<u8, String> {
     let started = Instant::now();
     if cmd == "emit-mir" {
@@ -569,6 +579,7 @@ fn run_source(
         }
         None => {
             let tracked = frontend::compile_path_tracked(input)?;
+            if let Some(lock) = &lock { lock.verify(&tracked.units)?; }
             let c = format!("{}{}", tracked.runtime, tracked.user);
             let key = if package_imports { None } else { frontend_cache::store(&cache_root(), input, &tracked) };
             if timings_enabled() {

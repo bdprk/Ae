@@ -6521,6 +6521,31 @@ fn local_library_packages_compile_through_declared_aliases() {
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
     }
+    let app = dir.join("app");
+    let executable = app.join("tool.exe");
+    let build = || Command::new(cli).current_dir(&app).args(["build", "-o"]).arg(&executable).output().unwrap();
+    let missing = build();
+    assert!(!missing.status.success() && String::from_utf8_lossy(&missing.stderr).contains("Run ae update"));
+    let update = || Command::new(cli).current_dir(&app).arg("update").output().unwrap();
+    let updated = update();
+    assert!(updated.status.success(), "{}", String::from_utf8_lossy(&updated.stderr));
+    let lockfile = app.join("ae.lock");
+    let lock = fs::read(&lockfile).unwrap();
+    assert!(update().status.success());
+    assert_eq!(fs::read(lockfile).unwrap(), lock);
+
+    let dependency = dir.join("base/src/lib.ae");
+    fs::write(&dependency, "pub fn base() -> i64 { return 41; }").unwrap();
+    let stale = build();
+    let stderr = String::from_utf8_lossy(&stale.stderr);
+    assert!(!stale.status.success() && stderr.contains("is stale") && stderr.contains("../base/src/lib.ae"), "{stderr}");
+    assert!(!executable.exists());
+    assert!(update().status.success());
+    let compiled = build();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let result = Command::new(&executable).output().unwrap();
+    assert!(result.status.success());
+    assert_eq!(String::from_utf8_lossy(&result.stdout).replace("\r\n", "\n"), "43\n");
     fs::write(dir.join("app/src/main.ae"), "use \"@base\"; fn main() {}").unwrap();
     let checked = Command::new(cli).current_dir(dir.join("app")).args(["check", "--json"]).output().unwrap();
     let report = String::from_utf8_lossy(&checked.stdout);
