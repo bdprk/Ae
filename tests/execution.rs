@@ -6090,3 +6090,31 @@ fn main() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "2\n");
 }
+
+#[test]
+fn function_values_borrow_and_release_temporary_string_arguments() {
+    let dir = unique_temp_dir("indirect_string_view");
+    let path = dir.join("main.ae");
+    fs::write(&path, r#"
+fn apply(f: fn(&string) -> i64) -> i64 {
+    let suffix = "b";
+    return f("a" + suffix);
+}
+
+fn main() {
+    print(apply(|text: &string| -> i64 { return len(text); }));
+}
+"#).unwrap();
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let output = Command::new(cli).arg("run").arg(&path).output().unwrap();
+    let c = Command::new(cli).arg("emit-c").arg(&path).output().unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "2\n");
+    assert!(c.status.success(), "{}", String::from_utf8_lossy(&c.stderr));
+    let text = String::from_utf8_lossy(&c.stdout);
+    let (_, call_and_tail) = text.split_once("= v0(AE_VIEW(").expect("indirect view call");
+    let (temporary, tail) = call_and_tail.split_once("));").expect("end of indirect call");
+    assert_eq!(tail.lines().find(|line| !line.trim().is_empty()).map(str::trim),
+        Some(format!("ae_str_release(&{temporary});").as_str()));
+}

@@ -547,7 +547,16 @@ impl Parser<'_> {
             if *self.current() != Kind::RParen {
                 loop {
                     if params.len() >= 8 { return Err(self.fail("function type parameter limit exceeded (8)")); }
-                    params.push(self.named_type()?);
+                    let param = if *self.current() == Kind::Amp {
+                        let ty = self.parameter_type()?;
+                        if ty != Type::StrView {
+                            return Err(self.fail("function types support only &string borrowed parameters"));
+                        }
+                        ty
+                    } else {
+                        self.named_type()?
+                    };
+                    params.push(param);
                     if *self.current() != Kind::Comma { break; }
                     self.pos += 1;
                 }

@@ -179,7 +179,7 @@ A closure literal is `|a: i64, b: i64| -> R { body }` (`||` for no parameters); 
 
 ## Function Types (`fn(T) -> R`) (ADR-0189)
 
-A parameter written `fn apply(f: fn(i64) -> i64, x: i64) -> i64` accepts a **function value**. The argument must be a closure literal with exactly that shape and no captures (a capturing closure has no representation without its environment — bind its inputs as arguments instead). Inside the callee, `f(x)` calls through the pointer the caller passed. Identical signatures intern to one type, so two closures of the same shape are interchangeable. Function values cannot be returned, stored in fields, or named-function references (`apply(double, 5)` is rejected — reference a function without calling it is future work).
+A parameter written `fn apply(f: fn(i64) -> i64, x: i64) -> i64` accepts a **function value**. The argument must be a closure literal with exactly that shape and no captures (a capturing closure has no representation without its environment — bind its inputs as arguments instead). Inside the callee, `f(x)` calls through the pointer the caller passed. Function types and closure parameters also accept read-only string borrows, for example `fn(&string) -> i64` and `|text: &string| -> i64 { return len(text); }`. An owned temporary passed as a string view is released after the call. Identical signatures intern to one type, so two closures of the same shape are interchangeable. Function values cannot be returned, stored in fields, or named-function references (`apply(double, 5)` is rejected — reference a function without calling it is future work).
 
 ## Struct Borrows (`&Type`) (ADR-0184)
 

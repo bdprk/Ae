@@ -180,7 +180,7 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
                 Emitted::value(format!("v{id}"), *ty)
             }
         }
-        Expr::Call(id, args, ret) => {
+        Expr::Call(id, args, ret) | Expr::FnCall(id, args, ret) => {
             let mut moves = Vec::new();
             // A read-only argument only borrows its value, so a temporary
             // (literal or `+` result) stays owned by this expression and is
@@ -201,7 +201,11 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
                 Argument::FnPtr(cid) => format!("ae_fn_{}", crate::frontend::closures::closure_fn_id(*cid)),
             }).collect::<Vec<_>>().join(", ");
             let t = *next; *next += 1;
-            let callee = crate::frontend::extern_name(*id).unwrap_or_else(|| format!("ae_fn_{id}"));
+            let callee = if matches!(expr, Expr::FnCall(..)) {
+                format!("v{id}")
+            } else {
+                crate::frontend::extern_name(*id).unwrap_or_else(|| format!("ae_fn_{id}"))
+            };
             out.push_str(&format!("    {}t{t} = {callee}({arguments});\n", ret.c_temp()));
             for text in &view_temps { out.push_str(&format!("    ae_str_release(&{text});\n")); }
             null_moves(out, &moves);
@@ -770,27 +774,6 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
         Expr::ClosureLit(cid) => {
             let fn_id = crate::frontend::closures::closure_fn_id(*cid);
             Emitted { text: format!("ae_fn_{fn_id}"), ty: Type::Closure(*cid), owned: false, moves: Vec::new(), materialized: false }
-        }
-        // An indirect call through a function-typed value: the C name of the
-        // slot is already the function pointer, so the call is a plain C
-        // call through it (ADR-0189).
-        Expr::FnCall(var_id, args, ret) => {
-            let mut moves = Vec::new();
-            let arguments = args.iter().map(|arg| match arg {
-                Argument::Value(e) => { let t = emit_expr(e, out, next, true); moves.extend(t.moves); t.text }
-                Argument::Borrow(id, is_vec) => if *is_vec { format!("&v{id}") } else { format!("v{id}") },
-                Argument::View(e) => {
-                    let t = emit_expr(e, out, next, false);
-                    moves.extend(t.moves);
-                    format!("AE_VIEW({})", t.text)
-                }
-                Argument::FnPtr(cid) => format!("ae_fn_{}", crate::frontend::closures::closure_fn_id(*cid)),
-            }).collect::<Vec<_>>().join(", ");
-            let t = *next; *next += 1;
-            out.push_str(&format!("    {}t{t} = v{var_id}({arguments});
-", ret.c_temp()));
-            null_moves(out, &moves);
-            Emitted { text: format!("t{t}"), ty: *ret, owned: ret.owned(), moves: Vec::new(), materialized: true }
         }
         Expr::Field(base, fname, fty) => {
             let b = emit_expr(base, out, next, false);
