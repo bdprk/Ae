@@ -78,6 +78,7 @@ extern "C" fn ae_add(a: i64, b: i64) -> i64 { return a + b; }
 ### 5.1 Layout
 - `#[repr(C)] struct Pair { a: i64, b: i64 }` fixes field order and C padding rules (each field at its natural alignment, struct alignment = max field alignment).
 - Without the attribute, layout is the compiler's choice (today: declaration order, natural alignment); `#[repr(C)]` is required for any struct crossing the FFI boundary in either direction.
+- A `#[repr(C)]` struct may contain another concrete `#[repr(C)]` struct. A non-`#[repr(C)]` struct field or a field owning storage is rejected; this exception does not make arbitrary structs C-compatible.
 - The layout is pinned by a compile-time query pair, `c_size_of[T]()` and `c_offset_of[T]("field")` (each field's byte offset), evaluated in the parser to constants. The `c_` prefix keeps the pair distinct from the generic-borrow convention's user-definable `size_of[T]`; the names belong to the same `#[repr(C)]`/`extern "C"` family.
 
 #### Scalar size query
