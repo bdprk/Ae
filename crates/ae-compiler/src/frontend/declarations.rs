@@ -279,7 +279,7 @@ impl Parser<'_> {
             let is_unsafe_fn = if *self.current() == Kind::Unsafe {
                 let fn_offset = self.tokens[self.pos].offset;
                 if !ae_syntax::has_doc_comment_above(self.source, fn_offset) {
-                    return Err(self.fail("an unsafe fn carries a doc comment naming its preconditions (what the caller must guarantee: validity, aliasing, thread context)"));
+                    return Err(self.fail("an unsafe fn carries a doc comment naming its preconditions (what the caller must guarantee: validity, aliasing, thread context)").with_code("E0704"));
                 }
                 self.pos += 1;
                 self.take(Kind::Fn)?;

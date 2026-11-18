@@ -22,6 +22,7 @@ cargo run -- emit-c examples/hello.ae
 cargo run -- fmt examples/hello.ae
 cargo run -- doc examples/hello.ae            # Render /// doc comments as Markdown
 cargo run -- doc --test examples/hello.ae     # Compile and run fenced examples in doc comments
+cargo run -- explain E0102                     # Stable explanation for a diagnostic code
 cargo run -- test tests_demo/strings_test.ae   # Convention: fn test_<name>() -> i64, 0 for pass
 cargo run -- run examples/hello.ae
 cargo run -- run examples/heart.ae

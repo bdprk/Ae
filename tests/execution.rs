@@ -6870,3 +6870,44 @@ fn doc_command_renders_comments_and_runs_fenced_examples() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+
+#[test]
+fn explain_names_stable_codes_and_rejects_unknown_ones() {
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let known = Command::new(cli).args(["explain", "e0102"]).output().unwrap();
+    assert!(known.status.success(), "{}", String::from_utf8_lossy(&known.stderr));
+    let text = String::from_utf8_lossy(&known.stdout);
+    assert!(text.starts_with("E0102: ") && text.contains("moved"), "{text}");
+
+    let unsafe_code = Command::new(cli).args(["explain", "E0704"]).output().unwrap();
+    assert!(unsafe_code.status.success());
+    assert!(String::from_utf8_lossy(&unsafe_code.stdout).contains("doc comment"));
+
+    let unknown = Command::new(cli).args(["explain", "E9999"]).output().unwrap();
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown error code 'E9999'"));
+    let missing = Command::new(cli).arg("explain").output().unwrap();
+    assert_eq!(missing.status.code(), Some(2));
+}
+
+#[test]
+fn unsafe_fn_without_a_doc_comment_is_rejected_with_e0704() {
+    let dir = unique_temp_dir("unsafe_doc_comment");
+    let source = dir.join("poke.ae");
+    fs::write(&source, "unsafe fn poke(v: i64) -> i64 {\n    return v * 3;\n}\nfn main() {\n    print(poke(4));\n}\n").unwrap();
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let text = Command::new(cli).arg("check").arg(&source).output().unwrap();
+    assert!(!text.status.success());
+    assert!(String::from_utf8_lossy(&text.stderr).contains("doc comment"), "{}", String::from_utf8_lossy(&text.stderr));
+
+    let json = Command::new(cli).args(["check", "--json"]).arg(&source).output().unwrap();
+    let report = String::from_utf8_lossy(&json.stdout);
+    assert!(!json.status.success() && report.contains("\"code\":\"E0704\""), "{report}");
+
+    // A doc comment above the declaration clears the rule.
+    fs::write(&source, "/// Caller guarantees v is a valid aligned i64; no aliasing; single-threaded.\nunsafe fn poke(v: i64) -> i64 {\n    return v * 3;\n}\nfn main() {\n    unsafe { print(poke(4)); }\n}\n").unwrap();
+    let accepted = Command::new(cli).arg("check").arg(&source).output().unwrap();
+    assert!(accepted.status.success(), "{}", String::from_utf8_lossy(&accepted.stderr));
+    fs::remove_dir_all(dir).unwrap();
+}
+

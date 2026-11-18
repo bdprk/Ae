@@ -1,0 +1,8 @@
+// E0704: an unsafe fn without a doc comment naming its preconditions.
+unsafe fn poke(v: i64) -> i64 {
+    return v * 3;
+}
+
+fn main() {
+    print(poke(4));
+}

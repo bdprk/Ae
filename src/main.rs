@@ -5,7 +5,7 @@ use frontend::compile_path;
 mod package;
 mod frontend_cache;
 
-const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae init [directory]\n       ae doc [--test] [source.ae|project]\n       ae update [project]\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae init [directory]\n       ae doc [--test] [source.ae|project]\n       ae explain <E0000>\n       ae update [project]\n       ae version";
 
 /// A toolchain failure with the exit code it maps to. Usage errors exit 2 and
 /// everything else exits 1, so a script can tell "you called it wrong" from
@@ -369,9 +369,9 @@ fn cache_command(subcommand: Option<&OsString>) -> Result<u8, String> {
 fn run(args: Vec<OsString>) -> Result<u8, Failure> {
     if args.is_empty() { return Err(Failure::usage(USAGE)); }
     let cmd = args[0].to_str().ok_or(Failure::usage("command must be UTF-8"))?.to_owned();
-    const COMMANDS: [&str; 16] = [
+    const COMMANDS: [&str; 17] = [
         "check", "emit-c", "emit-tree", "emit-cfg", "emit-mir", "run", "build", "test",
-        "fmt", "cache", "new", "init", "update", "deps", "version", "doc",
+        "fmt", "cache", "new", "init", "update", "deps", "version", "doc", "explain",
     ];
     if !COMMANDS.contains(&cmd.as_str()) {
         return Err(Failure::usage(format!("unknown command: {cmd}\n{USAGE}")));
@@ -389,6 +389,16 @@ fn run(args: Vec<OsString>) -> Result<u8, Failure> {
         package::create_project(directory)?;
         println!("created package in {}", directory.display());
         return Ok(0);
+    }
+    if cmd == "explain" {
+        if args.len() != 2 { return Err(Failure::usage(USAGE)); }
+        let code = args[1].to_str()
+            .ok_or(Failure::usage("error code must be UTF-8"))?
+            .to_ascii_uppercase();
+        return match frontend::explain(&code) {
+            Some(text) => { println!("{code}: {text}"); Ok(0) }
+            None => Err(Failure::usage(format!("unknown error code '{code}'; run ae explain with a code from a diagnostic\n{USAGE}"))),
+        };
     }
     if cmd == "doc" {
         let mut test = false;
