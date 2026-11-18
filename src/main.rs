@@ -2,6 +2,7 @@ use std::{env, ffi::{OsStr, OsString}, fs, path::{Path, PathBuf}, process::{Comm
 
 use ae_compiler::{fmt, frontend, harness, sha256};
 use frontend::compile_path;
+mod package;
 mod frontend_cache;
 
 const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> <source.ae>\n       ae check --json <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae> [filter] [--interp]\n       ae run <source.ae> [--release|--interp] [-- <program args>]\n       ae build <source.ae> -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
@@ -426,7 +427,9 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         // Editor diagnostics: one structured array on stdout, nothing else.
         // Success prints `[]`; lexical recovery may return multiple errors.
         let started = Instant::now();
-        let report = match frontend::check_path_diagnostic(Path::new(source)) {
+        let report = match package::entry_path(Path::new(source))
+            .map_err(frontend::FrontendError::Legacy)
+            .and_then(|input| frontend::check_path_diagnostic(&input)) {
             Ok(()) => "[]".to_owned(),
             Err(frontend::FrontendError::Legacy(message)) => format!("[{}]", diagnostic_json(&message)),
             Err(frontend::FrontendError::Diagnostic(diagnostic)) => format!("[{}]", structured_diagnostic_json(&diagnostic)),
@@ -461,7 +464,8 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
     // existing scripts pass it.
     let interp_run = cmd == "run" && args.len() == 3 && args.last().and_then(|a| a.to_str()) == Some("--interp");
     if interp_run {
-        let input = Path::new(&args[1]);
+        let input = package::entry_path(Path::new(&args[1]))?;
+        let input = input.as_path();
         match frontend::interpret_path(input) {
             Ok((out, code)) => {
                 print!("{out}");
@@ -489,7 +493,8 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" | "run" | "build" => return Err(USAGE.into()),
         _ => return Err(format!("unknown command: {cmd}\n{USAGE}")),
     };
-    let input = Path::new(&args[1]);
+    let input = package::entry_path(Path::new(&args[1]))?;
+    let input = input.as_path();
     let started = Instant::now();
     if cmd == "emit-mir" {
         let mir = frontend::mir_path(input)?;

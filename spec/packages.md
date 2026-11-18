@@ -1,6 +1,6 @@
 # Package Management Specification (M3.4 / M3.6 target)
 
-Status: **target specification** — not yet implemented. Transcribes the plan's §4.3 decisions into enforceable rules ahead of the M3.4/M3.6 slices, per the Spec-First rule. Each section gains positive/negative tests as its slice lands.
+Status: The CLI reads dependency-free manifests. Sections describing dependency resolution, lockfiles, and registry operations specify future milestones.
 
 ## 1. Design Rules
 
@@ -37,6 +37,8 @@ posix = "1.0"
 - `[package]` requires `name` (lowercase, `[a-z0-9_-]`, ≤64 bytes), `version` (three-number semver, no prerelease in this cycle), and the `ae` floor.
 - Registry dependencies take an MVS range; git deps pin a `rev` (branch/tag names are rejected — the lockfile must be reproducible without consulting the remote's mutable state); path deps are for in-repo development and are **rejected in `publish`**.
 - Platform-conditional dependencies select per target; the condition subset is `{windows, unix, x86_64, arm64}` until M7 needs more.
+
+Pass a package directory or its ae.toml path to check, run, build, emit-c, emit-tree, emit-cfg, or emit-mir. The entry is src/main.ae relative to the manifest. check --json and run --interp use the same entry. The ae field accepts a major.minor floor with optional patch. The CLI rejects nonempty dependencies and target tables until the corresponding resolution rules are implemented.
 
 ## 3. Lockfile (`ae.lock`)
 
