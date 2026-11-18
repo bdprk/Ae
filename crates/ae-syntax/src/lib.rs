@@ -409,3 +409,134 @@ mod diagnostic_tests {
         assert_eq!(lex_with_diagnostics(&"@".repeat(40)).unwrap_err().len(), 32);
     }
 }
+
+/// A contiguous `///` block and the declaration it sits above.
+#[derive(Debug)]
+pub struct DocBlock {
+    /// One-based line of the block's first `///`.
+    pub line: usize,
+    /// Markdown body: the `///` markers and one following space removed.
+    pub text: String,
+    /// First line of the next non-blank, non-doc line, trimmed; empty when the
+    /// block is not followed by a declaration.
+    pub declaration: String,
+}
+
+/// Collects doc-comment blocks in source order.
+pub fn doc_blocks(source: &str) -> Vec<DocBlock> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut blocks = Vec::new();
+    let mut index = 0;
+    while index < lines.len() {
+        let trimmed = lines[index].trim_start();
+        if trimmed.strip_prefix("///").is_none() {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        let mut text = String::new();
+        while index < lines.len() {
+            let line = lines[index].trim_start();
+            let Some(doc) = line.strip_prefix("///") else { break; };
+            text.push_str(doc.strip_prefix(' ').unwrap_or(doc));
+            text.push('\n');
+            index += 1;
+        }
+        let mut lookahead = index;
+        while lookahead < lines.len() && lines[lookahead].trim().is_empty() { lookahead += 1; }
+        let declaration = lines.get(lookahead).map(|line| line.trim()).unwrap_or("")
+            .split(['{', ';']).next().unwrap_or("").trim().to_owned();
+        blocks.push(DocBlock { line: start + 1, text, declaration });
+    }
+    blocks
+}
+
+/// One fenced example taken from a doc comment.
+#[derive(Debug)]
+pub struct DocExample {
+    /// One-based line of the opening fence.
+    pub line: usize,
+    /// The fence body, newline-terminated.
+    pub source: String,
+}
+
+/// Collects fenced code blocks from doc comments. A fence opens on a `///` line
+/// whose text begins with ``` and closes on a `///` line that is only ```;
+/// anything else while open is body. An unclosed fence is an error, not a silent
+/// skip, because a doc test that quietly disappears is worse than a failing one.
+pub fn doc_examples(source: &str) -> Result<Vec<DocExample>, String> {
+    let mut examples = Vec::new();
+    let mut open: Option<(usize, String)> = None;
+    for (index, line) in source.lines().enumerate() {
+        let Some(doc) = line.trim_start().strip_prefix("///") else {
+            if let Some((line, _)) = open {
+                return Err(format!("line {line}: doc-comment code fence is never closed"));
+            }
+            continue;
+        };
+        let text = doc.strip_prefix(' ').unwrap_or(doc);
+        let marker = text.trim();
+        match open.as_mut() {
+            Some((_, body)) => {
+                if marker == "```" {
+                    let (line, source) = open.take().unwrap();
+                    examples.push(DocExample { line, source });
+                } else {
+                    body.push_str(text);
+                    body.push('\n');
+                }
+            }
+            None => {
+                if marker == "```" {
+                    return Err(format!("line {}: doc-comment code fence closes without opening", index + 1));
+                }
+                if marker.starts_with("```") {
+                    open = Some((index + 1, String::new()));
+                }
+            }
+        }
+    }
+    if let Some((line, _)) = open {
+        return Err(format!("line {line}: doc-comment code fence is never closed"));
+    }
+    Ok(examples)
+}
+
+
+#[cfg(test)]
+mod doc_tests {
+    use super::*;
+
+    #[test]
+    fn collects_doc_blocks_with_their_declaration() {
+        let source = "/// Adds.\n///\n/// ```ae\n/// fn main() { print(1); }\n/// ```\nfn add(a: i64) -> i64 { return a; }\n";
+        let blocks = doc_blocks(source);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].line, 1);
+        assert!(blocks[0].text.contains("Adds."));
+        assert_eq!(blocks[0].declaration, "fn add(a: i64) -> i64");
+        let examples = doc_examples(source).unwrap();
+        assert_eq!(examples.len(), 1);
+        assert_eq!(examples[0].line, 3);
+        assert_eq!(examples[0].source, "fn main() { print(1); }\n");
+    }
+
+    #[test]
+    fn unclosed_or_stray_fences_are_reported_with_their_line() {
+        assert_eq!(doc_examples("/// ```ae\n/// fn main() {}\nfn main() {}\n").unwrap_err(),
+            "line 1: doc-comment code fence is never closed");
+        assert_eq!(doc_examples("/// ```\n").unwrap_err(),
+            "line 1: doc-comment code fence closes without opening");
+        assert!(doc_examples("// ```ae\n// not doc\nfn main() {}\n").unwrap().is_empty());
+    }
+
+    #[test]
+    fn blocks_stop_at_the_first_non_doc_line() {
+        let source = "/// one\nfn a() {}\n/// two\n\nfn b() {}\n";
+        let blocks = doc_blocks(source);
+        assert_eq!(blocks.len(), 2);
+        assert_eq!(blocks[0].declaration, "fn a()");
+        assert_eq!(blocks[1].declaration, "fn b()");
+    }
+}
+
