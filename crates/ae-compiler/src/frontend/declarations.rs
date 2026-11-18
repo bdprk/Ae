@@ -569,8 +569,12 @@ impl Parser<'_> {
                 }
             }
             self.take(Kind::RParen)?;
-            self.take(Kind::Arrow)?;
-            let ret = self.parameter_type()?;
+            let ret = if *self.current() == Kind::Arrow {
+                self.pos += 1;
+                self.parameter_type()?
+            } else {
+                Type::Int
+            };
             // A borrow may not be returned: the receiver's borrow ends with the
             // call, so anything it points at would be owned by the caller's
             // stack frame and dangle.
