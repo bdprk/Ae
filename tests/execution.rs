@@ -5575,6 +5575,18 @@ fn early(flag: bool) -> i64 {
     return 2;
 }
 
+fn maybe_value(flag: bool) -> Option[i64] {
+    if flag { return Option[i64]::Some(42); }
+    return Option[i64]::None();
+}
+
+fn propagate(flag: bool) -> Option[i64] {
+    var guard = Guard { id: 30 };
+    let value = maybe_value(flag)?;
+    print(value);
+    return Option[i64]::Some(value);
+}
+
 fn main() {
     if true {
         var g1 = Guard { id: 1 };
@@ -5582,6 +5594,8 @@ fn main() {
     var g2 = Guard { id: 2 };
     var _r1 = take(g2);
     var _r2 = early(true);
+    let _success = propagate(true);
+    let _failure = propagate(false);
 }
 "#).unwrap();
     let run = |mode: &str| Command::new(env!("CARGO_BIN_EXE_ae"))
@@ -5592,7 +5606,7 @@ fn main() {
     let mir = run("mir");
     assert!(mir.status.success(), "mir failed: {}", String::from_utf8_lossy(&mir.stderr));
     let mir_out = String::from_utf8_lossy(&mir.stdout).replace("\r\n", "\n");
-    assert_eq!(mir_out, "1\n2\n10\n");
+    assert_eq!(mir_out, "1\n2\n10\n42\n30\n30\n");
     let _ = std::fs::remove_dir_all(dir);
 }
 

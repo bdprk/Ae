@@ -20,3 +20,5 @@ On a cache miss the CLI calls compile_path_tracked. This loads source units thro
 - python scripts/fmt_acceptance.py --json REPORT records formatter results.
 
 The Linux gate remains open. Each future source change should be compared with the pinned Windows baseline and rerun on Linux when a runner is available.
+
+The native execution regression user_defined_drop_runs_on_scope_exit_and_respects_move covers B07. A guard constructed before the question-mark expression drops once on each path. The Some path prints the payload before dropping its guard. The None path drops the guard and returns before reaching the payload print. The parser records live owners, the drop pass filters releases using move state, and code generation emits the retained releases on the early-return edge. The current MIR dump exposes propagation as an operation. An explicit conditional terminator and edges remain part of the MIR work.
