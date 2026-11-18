@@ -500,11 +500,16 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
             let separator = walk_expr(sep, moved);
             base.or(separator)
         }
-        Expr::MapGet(_, key, ..) | Expr::MapHas(_, key, ..) | Expr::MapRemove(_, key, ..) => walk_expr(key, moved),
-        Expr::MapInc(_, key, delta, ..) => {
+        Expr::MapGet(place, key, ..) | Expr::MapHas(place, key, ..) | Expr::MapRemove(place, key, ..) => {
+            let map = moved.read(place.slot());
+            let key_result = walk_expr(key, moved);
+            map.or(key_result)
+        }
+        Expr::MapInc(place, key, delta, ..) => {
+            let map = moved.read(place.slot());
             let key_walk = walk_expr(key, moved);
             let delta_walk = walk_expr(delta, moved);
-            key_walk.or(delta_walk)
+            map.or(key_walk).or(delta_walk)
         }
         Expr::MathCall(_, args, ..) => {
             let mut violation = None;
@@ -514,7 +519,7 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
             violation
         }
         // map_keys borrows its map; run_command borrows its argument vector.
-        Expr::MapKeys(place, ..) => { let _ = place; None }
+        Expr::MapKeys(place, ..) => moved.read(place.slot()),
         Expr::RunCommand(program, vid, ..) => {
             let program_result = walk_expr(program, moved);
             let args_result = moved.read(*vid);
@@ -560,6 +565,21 @@ mod tests {
             (Expr::SliceView(1, None, var(2), var(3), 0, 0), vec![1, 2, 3]),
             (Expr::Join(1, var(2), 0, 0), vec![1, 2]),
             (Expr::RunCommand(var(1), 2, Type::Int, 0, 0), vec![1, 2]),
+        ];
+        for (expr, expected) in expressions { assert_eq!(expr_reads(&expr), expected); }
+    }
+
+    #[test]
+    fn map_expressions_read_map_slot_and_arguments() {
+        let place = || MapPlace::Var(1, MapKind::Int);
+        let key = || Box::new(Expr::Variable(2, Type::String, 0, 0));
+        let delta = || Box::new(Expr::Variable(3, Type::Int, 0, 0));
+        let expressions = [
+            (Expr::MapGet(place(), key(), Type::Int, 0, 0), vec![1, 2]),
+            (Expr::MapHas(place(), key(), 0, 0), vec![1, 2]),
+            (Expr::MapRemove(place(), key(), 0, 0), vec![1, 2]),
+            (Expr::MapInc(place(), key(), delta(), 0, 0), vec![1, 2, 3]),
+            (Expr::MapKeys(place(), 0, 0), vec![1]),
         ];
         for (expr, expected) in expressions { assert_eq!(expr_reads(&expr), expected); }
     }

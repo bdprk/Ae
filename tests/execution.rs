@@ -3639,6 +3639,29 @@ fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
 }
 
 #[test]
+fn closure_can_query_captured_map() {
+    let dir = unique_temp_dir("closure_read_map");
+    let source = dir.join("capture.ae");
+    fs::write(&source, "fn main() { var values = map_new(); values[\"key\"] = 42; let exists = || -> bool { return map_has(values, \"key\"); }; print(exists()); }\n").unwrap();
+    for backend in ["tree", "mir"] {
+        let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).env("AE_CODEGEN", backend).output().unwrap();
+        assert!(run.status.success(), "{backend}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "true\n");
+    }
+    for (index, (text, diagnostic)) in [
+        ("fn main() { var values = map_new(); values[\"key\"] = 42; let exists = || -> bool { return map_has(values, \"key\"); }; print(exists()); print(map_has(values, \"key\")); }\n", "moved"),
+        ("fn main() { var values = map_new(); let remove = || -> bool { return map_remove(values, \"key\"); }; print(remove()); }\n", "cannot mutate captured"),
+    ].iter().enumerate() {
+        let invalid = dir.join(format!("invalid{index}.ae"));
+        fs::write(&invalid, text).unwrap();
+        let checked = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&invalid).output().unwrap();
+        assert!(!checked.status.success(), "invalid map capture accepted: {text}");
+        assert!(String::from_utf8_lossy(&checked.stderr).contains(diagnostic), "{}", String::from_utf8_lossy(&checked.stderr));
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn closure_captures_token_separator() {
     let dir = unique_temp_dir("closure_token_separator");
     let source = dir.join("capture.ae");

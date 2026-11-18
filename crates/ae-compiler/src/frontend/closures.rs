@@ -407,9 +407,10 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
                 }
             }
         }
-        Expr::MapGet(place, key, ..) | Expr::MapHas(place, key, ..) | Expr::MapRemove(place, key, ..) => { record_place(place, used, mutated); walk_expr(key, used, mutated); }
+        Expr::MapGet(place, key, ..) | Expr::MapHas(place, key, ..) => { used.insert(place.slot()); walk_expr(key, used, mutated); }
+        Expr::MapRemove(place, key, ..) => { record_place(place, used, mutated); walk_expr(key, used, mutated); }
         Expr::MapInc(place, key, delta, ..) => { record_place(place, used, mutated); walk_expr(key, used, mutated); walk_expr(delta, used, mutated); }
-        Expr::MapKeys(place, ..) => record_place(place, used, mutated),
+        Expr::MapKeys(place, ..) => { used.insert(place.slot()); }
         Expr::Binary(a, _, b, ..) | Expr::StrEq(a, b, _) | Expr::Contains(a, b, ..) | Expr::Split(a, b, ..) | Expr::WriteFile(a, b, ..) | Expr::Slice(a, b, ..) | Expr::TryWriteFile(a, b, ..) | Expr::TryCopyFile(a, b, ..) | Expr::TryRenamePath(a, b, ..) | Expr::PathJoin(a, b, ..) | Expr::StartsWith(a, b) | Expr::EndsWith(a, b) | Expr::CountLinesWith(a, b, ..) | Expr::Utf8Prefix(a, b, ..) | Expr::Find(a, b, ..) | Expr::JsonGet(a, b, ..) | Expr::JsonInt(a, b, ..) | Expr::JsonBool(a, b, ..) | Expr::JsonLen(a, b, ..) | Expr::JsonHas(a, b, ..) => { walk_expr(a, used, mutated); walk_expr(b, used, mutated); }
         Expr::Neg(a, ..) | Expr::Not(a) | Expr::Len(a, ..) | Expr::ReadFile(a, ..) | Expr::Bytes(a, ..) | Expr::Trim(a, ..) | Expr::Lines(a, ..) | Expr::Utf8Len(a, ..) | Expr::ToString(a, ..) | Expr::FloatToString(a, ..) | Expr::ToF64(a, ..) => walk_expr(a, used, mutated),
         Expr::SliceView(_, _, a, b, ..) => { walk_expr(a, used, mutated); walk_expr(b, used, mutated); }
