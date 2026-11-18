@@ -996,6 +996,15 @@ pub(super) fn validate(function: &MirFunction) -> Result<(), String> {
                 }
             }
             CfgTerminator::Switch(_, _, targets) => for t in targets { if !ids.contains(t) { return Err(format!("internal: fn #{} switch target missing", function.id)); } },
+            CfgTerminator::Return(value) if expr_type(value) != function.returns => {
+                return Err(format!(
+                    "internal: fn #{} block {} returns {}, expected {}",
+                    function.id, block.id, expr_type(value).name(), function.returns.name(),
+                ));
+            }
+            CfgTerminator::Exit(code) if expr_type(code) != Type::Int => {
+                return Err(format!("internal: fn #{} block {} exits with a non-i64 value", function.id, block.id));
+            }
             CfgTerminator::Return(_) | CfgTerminator::Exit(_) | CfgTerminator::Unreachable => {}
         }
     }
@@ -1180,6 +1189,27 @@ mod validation_tests {
         let error = validate(&function).unwrap_err();
         assert!(error.contains("uses undefined temporary t0"), "{error}");
         function.blocks[0].bindings.swap(0, 1);
+        assert!(validate(&function).is_ok());
+    }
+
+    #[test]
+    fn rejects_terminators_with_wrong_operand_types() {
+        let mut function = MirFunction {
+            id: 0,
+            is_main: false,
+            params: vec![],
+            returns: Type::Int,
+            blocks: vec![MirBlock {
+                id: 0,
+                statements: vec![],
+                bindings: vec![],
+                terminator: CfgTerminator::Return(Expr::BoolLit(false)),
+            }],
+        };
+        assert!(validate(&function).unwrap_err().contains("returns bool, expected i64"));
+        function.blocks[0].terminator = CfgTerminator::Exit(Expr::BoolLit(false));
+        assert!(validate(&function).unwrap_err().contains("exits with a non-i64 value"));
+        function.blocks[0].terminator = CfgTerminator::Exit(Expr::Number(0));
         assert!(validate(&function).is_ok());
     }
 }
