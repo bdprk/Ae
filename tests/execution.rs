@@ -6173,6 +6173,10 @@ fn main() {
 }
 "#).unwrap();
     let cli = env!("CARGO_BIN_EXE_ae");
+    let graph = Command::new(cli).arg("emit-mir").arg(&path).output().unwrap();
+    assert!(graph.status.success(), "{}", String::from_utf8_lossy(&graph.stderr));
+    let graph = String::from_utf8_lossy(&graph.stdout);
+    assert!(graph.contains("forward_borrow(v1)") && graph.contains("address_of(v0)"), "{graph}");
     for flags in [&[][..], &["--interp"][..]] {
         let output = Command::new(cli).arg("run").arg(&path).args(flags).output().unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
@@ -6317,6 +6321,10 @@ fn main() {{ print(apply(double, 21)); }}
 fn double(x: i64) -> i64 {{ return x + x; }}
 "#)).unwrap();
     let cli = env!("CARGO_BIN_EXE_ae");
+    let graph = Command::new(cli).arg("emit-mir").arg(&path).output().unwrap();
+    assert!(graph.status.success(), "{}", String::from_utf8_lossy(&graph.stderr));
+    let graph = String::from_utf8_lossy(&graph.stdout);
+    assert!(graph.contains("fnptr#") && graph.contains("fn#0("), "{graph}");
     for flags in [&[][..], &["--interp"][..]] {
         let output = Command::new(cli).arg("run").arg(&path).args(flags).output().unwrap();
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
