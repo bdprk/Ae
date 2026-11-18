@@ -325,12 +325,19 @@ pub(super) fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker)
         // would treat the key's clean None as an early exit and abandon the
         // value's walk (the same truncation the Binary arm's failure log
         // entry documents).
-        Statement::ResetTokens(cursor) => moved.read(*cursor),
-        Statement::AdvanceTokens(cursor, element, advanced) => {
+        Statement::ResetTokens(cursor, iteration) => {
+            let violation = moved.read(*cursor);
+            moved.revive(*iteration);
+            violation
+        }
+        Statement::AdvanceTokens(source, cursor, element, advanced) => {
+            // Iterator state borrows the same text as the source cursor.
+            // Keep that loan live on every loop back edge.
+            let source_violation = moved.read(*source);
             let violation = moved.read(*cursor);
             moved.revive(*element);
             moved.revive(*advanced);
-            violation
+            source_violation.or(violation)
         }
         Statement::TakePropagationPayload(subject, _, _, binding) => {
             let violation = moved.read(*subject);

@@ -3587,6 +3587,11 @@ fn mir_interpreter_agrees_on_token_cursors_with_the_compiled_backends() {
     for t in cur {
         print(t);
     }
+    var pairs = 0;
+    for outer in cur {
+        for inner in cur { pairs = pairs + 1; }
+    }
+    print(pairs);
 }
 ").unwrap();
     let interp = Command::new(env!("CARGO_BIN_EXE_ae")).args(["run", source.to_str().unwrap(), "--interp"]).output().unwrap();
@@ -3594,9 +3599,13 @@ fn mir_interpreter_agrees_on_token_cursors_with_the_compiled_backends() {
     let compiled = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).output().unwrap();
     assert!(compiled.status.success(), "compiled failed: {}", String::from_utf8_lossy(&compiled.stderr));
     let normalize = |bytes: &[u8]| String::from_utf8_lossy(bytes).replace("\r\n", "\n");
-    let expected = "alpha\n5\nbeta\n4\n\n0\ngamma\n5\ntrue\nalpha\nbeta\n\ngamma\n";
+    let expected = "alpha\n5\nbeta\n4\n\n0\ngamma\n5\ntrue\nalpha\nbeta\n\ngamma\n16\n";
     assert_eq!(normalize(&interp.stdout), normalize(&compiled.stdout), "the interpreter and the compiled backend disagree");
     assert_eq!(normalize(&interp.stdout), expected);
+    let tree = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("run").arg(&source).env("AE_CODEGEN", "tree").output().unwrap();
+    assert!(tree.status.success(), "tree failed: {}", String::from_utf8_lossy(&tree.stderr));
+    assert_eq!(normalize(&tree.stdout), expected);
     fs::remove_dir_all(dir).unwrap();
 }
 

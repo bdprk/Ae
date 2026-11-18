@@ -288,10 +288,11 @@ fn statement_intrinsic(statement: &Statement, bindings: &mut Vec<MirBinding>, lo
         // The `?`'s error-path releases ride inside the statement (the C
         // backend emits them where the error path exits); the continuing
         // path's operand is the unwrapped expression.
-        Statement::ResetTokens(cursor) => ("reset_tokens", vec![
+        Statement::ResetTokens(cursor, iteration) => ("reset_tokens", vec![
+            MirOperand::Place(MirPlace::Local(*iteration, Type::Tokens)),
             MirOperand::Place(MirPlace::Local(*cursor, Type::Tokens)),
         ]),
-        Statement::AdvanceTokens(cursor, element, advanced) => ("advance_tokens", vec![
+        Statement::AdvanceTokens(_, cursor, element, advanced) => ("advance_tokens", vec![
             MirOperand::Place(MirPlace::Local(*cursor, Type::Tokens)),
             MirOperand::Place(MirPlace::Local(*element, Type::StrView)),
             MirOperand::Place(MirPlace::Local(*advanced, Type::Bool)),
