@@ -486,6 +486,9 @@ impl Parser<'_> {
                     Payload::Nested(_) => self.resolve_payload(&payload, &[], name_offset)?,
                     Payload::Param(_) => unreachable!("a non-generic struct has no type parameters"),
                 };
+                if repr_c && ty.owned() && !matches!(ty, Type::Struct(sid) if self.structs[sid].repr_c) {
+                    return Err(self.error_at(name_offset, &format!("field '{}' of '{}' owns storage, so the struct cannot claim a C layout", fname, name)));
+                }
                 concrete.push((fname, ty));
             }
             let id = self.structs.len();

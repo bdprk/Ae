@@ -3748,6 +3748,8 @@ fn repr_c_attribute_guards_and_extern_struct_rejections() {
     let cases = [
         ("#[repr(C)] struct Empty {} fn main() {}",
          "must have at least one field"),
+        ("struct Boxed[T] { value: T } #[repr(C)] struct Outer { item: Boxed[i64] } fn main() {}",
+         "cannot claim a C layout"),
         ("fn size_of[T](v: &T) -> i64 { return len(v); } #[repr(C)] struct Boxed[V] { inner: V } fn main() {}",
          "is generic, so it has no single C layout"),
         ("#[repr(C)] struct Bad { name: string } fn main() {}",
