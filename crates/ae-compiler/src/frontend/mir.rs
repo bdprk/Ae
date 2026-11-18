@@ -340,8 +340,19 @@ fn expr_intrinsic(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut Mi
             MirOperand::Place(MirPlace::Local(*id, Type::Array(*len))),
             lower_operand(index, bindings, lowering),
         ]),
-        Expr::VecIndex(id, index, ..) => ("index", vec![MirOperand::Place(MirPlace::Local(*id, Type::Vec)), lower_operand(index, bindings, lowering)]),
-        Expr::StrVecIndex(id, index, ..) => ("index", vec![MirOperand::Place(MirPlace::Local(*id, Type::StrVec)), lower_operand(index, bindings, lowering)]),
+        Expr::VecIndex(id, index, _, _, borrowed, element) => {
+            let vector = match (*element, *borrowed) {
+                (Type::F64, false) => Type::VecF,
+                (Type::F64, true) => Type::VecFRef,
+                (_, false) => Type::Vec,
+                (_, true) => Type::VecRef,
+            };
+            ("index", vec![MirOperand::Place(MirPlace::Local(*id, vector)), lower_operand(index, bindings, lowering)])
+        }
+        Expr::StrVecIndex(id, index, _, _, borrowed) => {
+            let vector = if *borrowed { Type::StrVecRef } else { Type::StrVec };
+            ("index", vec![MirOperand::Place(MirPlace::Local(*id, vector)), lower_operand(index, bindings, lowering)])
+        }
         Expr::Join(id, sep, ..) => ("join", vec![MirOperand::Place(MirPlace::Local(*id, Type::StrVec)), lower_operand(sep, bindings, lowering)]),
         Expr::Split(base, sep, ..) => ("split", vec![lower_operand(base, bindings, lowering), lower_operand(sep, bindings, lowering)]),
         Expr::Args(..) => ("args", vec![]),
@@ -425,7 +436,9 @@ fn string_base_operand(id: usize, field: &Option<String>) -> MirOperand {
 
 pub(super) fn expr_type(expr: &Expr) -> Type {
     match expr {
-        Expr::Number(..) | Expr::Index(..) | Expr::VecIndex(..) | Expr::Len(..) => Type::Int,
+        Expr::Number(..) | Expr::Index(..) | Expr::Len(..) => Type::Int,
+        Expr::VecIndex(_, _, _, _, _, ty) => *ty,
+        Expr::StrVecIndex(..) => Type::String,
         Expr::Binary(_, _, _, _, _, ty) => *ty,
         Expr::FloatLit(..) | Expr::ToF64(..) => Type::F64,
         Expr::BoolLit(..) | Expr::StrEq(..) | Expr::Contains(..) => Type::Bool,
