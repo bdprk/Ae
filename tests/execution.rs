@@ -5996,3 +5996,16 @@ fn mir_preserves_trapping_conditions_with_identical_successors() {
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("division by zero"), "{error}");
 }
+
+#[test]
+fn emit_mir_keeps_short_circuit_rhs_inside_the_lazy_operand() {
+    let dir = unique_temp_dir("mir_short_circuit");
+    let source = dir.join("short_circuit.ae");
+    fs::write(&source, "fn show(x: i64) -> bool { print(x); return true; } fn main() { let hit = false && show(9); print(hit); }").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-mir").arg(&source).output().unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let mir = String::from_utf8_lossy(&output.stdout);
+    assert!(mir.contains("false && lazy { fn#0(9) -> bool }"), "{mir}");
+    assert!(!mir.contains("= fn#0(9)"), "{mir}");
+}

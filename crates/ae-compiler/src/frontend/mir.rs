@@ -78,6 +78,7 @@ pub(super) enum MirPlace {
 pub(super) enum MirRvalue {
     Use(MirOperand),
     Binary(MirOperand, Kind, MirOperand, Type),
+    ShortCircuit(MirOperand, Kind, Expr),
     Call(usize, Vec<MirOperand>, Type),
     FnCall(usize, Vec<MirOperand>, Type),
     ClosureLit(usize),
@@ -185,6 +186,12 @@ fn lower_expr(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut MirLow
         Expr::StrLit(text, line, col) => MirRvalue::Use(MirOperand::Str(Rc::from(text.as_str()), *line, *col)),
         Expr::Variable(id, ty, ..) => MirRvalue::Use(MirOperand::Place(MirPlace::Local(*id, *ty))),
         Expr::Field(base, fname, fty) => MirRvalue::Use(MirOperand::Place(MirPlace::Field(Box::new(base_place(base, bindings, lowering)), fname.clone(), *fty))),
+        Expr::Binary(a, op, b, ..) if matches!(op, Kind::And | Kind::Or) => {
+            // The right operand may trap or have side effects. Preserve its
+            // source form, like a CFG condition, so it stays conditional.
+            let lhs = lower_operand(a, bindings, lowering);
+            MirRvalue::ShortCircuit(lhs, op.clone(), (**b).clone())
+        }
         Expr::Binary(a, op, b, ..) => {
             let lhs = lower_operand(a, bindings, lowering);
             let rhs = lower_operand(b, bindings, lowering);
@@ -831,6 +838,9 @@ fn subst_operand(op: &MirOperand, locals: &HashMap<usize, MirOperand>, temps: &H
 fn fold_rvalue(rvalue: &MirRvalue, locals: &HashMap<usize, MirOperand>, temps: &HashMap<usize, MirOperand>) -> MirRvalue {
     match rvalue {
         MirRvalue::Use(op) => MirRvalue::Use(subst_operand(op, locals, temps)),
+        MirRvalue::ShortCircuit(lhs, op, rhs) => {
+            MirRvalue::ShortCircuit(subst_operand(lhs, locals, temps), op.clone(), rhs.clone())
+        }
         MirRvalue::Binary(lhs, op, rhs, ty) => {
             let l = subst_operand(lhs, locals, temps);
             let r = subst_operand(rhs, locals, temps);
@@ -887,6 +897,7 @@ fn eval_binary(lhs: &MirOperand, op: &Kind, rhs: &MirOperand) -> Option<MirOpera
 fn collect_rvalue_temps(rvalue: &MirRvalue, used: &mut HashSet<usize>) {
     match rvalue {
         MirRvalue::Use(op) => collect_operand_temps(op, used),
+        MirRvalue::ShortCircuit(lhs, ..) => collect_operand_temps(lhs, used),
         MirRvalue::Binary(a, _, b, _) => { collect_operand_temps(a, used); collect_operand_temps(b, used); }
         MirRvalue::Call(_, args, _) | MirRvalue::FnCall(_, args, _) | MirRvalue::Intrinsic(_, args, _) => {
             for a in args { collect_operand_temps(a, used); }
@@ -1033,6 +1044,10 @@ fn print_operand(operand: &MirOperand, out: &mut String) {
 fn print_rvalue(rvalue: &MirRvalue, out: &mut String) {
     match rvalue {
         MirRvalue::Use(operand) => print_operand(operand, out),
+        MirRvalue::ShortCircuit(lhs, op, rhs) => {
+            print_operand(lhs, out);
+            out.push_str(&format!(" {} lazy {{ {} }} -> bool", tree::operator_text(op), mir_text(rhs)));
+        }
         MirRvalue::Binary(a, op, b, ty) => {
             print_operand(a, out);
             out.push(' ');
