@@ -449,11 +449,20 @@ pub(super) fn expr_type(expr: &Expr) -> Type {
         // The printed place types are evidence, so the string-shaped
         // expressions name their real types instead of the integer
         // catch-all (a string literal bound to `v0 (i64)` misleads).
-        Expr::StrLit(..) | Expr::ReadFile(..) | Expr::Join(..) | Expr::Trim(..) => Type::String,
+        Expr::StrLit(..) | Expr::ReadFile(..) | Expr::Join(..) | Expr::Trim(..)
+        | Expr::Slice(..) | Expr::FloatToString(..) | Expr::ToString(..)
+        | Expr::PathJoin(..) | Expr::PathName(..) | Expr::PathParent(..)
+        | Expr::Utf8Prefix(..) => Type::String,
+        Expr::Bytes(..) => Type::Vec,
+        Expr::Neg(value, ..) => expr_type(value),
+        Expr::ClosureLit(id) => Type::Closure(*id),
+        Expr::MapInc(place, ..) if place.f64_value() => Type::F64,
+        Expr::MapHas(..) | Expr::MapRemove(..) => Type::Bool,
         Expr::SliceView(..) => Type::StrView,
         Expr::Tokens(..) => Type::Tokens,
-        Expr::Split(..) | Expr::Args(..) | Expr::Lines(..) | Expr::StrVecNew(..) => Type::StrVec,
+        Expr::Split(..) | Expr::Args(..) | Expr::Lines(..) | Expr::StrVecNew(..) | Expr::MapKeys(..) => Type::StrVec,
         Expr::F64VecNew(..) => Type::VecF,
+        Expr::MapNew(_, _, MapKind::Float) => Type::MapF,
         Expr::MapNew(..) => Type::Map,
         // Math calls return f64 by definition (ADR-60).
         Expr::MathCall(..) => Type::F64,
@@ -478,11 +487,13 @@ pub(super) fn expr_type(expr: &Expr) -> Type {
         Expr::TryReadFile(_, ty, ..) | Expr::TryListDir(_, ty, ..) | Expr::ParseInt(_, ty, ..)
         | Expr::TryFileInfo(_, ty, ..) | Expr::TryRemoveFile(_, ty, ..) | Expr::TryRemoveDir(_, ty, ..)
         | Expr::TryCreateDir(_, ty, ..) | Expr::SetCwd(_, ty, ..) | Expr::Env(_, ty, ..)
+        | Expr::RunCommand(_, _, ty, ..) | Expr::MapGet(_, _, ty, ..)
         | Expr::ReadStdin(ty, ..) | Expr::Cwd(ty, ..) => ty.clone(),
         Expr::TryWriteFile(_, _, ty, ..) | Expr::TryCopyFile(_, _, ty, ..) | Expr::TryRenamePath(_, _, ty, ..)
         | Expr::TryAppendFile(_, _, ty, ..) | Expr::JsonGet(_, _, ty, ..) | Expr::JsonInt(_, _, ty, ..)
         | Expr::JsonBool(_, _, ty, ..) | Expr::JsonLen(_, _, ty, ..) | Expr::Find(_, _, ty, ..) => ty.clone(),
-        _ => Type::Int,
+        Expr::ToI64(..) | Expr::WriteFile(..) | Expr::CountLinesWith(..) | Expr::Utf8Len(..)
+        | Expr::MapInc(..) | Expr::NowMs | Expr::NowS => Type::Int,
     }
 }
 
