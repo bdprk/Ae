@@ -382,7 +382,7 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
             used.insert(*id);
             walk_expr(index, used, mutated);
         }
-        Expr::Tokens(id, ..) => { used.insert(*id); }
+        Expr::Tokens(id, _, sep, ..) => { used.insert(*id); walk_expr(sep, used, mutated); }
         Expr::Join(id, sep, ..) => { used.insert(*id); walk_expr(sep, used, mutated); }
         // The call's program name is an expression like any other; the
         // borrowed argument vector is a bare variable slot.
