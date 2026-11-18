@@ -1125,7 +1125,7 @@ impl Parser<'_> {
                 }
             }
             Kind::LParen => { self.pos += 1; let inner = self.expression(0, moving)?; self.take(Kind::RParen)?; inner }
-            _ => return Err(self.fail("expected expression")),
+            _ => return Err(self.fail("expected expression").with_code("E0011")),
         };
         // Postfix field access binds tighter than every operator.
         loop {

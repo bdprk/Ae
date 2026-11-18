@@ -877,7 +877,7 @@ impl Parser<'_> {
             }
         }
         if found.is_empty() {
-            return Err(self.error_at(offset, &format!("unknown function '{method}'")));
+            return Err(self.error_at(offset, &format!("unknown function '{method}'")).with_code("E0207"));
         }
         if found.len() > 1 {
             return Err(self.error_at(offset, &format!("method '{method}' is ambiguous; several constrained parameters of this generic declare it")));
