@@ -3294,6 +3294,32 @@ fn main() { print(add(2, 3)); }
 }
 
 #[test]
+fn emit_mir_preserves_vector_index_types() {
+    let path = std::env::temp_dir().join(format!(
+        "ae-mir-vector-index-{}-{}.ae",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(&path, r#"fn read(values: &vec[f64], words: &vec[string]) -> i64 {
+    print(values[0]);
+    print(words[0]);
+    return 0;
+}
+fn main() {
+    let values = vec[1.5];
+    let words = split("a b", " ");
+    let _result = read(&values, &words);
+}"#).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("emit-mir").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let mir = String::from_utf8_lossy(&output.stdout);
+    assert!(mir.contains("(f64) = index(v0 (&vec[f64]), 0) -> f64"), "{mir}");
+    assert!(mir.contains("(string) = index(v1 (&vec[string]), 0) -> string"), "{mir}");
+}
+
+#[test]
 fn emit_mir_runs_clean_on_the_run_suite() {
     // Every construct the run suite uses must lower into MIR without a
     // validator panic or a missing arm.
