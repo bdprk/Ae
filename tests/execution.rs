@@ -6499,3 +6499,31 @@ fn package_deps_visits_local_diamond_once_and_rejects_cycles() {
     assert!(!cycle.status.success() && error.contains("dependency cycle") && error.matches("ae.toml").count() == 4, "{error}");
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn local_library_packages_compile_through_declared_aliases() {
+    let dir = unique_temp_dir("package_library_imports");
+    for (name, file, source, dependency) in [
+        ("app", "main.ae", "use \"@math\"; fn main() { print(answer()); }", "math = { path = '../math' }"),
+        ("math", "lib.ae", "use \"@base\"; pub fn answer() -> i64 { return base() + 2; }", "base = { path = '../base' }"),
+        ("base", "lib.ae", "pub fn base() -> i64 { return 40; }", ""),
+    ] {
+        let package = dir.join(name);
+        fs::create_dir_all(package.join("src")).unwrap();
+        fs::write(package.join("ae.toml"), format!(
+            "[package]\nname = '{name}'\nversion = '0.1.0'\nae = '0.1'\n\n[dependencies]\n{dependency}"
+        )).unwrap();
+        fs::write(package.join("src").join(file), source).unwrap();
+    }
+    let cli = env!("CARGO_BIN_EXE_ae");
+    for flags in [&[][..], &["--interp"][..]] {
+        let output = Command::new(cli).current_dir(dir.join("app")).arg("run").args(flags).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
+    }
+    fs::write(dir.join("app/src/main.ae"), "use \"@base\"; fn main() {}").unwrap();
+    let checked = Command::new(cli).current_dir(dir.join("app")).args(["check", "--json"]).output().unwrap();
+    let report = String::from_utf8_lossy(&checked.stdout);
+    assert!(!checked.status.success() && report.contains("unknown package dependency 'base'"), "{report}");
+    fs::remove_dir_all(dir).unwrap();
+}
