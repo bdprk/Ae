@@ -3639,6 +3639,32 @@ fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
 }
 
 #[test]
+fn nested_repr_c_struct_crosses_a_separate_c_translation_unit() {
+    let dir = unique_temp_dir("nested_c_ffi");
+    let source = dir.join("main.ae");
+    fs::write(&source, "#[repr(C)] struct Inner { flag: bool, value: i64 }\n#[repr(C)] struct Outer { prefix: bool, inner: Inner, tail: bool }\nextern \"C\" fn nested_ffi_sum(value: Outer) -> i64;\nfn main() { let inner = Inner { flag: true, value: 40 }; let outer = Outer { prefix: true, inner: inner, tail: true }; unsafe { print(nested_ffi_sum(outer)); } }\n").unwrap();
+    let foreign = dir.join("foreign.c");
+    fs::write(&foreign, "#include <stdint.h>\n#include <stdbool.h>\nstruct Inner { bool flag; int64_t value; };\nstruct Outer { bool prefix; struct Inner inner; bool tail; };\nint64_t nested_ffi_sum(struct Outer value) { return value.inner.value + (value.prefix ? 1 : 0) + (value.inner.flag && value.tail ? 1 : 0); }\n").unwrap();
+    for backend in ["tree", "mir"] {
+        let generated = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-c").arg(&source).env("AE_CODEGEN", backend).output().unwrap();
+        assert!(generated.status.success(), "{backend}: {}", String::from_utf8_lossy(&generated.stderr));
+        let generated_path = dir.join(format!("{backend}.c"));
+        fs::write(&generated_path, generated.stdout).unwrap();
+        let executable = dir.join(if cfg!(windows) { format!("{backend}.exe") } else { backend.to_owned() });
+        let compiler = std::env::var_os("AE_CC").unwrap_or_else(|| "gcc".into());
+        let mut cc = Command::new(compiler);
+        cc.arg("-std=c11").arg(&generated_path).arg(&foreign).arg("-o").arg(&executable);
+        if !cfg!(windows) { cc.arg("-lm"); }
+        let output = cc.output().unwrap();
+        assert!(output.status.success(), "{backend}: {}", String::from_utf8_lossy(&output.stderr));
+        let run = Command::new(executable).output().unwrap();
+        assert!(run.status.success(), "{backend}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "42\n");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn repr_c_nested_layout_matches_the_native_c_compiler() {
     let dir = unique_temp_dir("nested_c_layout");
     let source = dir.join("nested.ae");
