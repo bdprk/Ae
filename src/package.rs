@@ -193,17 +193,46 @@ fn read_manifest(manifest: &Path) -> Result<Manifest, String> {
         return Err(fail(&format!("package requires AE {floor} or later, installed version is {current}")));
     }
 
-    if document.contains_key("target") {
-        return Err(fail("target-specific dependencies are not implemented yet"));
-    }
     let name = name.to_owned();
     let version = version.to_owned();
-    let dependencies = match document.remove("dependencies") {
+    let mut dependencies = match document.remove("dependencies") {
         None => toml::Table::new(),
         Some(toml::Value::Table(table)) => table,
         Some(_) => return Err(fail("expected a [dependencies] table")),
     };
+    if let Some(targets) = document.remove("target") {
+        let targets = targets.as_table().ok_or_else(|| fail("expected a [target] table"))?;
+        for (selector, value) in targets {
+            let condition = selector.strip_prefix("cfg(").and_then(|prefix| prefix.strip_suffix(')'))
+                .and_then(platform_matches)
+                .ok_or_else(|| fail(&format!("unsupported target selector '{selector}'")))?;
+            let table = value.as_table().filter(|table| table.len() == 1)
+                .and_then(|table| table.get("dependencies")).and_then(toml::Value::as_table)
+                .ok_or_else(|| fail(&format!("target '{selector}' requires a dependencies table")))?;
+            if condition {
+                for (alias, dependency) in table {
+                    if let Some(previous) = dependencies.get(alias) {
+                        if previous != dependency {
+                            return Err(fail(&format!("multiple active declarations for dependency '{alias}'")));
+                        }
+                    } else {
+                        dependencies.insert(alias.clone(), dependency.clone());
+                    }
+                }
+            }
+        }
+    }
     Ok(Manifest { name, version, dependencies, digest: ae_compiler::sha256::hex(source.as_bytes()) })
+}
+
+fn platform_matches(platform: &str) -> Option<bool> {
+    Some(match platform {
+        "windows" => cfg!(windows),
+        "unix" => cfg!(unix),
+        "x86_64" => cfg!(target_arch = "x86_64"),
+        "arm64" => cfg!(target_arch = "aarch64"),
+        _ => return None,
+    })
 }
 
 pub(super) fn describe_graph(root: &Path) -> Result<String, String> {
