@@ -11,25 +11,52 @@ fn valid_name(name: &str) -> bool {
     })
 }
 
+const HELLO: &str = "fn main() {\n    print(\"Hello, AE!\");\n}\n";
+
+fn manifest_text(name: &str) -> String {
+    format!(
+        "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nae = \"{}\"\n",
+        env!("CARGO_PKG_VERSION"),
+    )
+}
+
+fn create_file(path: &Path, content: &str) -> Result<(), String> {
+    use std::io::Write;
+    let mut file = fs::File::create_new(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    file.write_all(content.as_bytes()).map_err(|error| format!("{}: {error}", path.display()))
+}
+
 pub(super) fn create_project(directory: &Path) -> Result<(), String> {
     let name = directory.file_name().and_then(|name| name.to_str())
         .filter(|name| valid_name(name)).ok_or(PACKAGE_NAME_ERROR)?;
-    let manifest = format!(
-        "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nae = \"{}\"\n",
-        env!("CARGO_PKG_VERSION"),
-    );
-
-    fn create_file(path: &Path, content: &str) -> Result<(), String> {
-        use std::io::Write;
-        let mut file = fs::File::create_new(path).map_err(|error| format!("{}: {error}", path.display()))?;
-        file.write_all(content.as_bytes()).map_err(|error| format!("{}: {error}", path.display()))
-    }
-
     fs::create_dir(directory).map_err(|error| format!("{}: {error}", directory.display()))?;
     let source = directory.join("src");
     fs::create_dir(&source).map_err(|error| format!("{}: {error}", source.display()))?;
-    create_file(&source.join("main.ae"), "fn main() {\n    print(\"Hello, AE!\");\n}\n")?;
-    create_file(&directory.join(MANIFEST), &manifest)
+    create_file(&source.join("main.ae"), HELLO)?;
+    create_file(&directory.join(MANIFEST), &manifest_text(name))
+}
+
+/// Scaffolds a package inside an existing directory. A manifest already present is an
+/// error rather than an overwrite; an existing `src/main.ae` is left untouched, so `init`
+/// on a directory that already holds sources only adds the manifest.
+pub(super) fn init_project(directory: &Path) -> Result<(), String> {
+    if !directory.is_dir() {
+        return Err(format!("{}: init needs an existing directory; use ae new for a new one", directory.display()));
+    }
+    let canonical = directory.canonicalize().map_err(|error| format!("{}: {error}", directory.display()))?;
+    let name = canonical.file_name().and_then(|name| name.to_str())
+        .filter(|name| valid_name(name)).ok_or(PACKAGE_NAME_ERROR)?;
+    let manifest = directory.join(MANIFEST);
+    if manifest.try_exists().map_err(|error| format!("{}: {error}", manifest.display()))? {
+        return Err(format!("{}: already contains {MANIFEST}", directory.display()));
+    }
+    let source = directory.join("src");
+    fs::create_dir_all(&source).map_err(|error| format!("{}: {error}", source.display()))?;
+    let main = source.join("main.ae");
+    if !main.try_exists().map_err(|error| format!("{}: {error}", main.display()))? {
+        create_file(&main, HELLO)?;
+    }
+    fs::write(&manifest, manifest_text(name)).map_err(|error| format!("{}: {error}", manifest.display()))
 }
 
 pub(super) fn discover_manifest() -> Result<PathBuf, String> {

@@ -5,7 +5,7 @@ use frontend::compile_path;
 mod package;
 mod frontend_cache;
 
-const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae update [project]\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae init [directory]\n       ae update [project]\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -353,6 +353,13 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         let directory = Path::new(&args[1]);
         package::create_project(directory)?;
         println!("created package in {}", directory.display());
+        return Ok(0);
+    }
+    if cmd == "init" {
+        if args.len() > 2 { return Err(USAGE.into()); }
+        let directory = args.get(1).map_or_else(|| PathBuf::from("."), PathBuf::from);
+        package::init_project(&directory)?;
+        println!("initialized package in {}", directory.display());
         return Ok(0);
     }
     if cmd == "cache" { return cache_command(args.get(1)); }
