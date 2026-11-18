@@ -40,7 +40,14 @@ impl Parser<'_> {
     pub(super) fn check_export_types(&self, name: &str, params: &[Type], ret: Type) -> Result<(), ae_span::Diagnostic> {
         for ty in params.iter().copied().chain(std::iter::once(ret)) {
             let (kind, type_name, public) = match ty {
-                Type::Struct(id) | Type::StructRef(id) => ("struct", self.structs[id].name.clone(), self.structs[id].public),
+                Type::Struct(id) | Type::StructRef(id) | Type::StructMut(id) => {
+                    ("struct", self.structs[id].name.clone(), self.structs[id].public)
+                }
+                Type::Fn(sig) => {
+                    let (params, returns) = super::closures::fn_sig(sig);
+                    self.check_export_types(name, &params, returns)?;
+                    continue;
+                }
                 Type::Enum(_, id) => ("enum", self.enums[id].name.to_owned(), self.enums[id].public),
                 _ => continue,
             };

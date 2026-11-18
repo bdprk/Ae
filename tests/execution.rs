@@ -6345,3 +6345,28 @@ extern "C" fn callback(x: i64) -> i64 {{ return x + 2; }}
     }
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn public_functions_reject_private_types_in_callback_signatures() {
+    let dir = unique_temp_dir("private_callback_types");
+    let path = dir.join("main.ae");
+    let cli = env!("CARGO_BIN_EXE_ae");
+    for signature in ["fn(&Hidden) -> i64", "fn(&mut Hidden) -> i64", "fn() -> Hidden", "&mut Hidden"] {
+        fs::write(&path, format!(r#"
+struct Hidden {{ value: i64 }}
+pub fn expose(callback: {signature}) -> i64 {{ return 0; }}
+fn main() {{}}
+"#)).unwrap();
+        let checked = Command::new(cli).arg("check").arg(&path).output().unwrap();
+        let stderr = String::from_utf8_lossy(&checked.stderr);
+        assert!(!checked.status.success() && stderr.contains("public function 'expose' exposes private struct 'Hidden'"), "{stderr}");
+    }
+    fs::write(&path, r#"
+pub struct Visible { value: i64 }
+pub fn expose(callback: fn(&Visible) -> i64) -> i64 { return 0; }
+fn main() {}
+"#).unwrap();
+    let checked = Command::new(cli).arg("check").arg(&path).output().unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    assert!(checked.status.success(), "{}", String::from_utf8_lossy(&checked.stderr));
+}
