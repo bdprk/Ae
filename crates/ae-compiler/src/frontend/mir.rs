@@ -723,6 +723,12 @@ fn optimize_block(block: &mut MirBlock) {
     let mut temp_consts: HashMap<usize, MirOperand> = HashMap::new();
 
     for binding in &mut block.bindings {
+        // Calls and intrinsics can write through pointers. Aggregate
+        // operands can contain calls directly. Drop local facts at such
+        // operations until MIR can prove which places they write.
+        if !matches!(binding.rvalue, MirRvalue::Use(_) | MirRvalue::Binary(..) | MirRvalue::ClosureLit(_)) {
+            local_consts.clear();
+        }
         binding.rvalue = fold_rvalue(&binding.rvalue, &local_consts, &temp_consts);
         match &binding.target {
             MirPlace::Local(id, _) => {
