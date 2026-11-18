@@ -6149,3 +6149,34 @@ fn main() {
     }
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn function_values_borrow_structs_and_fixed_arrays() {
+    let dir = unique_temp_dir("indirect_struct_array_borrow");
+    let path = dir.join("main.ae");
+    fs::write(&path, r#"
+struct Pair { left: i64, right: i64 }
+
+fn apply(f: fn(&Pair, &[i64; 2]) -> i64, pair: &Pair, values: &[i64; 2]) -> i64 {
+    return f(&pair, &values);
+}
+
+fn main() {
+    var pair = Pair { left: 40, right: 2 };
+    var values = [1, 2];
+    print(apply(|p: &Pair, a: &[i64; 2]| -> i64 {
+        return p.left + a[1];
+    }, &pair, &values));
+    pair.right = 3;
+    values[0] = 4;
+    print(pair.right + values[0]);
+}
+"#).unwrap();
+    let cli = env!("CARGO_BIN_EXE_ae");
+    for flags in [&[][..], &["--interp"][..]] {
+        let output = Command::new(cli).arg("run").arg(&path).args(flags).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n7\n");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}

@@ -68,7 +68,7 @@ pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Fn(sig) => {
             let (params, ret) = crate::frontend::closures::fn_sig(sig);
             let c_params = if params.is_empty() { "void".to_owned() } else { params.iter().map(|t| match t {
-                Type::VecRef | Type::StrVecRef | Type::VecFRef => c_type(*t, 0, false),
+                Type::VecRef | Type::StrVecRef | Type::VecFRef | Type::StructRef(_) | Type::Array(_) => c_type(*t, 0, false),
                 _ => t.c_temp().trim_end().to_owned(),
             }).collect::<Vec<_>>().join(", ") };
             if declaration {
