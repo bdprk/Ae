@@ -344,6 +344,9 @@ impl Parser<'_> {
     // `struct Boxed[V]` stays a shape until the outer declaration is
     // instantiated (M1.10).
     pub(super) fn field_type(&mut self, params: &[String]) -> Result<Payload, ae_span::Diagnostic> {
+        if *self.current() == Kind::Star {
+            return Ok(Payload::Concrete(self.pointer_type()?));
+        }
         if let Kind::Ident(name) = self.current() {
             if let Some(index) = params.iter().position(|p| p == name) {
                 self.pos += 1;

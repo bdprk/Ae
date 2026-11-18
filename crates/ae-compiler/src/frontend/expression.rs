@@ -1127,13 +1127,15 @@ impl Parser<'_> {
                     break;
                 }
                 let as_offset = self.tokens[self.pos].offset;
-                let (base, _base_ty) = lhs;
+                let (base, base_ty) = lhs;
                 self.pos += 1;
                 let target = self.pointer_type()?;
-                if let Type::Ptr(pid) | Type::PtrMut(pid) = &target {
-                    let pointee = super::ptr_pointee(*pid);
-                    if pointee.owned() {
-                        return Err(self.error_at(as_offset, "a pointer to an owned value is not supported yet; its borrow is not tracked, so safe code could dangle it by moving the value"));
+                if !matches!(base_ty, Type::Ptr(_) | Type::PtrMut(_)) {
+                    if let Type::Ptr(pid) | Type::PtrMut(pid) = &target {
+                        let pointee = super::ptr_pointee(*pid);
+                        if pointee.owned() {
+                            return Err(self.error_at(as_offset, "a pointer to an owned value is not supported yet; its borrow is not tracked, so safe code could dangle it by moving the value"));
+                        }
                     }
                 }
                 let mutable = matches!(target, Type::PtrMut(_));
