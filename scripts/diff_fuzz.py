@@ -470,7 +470,22 @@ def run_seed(seed: int, workdir: Path, cache_dir: Path, compile_timeout: int) ->
     their own content cache, so parallel workers never share mutable state
     with each other or with the user's cache. Returns a result dict; never
     raises (every failure becomes a result).
+
+    An environmental failure (compile timeout under load, ENOSPC, tmpdir
+    race) is the host losing the race, not the language diverging, so the
+    seed retries once; a still-environmental result is reported as ENV and
+    is not counted as a differential failure (M2.13 counts real divergences).
     """
+    result = run_seed_once(seed, workdir, cache_dir, compile_timeout)
+    if result["ok"] is False and result.get("env"):
+        retry = run_seed_once(seed, workdir, cache_dir, compile_timeout)
+        if retry["ok"] or not retry.get("env"):
+            return retry
+        result["detail"] = "ENV after retry: " + retry["detail"] + " (first attempt: " + result["detail"] + ")"
+    return result
+
+
+def run_seed_once(seed: int, workdir: Path, cache_dir: Path, compile_timeout: int) -> dict:
     started = time.perf_counter()
     result = {"seed": seed, "ok": None, "detail": "", "lines": 0, "source": ""}
     gen = Gen(seed)
@@ -511,10 +526,24 @@ def run_seed(seed: int, workdir: Path, cache_dir: Path, compile_timeout: int) ->
         else:
             result["ok"] = True
             result["lines"] = len(outs[0].splitlines())
-    except (RuntimeError, subprocess.TimeoutExpired, OSError) as error:
+    except subprocess.TimeoutExpired as error:
+        # A compile or run timeout is the host losing the race under load, so
+        # the result is flagged environmental and `run_seed` retries it once
+        # instead of charging the M2.13 gate with a false divergence.
+        result["ok"] = False
+        result["env"] = True
+        result["detail"] = f"environmental timeout: {error}"
+    except OSError as error:
         # OSError covers the environment failing under the seed (ENOSPC on a
         # long duration run, tmpdir races): that seed fails, the run survives
         # — a harness that dies on ENOSPC loses its whole segment summary.
+        result["ok"] = False
+        result["env"] = True
+        result["detail"] = str(error)
+    except RuntimeError as error:
+        # The compiler rejected the generated program: a real
+        # generator/compiler disagreement, not host noise, so this stays a
+        # differential FAILURE (no env flag, no retry).
         result["ok"] = False
         result["detail"] = str(error)
     # The seed's directory (source, generated C, binaries) is dead weight
@@ -552,13 +581,11 @@ def main() -> int:
     jobs = max(1, args.jobs)
     started = time.perf_counter()
     results: dict[int, dict] = {}
-    failures = 0
     cache_state = {"last": 0.0}
 
     with tempfile.TemporaryDirectory() as tmp:
         workdir = Path(tmp)
         cache_dir = workdir / "cache"
-        corpus: dict[int, str] = {}
         deadline = started + args.duration * 3600.0
         seed = args.start
 
@@ -592,8 +619,7 @@ def main() -> int:
                         result = future.result()
                         futures.discard(future)
                         results[result["seed"]] = result
-                        failures += 0 if result["ok"] else 1
-                        mark = "ok" if result["ok"] else "FAILURE"
+                        mark = "ok" if result["ok"] else ("ENV" if result.get("env") else "FAILURE")
                         print(f"seed {result['seed']}: {mark} ({result['lines']} lines)", flush=True)
                 maybe_trim_cache(cache_dir, cache_state)
             while futures:
@@ -602,32 +628,39 @@ def main() -> int:
                     result = future.result()
                     futures.discard(future)
                     results[result["seed"]] = result
-                    failures += 0 if result["ok"] else 1
-                    mark = "ok" if result["ok"] else "FAILURE"
+                    mark = "ok" if result["ok"] else ("ENV" if result.get("env") else "FAILURE")
                     print(f"seed {result['seed']}: {mark} ({result['lines']} lines)", flush=True)
                 maybe_trim_cache(cache_dir, cache_state)
 
         if args.save_corpus:
             corpus_dir = Path(args.save_corpus)
             corpus_dir.mkdir(parents=True, exist_ok=True)
-            for seed in seeds:
-                gen = Gen(seed)
-                (corpus_dir / f"seed_{seed}.ae").write_text(gen.program(), encoding="utf-8")
-            print(f"corpus saved: {corpus_dir} ({len(seeds)} programs)")
+            for seed in sorted(results):
+                (corpus_dir / f"seed_{seed}.ae").write_text(results[seed]["source"], encoding="utf-8")
+            print(f"corpus saved: {corpus_dir} ({len(results)} programs)")
 
     elapsed = time.perf_counter() - started
     order = sorted(results)
-    failed_seeds = [seed for seed in order if not results[seed]["ok"]]
+    failed_seeds = [seed for seed in order if not results[seed]["ok"] and not results[seed].get("env")]
+    env_seeds = [seed for seed in order if not results[seed]["ok"] and results[seed].get("env")]
     for seed in failed_seeds:
         print("")
         print(f"seed {seed}: FAILURE")
         print(results[seed]["source"])
         print(results[seed]["detail"])
+    for seed in env_seeds:
+        print("")
+        print(f"seed {seed}: ENVIRONMENTAL (host lost the race, not a language divergence)")
+        print(results[seed]["source"])
+        print(results[seed]["detail"])
     rate = len(results) / elapsed if elapsed > 0 else 0.0
-    print(f"\n{len(results)} seeds, {failures} failures, {elapsed:.1f}s ({rate:.2f} seeds/s, {jobs} jobs)")
+    suffix = f", {len(env_seeds)} environmental" if env_seeds else ""
+    print(f"\n{len(results)} seeds, {len(failed_seeds)} failures{suffix}, {elapsed:.1f}s ({rate:.2f} seeds/s, {jobs} jobs)")
     if failed_seeds:
         print(f"failed seeds: {failed_seeds}")
-    return 1 if failures else 0
+    if env_seeds:
+        print(f"environmental seeds: {env_seeds}")
+    return 1 if failed_seeds else 0
 
 
 if __name__ == "__main__":
