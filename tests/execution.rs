@@ -3639,6 +3639,24 @@ fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
 }
 
 #[test]
+fn pointer_offset_count_can_consume_owned_argument() {
+    let dir = unique_temp_dir("pointer_offset_owned_count");
+    let source = dir.join("offset.ae");
+    fs::write(&source, "fn offset(s: string) -> i64 { print(s); return 0; }\nfn main() { var value = 42; let pointer = &value as *const i64; let text = \"owned\"; unsafe { let shifted = pointer.offset(offset(text)); print(shifted.deref()); } }\n").unwrap();
+    for backend in ["tree", "mir"] {
+        let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).env("AE_CODEGEN", backend).output().unwrap();
+        assert!(run.status.success(), "{backend}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "owned\n42\n");
+    }
+    let invalid = dir.join("moved.ae");
+    fs::write(&invalid, "fn offset(s: string) -> i64 { return 0; }\nfn main() { var value = 42; let pointer = &value as *const i64; let text = \"owned\"; unsafe { let shifted = pointer.offset(offset(text)); print(shifted.deref()); } print(text); }\n").unwrap();
+    let checked = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&invalid).output().unwrap();
+    assert!(!checked.status.success(), "use after move was accepted");
+    assert!(String::from_utf8_lossy(&checked.stderr).contains("moved"), "{}", String::from_utf8_lossy(&checked.stderr));
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn nested_repr_c_struct_crosses_a_separate_c_translation_unit() {
     let dir = unique_temp_dir("nested_c_ffi");
     let source = dir.join("main.ae");
