@@ -5815,13 +5815,21 @@ fn compound_assignment_operators() {
 
     let source = dir.join("main.ae");
     std::fs::write(&source, r#"
+struct Counter { n: i64 }
+
 fn main() {
     var x = 10;
     x += 5;
     x -= 3;
     x *= 2;
     x /= 4;
+    x %= 4;
     print(x);
+
+    var c = Counter { n: 10 };
+    c.n += 5;
+    c.n %= 6;
+    print(c.n);
 
     var f = 1.5;
     f += 2.5;
@@ -5845,7 +5853,7 @@ fn main() {
     let mir_out = String::from_utf8_lossy(&mir.stdout).replace("\r\n", "\n");
     let tree_out = String::from_utf8_lossy(&tree.stdout).replace("\r\n", "\n");
     assert_eq!(mir_out, tree_out);
-    assert_eq!(mir_out, "6\n8.0\nhello world\n");
+    assert_eq!(mir_out, "2\n3\n8.0\nhello world\n");
 
     let _ = std::fs::remove_dir_all(dir);
 }
