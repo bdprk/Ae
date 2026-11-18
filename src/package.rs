@@ -53,25 +53,117 @@ pub(super) fn manifest_path(input: &Path) -> Option<PathBuf> {
     }
 }
 
-pub(super) fn entry_path(input: &Path, allow_dependencies: bool) -> Result<(PathBuf, ae_compiler::frontend::PackageImports), String> {
+pub(super) struct PackageEntry {
+    pub path: PathBuf,
+    pub imports: ae_compiler::frontend::PackageImports,
+    pub lock: Option<PackageLock>,
+}
+
+pub(super) fn entry_path(input: &Path) -> Result<PackageEntry, String> {
     let Some(manifest) = manifest_path(input) else {
-        return Ok((input.to_owned(), Default::default()));
+        return Ok(PackageEntry { path: input.to_owned(), imports: Default::default(), lock: None });
     };
     let package = read_manifest(&manifest)?;
     let mut graph = PathGraph::default();
-    if !package.dependencies.is_empty() {
-        if !allow_dependencies {
-            return Err(format!("{}: package dependency resolution for build requires lockfile support", manifest.display()));
-        }
+    let lock_path = manifest.with_file_name("ae.lock");
+    let has_lock = lock_path.try_exists().map_err(|error| format!("{}: {error}", lock_path.display()))?;
+    let lock = if package.dependencies.is_empty() && !has_lock {
+        None
+    } else {
         graph.visit(&manifest)?;
+        Some(PackageLock { path: lock_path, manifests: graph.manifests })
+    };
+    Ok(PackageEntry { path: manifest.with_file_name("src").join("main.ae"), imports: graph.imports, lock })
+}
+
+pub(super) struct PackageLock {
+    path: PathBuf,
+    manifests: Vec<(PathBuf, String)>,
+}
+
+impl PackageLock {
+    fn render(&self, units: &[ae_compiler::frontend::SourceUnit]) -> Result<String, String> {
+        use std::fmt::Write;
+        let base = self.path.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let base = base.canonicalize().map_err(|error| format!("{}: {error}", base.display()))?;
+        let local = |path: &Path| -> Result<String, String> {
+            let from: Vec<_> = base.components().collect();
+            let to: Vec<_> = path.components().collect();
+            let shared = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+            if shared == 0 {
+                return Err(format!("cannot lock a file on another filesystem root: {}", path.display()));
+            }
+            let mut parts = vec![".."; from.len() - shared];
+            for component in &to[shared..] {
+                parts.push(component.as_os_str().to_str().ok_or_else(|| format!(
+                    "cannot lock a non-UTF-8 path: {}", path.display()
+                ))?);
+            }
+            Ok(parts.join("/"))
+        };
+
+        let mut text = String::from("ae-lock-v1\n");
+        for (path, digest) in &self.manifests {
+            writeln!(text, "manifest {digest} {:?}", local(path)?).unwrap();
+        }
+        let mut sources = Vec::new();
+        for unit in units {
+            let path = unit.path.canonicalize().map_err(|error| format!("{}: {error}", unit.path.display()))?;
+            sources.push((local(&path)?, &unit.digest));
+        }
+        sources.sort();
+        for (path, digest) in sources {
+            writeln!(text, "source {digest} {path:?}").unwrap();
+        }
+        Ok(text)
     }
-    Ok((manifest.with_file_name("src").join("main.ae"), graph.imports))
+
+    pub fn verify(&self, units: &[ae_compiler::frontend::SourceUnit]) -> Result<(), String> {
+        let recorded = fs::read_to_string(&self.path)
+            .map_err(|error| format!("{}: {error}. Run ae update", self.path.display()))?;
+        let actual = self.render(units)?;
+        if recorded.lines().eq(actual.lines()) {
+            return Ok(());
+        }
+        let mut locked_lines = recorded.lines();
+        let mut actual_lines = actual.lines();
+        let (expected, found) = loop {
+            let locked = locked_lines.next();
+            let observed = actual_lines.next();
+            if locked != observed {
+                break (locked.unwrap_or("<missing entry>"), observed.unwrap_or("<missing entry>"));
+            }
+        };
+        Err(format!("{} is stale. Run ae update\n  locked: {expected}\n  actual: {found}", self.path.display()))
+    }
+}
+
+pub(super) fn update_lock(manifest: &Path) -> Result<(), String> {
+    let PackageEntry { path, imports, lock } = entry_path(manifest)?;
+    let lock = match lock {
+        Some(lock) => lock,
+        None => {
+            let canonical = manifest.canonicalize().map_err(|error| format!("{}: {error}", manifest.display()))?;
+            let package = read_manifest(&canonical)?;
+            PackageLock { path: manifest.with_file_name("ae.lock"), manifests: vec![(canonical, package.digest)] }
+        }
+    };
+    let tracked = ae_compiler::frontend::with_package_imports(imports, || {
+        ae_compiler::frontend::compile_path_tracked(&path)
+    })?;
+    let contents = lock.render(&tracked.units)?;
+    let parent = lock.path.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let temporary = super::TempDir::create(parent)?;
+    let staged = temporary.0.join("ae.lock");
+    fs::write(&staged, contents).map_err(|error| format!("{}: {error}", staged.display()))?;
+    fs::rename(&staged, &lock.path).map_err(|error| format!("{}: {error}", lock.path.display()))
 }
 
 struct Manifest {
     name: String,
     version: String,
     dependencies: toml::Table,
+    digest: String,
 }
 
 fn read_manifest(manifest: &Path) -> Result<Manifest, String> {
@@ -111,7 +203,7 @@ fn read_manifest(manifest: &Path) -> Result<Manifest, String> {
         Some(toml::Value::Table(table)) => table,
         Some(_) => return Err(fail("expected a [dependencies] table")),
     };
-    Ok(Manifest { name, version, dependencies })
+    Ok(Manifest { name, version, dependencies, digest: ae_compiler::sha256::hex(source.as_bytes()) })
 }
 
 pub(super) fn describe_graph(root: &Path) -> Result<String, String> {
@@ -126,6 +218,7 @@ struct PathGraph {
     visited: std::collections::HashSet<PathBuf>,
     output: String,
     imports: ae_compiler::frontend::PackageImports,
+    manifests: Vec<(PathBuf, String)>,
 }
 
 impl PathGraph {
@@ -167,6 +260,7 @@ impl PathGraph {
         self.visiting.pop();
         self.imports.insert(path.with_file_name("src"), imports);
         self.visited.insert(path.clone());
+        self.manifests.push((path.clone(), package.digest));
         writeln!(self.output, "{} {} ({})", package.name, package.version, path.display()).unwrap();
         for (alias, relative) in edges {
             writeln!(self.output, "  {alias} -> {relative}").unwrap();
