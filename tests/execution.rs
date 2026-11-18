@@ -6374,3 +6374,33 @@ fn main() {}
     fs::remove_dir_all(dir).unwrap();
     assert!(checked.status.success(), "{}", String::from_utf8_lossy(&checked.stderr));
 }
+
+#[test]
+fn native_backends_save_scalar_returns_before_running_destructors() {
+    let dir = unique_temp_dir("return_before_drop");
+    let path = dir.join("main.ae");
+    fs::write(&path, r#"
+struct Guard { target: *mut i64 }
+impl Guard {
+    fn drop(&mut self) -> i64 {
+        unsafe { let _write = ptr_write(self.target, 0); }
+        return 0;
+    }
+}
+
+fn answer() -> i64 {
+    var result = 42;
+    let guard = Guard { target: &mut result as *mut i64 };
+    return result;
+}
+
+fn main() { print(answer()); }
+"#).unwrap();
+    for backend in ["mir", "tree"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+            .arg("run").arg(&path).env("AE_CODEGEN", backend).output().unwrap();
+        assert!(output.status.success(), "{backend}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
