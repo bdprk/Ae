@@ -435,7 +435,11 @@ impl Parser<'_> {
         // Remember which declaration and arguments produced this layout, so
         // method calls on the instantiation can resolve through its generic
         // impl block (ADR-0187).
-        self.generics.struct_origin.insert(sid, (gid, args));
+        self.generics.struct_origin.insert(sid, (gid, args.clone()));
+        if self.generics.generic_impls.get(&def.name).is_some_and(|imp| imp.methods.iter().any(|m| m.name == "drop")) {
+            let drop_inst = self.instantiate_impl_method(&def.name, "drop", sid, gid, &args, offset)?;
+            self.structs[sid].drop_fn = Some(drop_inst.0);
+        }
         Ok(sid)
     }
     pub(super) fn parse_struct_def(&mut self, public: bool, repr_c: bool) -> Result<(), ae_span::Diagnostic> {

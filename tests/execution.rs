@@ -5686,3 +5686,42 @@ fn main() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn generic_struct_destructor_runs_on_scope_exit() {
+    let dir = std::env::temp_dir().join("ae_test_generic_drop");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let source = dir.join("main.ae");
+    std::fs::write(&source, r#"
+struct Box[T] {
+    tag: i64,
+    val: T,
+}
+
+impl Box[T] {
+    fn drop(&mut self) -> i64 {
+        print(self.tag);
+        return 0;
+    }
+}
+
+fn main() {
+    if true {
+        var b1 = Box[i64] { tag: 11, val: 42 };
+    }
+    var b2 = Box[string] { tag: 22, val: "hi" };
+}
+"#).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", source.to_str().unwrap()])
+        .env("AE_CODEGEN", "mir")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "mir failed: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
+    assert_eq!(stdout, "11\n22\n");
+
+    let _ = std::fs::remove_dir_all(dir);
+}
