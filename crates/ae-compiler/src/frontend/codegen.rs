@@ -441,7 +441,10 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
                 parts.push(e.text);
             }
             let id = *next; *next += 1;
-            out.push_str(&format!("    ae_t{sid} t{id} = {{ {} }};\n", parts.join(", ")));
+            out.push_str(&format!(
+                "    ae_t{sid} t{id} = {{ {} }};\n    AE_T{sid}_ACTIVATE(t{id});\n",
+                parts.join(", ")
+            ));
             null_moves(out, &moves);
             Emitted { text: format!("t{id}"), ty: Type::Struct(*sid), owned: true, moves: Vec::new(), materialized: true }
         }

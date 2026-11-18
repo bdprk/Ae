@@ -5622,6 +5622,9 @@ fn main() {
     assert!(mir.status.success(), "mir failed: {}", String::from_utf8_lossy(&mir.stderr));
     let mir_out = String::from_utf8_lossy(&mir.stdout).replace("\r\n", "\n");
     assert_eq!(mir_out, "1\n2\n10\n42\n30\n30\n");
+    let tree = run("tree");
+    assert!(tree.status.success(), "tree failed: {}", String::from_utf8_lossy(&tree.stderr));
+    assert_eq!(tree.stdout, mir.stdout);
     let graph = Command::new(env!("CARGO_BIN_EXE_ae"))
         .arg("emit-mir")
         .arg(&source)
