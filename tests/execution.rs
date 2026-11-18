@@ -6522,6 +6522,18 @@ fn local_library_packages_compile_through_declared_aliases() {
         assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
     }
     let app = dir.join("app");
+    fs::write(app.join("src/test.ae"), r#"
+use "@math";
+fn test_answer() -> i64 {
+    assert(answer() == 42);
+    return 0;
+}
+"#).unwrap();
+    for flags in [&[][..], &["--interp"][..]] {
+        let tests = Command::new(cli).current_dir(app.join("src")).arg("test").args(flags).output().unwrap();
+        assert!(tests.status.success(), "{}", String::from_utf8_lossy(&tests.stderr));
+        assert!(String::from_utf8_lossy(&tests.stdout).contains("test_answer"));
+    }
     let cache = dir.join("cache");
     let native_run = || Command::new(cli).current_dir(&app)
         .env("AE_CACHE", &cache).env("AE_TIMINGS", "1").arg("run").output().unwrap();
