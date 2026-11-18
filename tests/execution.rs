@@ -3639,6 +3639,28 @@ fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
 }
 
 #[test]
+fn repr_c_nested_layout_matches_the_native_c_compiler() {
+    let dir = unique_temp_dir("nested_c_layout");
+    let source = dir.join("nested.ae");
+    fs::write(&source, "#[repr(C)] struct Inner { flag: bool, value: i64 }\n#[repr(C)] struct Outer { prefix: bool, inner: Inner, tail: bool }\nfn main() { let inner = Inner { flag: true, value: 42 }; let outer = Outer { prefix: false, inner: inner, tail: true }; print(c_size_of[Outer]()); print(c_align_of[Outer]()); print(c_offset_of[Outer](\"inner\")); print(c_offset_of[Outer](\"tail\")); }\n").unwrap();
+    let c = dir.join("nested.c");
+    let executable = dir.join(if cfg!(windows) { "nested.exe" } else { "nested" });
+    fs::write(&c, "#include <stdbool.h>\n#include <stdint.h>\n#include <stddef.h>\n#include <stdio.h>\nstruct Inner { bool flag; int64_t value; };\nstruct Outer { bool prefix; struct Inner inner; bool tail; };\nint main(void) { printf(\"%zu\\n%zu\\n%zu\\n%zu\\n\", sizeof(struct Outer), _Alignof(struct Outer), offsetof(struct Outer, inner), offsetof(struct Outer, tail)); return 0; }\n").unwrap();
+    let cc = Command::new("gcc").arg("-std=c11").arg(&c).arg("-o").arg(&executable).output().unwrap();
+    assert!(cc.status.success(), "{}", String::from_utf8_lossy(&cc.stderr));
+    let native = Command::new(&executable).output().unwrap();
+    assert!(native.status.success());
+    let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).output().unwrap();
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), String::from_utf8_lossy(&native.stdout).replace("\r\n", "\n"));
+    let bad = dir.join("bad.ae");
+    fs::write(&bad, "struct Plain { x: i64 } #[repr(C)] struct Outer { inner: Plain } fn main() {}\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&bad).output().unwrap();
+    assert!(!output.status.success(), "non-repr(C) nested field must be rejected");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn c_alignment_matches_the_native_c_compiler() {
     let dir = unique_temp_dir("scalar_alignment");
     let source = dir.join("layout.ae");

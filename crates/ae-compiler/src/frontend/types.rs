@@ -456,6 +456,7 @@ impl Parser<'_> {
             let fty = self.field_type(&params)?;
             if repr_c {
                 let owned = match &fty {
+                    Payload::Concrete(Type::Struct(sid)) if self.structs[*sid].repr_c => false,
                     Payload::Concrete(ty) => ty.owned(),
                     Payload::Nested(_) => false,
                     Payload::Param(_) => false,
