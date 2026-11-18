@@ -398,3 +398,19 @@ Debian 13 x86-64, InstaBox evaluate-2 (`rustc 1.99.0`, `cargo 1.99.0`, gcc 14.2.
 
 Baseline B01–B10 are verified at this revision. Still unverified: everything from M0.1 onward that this table does not name.
 
+
+## Verified 2026-11-19 — `ae add` / `ae remove` (ADR-0211)
+
+Host: Windows 11 x86-64 (`rustc 1.99.1`, `cargo 1.99.1`, gcc 16.2.0 MinGW-W64 UCRT). Linux run pending the next probe; marked single-platform.
+
+| Check | Evidence |
+|---|---|
+| `add` creates the section and the lock | `add_and_remove_manage_manifest_dependencies_and_the_lockfile` (tests/execution.rs): clean manifest gains `[dependencies]\nmath = { path = "../math" }`, `ae.lock` written, `run` prints 42 without a separate `update`. |
+| Idempotent re-add across verbatim paths | Re-adding `../math` reports `is already declared`, exit 0, manifest bytes unchanged. Pinned against Windows verbatim (`\?\`) canonicalization, which does not fold `..` — the recorded path is resolved lexically (`resolve_recorded_path`) before comparing directories. |
+| Same alias, different source rejected | A second package named `math` in another directory fails with `already declared with a different source`, exit 1. |
+| Self-add and unknown-alias rejections | `add .` → `a package cannot depend on itself`; `remove nope` → `no dependency named 'nope'`; manifest bytes unchanged in both cases. |
+| Remove with a live import fails soft | `remove math` exits 0, prints the stale-lock notice (`ae.lock is now stale (...); run 'ae update' after removing imports`), manifest line deleted; the old lock stays on disk and the next `run` fails closed with `unknown package dependency 'math'`. |
+| Lock rebuild after imports are removed | `ae update` rebuilds the lock without `../math`; `run` prints 7; a second `remove` fails with `no dependency named 'math'`. |
+| Suite | `cargo test --workspace --locked`: 10 bin + 281 execution + 3 run + 43 compiler + 2 span + 23 syntax, 0 failures. |
+
+Design rationale and rejected alternatives: `docs/adr/0211-add-remove-dependency-commands.md`.
