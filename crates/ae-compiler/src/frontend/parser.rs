@@ -584,6 +584,34 @@ impl<'a> Parser<'a> {
                             if self.is_borrowed(id) {
                                 self.deferred_write_conflicts.push((id, name_offset, name.clone(), "modify", Some(fname.clone())));
                             }
+                            let compound_op = match *self.current() {
+                                Kind::PlusEqual => Some(Kind::Plus),
+                                Kind::MinusEqual => Some(Kind::Minus),
+                                Kind::StarEqual => Some(Kind::Star),
+                                Kind::SlashEqual => Some(Kind::Slash),
+                                Kind::PercentEqual => Some(Kind::Percent),
+                                _ => None,
+                            };
+                            if let Some(op) = compound_op {
+                                let allowed = matches!(fty, Type::Int)
+                                    || (matches!(fty, Type::F64) && op != Kind::Percent)
+                                    || (fty == Type::String && op == Kind::Plus);
+                                if !allowed {
+                                    return Err(self.fail(&format!("compound assignment is not supported for field type '{}'", fty.name())));
+                                }
+                                self.pos += 1;
+                                let (line, col) = self.position();
+                                let (rhs, rhs_ty) = self.expression(0, false)?;
+                                self.take(Kind::Semi)?;
+                                if rhs_ty != fty {
+                                    return Err(self.fail(&format!("field '{}' must be {}", fname, fty.name())));
+                                }
+                                let base_var = Expr::Variable(id, ty, line, col);
+                                let lhs_field = Expr::Field(Box::new(base_var), fname.clone(), fty);
+                                let value = Expr::Binary(Box::new(lhs_field), op, Box::new(rhs), line, col, fty);
+                                result.push(Statement::FieldStore(id, fname, fty, value, false));
+                                continue;
+                            }
                             self.take(Kind::Equal)?;
                             // Same consuming rule as the `&mut` write: the
                             // field owns the bytes afterwards.
@@ -623,10 +651,14 @@ impl<'a> Parser<'a> {
                             Kind::MinusEqual => Some(Kind::Minus),
                             Kind::StarEqual => Some(Kind::Star),
                             Kind::SlashEqual => Some(Kind::Slash),
+                            Kind::PercentEqual => Some(Kind::Percent),
                             _ => None,
                         };
                         if let Some(op) = compound_op {
-                            if !matches!(ty, Type::Int | Type::F64) && !(op == Kind::Plus && ty == Type::String) {
+                            let allowed = matches!(ty, Type::Int)
+                                || (matches!(ty, Type::F64) && op != Kind::Percent)
+                                || (ty == Type::String && op == Kind::Plus);
+                            if !allowed {
                                 return Err(self.fail(&format!("compound assignment is not supported for type '{}'", ty.name())));
                             }
                             self.pos += 1;
