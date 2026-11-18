@@ -10,6 +10,8 @@ Diagnostics display row and column numbers; generics are currently monomorphized
 
 ## Usage
 
+Exit codes are part of the interface: `0` success, `2` the command line itself was wrong (unknown command, missing argument, bad flag), `1` the tool ran but the program or package was rejected (diagnostics, I/O, a stale lockfile), and a compiled program's own `exit(n)` status is passed through unchanged.
+
 Requires Rust and a C11-compatible GCC; use `AE_CC` to specify an alternative compatible compiler executable. Both Windows (GCC/MinGW) and Linux (GCC) have been verified natively: all tests pass on both platforms, and Linux sanitizer checks pass. Example outputs are consistent after normalizing line endings (Windows stdout uses CRLF, Linux uses LF; output to the Windows console is converted to UTF-16 according to the console code page, see ADR-55; for details, see the [Platform Support Matrix](docs/platform-matrix.md)).
 
 ```sh

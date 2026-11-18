@@ -7,6 +7,34 @@ mod frontend_cache;
 
 const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae init [directory]\n       ae update [project]\n       ae version";
 
+/// A toolchain failure with the exit code it maps to. Usage errors exit 2 and
+/// everything else exits 1, so a script can tell "you called it wrong" from
+/// "your program is wrong" without parsing stderr.
+struct Failure {
+    code: u8,
+    message: String,
+}
+
+impl Failure {
+    fn usage(message: impl Into<String>) -> Self {
+        Self { code: 2, message: message.into() }
+    }
+}
+
+impl From<String> for Failure {
+    fn from(message: String) -> Self {
+        Self { code: 1, message }
+    }
+}
+
+/// Literal messages are command-line misuse (a bad path, a bad flag); compile
+/// and build failures arrive as owned strings from the compiler and exit 1.
+impl From<&str> for Failure {
+    fn from(message: &str) -> Self {
+        Self::usage(message.to_owned())
+    }
+}
+
 struct TempDir(PathBuf);
 impl TempDir {
     fn create(parent: &Path) -> Result<Self, String> {
@@ -338,33 +366,40 @@ fn cache_command(subcommand: Option<&OsString>) -> Result<u8, String> {
     }
 }
 
-fn run(args: Vec<OsString>) -> Result<u8, String> {
-    if args.is_empty() { return Err(USAGE.into()); }
-    let cmd = args[0].to_str().ok_or("command must be UTF-8")?.to_owned();
+fn run(args: Vec<OsString>) -> Result<u8, Failure> {
+    if args.is_empty() { return Err(Failure::usage(USAGE)); }
+    let cmd = args[0].to_str().ok_or(Failure::usage("command must be UTF-8"))?.to_owned();
+    const COMMANDS: [&str; 15] = [
+        "check", "emit-c", "emit-tree", "emit-cfg", "emit-mir", "run", "build", "test",
+        "fmt", "cache", "new", "init", "update", "deps", "version",
+    ];
+    if !COMMANDS.contains(&cmd.as_str()) {
+        return Err(Failure::usage(format!("unknown command: {cmd}\n{USAGE}")));
+    }
     if cmd == "version" {
-        if args.len() != 1 { return Err(USAGE.into()); }
+        if args.len() != 1 { return Err(Failure::usage(USAGE)); }
         println!("ae {} ({}, {})", env!("CARGO_PKG_VERSION"),
             if cfg!(windows) { "windows" } else { "unix" },
             if cfg!(target_arch = "x86_64") { "x86-64" } else { "other-arch" });
         return Ok(0);
     }
     if cmd == "new" {
-        if args.len() != 2 { return Err(USAGE.into()); }
+        if args.len() != 2 { return Err(Failure::usage(USAGE)); }
         let directory = Path::new(&args[1]);
         package::create_project(directory)?;
         println!("created package in {}", directory.display());
         return Ok(0);
     }
     if cmd == "init" {
-        if args.len() > 2 { return Err(USAGE.into()); }
+        if args.len() > 2 { return Err(Failure::usage(USAGE)); }
         let directory = args.get(1).map_or_else(|| PathBuf::from("."), PathBuf::from);
         package::init_project(&directory)?;
         println!("initialized package in {}", directory.display());
         return Ok(0);
     }
-    if cmd == "cache" { return cache_command(args.get(1)); }
+    if cmd == "cache" { return cache_command(args.get(1)).map_err(Failure::from); }
     if cmd == "fmt" {
-        if args.len() != 2 { return Err(USAGE.into()); }
+        if args.len() != 2 { return Err(Failure::usage(USAGE)); }
         let started = Instant::now();
         let changed = fmt::fmt_path(Path::new(&args[1]))?;
         if timings_enabled() {
@@ -382,12 +417,12 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
                 rest.push(arg);
             }
         }
-        if rest.len() > 2 { return Err(USAGE.into()); }
+        if rest.len() > 2 { return Err(Failure::usage(USAGE)); }
         let filter = match rest.get(1).and_then(|a| a.to_str()) {
             Some(filter) => Some(filter.to_owned()),
             // A non-UTF-8 filter cannot match any UTF-8 test name; say so
             // instead of silently running everything.
-            None if rest.len() == 2 => return Err("test filter must be valid UTF-8".into()),
+            None if rest.len() == 2 => return Err(Failure::usage("test filter must be valid UTF-8")),
             None => None,
         };
         let input = match rest.first() {
@@ -399,13 +434,14 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         if is_package {
             path.set_file_name("test.ae");
         }
-        return frontend::with_package_imports(imports, || run_tests(&path, filter.as_deref(), use_interp));
+        return frontend::with_package_imports(imports, || run_tests(&path, filter.as_deref(), use_interp))
+            .map_err(Failure::from);
     }
     if cmd == "update" {
         let manifest = match &args[1..] {
             [] => package::discover_manifest()?,
             [input] => package::manifest_path(Path::new(input)).ok_or("expected a package directory or ae.toml")?,
-            _ => return Err(USAGE.into()),
+            _ => return Err(Failure::usage(USAGE)),
         };
         package::update_lock(&manifest)?;
         return Ok(0);
@@ -414,7 +450,7 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         let manifest = match &args[1..] {
             [] => Some(package::discover_manifest()?),
             [input] => package::manifest_path(Path::new(input)),
-            _ => return Err(USAGE.into()),
+            _ => return Err(Failure::usage(USAGE)),
         };
         let description = match manifest {
             Some(manifest) => package::describe_graph(&manifest)?,
@@ -462,7 +498,7 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
     if implicit_project {
         args.insert(1, package::discover_manifest()?.into_os_string());
     }
-    if args.len() < 2 { return Err(USAGE.into()); }
+    if args.len() < 2 { return Err(Failure::usage(USAGE)); }
     // `run` forwards everything after `--` to the program, so a script that
     // reads `args()` can be exercised through the toolchain instead of being
     // built and invoked by hand. The split happens before the flags are read,
@@ -471,7 +507,7 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
     if let Some(at) = args.iter().position(|a| a.to_str() == Some("--")) {
         program_args = args.split_off(at + 1);
         args.pop();
-        if cmd != "run" { return Err(format!("'{cmd}' does not take program arguments\n{USAGE}")); }
+        if cmd != "run" { return Err(Failure::usage(format!("'{cmd}' does not take program arguments\n{USAGE}"))); }
     }
     // `build` writes the file a user ships, so it is optimized unless --debug
     // asks for the fast build; `run` is the development loop and stays at -O0
@@ -493,7 +529,7 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
             }
             Err((out, msg)) => {
                 print!("{out}");
-                return Err(msg);
+                return Err(msg.into());
             }
         }
     }
@@ -510,14 +546,15 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" | "run" if args.len() == 2 => None,
         "run" if level.is_some() => None,
         "build" if (args.len() == 4 || level.is_some()) && args[2] == "-o" => Some(PathBuf::from(&args[3])),
-        "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" | "run" | "build" => return Err(USAGE.into()),
-        _ => return Err(format!("unknown command: {cmd}\n{USAGE}")),
+        "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" | "run" | "build" => return Err(Failure::usage(USAGE)),
+        _ => return Err(Failure::usage(format!("unknown command: {cmd}\n{USAGE}"))),
     };
     let package::PackageEntry { path: input, imports, lock } = package::entry_path(Path::new(&args[1]))?;
     let import_key = sha256::hex(format!("{imports:?}").as_bytes());
     frontend::with_package_imports(imports, || {
         run_source(&cmd, &input, output, &program_args, release, &import_key, lock.filter(|_| cmd == "build"))
     })
+    .map_err(Failure::from)
 }
 
 fn run_tests(input: &Path, filter: Option<&str>, use_interp: bool) -> Result<u8, String> {
@@ -535,7 +572,7 @@ fn run_tests(input: &Path, filter: Option<&str>, use_interp: bool) -> Result<u8,
             }
             Err((out, msg)) => {
                 print!("{out}");
-                return Err(msg);
+                return Err(msg.into());
             }
         }
     }
@@ -663,16 +700,17 @@ fn main() -> ExitCode {
             Ok(code) => code,
             Err(_) => return ExitCode::FAILURE,
         },
-        Err(e) => Err(format!("cannot start compiler thread: {e}")),
+        Err(e) => Err(Failure::from(format!("cannot start compiler thread: {e}"))),
     };
     match result {
         Ok(code) => ExitCode::from(code),
-        Err(e) => {
+        Err(failure) => {
             // A runtime trap carries its own `ae:` prefix (the exact
             // format the compiled binary's runtime prints); diagnostics get
             // the prefix here.
-            if e.starts_with("ae:") { eprintln!("{e}"); } else { eprintln!("ae: {e}"); }
-            ExitCode::FAILURE
+            if failure.message.starts_with("ae:") { eprintln!("{}", failure.message); }
+            else { eprintln!("ae: {}", failure.message); }
+            ExitCode::from(failure.code)
         }
     }
 }
