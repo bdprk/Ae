@@ -49,6 +49,11 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             let target_ty = if *mutable { Type::PtrMut(*pointee_id) } else { Type::Ptr(*pointee_id) };
             Emitted::value(format!("({ptr_c})({})", inner.text), target_ty)
         }
+        Expr::PtrWrite(pointer, value, ..) => {
+            let p = emit_expr(pointer, out, next, false);
+            let v = emit_expr(value, out, next, true);
+            Emitted::value(format!("(*({}) = ({}), (int64_t)0)", p.text, v.text), Type::Int)
+        }
         Expr::PtrDropInPlace(pointer, pointee, ..) => {
             let p = emit_expr(pointer, out, next, false);
             let call = match pointee {

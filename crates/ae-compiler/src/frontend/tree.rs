@@ -305,6 +305,13 @@ impl<'a> TreePrinter<'a> {
                 out.push_str(&self.expression_text(operand));
                 out.push(')');
             }
+            Expr::PtrWrite(pointer, value, _, _, _) => {
+                out.push_str("ptr_write(");
+                out.push_str(&self.expression_text(pointer));
+                out.push_str(", ");
+                out.push_str(&self.expression_text(value));
+                out.push(')');
+            }
             Expr::PtrDropInPlace(pointer, _, _, _) => {
                 out.push_str("ptr_drop_in_place(");
                 out.push_str(&self.expression_text(pointer));

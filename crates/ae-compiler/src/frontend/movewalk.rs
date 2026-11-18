@@ -382,7 +382,7 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         Expr::BorrowAs(e, ..) | Expr::DerefPtr(e, ..) => walk_expr(e, moved),
         // The pointer itself is only read; the count can contain calls and
         // therefore reads or moves of its own, after evaluating the base.
-        Expr::PtrOffset(base, count, ..) => {
+        Expr::PtrOffset(base, count, ..) | Expr::PtrWrite(base, count, ..) => {
             let base_result = walk_expr(base, moved);
             let count_result = walk_expr(count, moved);
             base_result.or(count_result)
