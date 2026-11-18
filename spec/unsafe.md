@@ -82,7 +82,7 @@ extern "C" fn ae_add(a: i64, b: i64) -> i64 { return a + b; }
 
 #### Scalar size query
 
-`c_size_of[T]()` also accepts `i64`, `f64`, and `bool`, including when `T` is a generic parameter substituted with one of these types. Their sizes in the current x86-64 Windows and Linux C ABI model are respectively 8, 8, and 1 bytes, matching the existing scalar fields in `#[repr(C)]` layout calculation. `c_offset_of` remains limited to `#[repr(C)]` structs; scalars have no fields. Unknown types, owned types, and non-`#[repr(C)]` structs remain rejected. This query specifies size only, not alignment, allocator compatibility, or container soundness; other target ABIs require a separate verified layout model.
+`c_size_of[T]()` and `c_align_of[T]()` accept `i64`, `f64`, `bool`, and `#[repr(C)]` structs, including when `T` is a generic parameter substituted with one of these types. Both values for the three scalars in the current x86-64 Windows and Linux C ABI model are respectively 8, 8, and 1 bytes, matching the existing struct-layout calculation. Struct alignment is the maximum field alignment, or 1 for an empty struct in the current layout model. `c_offset_of` remains limited to `#[repr(C)]` structs; scalars have no fields. Unknown types, owned types, and non-`#[repr(C)]` structs remain rejected. These queries do not establish allocator compatibility or container soundness; other target ABIs require a separate verified layout model. Empty C structs are not portable C11 and their layout is not an FFI guarantee.
 
 ### 5.2 Diagnostics
 - Passing a non-`#[repr(C)]` struct across `extern "C"` is rejected: `'Pair' is not '#[repr(C)]'; the C ABI requires a fixed layout` (E0703).
