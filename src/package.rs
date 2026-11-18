@@ -321,6 +321,7 @@ pub(super) fn describe_graph(root: &Path) -> Result<String, String> {
 struct PathGraph {
     visiting: Vec<PathBuf>,
     visited: std::collections::HashMap<PathBuf, Version>,
+    packages: std::collections::HashMap<String, (Version, PathBuf)>,
     output: String,
     imports: ae_compiler::frontend::PackageImports,
     manifests: Vec<(PathBuf, String)>,
@@ -343,6 +344,17 @@ impl PathGraph {
         }
 
         let package = read_manifest(&path)?;
+        // Two copies of one package at different versions cannot both be linked;
+        // name the two manifests instead of letting the second silently shadow the first.
+        if let Some((known, origin)) = self.packages.get(&package.name) {
+            if *known != package.version {
+                return Err(format!(
+                    "{}: package '{}' is version {} here but version {} in {}",
+                    path.display(), package.name, package.version, known, origin.display()));
+            }
+        } else {
+            self.packages.insert(package.name.clone(), (package.version, path.clone()));
+        }
         self.visiting.push(path.clone());
         let mut edges = Vec::new();
         let mut imports = std::collections::BTreeMap::new();

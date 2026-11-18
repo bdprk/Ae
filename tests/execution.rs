@@ -6797,3 +6797,36 @@ fn cli_exit_codes_distinguish_usage_compile_and_program_failures() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+
+#[test]
+fn one_program_cannot_link_two_versions_of_the_same_package() {
+    let dir = unique_temp_dir("package_version_conflict");
+    let write = |directory: &str, name: &str, version: &str, dependencies: &str| {
+        let package = dir.join(directory);
+        fs::create_dir_all(package.join("src")).unwrap();
+        fs::write(package.join("src/lib.ae"), "pub fn value() -> i64 { return 1; }").unwrap();
+        fs::write(package.join("ae.toml"), format!(
+            "[package]\nname = '{name}'\nversion = '{version}'\nae = '0.1'\n\n[dependencies]\n{dependencies}"
+        )).unwrap();
+    };
+    write("app", "app", "0.1.0", "left = { path = '../left' }\nright = { path = '../right' }");
+    write("left", "left", "0.1.0", "shared = { path = '../shared-1' }");
+    write("right", "right", "0.1.0", "shared = { path = '../shared-2' }");
+    write("shared-1", "shared", "0.1.0", "");
+    write("shared-2", "shared", "0.2.0", "");
+
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let deps = || Command::new(cli).current_dir(dir.join("app")).arg("deps").output().unwrap();
+    let conflict = deps();
+    let stderr = String::from_utf8_lossy(&conflict.stderr);
+    assert!(!conflict.status.success(), "{stderr}");
+    assert!(stderr.contains("package 'shared' is version 0.2.0 here but version 0.1.0"), "{stderr}");
+    assert!(stderr.contains("shared-2") && stderr.contains("shared-1"), "{stderr}");
+
+    write("shared-2", "shared", "0.1.0", "");
+    let agreed = deps();
+    assert!(agreed.status.success(), "{}", String::from_utf8_lossy(&agreed.stderr));
+    assert_eq!(String::from_utf8_lossy(&agreed.stdout).matches("shared 0.1.0").count(), 2);
+    fs::remove_dir_all(dir).unwrap();
+}
+
