@@ -6664,3 +6664,64 @@ platform = {{ path = "../absent" }}
     assert!(!invalid.status.success() && stderr.contains("multiple active declarations"), "{stderr}");
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn lockfile_is_independent_of_dependency_order_and_working_directory() {
+    let dir = unique_temp_dir("package_lock_determinism");
+    for (name, body) in [("left", "pub fn left() -> i64 { return 1; }"), ("right", "pub fn right() -> i64 { return 2; }")] {
+        let package = dir.join(name);
+        fs::create_dir_all(package.join("src")).unwrap();
+        fs::write(package.join("ae.toml"), format!(
+            "[package]\nname = '{name}'\nversion = '0.2.0'\nae = '0.1'\n"
+        )).unwrap();
+        fs::write(package.join("src/lib.ae"), body).unwrap();
+    }
+    let app = dir.join("app");
+    fs::create_dir_all(app.join("src")).unwrap();
+    fs::write(app.join("src/main.ae"), "fn main() {}").unwrap();
+    let manifest = app.join("ae.toml");
+    let header = "[package]\nname = 'app'\nversion = '0.1.0'\nae = '0.1'\n\n[dependencies]\n";
+    fs::write(&manifest, format!("{header}left = {{ path = '../left' }}\nright = {{ path = '../right' }}")).unwrap();
+
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let update = |directory: &std::path::Path| {
+        let output = Command::new(cli).current_dir(directory).arg("update").output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    };
+    let lockfile = app.join("ae.lock");
+    // The root manifest is content-addressed, so reordering its entries changes its own digest;
+    // the resolved graph must not move.
+    let graph = |text: &str| -> Vec<String> {
+        text.lines().map(|line| {
+            let mut fields = line.splitn(3, ' ');
+            let kind = fields.next().unwrap_or("").to_owned();
+            let path = fields.nth(1).unwrap_or("");
+            format!("{kind} {path}")
+        }).collect()
+    };
+    let digest_of = |text: &str, path: &str| -> String {
+        text.lines().filter(|line| line.starts_with("manifest ") && line.contains(path))
+            .map(|line| line.split(' ').nth(1).unwrap().to_owned()).next().unwrap()
+    };
+    update(&app);
+    let first = fs::read_to_string(&lockfile).unwrap();
+    assert_eq!(graph(&first).iter().filter(|line| line.starts_with("manifest ")).count(), 3, "{first}");
+    assert!(first.lines().last().is_some_and(|line| line.starts_with("source ")));
+
+    fs::write(&manifest, format!("{header}right = {{ path = '../right' }}\n\n# trailing comment\nleft = {{ path = '../left' }}")).unwrap();
+    update(&app);
+    let reordered = fs::read_to_string(&lockfile).unwrap();
+    assert_eq!(graph(&reordered), graph(&first), "dependency order changed the locked graph");
+    assert_eq!(digest_of(&reordered, "../left/ae.toml"), digest_of(&first, "../left/ae.toml"));
+    assert_eq!(digest_of(&reordered, "../right/ae.toml"), digest_of(&first, "../right/ae.toml"));
+
+    let nested = app.join("src/deep/more");
+    fs::create_dir_all(&nested).unwrap();
+    update(&nested);
+    assert_eq!(fs::read_to_string(&lockfile).unwrap(), reordered, "working directory changed the lockfile");
+
+    let build = Command::new(cli).current_dir(&nested).args(["build", "-o"]).arg(dir.join("app.bin")).output().unwrap();
+    assert!(build.status.success(), "{}", String::from_utf8_lossy(&build.stderr));
+    fs::remove_dir_all(dir).unwrap();
+}
+
