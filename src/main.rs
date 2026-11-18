@@ -5,7 +5,7 @@ use frontend::compile_path;
 mod package;
 mod frontend_cache;
 
-const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> <source.ae>\n       ae check --json <source.ae>\n       ae fmt <source.ae>\n       ae test <source.ae> [filter] [--interp]\n       ae run <source.ae> [--release|--interp] [-- <program args>]\n       ae build <source.ae> -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test <source.ae> [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps <source.ae>\n       ae version";
 
 struct TempDir(PathBuf);
 impl TempDir {
@@ -411,15 +411,10 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
     // `check --json <file>` is the documented spelling; `check <file> --json`
     // is accepted too because both readings are natural and the flag has no
     // other position to be confused with.
-    let json_check = match (cmd.as_str(), args.len()) {
-        ("check", 3) => {
-            let first = args[1].to_str();
-            let second = args[2].to_str();
-            match (first, second) {
-                (Some("--json"), Some(file)) => Some(file),
-                (Some(file), Some("--json")) => Some(file),
-                _ => None,
-            }
+    let json_check = match (cmd.as_str(), &args[1..]) {
+        ("check", [flag]) if flag == "--json" => Some(package::discover_manifest()),
+        ("check", [flag, input]) | ("check", [input, flag]) if flag == "--json" => {
+            Some(Ok(PathBuf::from(input)))
         }
         _ => None,
     };
@@ -427,7 +422,7 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         // Editor diagnostics: one structured array on stdout, nothing else.
         // Success prints `[]`; lexical recovery may return multiple errors.
         let started = Instant::now();
-        let report = match package::entry_path(Path::new(source))
+        let report = match source.and_then(|path| package::entry_path(&path))
             .map_err(frontend::FrontendError::Legacy)
             .and_then(|input| frontend::check_path_diagnostic(&input)) {
             Ok(()) => "[]".to_owned(),
@@ -441,13 +436,23 @@ fn run(args: Vec<OsString>) -> Result<u8, String> {
         }
         return Ok(if report == "[]" { 0 } else { 1 });
     }
+    let mut args = args;
+    let first = args.get(1).and_then(|arg| arg.to_str());
+    let implicit_project = match cmd.as_str() {
+        "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" => args.len() == 1,
+        "run" => args.len() == 1 || matches!(first, Some("--release" | "--debug" | "--interp" | "--")),
+        "build" => first == Some("-o"),
+        _ => false,
+    };
+    if implicit_project {
+        args.insert(1, package::discover_manifest()?.into_os_string());
+    }
     if args.len() < 2 { return Err(USAGE.into()); }
     // `run` forwards everything after `--` to the program, so a script that
     // reads `args()` can be exercised through the toolchain instead of being
     // built and invoked by hand. The split happens before the flags are read,
     // so an optimization flag may sit on either side of the separator.
     let mut program_args: Vec<OsString> = Vec::new();
-    let mut args = args;
     if let Some(at) = args.iter().position(|a| a.to_str() == Some("--")) {
         program_args = args.split_off(at + 1);
         args.pop();

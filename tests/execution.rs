@@ -6423,6 +6423,14 @@ fn package_manifest_selects_entry_and_validates_metadata() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
 
+    let nested = dir.join("src/nested");
+    fs::create_dir(&nested).unwrap();
+    let implicit = Command::new(cli).current_dir(&nested).args(["run", "--interp"]).output().unwrap();
+    assert!(implicit.status.success(), "{}", String::from_utf8_lossy(&implicit.stderr));
+    assert_eq!(String::from_utf8_lossy(&implicit.stdout).replace("\r\n", "\n"), "42\n");
+    let implicit = Command::new(cli).current_dir(&nested).args(["check", "--json"]).output().unwrap();
+    assert!(implicit.status.success(), "{}", String::from_utf8_lossy(&implicit.stdout));
+    assert_eq!(String::from_utf8_lossy(&implicit.stdout).trim(), "[]");
     let checked = Command::new(cli).args(["check", "--json"]).arg(&manifest).output().unwrap();
     assert!(checked.status.success(), "{}", String::from_utf8_lossy(&checked.stdout));
     assert_eq!(String::from_utf8_lossy(&checked.stdout).trim(), "[]");
