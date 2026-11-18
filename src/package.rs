@@ -3,6 +3,17 @@ use std::path::{Path, PathBuf};
 
 const MANIFEST: &str = "ae.toml";
 
+pub(super) fn discover_manifest() -> Result<PathBuf, String> {
+    let current = std::env::current_dir().map_err(|error| format!("cannot read current directory: {error}"))?;
+    for directory in current.ancestors() {
+        let manifest = directory.join(MANIFEST);
+        if manifest.try_exists().map_err(|error| format!("{}: {error}", manifest.display()))? {
+            return Ok(manifest);
+        }
+    }
+    Err(format!("no {MANIFEST} found in {} or its parent directories", current.display()))
+}
+
 pub(super) fn entry_path(input: &Path) -> Result<PathBuf, String> {
     let manifest = if input.is_dir() {
         input.join(MANIFEST)
