@@ -469,6 +469,9 @@ impl Parser<'_> {
             if *self.current() == Kind::Comma { self.pos += 1; }
         }
         self.take(Kind::RBrace)?;
+        if repr_c && fields.is_empty() {
+            return Err(self.error_at(name_offset, &format!("'{}' must have at least one field to claim a C layout", name)));
+        }
         if params.is_empty() {
             // A non-generic struct may still carry nested instantiations
             // (`entries: Pair[i64, Pair[string, f64]]`); their arguments are
