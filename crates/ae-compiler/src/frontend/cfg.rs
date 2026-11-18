@@ -157,6 +157,20 @@ fn is_short_circuit(expression: &Expr) -> bool {
     }
 }
 
+fn lower_exit_operand(expr: &Expr, current: usize, lowering: &mut Lowering) -> (usize, Expr) {
+    match expr {
+        Expr::Number(_) | Expr::BoolLit(_) | Expr::FloatLit(_) | Expr::Variable(..) => {
+            (current, expr.clone())
+        }
+        _ if is_short_circuit(expr) => lower_boolean_value(expr, current, lowering),
+        _ => {
+            let result = lowering.synthetic_local();
+            lowering.block(current).statements.push(Statement::Declare(result, expr.clone()));
+            (current, Expr::Variable(result, super::mir::expr_type(expr), 0, 0))
+        }
+    }
+}
+
 // Lower one statement; returns the continuation block and whether every
 // path through it ended unconditionally.
 fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowering) -> (usize, bool) {
@@ -329,17 +343,7 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             (join, false)
         }
         Statement::Return(expr, frees) => {
-            let (current, value) = match expr {
-                Expr::Number(_) | Expr::BoolLit(_) | Expr::FloatLit(_) | Expr::Variable(..) => {
-                    (current, expr.clone())
-                }
-                _ if is_short_circuit(expr) => lower_boolean_value(expr, current, lowering),
-                _ => {
-                    let result = lowering.synthetic_local();
-                    lowering.block(current).statements.push(Statement::Declare(result, expr.clone()));
-                    (current, Expr::Variable(result, super::mir::expr_type(expr), 0, 0))
-                }
-            };
+            let (current, value) = lower_exit_operand(expr, current, lowering);
             // The release annotations ride the return: they are statements
             // the lowering keeps in order, then the return edge.
             if !frees.is_empty() {
@@ -349,10 +353,11 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             (lowering.new_block(), true)
         }
         Statement::Exit(code, frees) => {
+            let (current, value) = lower_exit_operand(code, current, lowering);
             if !frees.is_empty() {
                 lowering.block(current).statements.push(Statement::Frees(frees.clone()));
             }
-            lowering.block(current).terminator = CfgTerminator::Exit((*code).clone());
+            lowering.block(current).terminator = CfgTerminator::Exit(value);
             (lowering.new_block(), true)
         }
         // An `unsafe` block is a scoping container (M2.12 slice 1): its inner
@@ -380,9 +385,6 @@ fn lower_statement(statement: &Statement, current: usize, lowering: &mut Lowerin
             lowering.block(current).terminator = CfgTerminator::Goto(head);
             (lowering.new_block(), true)
         }
-        // `?` propagation and `assert` keep their whole statement form: their
-        // control flow is decided by a result tag inside the operation, which
-        // this slice does not split out. The MIR construction splits them.
         // Every other non-control statement stays whole in the current block.
         other => {
             lowering.block(current).statements.push(other.clone());

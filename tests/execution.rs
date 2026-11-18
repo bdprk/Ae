@@ -6376,7 +6376,7 @@ fn main() {}
 }
 
 #[test]
-fn native_backends_save_scalar_returns_before_running_destructors() {
+fn native_backends_evaluate_scope_exit_operands_before_running_destructors() {
     let dir = unique_temp_dir("return_before_drop");
     let path = dir.join("main.ae");
     fs::write(&path, r#"
@@ -6394,12 +6394,17 @@ fn answer() -> i64 {
     return result;
 }
 
-fn main() { print(answer()); }
+fn main() {
+    print(answer());
+    var status = 20;
+    let guard = Guard { target: &mut status as *mut i64 };
+    exit(status + 2);
+}
 "#).unwrap();
     for backend in ["mir", "tree"] {
         let output = Command::new(env!("CARGO_BIN_EXE_ae"))
             .arg("run").arg(&path).env("AE_CODEGEN", backend).output().unwrap();
-        assert!(output.status.success(), "{backend}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(output.status.code(), Some(22), "{backend}: {}", String::from_utf8_lossy(&output.stderr));
         assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
     }
     fs::remove_dir_all(dir).unwrap();
