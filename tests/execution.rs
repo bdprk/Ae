@@ -5971,3 +5971,19 @@ fn main() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn mir_branch_observes_writes_through_raw_pointers() {
+    let output = execute(r#"
+fn main() {
+    var flag = false;
+    unsafe {
+        var pointer = &mut flag as *mut bool;
+        var _write = ptr_write(pointer, true);
+    }
+    if flag { print(42); } else { print(0); }
+}
+"#);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
+}
