@@ -6571,3 +6571,45 @@ fn local_library_packages_compile_through_declared_aliases() {
     assert!(!checked.status.success() && report.contains("unknown package dependency 'base'"), "{report}");
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn package_target_tables_load_only_the_active_local_dependency() {
+    let dir = unique_temp_dir("package_targets");
+    let app = dir.join("app");
+    let lib = dir.join("lib");
+    for package in [&app, &lib] {
+        fs::create_dir_all(package.join("src")).unwrap();
+    }
+    fs::write(lib.join("ae.toml"), "[package]\nname = 'lib'\nversion = '0.1.0'\nae = '0.1'\n").unwrap();
+    fs::write(lib.join("src/lib.ae"), "pub fn answer() -> i64 { return 42; }").unwrap();
+    fs::write(app.join("src/main.ae"), "use \"@platform\"; fn main() { print(answer()); }").unwrap();
+    let (active, inactive) = if cfg!(windows) { ("windows", "unix") } else { ("unix", "windows") };
+    let manifest = app.join("ae.toml");
+    let valid = format!(r#"
+[package]
+name = "app"
+version = "0.1.0"
+ae = "0.1"
+
+[target.'cfg({active})'.dependencies]
+platform = {{ path = "../lib" }}
+
+[target.'cfg({inactive})'.dependencies]
+platform = {{ path = "../absent" }}
+"#);
+    fs::write(&manifest, &valid).unwrap();
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let update = Command::new(cli).current_dir(&app).arg("update").output().unwrap();
+    assert!(update.status.success(), "{}", String::from_utf8_lossy(&update.stderr));
+    let lock = fs::read_to_string(app.join("ae.lock")).unwrap();
+    assert!(lock.contains("../lib/src/lib.ae") && !lock.contains("../absent"), "{lock}");
+    let output = Command::new(cli).current_dir(&app).arg("run").output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
+
+    fs::write(&manifest, format!("{valid}\n[dependencies]\nplatform = {{ path = '../other' }}\n")).unwrap();
+    let invalid = Command::new(cli).current_dir(&app).arg("check").output().unwrap();
+    let stderr = String::from_utf8_lossy(&invalid.stderr);
+    assert!(!invalid.status.success() && stderr.contains("multiple active declarations"), "{stderr}");
+    fs::remove_dir_all(dir).unwrap();
+}
