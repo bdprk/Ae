@@ -3639,6 +3639,30 @@ fn mir_interpreter_agrees_on_maps_with_the_compiled_backends() {
 }
 
 #[test]
+fn field_assignment_evaluates_rhs_before_releasing_old_value() {
+    let dir = unique_temp_dir("field_self_reference");
+    let source = dir.join("field.ae");
+    fs::write(&source, "struct Record { value: string }\nfn main() { var r = Record { value: \"hello\" }; r.value = r.value + \"!\"; print(r.value); }\n").unwrap();
+    for backend in ["tree", "mir"] {
+        let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&source).env("AE_CODEGEN", backend).output().unwrap();
+        assert!(run.status.success(), "{backend}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "hello!\n");
+    }
+    let vector = dir.join("vector.ae");
+    fs::write(&vector, "struct Record { value: vec[f64] }\nfn main() { var r = Record { value: vec[1.0] }; let replacement = vec[2.0]; r.value = replacement; print(\"done\"); }\n").unwrap();
+    for backend in ["tree", "mir"] {
+        let emitted = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-c").arg(&vector).env("AE_CODEGEN", backend).output().unwrap();
+        assert!(emitted.status.success(), "{backend}: {}", String::from_utf8_lossy(&emitted.stderr));
+        let c = String::from_utf8_lossy(&emitted.stdout);
+        assert!(c.contains("ae_f64vec_release(&v0.value);"), "{backend}: old vector field must be released");
+        let run = Command::new(env!("CARGO_BIN_EXE_ae")).arg("run").arg(&vector).env("AE_CODEGEN", backend).output().unwrap();
+        assert!(run.status.success(), "{backend}: {}", String::from_utf8_lossy(&run.stderr));
+        assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "done\n");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn closure_can_query_captured_map() {
     let dir = unique_temp_dir("closure_read_map");
     let source = dir.join("capture.ae");

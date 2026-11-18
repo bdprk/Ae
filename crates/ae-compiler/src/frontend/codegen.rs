@@ -1106,19 +1106,24 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                     Type::String => format!("    ae_str_release(&v{id}{}{});\n", dot, fname),
                     Type::Vec => format!("    ae_vec_release(&v{id}{}{});\n", dot, fname),
                     Type::StrVec => format!("    ae_strvec_release(&v{id}{}{});\n", dot, fname),
+                    Type::VecF => format!("    ae_f64vec_release(&v{id}{}{});\n", dot, fname),
                     Type::Map => format!("    ae_map_release(&v{id}{}{});\n", dot, fname),
                     Type::MapF => format!("    ae_mapf_release(&v{id}{}{});\n", dot, fname),
                     Type::Struct(k) => format!("    ae_t{k}_release(&v{id}{}{});\n", dot, fname),
                     Type::Enum(_, k) => format!("    ae_e{k}_release(&v{id}{}{});\n", dot, fname),
                     _ => String::new(),
                 };
-                out.push_str(&release_old);
                 // The value emits in a moving context: an owned variable
                 // on the right side is consumed and zeroed here, so the
                 // field owns the bytes and the source does not (no
                 // aliasing, no double release at the scope ends).
                 let value = emit_expr(value, out, next, true);
-                out.push_str(&format!("    v{id}{}{} = {};\n", dot, fname, value.text));
+                // Snapshot the result before releasing the old field: even a
+                // non-materialized expression can read that same field.
+                let temp = *next; *next += 1;
+                out.push_str(&format!("    {}t{temp} = {};\n", fty.c_temp(), value.text));
+                out.push_str(&release_old);
+                out.push_str(&format!("    v{id}{}{} = t{temp};\n", dot, fname));
                 null_moves(out, &value.moves);
             }
             Statement::Assign(id, e, release_old) => {
