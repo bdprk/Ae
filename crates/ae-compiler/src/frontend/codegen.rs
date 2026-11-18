@@ -49,6 +49,21 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             let target_ty = if *mutable { Type::PtrMut(*pointee_id) } else { Type::Ptr(*pointee_id) };
             Emitted::value(format!("({ptr_c})({})", inner.text), target_ty)
         }
+        Expr::PtrDropInPlace(pointer, pointee, ..) => {
+            let p = emit_expr(pointer, out, next, false);
+            let call = match pointee {
+                Type::String => format!("(ae_str_release({}), (int64_t)0)", p.text),
+                Type::Vec => format!("(ae_vec_release({}), (int64_t)0)", p.text),
+                Type::StrVec => format!("(ae_strvec_release({}), (int64_t)0)", p.text),
+                Type::VecF => format!("(ae_f64vec_release({}), (int64_t)0)", p.text),
+                Type::Map => format!("(ae_map_release({}), (int64_t)0)", p.text),
+                Type::MapF => format!("(ae_mapf_release({}), (int64_t)0)", p.text),
+                Type::Struct(sid) => format!("(ae_t{sid}_release((ae_t{sid} *)({})), (int64_t)0)", p.text),
+                Type::Enum(_, eid) => format!("(ae_e{eid}_release((ae_e{eid} *)({})), (int64_t)0)", p.text),
+                _ => format!("((void)({}), (int64_t)0)", p.text),
+            };
+            Emitted::value(call, Type::Int)
+        }
         Expr::PtrOffset(pointer, count, bytewise, ..) => {
             // ADR-0209 step A: pointer arithmetic. The element form rides C's
             // own scaling (base is a T*, so base + n advances n elements);

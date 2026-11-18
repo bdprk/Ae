@@ -5635,3 +5635,54 @@ fn main() {}
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn ptr_drop_in_place_drops_struct_in_place_and_requires_unsafe() {
+    let dir = std::env::temp_dir().join("ae_test_ptr_drop_in_place");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let source = dir.join("main.ae");
+    std::fs::write(&source, r#"
+struct Guard { id: i64 }
+impl Guard {
+    fn drop(&mut self) -> i64 {
+        print(self.id);
+        return 0;
+    }
+}
+
+fn main() {
+    var x = 77;
+    unsafe {
+        var p = &mut x as *mut i64;
+        var _d = ptr_drop_in_place(p);
+    }
+    print(x);
+}
+"#).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", source.to_str().unwrap()])
+        .env("AE_CODEGEN", "mir")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "mir failed: {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout).replace("\r\n", "\n");
+    assert_eq!(stdout, "77\n");
+
+    let safe_err = dir.join("safe_err.ae");
+    std::fs::write(&safe_err, r#"
+fn main() {
+    var x = 1;
+    var p = &mut x as *mut i64;
+    var _d = ptr_drop_in_place(p);
+}
+"#).unwrap();
+    let err = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["check", safe_err.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(!err.status.success(), "ptr_drop_in_place outside unsafe should be rejected");
+
+    let _ = std::fs::remove_dir_all(dir);
+}

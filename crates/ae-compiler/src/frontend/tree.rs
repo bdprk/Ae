@@ -305,6 +305,11 @@ impl<'a> TreePrinter<'a> {
                 out.push_str(&self.expression_text(operand));
                 out.push(')');
             }
+            Expr::PtrDropInPlace(pointer, _, _, _) => {
+                out.push_str("ptr_drop_in_place(");
+                out.push_str(&self.expression_text(pointer));
+                out.push(')');
+            }
             Expr::PtrOffset(pointer, count, bytewise, _, _) => {
                 let name = if *bytewise { "byte_offset" } else { "offset" };
                 out.push_str(name);

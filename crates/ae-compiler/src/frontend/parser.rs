@@ -99,7 +99,7 @@ impl<'a> Parser<'a> {
             Expr::DerefPtr(..) => true,
             // Pointer arithmetic is the same class of unchecked operation
             // (it gates on unsafe_depth exactly like the deref).
-            Expr::PtrOffset(..) => true,
+            Expr::PtrOffset(..) | Expr::PtrDropInPlace(..) => true,
             Expr::Call(id, args, _) => {
                 // A call to a declared `extern "C" fn` or an `unsafe fn` is
                 // exactly what the block legalizes (the same test E0701

@@ -1910,6 +1910,7 @@ fn eval_expr(
         // compiled backends run the arithmetic; the corpus pins their
         // behavior without asserting interp agreement.
         Expr::PtrOffset(..) => Err(Flow::Trap("pointer arithmetic cannot run in the interpreter; run the compiled program".to_owned())),
+        Expr::PtrDropInPlace(..) => Err(Flow::Trap("ptr_drop_in_place cannot run in the interpreter; run the compiled program".to_owned())),
         Expr::DerefPtr(pointer, ..) => match eval_expr(env, pointer, locals, caller_locals, false)? {
             Val::Ptr(slot) => match locals.get(&slot).cloned() {
                 Some(Val::Moved) => Err(trap("reading through a pointer to a moved value", 0, 0)),
