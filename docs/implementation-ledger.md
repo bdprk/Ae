@@ -101,13 +101,13 @@ Integration gate: Missing variant diagnosed, capture moves observable.
 
 Entry dependency: M1.2.
 
-- [ ] M2.1.01. **Build places.** Represent local, field and dereference projections separately in a MIR dump.
-- [ ] M2.1.02. **assign temporaries.** Lower two effectful operands and confirm left-to-right evaluation.
-- [ ] M2.1.03. **create block terminators.** Reject a basic block with a missing or duplicate terminator.
-- [ ] M2.1.04. **lower branches.** Execute both arms and compare the merged value against the C baseline.
-- [ ] M2.1.05. **loops.** Check continue and break from nested loops target the correct blocks.
-- [ ] M2.1.06. **early exits.** Trace return and error propagation around an owned local.
-- [ ] M2.1.07. **validate graph.** Feed an invalid successor and ill-typed assignment to the verifier and reject both.
+- [x] M2.1.01. **Build places.** Represent local, field and dereference projections separately in a MIR dump. (`MirPlace::{Temp, Var, Field, Deref}` in mir.rs; `emit_mir_decomposes_statements_into_bindings` prints temps apart from the locals they came from; `mir_branch_observes_writes_through_raw_pointers` shows a deref projection as its own place)
+- [x] M2.1.02. **assign temporaries.** Lower two effectful operands and confirm left-to-right evaluation. (ordered walk: `a_view_read_after_a_mut_call_in_one_statement_is_a_conflict` vs `..._before_..._is_allowed`, so the same statement keeps operand order; `emit_mir_keeps_short_circuit_rhs_inside_the_lazy_operand` pins the lazy operand's temporaries)
+- [x] M2.1.03. **create block terminators.** Reject a basic block with a missing or duplicate terminator. (structural: `MirBlock` holds exactly one `terminator` field, so missing/duplicate cannot be constructed; `rejects_terminators_with_wrong_operand_types` covers the malformed-terminator case)
+- [x] M2.1.04. **lower branches.** Execute both arms and compare the merged value against the C baseline. (`mir_backend_matches_tree_backend_on_matches_and_counted_loops` compares the interpreter and the C backend byte for byte; `mir_interpreter_agrees_on_result_enums_with_the_compiled_backends` covers both-variant arms)
+- [x] M2.1.05. **loops.** Check continue and break from nested loops target the correct blocks. (`mir_backend_matches_tree_backend_on_matches_and_counted_loops`: the expected trace states `nested continue lands on the inner step, break leaves the inner loop` and the backend comparison enforces it)
+- [x] M2.1.06. **early exits.** Trace return and error propagation around an owned local. (`mir_drop_elision_thins_propagate_error_path_releases` and `mir_drop_elision_removes_releases_of_moved_slots` trace the `?`/return paths around owned locals)
+- [x] M2.1.07. **validate graph.** Feed an invalid successor and ill-typed assignment to the verifier and reject both. (`validate` runs on every lowering (mir.rs:31); validation_tests reject a wrong destination type, a temporary used before its definition, and wrong terminator operand types)
 
 Integration gate: Golden MIR and interpreter agree with C path on pure expressions.
 
