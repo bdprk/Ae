@@ -57,7 +57,7 @@ use std::ops::Range;
 
 use ae_span::Diagnostic;
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TypedName {
     pub name: String,
     pub name_range: Range<usize>,
