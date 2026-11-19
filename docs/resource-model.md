@@ -78,7 +78,7 @@ Deallocation of owned values is **deterministic and idempotent** (handles are cl
 
 ## 7. Concurrency and `unsafe`
 
-The current language has **no** concurrency, threads, or shared mutable state, so "sendable/shareable" constraints are not required: any owned value lives within a single thread. Introducing concurrency will require extending this document (defining which types are `Send`, which are `Sync`, and how locks interact with borrows) before implementation.
+The current language has **no** concurrency implemented, and no shared mutable state in safe code. The ground rules for the first thread surface are fixed by [ADR-0214](adr/0214-threaded-execution-ground-rules.md): a thread boundary accepts **owned data only** — views (`StrView`), borrows (`VecRef`/`StructRef`/`StructMut`), and raw pointers are rejected at the `spawn` call site, reusing the existing escape proof that a borrow never outlives its frame; strings, vectors, enums, structs, and own-capturing closures move. Named `Send`/`Sync` markers stay deferred until scoped borrows (M4.1.02) or interior mutability make them non-vacuous; the allocator budget becomes exact under concurrency via atomics, and a substituted allocator must be thread-safe by contract. Unsafe pointer crossings carry the spec/unsafe.md 2.4 promise.
 
 `unsafe` exists since M2.12 (`spec/unsafe.md`, ADR-0207): `unsafe {}` blocks, `unsafe fn`, raw pointers, `extern "C"` declarations/exposures, and `#[repr(C)]`. The boundary does not weaken this model — it sits beside it:
 

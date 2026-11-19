@@ -194,7 +194,7 @@ Integration gate: Same lock gives same graph, corrupt cache fails closed.
 
 Entry dependency: M2.3.
 
-- [ ] M4.1.01. **Specify transfer and sharing bounds.** Reject sending a nontransferable capture and sharing a nonshareable value.
+- [ ] M4.1.01. **Specify transfer and sharing bounds.** Reject sending a nontransferable capture and sharing a nonshareable value. (ground rules accepted as [ADR-0214](adr/0214-threaded-execution-ground-rules.md): owned-data-only boundary, borrows rejected at spawn by the existing frame-escape proof; the acceptance test waits for the spawn surface)
 - [ ] M4.1.02. **scope join.** Join a borrowed child on success and on early scope exit.
 - [ ] M4.1.03. **mutex guards.** Release the guard on all exits and reject references outliving it.
 - [ ] M4.1.04. **atomics.** Check permitted orderings per operation and model a release/acquire handoff.
