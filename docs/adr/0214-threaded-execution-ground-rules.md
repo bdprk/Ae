@@ -43,6 +43,10 @@ M4.1 is the first concurrency milestone and the language has none of its ground 
 - The allocator-under-concurrency probe: N threads allocating through the budget; the limit trips exactly once, and `--leak` reports no retained blocks.
 - Dual-platform: spawn/join runs and reports identical stdout on Windows and Linux (`evaluate-3` direct run while CI remains billing-blocked).
 
+## Evidence (first two decisions, 2026-11-20)
+
+Decisions 1–2 are implemented at `99464a4`: `ae_thread_spawn`/`join` in `runtime.c` (unit `ae_thread`; C11 `thrd_*` on Linux, self-declared Win32 entries with the header's own spellings, placed after the `<windows.h>` include point so the redeclarations merge), and the allocator budget/total/ready as C11 atomics with charge-and-rollback. `scripts/thread_harness.c` (run by `scripts/test_thread_harness.py`, wired into the scripts unittest pass) spawns eight OS threads through the primitives and asserts the cumulative-ask counter equals the exact deterministic total, including the spawn machinery's own blocks. Pay-as-you-go: a print program emits no thread symbols and no atomics beyond the include; an allocating program adds the three atomic globals. Dual platform: Windows (Win32 branch) and evaluate-3 Linux (C11 branch), logs in `bench/results/2026-11-20-linux-threads/` — direct runs, CI still billing-blocked. The Win32 audit test now covers the three thread entries.
+
 ## Consequences
 
 - `docs/resource-model.md` §81's deferral is resolved for owned transfers: the concurrency section states the owned-data rule and points here. `Send`/`Sync` remain deferred until M4.1.02+.
