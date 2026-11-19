@@ -45,6 +45,27 @@ load-independent.
 | 22:39 | evaluate-2 | 5,760 | 0 |
 | 22:39 | evaluate-3 | 5,337 | 0 |
 | 22:39 | ai | 4,856 | 0 |
+| 07:59 | eva | 82,914 | 0 |
+| 07:59 | evaluate-1 | 10,114,162 | 0 |
+| 07:59 | evaluate-2 | 20,090,567 | 0 |
+| 07:59 | evaluate-3 | (asleep: sandbox cool-down, retry after 08:10) | — |
+| 07:59 | ai | 40,118,240 | 0¹ |
+
+
+## Incident 2026-11-19 — seed 40115917 (ai) and driver hardening
+
+At `fuzz.log:111417` the ai host recorded `seed 40115917: FAILURE (0 lines)`. The seed passed on every
+re-run (locally at `f06093a` and on the host itself, `ok (4 lines)` in 1.3 s), and `(0 lines)` matches the
+driver's exception path, so the verdict was a compile timeout under the fleet's shared benchmark load —
+the host lost the race, the language did not diverge. The running driver carried the old classification,
+which charged environmental timeouts to the M2.13 failure count; `b15db5c` fixes `scripts/diff_fuzz.py`:
+environmental timeouts and OS errors retry once and are reported as `ENV` with a separate summary count
+(`N environmental`) and excluded from the exit code, while a compiler rejection of a generated program
+(`RuntimeError`) stays a real differential FAILURE. `--save-corpus` also crashed on an undefined name
+before writing anything; it now saves the sources that actually ran. The fixed driver is deployed to every
+reachable host (`md5 e9e0f426…`); ai's supervisor was relaunched under a fresh 24-hour budget resuming at
+seed 40,117,992 (the old 7.6 h segment stays in the log as history). ¹ ai's failure column excludes the
+one environmental timeout; its segment before the relaunch had 0 differential failures.
 
 ## Collection
 
