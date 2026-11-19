@@ -35,8 +35,8 @@ Integration gate: Editor and terminal point to the same token. (Editor side pinn
 
 Entry dependency: M0.1.
 
-- [ ] M0.2.01. **Inventory grammar.** Map each production to a current example or a documented gap.
-- [ ] M0.2.02. **port literals.** Compare decoded values and spans for escaped and unterminated strings.
+- [x] M0.2.01. **Inventory grammar.** See [the active parser grammar inventory](architecture/grammar-inventory.md) for witnesses and documented gaps.
+- [ ] M0.2.02. **port literals.** The shared lexer and current CLI have regression coverage for escaped string values and malformed literal spans. Parser-to-parser parity remains pending.
 - [ ] M0.2.03. **expressions.** Parse unary minus nested inside multiplication and compare both parse trees.
 - [ ] M0.2.04. **patterns.** Pin nested variant payload bindings and the span of a malformed pattern.
 - [ ] M0.2.05. **declarations.** Compare function and generic struct boundaries across both parsers.

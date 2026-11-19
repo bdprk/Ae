@@ -640,12 +640,20 @@ fn print_handles_strings_with_escapes_and_unicode() {
     // `\r` is three bytes only when it lands in the middle of a line: a lone
     // carriage return at the end of printed text would be swallowed by the
     // terminal, so the length assertion above is the real check.
-    for source in ["fn main() { print(\"bad \\q\"); }", "fn main() { print(\"open }", "fn main() { print(\"a\nb\"); }"] {
+    for (source, marker, code) in [
+        (r#"fn main() { print("bad \q"); }"#, '\\', "E0002"),
+        ("// \u{00e9}\nfn main() { print(\"open }", '"', "E0003"),
+        ("fn main() { print(\"a\nb\"); }", '\n', "E0004"),
+    ] {
         let path = std::env::temp_dir().join(format!("ae-str-invalid-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
         fs::write(&path, source).unwrap();
-        let result = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+        let result = Command::new(env!("CARGO_BIN_EXE_ae")).args(["check", "--json"]).arg(&path).output().unwrap();
         fs::remove_file(path).unwrap();
         assert!(!result.status.success(), "{source}");
+        let diagnostic = String::from_utf8_lossy(&result.stdout);
+        let start = source.find(marker).unwrap();
+        let expected = format!("\"byte_start\":{start},\"byte_end\":{},\"code\":\"{code}\"", start + 1);
+        assert!(diagnostic.contains(&expected), "{diagnostic}");
     }
 }
 #[test]
