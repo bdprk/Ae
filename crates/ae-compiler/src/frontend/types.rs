@@ -224,7 +224,7 @@ impl Parser<'_> {
     // `[T, U]` or `[T: Add + Ord, U: Copy]`. Constraints are parsed here for
     // every generic declaration, but only generic functions may use them.
     pub(super) fn type_params_with_bounds(&mut self) -> Result<Vec<(String, Vec<Bound>, Vec<usize>)>, ae_span::Diagnostic> {
-        use ae_syntax::declaration::{validate_type_parameter, MAX_TYPE_PARAMETERS};
+        use ae_syntax::declaration::{type_bound_tokens, validate_type_parameter, MAX_TYPE_PARAMETERS};
 
         let mut params: Vec<(String, Vec<Bound>, Vec<usize>)> = Vec::new();
         if *self.current() != Kind::LBracket { return Ok(params); }
@@ -238,8 +238,10 @@ impl Parser<'_> {
             let mut traits = Vec::new();
             if *self.current() == Kind::Colon {
                 self.pos += 1;
-                loop {
-                    let at = self.tokens[self.pos].offset;
+                let tokens = Rc::clone(&self.tokens);
+                for (index, token) in type_bound_tokens(&tokens, self.pos) {
+                    self.pos = index;
+                    let at = token.offset;
                     let label = self.identifier()?;
                     let bound = match label.as_str() {
                         "Add" => Some(Bound::Add), "Eq" => Some(Bound::Eq),
@@ -268,8 +270,6 @@ impl Parser<'_> {
                             traits.push(tid);
                         }
                     }
-                    if *self.current() != Kind::Plus { break; }
-                    self.pos += 1;
                 }
             }
             params.push((param, bounds, traits));

@@ -60,6 +60,27 @@ pub fn validate_type_parameter<'a>(
     Ok(())
 }
 
+/// Read the bounds following a colon in source order. Each item includes the
+/// token index of the bound; an invalid name ends the sequence.
+pub fn type_bound_tokens(tokens: &[Token], mut index: usize) -> impl Iterator<Item = (usize, &Token)> {
+    let mut finished = false;
+    std::iter::from_fn(move || {
+        if finished {
+            return None;
+        }
+        let token = tokens.get(index)?;
+        let bound = (index, token);
+        if matches!(token.kind, Kind::Ident(_))
+            && tokens.get(index + 1).is_some_and(|next| next.kind == Kind::Plus)
+        {
+            index += 2;
+        } else {
+            finished = true;
+        }
+        Some(bound)
+    })
+}
+
 #[derive(Debug, PartialEq)]
 pub struct TypeParameter {
     pub name: String,
@@ -466,11 +487,13 @@ impl DeclarationParser<'_> {
                     .map_err(|message| self.error(&message))?;
                 let mut bounds = Vec::new();
                 if self.consume(Kind::Colon) {
-                    loop {
-                        bounds.push(self.name()?);
-                        if !self.consume(Kind::Plus) {
-                            break;
-                        }
+                    for (index, token) in type_bound_tokens(self.tokens, self.pos) {
+                        self.pos = index;
+                        let Kind::Ident(bound) = &token.kind else {
+                            return Err(self.error("expected identifier").with_code("E0010"));
+                        };
+                        bounds.push(bound.clone());
+                        self.pos += 1;
                     }
                 }
                 type_parameters.push(TypeParameter { name, bounds });
