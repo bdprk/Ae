@@ -1017,7 +1017,10 @@ impl<'a> Parser<'a> {
         let mut seen = vec![false; def.variants.len()];
         self.borrows.push((sid, self.scopes.len(), BorrowKind::Container));
         while *self.current() != Kind::RBrace {
-            let pattern = self.identifier()?;
+            let pattern = ae_syntax::pattern::parse_pattern_name(
+                &self.file, self.source, &self.tokens[self.pos],
+            )?;
+            self.pos += 1;
             // An instantiated enum is matched by its declaration name:
             // `Option::Some(v)` covers Option[string] and Option[i64] alike.
             if pattern != def.pattern {
@@ -1039,7 +1042,10 @@ impl<'a> Parser<'a> {
                 if fields.is_empty() { return Err(self.fail(&format!("variant '{}::{}' has no payload", def.name, vname))); }
                 self.pos += 1;
                 for (index, field) in fields.iter().copied().enumerate() {
-                    let bname = self.identifier()?;
+                    let bname = ae_syntax::pattern::parse_pattern_name(
+                        &self.file, self.source, &self.tokens[self.pos],
+                    )?.to_owned();
+                    self.pos += 1;
                     if RESERVED.contains(&bname.as_str()) { return Err(self.fail(&format!("'{bname}' is a built-in name and cannot be a pattern binding"))); }
                     if self.names.contains_key(&bname) { return Err(self.duplicate_binding_error(&bname)); }
                     let id = self.next_var; self.next_var += 1;
