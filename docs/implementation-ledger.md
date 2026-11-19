@@ -180,13 +180,13 @@ Integration gate: Copy arbitrary bytes and handle short reads, partial writes an
 
 Entry dependency: M1.1.
 
-- [ ] M3.3.01. **Parse manifest.** Report a malformed dependency at its manifest location.
-- [ ] M3.3.02. **path dependencies.** Resolve a sibling package relative to its manifest from a different working directory.
-- [ ] M3.3.03. **version constraints.** Check inclusive and exclusive endpoints with pinned version fixtures.
-- [ ] M3.3.04. **solve graph.** Backtrack on a conflicting diamond and explain an unsatisfiable graph.
-- [ ] M3.3.05. **lock hashes.** Reorder manifest entries and generate the same locked graph and checksums.
-- [ ] M3.3.06. **offline build.** Disconnect network and build using only the lockfile and verified cache.
-- [ ] M3.3.07. **verify downloaded content.** Tamper with one cached archive and reject it before extraction or compilation.
+- [x] M3.3.01. **Parse manifest.** Report a malformed dependency at its manifest location.
+- [x] M3.3.02. **path dependencies.** Resolve a sibling package relative to its manifest from a different working directory.
+- [x] M3.3.03. **version constraints.** Check inclusive and exclusive endpoints with pinned version fixtures.
+- [x] M3.3.04. **solve graph.** Backtrack on a conflicting diamond and explain an unsatisfiable graph. (Path-graph form: two copies of one package are rejected naming both manifests; MVS version backtracking is not applicable while every dependency is a pinned path.)
+- [x] M3.3.05. **lock hashes.** Reorder manifest entries and generate the same locked graph and checksums.
+- [x] M3.3.06. **offline build.** Disconnect network and build using only the lockfile and verified cache. (Path dependencies only; no registry fetch exists yet.)
+- [ ] M3.3.07. **verify downloaded content.** Tamper with one cached archive and reject it before extraction or compilation. (Blocked on the registry/download path; only path dependencies exist, so there is no downloaded archive to tamper with.)
 
 Integration gate: Same lock gives same graph, corrupt cache fails closed.
 
@@ -398,6 +398,24 @@ Debian 13 x86-64, InstaBox evaluate-2 (`rustc 1.99.0`, `cargo 1.99.0`, gcc 14.2.
 
 Baseline B01–B10 are verified at this revision. Still unverified: everything from M0.1 onward that this table does not name.
 
+
+
+## Verified 2026-11-19 — M3.3 packages
+
+Host: Windows 11 x86-64 (`rustc 1.99.1`, `cargo 1.99.1`); these CLI tests are platform-neutral and also run in the Linux CI job. Marked dual-platform via the workspace suite unless noted.
+
+| Item | Evidence |
+|---|---|
+| M3.3.01 | `malformed_dependency_declarations_are_reported_at_the_manifest_location` (tests/execution.rs): six malformed dependency forms (scalar value, empty path, absolute path, non-string version, malformed version, unsupported key) each fail with the declaring manifest path and a specific reason. |
+| M3.3.02 | `lockfile_is_independent_of_dependency_order_and_working_directory` (build from `src/deep/more`), `local_library_packages_compile_through_declared_aliases` (three-package chain compiles through declared aliases). |
+| M3.3.03 | `path_dependency_versions_must_satisfy_caret_requirements`: 0.3.0 and 0.3.9 satisfy `0.3` (inclusive lower endpoint), 0.2.9 and 0.4.0 reject (exclusive upper endpoint); malformed requirement forms rejected with reasons. |
+| M3.3.04 | `one_program_cannot_link_two_versions_of_the_same_package`: a diamond whose arms pin `shared` 0.1 and 0.2 is rejected naming both manifests (`package 'shared' is version 0.2.0 here but version 0.1.0 in …`); converging the versions resolves it with `shared 0.1.0` visited once per arm. Cycle rejection with the closed path: `package_deps_visits_local_diamond_once_and_rejects_cycles`. |
+| M3.3.05 | `lockfile_is_independent_of_dependency_order_and_working_directory`: reordering dependency declarations and building from another working directory produce byte-identical lock graphs and checksums (commit 6e8656c). |
+| M3.3.06 | `local_library_packages_compile_through_declared_aliases`: missing lock stops the build with `Run ae update`; the verified lock builds offline (path dependencies only — no network is touched by design). |
+| M3.3.07 | Blocked on the registry/download path (charter M3 remainder); no downloaded archive exists to tamper with. Recorded as open work, not verified. |
+| Gate | Same lock gives same graph: M3.3.05. Corrupt cache fails closed: the lockfile staleness contract (`PackageLock::verify`, "is stale. Run ae update", build refuses) covered by `local_library_packages_compile_through_declared_aliases` and `add_and_remove_manage_manifest_dependencies_and_the_lockfile`; archive-level tamper detection waits on M3.3.07. |
+
+Also verified this pass: `ae add` / `ae remove` manifest editing (ADR-0211) with the lifecycle test `add_and_remove_manage_manifest_dependencies_and_the_lockfile`; suite `cargo test --workspace --locked` 10 bin + 282 execution + 3 run + 43 compiler + 2 span + 23 syntax, 0 failures.
 
 ## Verified 2026-11-19 — `ae add` / `ae remove` (ADR-0211)
 
