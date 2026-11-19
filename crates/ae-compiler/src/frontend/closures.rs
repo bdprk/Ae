@@ -29,6 +29,31 @@ pub(super) fn closure_fn_id(cid: usize) -> usize {
 }
 thread_local! {
     static FN_IDS: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+    // The spawn surfaces this program uses, recorded by the checker so the C
+    // assembly emits exactly the context layouts and trampolines that are
+    // referenced (ADR-0214). One compile per process, like FN_IDS.
+    static SPAWNED: std::cell::RefCell<Vec<SpawnedThread>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+// One spawn surface: a closure's generated function with its capture types in
+// order, or a zero-parameter function value keyed by its interned signature.
+#[derive(Clone, PartialEq)]
+pub(super) enum SpawnedThread {
+    Closure { fn_id: usize, captures: Vec<Type>, ret: Type },
+    FnValue { sig: usize, ret: Type },
+}
+
+pub(super) fn record_spawned(entry: SpawnedThread) {
+    SPAWNED.with(|spawned| {
+        let mut spawned = spawned.borrow_mut();
+        if !spawned.contains(&entry) {
+            spawned.push(entry);
+        }
+    });
+}
+
+pub(super) fn take_spawned() -> Vec<SpawnedThread> {
+    SPAWNED.with(|spawned| std::mem::take(&mut *spawned.borrow_mut()))
 }
 
 pub(super) fn intern_fn_sig(params: Vec<Type>, ret: Type) -> usize {
@@ -420,6 +445,14 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
         Expr::MathCall(_, args, ..) => { for v in args { walk_expr(v, used, mutated); } }
         Expr::TryReadFile(a, ..) | Expr::TryListDir(a, ..) | Expr::PathExists(a, ..) | Expr::PathIsDir(a, ..) | Expr::ParseInt(a, ..) | Expr::PathName(a, ..) | Expr::PathParent(a, ..) | Expr::TryFileInfo(a, ..) | Expr::TryRemoveFile(a, ..) | Expr::TryRemoveDir(a, ..) | Expr::TryCreateDir(a, ..) | Expr::SetCwd(a, ..) | Expr::Env(a, ..) | Expr::ToI64(a, ..) => walk_expr(a, used, mutated),
         Expr::TryAppendFile(a, b, ..) => { walk_expr(a, used, mutated); walk_expr(b, used, mutated); }
+        // A spawn reads its callable and its capture slots (the slots move
+        // into the thread — ADR-0214), so a nested spawn captures what its
+        // slots and callable read.
+        Expr::Spawn(slots, callable, ..) => {
+            for slot in slots { walk_expr(slot, used, mutated); }
+            walk_expr(callable, used, mutated);
+        }
+        Expr::Wait(handle, ..) => walk_expr(handle, used, mutated),
         Expr::Number(_) | Expr::FloatLit(_) | Expr::BoolLit(_) | Expr::StrLit(..) | Expr::Args(..) | Expr::ReadStdin(..) | Expr::Cwd(..) | Expr::StrVecNew(..) | Expr::F64VecNew(..) | Expr::NowMs | Expr::NowS | Expr::ClosureLit(_) | Expr::MapNew(..) => {}
     }
 }

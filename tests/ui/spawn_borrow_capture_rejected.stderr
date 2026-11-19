@@ -1,0 +1,1 @@
+ae: $DIR/spawn_borrow_capture_rejected.ae:7:13: spawn moves its captures into the thread; 's' is captured by reference and cannot cross

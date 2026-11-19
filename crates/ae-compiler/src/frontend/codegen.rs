@@ -163,6 +163,9 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
                     // Structs and enums have no runtime sentinel: the compile-time
                     // move set is their only guard (documented limitation).
                     Type::Struct(_) | Type::Enum(_, _) => {}
+                    // A thread handle is a plain pointer: wait's own check
+                    // rejects the moved (NULL) slot, so no backstop here.
+                    Type::Thread(_) => {}
                     _ => {
                         let probe = match ty { Type::Vec | Type::StrVec | Type::VecF => format!("!v{id}.data"), Type::Map | Type::MapF => format!("!v{id}.slots"), _ => format!("!v{id}.ptr") };
                         let message = match ty { Type::Vec | Type::StrVec | Type::VecF => "use of moved vector", Type::Map | Type::MapF => "use of moved map", _ => "use of moved string" };
@@ -775,6 +778,55 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             let fn_id = crate::frontend::closures::closure_fn_id(*cid);
             Emitted { text: format!("ae_fn_{fn_id}"), ty: Type::Closure(*cid), owned: false, moves: Vec::new(), materialized: false }
         }
+        // ADR-0214 / spec/concurrency.md: the captures move into a heap
+        // context whose first member is the return slot, so wait reads it
+        // without knowing the capture layout. The runtime's spawn/join carry
+        // the platform thread through one spelling; a NULL native handle
+        // means the spawn machinery ran out of memory, fatal like every
+        // other allocation failure.
+        Expr::Spawn(slots, callable, tid, line, column) => {
+            let (entry, ctx_ty) = match &**callable {
+                Expr::ClosureLit(cid) | Expr::Variable(_, Type::Closure(cid), ..) => {
+                    let fn_id = crate::frontend::closures::closure_fn_id(*cid);
+                    (format!("ae_thread_entry_{fn_id}"), format!("ae_thread_ctx_{fn_id}"))
+                }
+                Expr::Variable(_, Type::Fn(sig), ..) =>
+                    (format!("ae_thread_entry_f{sig}"), format!("ae_thread_fncall_{sig}")),
+                other => unreachable!("spawn callable shape: {other:?}"),
+            };
+            let t = *next; *next += 1;
+            out.push_str(&format!("    {ctx_ty} *ctx{t} = ae_alloc(sizeof({ctx_ty}), {line}, {column});\n"));
+            let mut moves = Vec::new();
+            for (index, slot) in slots.iter().enumerate() {
+                let value = emit_expr(slot, out, next, true);
+                moves.extend(value.moves);
+                out.push_str(&format!("    ctx{t}->f{index} = {};\n", value.text));
+            }
+            out.push_str(&format!("    void *native{t} = ae_thread_spawn({entry}, ctx{t});\n"));
+            out.push_str(&format!("    if (!native{t}) ae_fail(\"out of memory\", {line}, {column});\n"));
+            null_moves(out, &moves);
+            out.push_str(&format!("    ae_thread_slot *t{t} = ae_alloc(sizeof(ae_thread_slot), {line}, {column});\n"));
+            out.push_str(&format!("    t{t}->native = native{t};\n"));
+            out.push_str(&format!("    t{t}->ctx = (void *)ctx{t};\n"));
+            Emitted { text: format!("t{t}"), ty: Type::Thread(*tid), owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::Wait(handle, ret, line, column) => {
+            // The handle moves into wait: the slot and its context are
+            // released here, and the return value — the context's first
+            // member — transfers to the temporary. A NULL slot is a moved
+            // handle, which safe code cannot reach past the move check.
+            let h = emit_expr(handle, out, next, true);
+            let t = *next; *next += 1;
+            let ret_spelling = ret.c_temp().trim_end().to_owned();
+            out.push_str(&format!("    ae_thread_slot *s{t} = {};\n", h.text));
+            out.push_str(&format!("    if (!s{t}) ae_fail(\"use of a moved thread handle\", {line}, {column});\n"));
+            out.push_str(&format!("    ae_thread_join(s{t}->native);\n"));
+            out.push_str(&format!("    {ret_spelling} t{t} = *({ret_spelling} *)s{t}->ctx;\n"));
+            out.push_str(&format!("    ae_free(s{t}->ctx);\n"));
+            out.push_str(&format!("    ae_free(s{t});\n"));
+            null_moves(out, &h.moves);
+            Emitted { text: format!("t{t}"), ty: *ret, owned: ret.owned(), moves: Vec::new(), materialized: true }
+        }
         Expr::Field(base, fname, fty) => {
             let b = emit_expr(base, out, next, false);
             if fty.owned() {
@@ -925,6 +977,10 @@ pub(super) fn release_var(out: &mut String, id: usize, ty: Type) {
         Type::MapF => out.push_str(&format!("    ae_mapf_release(&v{id});\n")),
         Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&v{id});\n")),
         Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_release(&v{id});\n")),
+        // A never-joined handle leaks its thread slot (spec/concurrency.md
+        // §1 rule 3); the release is idempotent because wait nulls the
+        // variable first.
+        Type::Thread(_) => out.push_str(&format!("    ae_free(v{id});\n")),
         _ => out.push_str(&format!("    ae_str_release(&v{id});\n")),
     }
 }

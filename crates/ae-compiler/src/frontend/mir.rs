@@ -202,6 +202,15 @@ fn lower_expr(expr: &Expr, bindings: &mut Vec<MirBinding>, lowering: &mut MirLow
         Expr::Call(id, args, ret) => MirRvalue::Call(*id, lower_args(args, bindings, lowering), *ret),
         Expr::FnCall(id, args, ret, _) => MirRvalue::FnCall(*id, lower_args(args, bindings, lowering), *ret),
         Expr::ClosureLit(cid) => MirRvalue::ClosureLit(*cid),
+        // The decomposed view records the spawn as a named side effect over
+        // its capture slots and callable; the C emission goes through the
+        // statement's original expression (M2.3's whole-shape rule).
+        Expr::Spawn(slots, callable, tid, ..) => {
+            let mut operands: Vec<MirOperand> = slots.iter().map(|slot| lower_operand(slot, bindings, lowering)).collect();
+            operands.push(lower_operand(callable, bindings, lowering));
+            MirRvalue::Intrinsic("thread_spawn", operands, Type::Thread(*tid))
+        }
+        Expr::Wait(handle, ret, ..) => MirRvalue::Intrinsic("thread_wait", vec![lower_operand(handle, bindings, lowering)], *ret),
         Expr::StructLit(sid, values) => MirRvalue::Aggregate(*sid, values.iter().map(|v| lower_expr(v, bindings, lowering)).collect()),
         Expr::EnumLit(name, eid, vidx, values) => MirRvalue::AdtAggregate(name, *eid, *vidx, values.iter().map(|v| lower_expr(v, bindings, lowering)).collect()),
         Expr::VecLit(values, ty, ..) => MirRvalue::VecNew(values.iter().map(|v| lower_expr(v, bindings, lowering)).collect(), *ty),
@@ -466,6 +475,8 @@ fn string_base_operand(id: usize, field: &Option<String>) -> MirOperand {
 
 pub(super) fn expr_type(expr: &Expr) -> Type {
     match expr {
+        Expr::Spawn(_, _, tid, ..) => Type::Thread(*tid),
+        Expr::Wait(_, ret, ..) => *ret,
         Expr::Number(..) | Expr::Index(..) | Expr::Len(..) => Type::Int,
         Expr::VecIndex(_, _, _, _, _, ty) => *ty,
         Expr::StrVecIndex(..) => Type::String,

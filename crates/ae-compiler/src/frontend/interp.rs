@@ -35,6 +35,11 @@ enum Val {
     // returns, so a pointer cannot cross a frame.
     Ptr(usize),
     Ref(usize),
+    // A thread handle (ADR-0214): the sequence number of its stashed result.
+    // The interpreter is single-threaded — the spawned callable runs to
+    // completion at the spawn site and wait hands back the value, the same
+    // observable behavior the compiled backends give a deterministic program.
+    Thread(usize),
     Moved,
 }
 
@@ -52,6 +57,9 @@ struct Env<'a> {
     fns: HashMap<usize, &'a Function>,
     out: String,
     steps: usize,
+    // Spawned results, indexed by handle (ADR-0214). `None` marks a handle
+    // whose value wait already took.
+    threads: Vec<Option<Val>>,
 }
 
 const MAX_STEPS: usize = 5_000_000;
@@ -69,7 +77,7 @@ pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
         }
     }
     let main_fn = main_fn.ok_or_else(|| (String::new(), "program must define a main function".to_owned()))?;
-    let mut env = Env { program: &program, fns, out: String::new(), steps: 0 };
+    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new() };
     let mut locals: HashMap<usize, Val> = HashMap::new();
     match eval_stmts(&mut env, &main_fn.body, &mut locals, &mut None) {
         Flow::Next | Flow::Return(_) => Ok((env.out, 0)),
@@ -1917,6 +1925,34 @@ fn eval_expr(
             };
             invoke_call(env, target_fn, args, locals, caller_locals)
         }
+        // ADR-0214: the spawned callable runs to completion here (its capture
+        // slots evaluate as by-value arguments, so the interpreter's move
+        // markers match the compiled move), and wait reads the stashed value.
+        Expr::Spawn(slots, callable, ..) => {
+            let args = slots.iter().map(|slot| Argument::Value(slot.clone())).collect::<Vec<_>>();
+            let value = match &**callable {
+                Expr::ClosureLit(cid) => invoke_call(env, closures::closure_fn_id(*cid), &args, locals, caller_locals)?,
+                Expr::Variable(_, Type::Closure(cid), ..) =>
+                    invoke_call(env, closures::closure_fn_id(*cid), &args, locals, caller_locals)?,
+                Expr::Variable(id, Type::Fn(_), ..) => {
+                    let target = match read_var(locals, caller_locals, *id, 0, 0)? {
+                        Val::FnPtr(fid) => fid,
+                        _ => return Err(Flow::Trap("internal: spawn of a non-function value".to_owned())),
+                    };
+                    invoke_call(env, target, &args, locals, caller_locals)?
+                }
+                _ => return Err(Flow::Trap("internal: spawn callable shape".to_owned())),
+            };
+            env.threads.push(Some(value));
+            Ok(Val::Thread(env.threads.len() - 1))
+        }
+        Expr::Wait(handle, ..) => match eval_expr(env, handle, locals, caller_locals, true)? {
+            Val::Thread(seq) => match env.threads[seq].take() {
+                Some(value) => Ok(value),
+                None => Err(Flow::Trap("internal: thread value already taken".to_owned())),
+            },
+            _ => Err(Flow::Trap("internal: wait on a non-handle".to_owned())),
+        },
         other => Err(Flow::Trap(format!("unsupported expression in MIR interpreter: {}", format!("{other:?}").chars().take(60).collect::<String>()))),
     }
 }

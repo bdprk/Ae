@@ -338,6 +338,22 @@ impl<'a> TreePrinter<'a> {
                 out.push(')');
             }
             Expr::ClosureLit(cid) => out.push_str(&format!("closure#{}", cid)),
+            // The handle and the capture slots print like any expression; the
+            // shape mirrors the surface form the programmer wrote.
+            Expr::Spawn(slots, callable, ..) => {
+                out.push_str("spawn(");
+                self.expression(callable, out);
+                for slot in slots {
+                    out.push_str(", ");
+                    self.expression(slot, out);
+                }
+                out.push(')');
+            }
+            Expr::Wait(handle, ..) => {
+                out.push_str("wait(");
+                self.expression(handle, out);
+                out.push(')');
+            }
             Expr::Binary(a, op, b, line, col, ty) => {
                 self.expression(a, out);
                 out.push_str(&format!(" {} ", operator_text(op)));

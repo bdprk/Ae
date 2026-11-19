@@ -31,7 +31,7 @@ use c_output::*;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), StructRef(usize), StructMut(usize), Enum(&'static str, usize), Tokens, Closure(usize), Fn(usize), Ptr(usize), PtrMut(usize) }
+enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), StructRef(usize), StructMut(usize), Enum(&'static str, usize), Tokens, Closure(usize), Fn(usize), Ptr(usize), PtrMut(usize), Thread(usize) }
 // The pointee registry for `Type::Ptr` (M2.12): Type is Copy, so the
 // pointee rides an id exactly like the closure/fn signature registries do.
 thread_local! {
@@ -147,6 +147,9 @@ impl Type {
             // A raw pointer (M2.12): an address typed by pointee layout only.
             Type::Ptr(id) => format!("*const {}", ptr_pointee(id).name()),
             Type::PtrMut(id) => format!("*mut {}", ptr_pointee(id).name()),
+            // A thread handle (ADR-0214 / spec/concurrency.md): owns its heap
+            // slot; the return type rides the interned slot, not the spelling.
+            Type::Thread(id) => format!("Thread#{}", id),
         }
     }
     fn c_temp(self) -> String {
@@ -174,6 +177,7 @@ impl Type {
             Type::Fn(_) => "void ".to_owned(),
             Type::Ptr(id) => format!("const {}* ", ptr_pointee(id).c_temp().trim_end()),
             Type::PtrMut(id) => format!("{}* ", ptr_pointee(id).c_temp().trim_end()),
+            Type::Thread(_) => "void *".to_owned(),
             _ => "int64_t ".to_owned(),
         }
     }
@@ -181,7 +185,7 @@ impl Type {
     // released on scope exit and control-flow jumps. Enums own their payload
     // slots, which may hold strings.
     fn owned(self) -> bool {
-        matches!(self, Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..))
+        matches!(self, Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Thread(_))
         // A raw pointer is a plain value (M2.12): copying it moves nothing,
         // so it neither moves nor releases.
     }
@@ -196,7 +200,7 @@ const MAX_ENUM_TYPES: usize = 256;
 const MAX_STRUCT_TYPES: usize = 256;
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
-const RESERVED: &[&str] = &["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "f64map_new", "map_put", "map_get", "map_has", "map_remove", "map_inc", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "find", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "f64vec_new", "run_command", "set_cwd", "to_f64", "to_i64", "c_size_of", "c_align_of", "c_offset_of", "tokenize", "sqrt", "abs", "floor", "ceil", "round", "exp", "log", "sin", "cos", "pow", "atan2", "min", "max"];
+const RESERVED: &[&str] = &["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "f64map_new", "map_put", "map_get", "map_has", "map_remove", "map_inc", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "find", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "f64vec_new", "run_command", "set_cwd", "to_f64", "to_i64", "c_size_of", "c_align_of", "c_offset_of", "tokenize", "sqrt", "abs", "floor", "ceil", "round", "exp", "log", "sin", "cos", "pow", "atan2", "min", "max", "spawn", "wait"];
 // The math builtins (ADR-60): AE name, C symbol, arity. Every argument and
 // the result is f64, and each call maps 1:1 onto C libm, so domain errors are
 // IEEE NaN/-inf instead of language-level failures — unlike the checked `/`
@@ -277,6 +281,13 @@ enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Bo
     // captures at the moment of the call. Passed as a function value, the
     // emitted pointer is the literal's function id (ADR-0189).
     ClosureLit(usize), FnCall(usize, Vec<Argument>, Type, usize),
+    // ADR-0214 / spec/concurrency.md: spawn moves its capture slots (the
+    // leading expressions, in capture order) into a heap context the thread
+    // consumes, and wait blocks on the handle and hands back the spawned
+    // callable's owned return. The callable is a closure literal or a
+    // zero-parameter function value; the return type rides the variant so
+    // wait's result is typed without a second lookup.
+    Spawn(Vec<Expr>, Box<Expr>, usize, usize, usize), Wait(Box<Expr>, Type, usize, usize),
     // A raw pointer (M2.12 slice 2/3): `&expr as *const T` and
     // `&mut expr as *mut T` take the address of a local; the bool records
     // mutability. `p.deref()` reads through it, inside `unsafe` only.
@@ -500,7 +511,7 @@ type Instance = (usize, Vec<Type>, Type);
 // arguments (ADR-21, ADR-30, ADR-31). `next_fn_id` is the one id space shared
 // by ordinary and instantiated functions, so C names never collide.
 #[derive(Default, Clone)]
-struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, struct_origin: HashMap<usize, (usize, Vec<Type>)>, enum_origin: HashMap<usize, (usize, Vec<Type>)>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef>, generic_impls: HashMap<String, GenericImplDef>, generic_impl_done: HashMap<String, Instance>, impl_in_progress: std::collections::HashSet<String>, closures: Vec<ClosureDef>, nested_shapes: Vec<NestedShape>, instantiation_trace: Vec<(&'static str, String, String)> }
+struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, struct_origin: HashMap<usize, (usize, Vec<Type>)>, enum_origin: HashMap<usize, (usize, Vec<Type>)>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef>, generic_impls: HashMap<String, GenericImplDef>, generic_impl_done: HashMap<String, Instance>, impl_in_progress: std::collections::HashSet<String>, closures: Vec<ClosureDef>, threads: Vec<Type>, nested_shapes: Vec<NestedShape>, instantiation_trace: Vec<(&'static str, String, String)> }
 #[derive(Debug, Clone)]
 struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 

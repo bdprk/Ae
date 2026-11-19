@@ -1,0 +1,19 @@
+// ADR-0214 / spec/concurrency.md: spawn moves its owned captures into a
+// thread; wait blocks and hands back the return value. The loop spawns and
+// joins one thread per iteration, so every handle is consumed exactly once
+// and each capture's storage moves with its thread.
+fn main() {
+    let base = 10;
+    let offset = spawn(|| -> i64 { return base + 32; });
+    print(wait(offset));
+    let greet = spawn(|| -> string { return "hi " + "there"; });
+    print(wait(greet));
+    var i = 0;
+    var sum = 0;
+    while i < 4 {
+        let add = spawn(|| -> i64 { return i * 2; });
+        sum = sum + wait(add);
+        i = i + 1;
+    }
+    print(sum);
+}

@@ -1249,7 +1249,7 @@ static void ae_map_forfeit(ae_map *m) {
     m->used = 0;
 }
 
-// unit: ae_thread
+// unit: ae_thread_entry_fn
 // ---- Threads (ADR-0214) ------------------------------------------------------
 // One spelling per primitive: spawn runs a void fn(void *ctx) on an operating
 // system thread and returns an opaque handle; join waits for it to finish and
@@ -1267,34 +1267,42 @@ static void ae_map_forfeit(ae_map *m) {
 // when that header arrives. The struct tag matches the header's own, so the
 // two declarations merge; this unit sits after that include for exactly this
 // reason, and a program that prunes the header declares them alone.
+typedef void (*ae_thread_entry_fn)(void *ctx);
+// The tag completes when the argument-conversion part pulls <windows.h>; the
+// forward declaration keeps the standalone spelling warning-free.
+struct _SECURITY_ATTRIBUTES;
 extern void *CreateThread(struct _SECURITY_ATTRIBUTES *attributes, size_t stack, unsigned long (*start)(void *), void *parameter, unsigned long flags, unsigned long *id); /* win32-declared */
 extern unsigned long WaitForSingleObject(void *handle, unsigned long milliseconds); /* win32-declared */
 extern int CloseHandle(void *handle); /* win32-declared */
 typedef struct { void *native; } ae_thread_handle;
+// The job block pairs the entry with its context; a typed member keeps the
+// function pointer out of an object pointer, which ISO C forbids converting.
+typedef struct { ae_thread_entry_fn fn; void *ctx; } ae_thread_job;
 static unsigned long ae_thread_body(void *raw) {
-    void (**job)(void *) = raw;
-    job[0](((void **)raw)[1]);
+    ae_thread_job *job = raw;
+    job->fn(job->ctx);
     ae_free(raw);
     return 0;
 }
 #else
 #include <threads.h>
 typedef struct { thrd_t native; } ae_thread_handle;
+typedef struct { ae_thread_entry_fn fn; void *ctx; } ae_thread_job;
 static int ae_thread_body(void *raw) {
-    void (**job)(void *) = raw;
-    job[0](((void **)raw)[1]);
+    ae_thread_job *job = raw;
+    job->fn(job->ctx);
     ae_free(raw);
     return 0;
 }
 #endif
-static void *ae_thread_spawn(void (*entry)(void *), void *ctx) { /* win32-declared */
+static void *ae_thread_spawn(ae_thread_entry_fn entry, void *ctx) { /* win32-declared */
     // Two slots: the entry function and its context. The block is owned by
     // the thread body, which frees it after the call; the handle is a
     // separate allocation so a leaked join stays one leak, not two.
-    void **job = ae_alloc_try(2 * sizeof(void *));
+    ae_thread_job *job = ae_alloc_try(sizeof(ae_thread_job));
     if (!job) return NULL;
-    job[0] = (void *)entry;
-    job[1] = ctx;
+    job->fn = entry;
+    job->ctx = ctx;
     ae_thread_handle *handle = ae_alloc_try(sizeof(ae_thread_handle));
     if (!handle) { ae_free(job); return NULL; }
 #ifdef _WIN32
