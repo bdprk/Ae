@@ -316,16 +316,27 @@ impl<'a> Parser<'a> {
                     let id = self.next_var; self.next_var += 1;
                     let (stmt, ty) = if *self.current() == Kind::LBracket {
                         self.pos += 1;
-                        let mut values = Vec::new();
                         if *self.current() == Kind::RBracket { return Err(self.fail("array must contain at least one element")); }
-                        loop {
-                            if values.len() == 4096 { return Err(self.fail("array element limit exceeded (4096)")); }
-                            let (element, element_ty) = self.expression(0, false)?;
-                            if element_ty != Type::Int { return Err(self.fail("array elements must be i64")); }
-                            values.push(element);
-                            if *self.current() != Kind::Comma { break; }
-                            self.pos += 1;
-                        }
+                        let values = ae_syntax::parse_comma_list(
+                            self,
+                            |parser, count| {
+                                if count == 4096 {
+                                    return Err(parser.fail("array element limit exceeded (4096)"));
+                                }
+                                let (element, element_ty) = parser.expression(0, false)?;
+                                if element_ty != Type::Int {
+                                    return Err(parser.fail("array elements must be i64"));
+                                }
+                                Ok(element)
+                            },
+                            |parser| {
+                                if *parser.current() != Kind::Comma {
+                                    return false;
+                                }
+                                parser.pos += 1;
+                                true
+                            },
+                        )?;
                         self.take(Kind::RBracket)?; self.take(Kind::Semi)?;
                         let len = values.len(); (Statement::Array(id, values), Type::Array(len))
                     } else {
