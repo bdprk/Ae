@@ -3548,6 +3548,108 @@ fn emit_tree_preserves_negation_and_multiplication_grouping() {
 }
 
 #[test]
+fn standalone_literals_agree_with_the_compiler_on_values_and_spans() {
+    use ae_syntax::{expression::{parse_operator_expression, ExpressionKind}, Kind};
+
+    // The token keeps the source spelling (escapes uninterpreted) and the
+    // runtime decodes exactly the four escapes below. Expected bytes are
+    // spelled out here, independently of the compiler's own decoder.
+    let cases = [
+        (r#""plain""#, "plain"),
+        (r#""a\nb""#, "a\nb"),
+        (r#""tab\there""#, "tab\there"),
+        (r#""carriage\rreturn""#, "carriage\rreturn"),
+        (r#""quote\"end""#, "quote\"end"),
+        (r#""back\\slash""#, "back\\slash"),
+        (r#""héllo世界""#, "héllo世界"),
+        (r#""""#, ""),
+    ];
+    // Recomputed from bytes: the compiler reports 1-based character columns.
+    let position = |source: &str, offset: usize| {
+        let prefix = &source[..offset];
+        let line = prefix.matches('\n').count() + 1;
+        let start = prefix.rfind('\n').map(|newline| newline + 1).unwrap_or(0);
+        (line, source[start..offset].chars().count() + 1)
+    };
+    let ae = env!("CARGO_BIN_EXE_ae");
+
+    for (spelling, decoded) in cases {
+        let parsed = parse_operator_expression("main.ae", spelling).unwrap();
+        let ExpressionKind::Atom(Kind::Text(raw)) = &parsed.kind else {
+            panic!("expected a text atom for {spelling}");
+        };
+        assert_eq!(parsed.range, 0..spelling.len(), "{spelling}");
+        assert_eq!(raw, &spelling[1..spelling.len() - 1], "{spelling}");
+
+        let source = format!("fn main() {{\n    let s = {spelling};\n    print(s);\n}}\n");
+        let dir = unique_temp_dir("literal");
+        let path = dir.join("main.ae");
+        fs::write(&path, &source).unwrap();
+        let tree = Command::new(ae).arg("emit-tree").arg(&path).output().unwrap();
+        let run = Command::new(ae).arg("run").arg(&path).output().unwrap();
+        fs::remove_dir_all(dir).unwrap();
+        assert!(tree.status.success(), "{spelling}: {}", String::from_utf8_lossy(&tree.stderr));
+        assert!(run.status.success(), "{spelling}: {}", String::from_utf8_lossy(&run.stderr));
+
+        let offset = source.find(spelling).unwrap();
+        let (line, column) = position(&source, offset);
+        assert_eq!(&source[offset..offset + spelling.len()], spelling);
+        let needle = format!("{:?} @ {line}:{column}", raw);
+        let dumped = String::from_utf8_lossy(&tree.stdout);
+        assert!(dumped.contains(&needle), "{spelling}: expected {needle:?} in\n{dumped}");
+
+        let printed = String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n");
+        assert_eq!(printed, format!("{decoded}\n"), "{spelling}");
+    }
+
+    // A multibyte prefix on the same line separates the two units: the token
+    // range is a byte offset, the reported column counts characters.
+    let source = "fn main() {\n    let a = \"héllo世界\"; let s = \"a\\nb\";\n    print(s);\n}\n";
+    let offset = source.rfind("\"a\\nb\"").unwrap();
+    let (line, column) = position(source, offset);
+    let byte_column = source[..offset].rsplit('\n').next().unwrap().len() + 1;
+    assert_ne!(column, byte_column, "the fixture must separate the two units");
+    let dir = unique_temp_dir("literal-multibyte");
+    let path = dir.join("main.ae");
+    fs::write(&path, source).unwrap();
+    let tree = Command::new(ae).arg("emit-tree").arg(&path).output().unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    let needle = format!("{:?} @ {line}:{column}", "a\\nb");
+    let dumped = String::from_utf8_lossy(&tree.stdout);
+    assert!(dumped.contains(&needle), "expected {needle:?} in\n{dumped}");
+}
+
+#[test]
+fn standalone_and_compiler_agree_on_string_literal_rejections() {
+    // Each fixture holds one broken literal; the compiler's JSON diagnostic
+    // must name the same code and byte range the extracted lexer reports.
+    let cases = [
+        ("fn main() { print(\"oops); }", "E0003"),
+        ("fn main() {\n    print(\"bad\\q\");\n}", "E0002"),
+        ("fn main() {\n    print(\"line\nbreak\");\n}", "E0004"),
+    ];
+    let ae = env!("CARGO_BIN_EXE_ae");
+    for (source, code) in cases {
+        let lexer = ae_syntax::lex_diagnostic(source).unwrap_err();
+        assert_eq!(lexer.code.as_deref(), Some(code), "{source:?}");
+        let range = lexer.primary.as_ref().expect("primary label").span.range.clone();
+
+        let dir = unique_temp_dir("literal-rejection");
+        let path = dir.join("main.ae");
+        fs::write(&path, source).unwrap();
+        let output = Command::new(ae).args(["check", "--json"]).arg(&path).output().unwrap();
+        fs::remove_dir_all(dir).unwrap();
+        assert_eq!(output.status.code(), Some(1), "{source:?}");
+        let json = String::from_utf8_lossy(&output.stdout);
+        assert!(json.contains(&format!("\"code\":\"{code}\"")), "{source:?}: {json}");
+        assert!(
+            json.contains(&format!("\"byte_start\":{},\"byte_end\":{}", range.start, range.end)),
+            "{source:?}: expected {range:?} in {json}"
+        );
+    }
+}
+
+#[test]
 fn standalone_postfix_expression_matches_compiler_execution() {
     let expression = "-combine(values[0], point.x) * 3";
     let parsed = ae_syntax::expression::parse_operator_expression("main.ae", expression).unwrap();

@@ -36,7 +36,7 @@ Integration gate: Editor and terminal point to the same token. (Editor side pinn
 Entry dependency: M0.1.
 
 - [x] M0.2.01. **Inventory grammar.** See [the active parser grammar inventory](architecture/grammar-inventory.md) for witnesses and documented gaps.
-- [ ] M0.2.02. **port literals.** The active compiler now consumes expression literal atoms from ae-syntax. Escape spelling, decoded CLI output, and malformed literal spans have regression coverage. Whole-parser parity remains pending.
+- [x] M0.2.02. **port literals.** The active compiler consumes expression literal atoms from `ae_syntax::literal::parse_literal`. Escape spelling and byte range agree with the standalone `parse_operator_expression` for eight spellings (plain, the four escapes, a non-ASCII string, and the empty string); `ae run` prints exactly the expected decoded bytes; and the reported `line:column` is pinned as a character count even when a multibyte literal earlier on the line makes it differ from the byte column. Rejected literals (`E0002`/`E0003`/`E0004`) report the same code and byte range through `check --json`. Evidence: [Verified 2026-11-19 — M0.2.02 literals](#verified-2026-11-19--m0202-literals-dual-platform).
 - [ ] M0.2.03. **expressions.** The syntax crate parses operator expressions over literals, names, and groups. Tree tests compare its negation and multiplication grouping with the active compiler on the same inputs. The standalone parser also captures calls, index expressions, and field access with byte ranges. Declaration-dependent forms and type restrictions remain on the active compiler path.
 - [ ] M0.2.04. **patterns.** The standalone syntax parser records nested variant payloads in source order and locates malformed bindings. The active compiler still accepts only flat payload binding patterns, so nested semantic lowering and CLI parity remain pending.
 - [x] M0.2.05. **declarations.** A shared fixture compares function and generic struct byte boundaries across the standalone syntax parser and the active compiler. It checks parameter, return, and field spellings and compiles and runs the source. The standalone parser retains function bodies as ranges and does not yet cover every declaration kind.
@@ -455,6 +455,20 @@ Host: Windows 11 x86-64 (`rustc 1.99.1`, `cargo 1.99.1`); all fixtures are platf
 | Gate | Editor: byte offsets + char columns (M0.1.03). Terminal: the same token underlined via the cell policy (M0.1.04). Revision-aware buffers (M0.1.02) join when editor session state exists (M6.2.01/02). |
 
 Suite after this pass: `cargo test --workspace --locked` 14 bin + 284 execution + 3 run + 43 compiler + 2 span + 23 syntax = 369, 0 failures.
+
+## Verified 2026-11-19 — M0.2.02 literals (dual platform)
+
+Hosts: Windows 11 x86-64 (`rustc 1.99.1`, `cargo 1.99.1`) and InstaBox `evaluate-2` Linux x86-64 (`rustc 1.99.0`), same revision.
+
+| Item | Evidence |
+|---|---|
+| M0.2.02 accepted corpus | `standalone_literals_agree_with_the_compiler_on_values_and_spans` (tests/execution.rs): eight spellings — plain, `\n`, `\t`, `\r`, `\"`, `\\`, non-ASCII (`héllo世界`), empty. For each, the extracted parser (`parse_operator_expression` → `Atom(Kind::Text)`) reports the whole quoted byte range and the raw interior spelling; the active compiler's `emit-tree` prints the same `Debug` spelling at the recomputed 1-based character `line:column`; `ae run` prints exactly the decoded bytes (expected bytes written independently of the compiler's decoder). |
+| M0.2.02 span units | Same test, second half: with a multibyte literal earlier on the line (`let a = "héllo世界"; let s = "a\nb";`) the second literal sits at character column 32 while its byte column is larger — the assertion fails if the two coincide, so the token range stays a byte offset and the reported column stays a character count. |
+| M0.2.02 rejected corpus | `standalone_and_compiler_agree_on_string_literal_rejections`: `E0003` (unterminated at EOF), `E0002` (`\q`), `E0004` (raw newline inside the quotes). The extracted lexer's code and primary byte range equal `ae check --json`'s `code`/`byte_start`/`byte_end`; the CLI exits 1. Recovery boundary matches spec/diagnostics.md (continue only past an escape whose closing quote is unambiguous; stop otherwise). |
+| Component change | None required: the active expression parser already routes literals through `ae_syntax::literal::parse_literal` (crates/ae-compiler/src/frontend/expression.rs:98), so this slice locks parity rather than moving code. |
+| Gate | Both routes name the same bytes for accepted and rejected literals; malformed literals terminate identically on both platforms. |
+
+Suite after this pass: `cargo test --workspace --locked` 14 bin + 295 execution + 3 run + 44 compiler + 2 span + 48 syntax, 0 failures — identical counts on Windows and Linux.
 
 ## Verified 2026-11-19 — M3.3 packages
 
