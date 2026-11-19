@@ -237,10 +237,7 @@ impl Parser<'_> {
         let mut fields = Vec::new();
         while self.current().kind != Kind::RBrace {
             let token = self.current();
-            let Kind::Ident(name) = &token.kind else {
-                return Err(self.error("expected a struct field name"));
-            };
-            let name = name.clone();
+            let name = crate::parse_identifier(self.file, self.source, token)?.to_owned();
             let name_range = token.offset..token.end;
             self.cursor += 1;
             if self.current().kind != Kind::Colon {
