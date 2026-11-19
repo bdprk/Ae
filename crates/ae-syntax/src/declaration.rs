@@ -251,14 +251,19 @@ pub fn recover_declarations(file: &str, source: &str) -> RecoveredDeclarations {
             return result;
         }
     };
-    let imports = match crate::module::parse_use_headers(file, source, &tokens) {
-        Ok(imports) => imports,
+    let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: 0 };
+    match crate::module::parse_use_headers(file, source, &tokens) {
+        Ok(imports) => parser.pos = imports.body_start,
         Err(error) => {
+            // Start recovery at the rejected header token so a missing
+            // semicolon cannot hide the declaration that follows it.
+            if let Some(label) = &error.primary {
+                parser.pos = tokens.partition_point(|token| token.offset < label.span.range.start);
+            }
             result.diagnostics.push(error);
-            return result;
+            parser.synchronize(0);
         }
-    };
-    let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: imports.body_start };
+    }
     while parser.current().kind != Kind::Eof {
         let start = parser.pos;
         match parser.declaration() {
@@ -752,6 +757,17 @@ mod tests {
         assert_eq!(diagnostic.primary.as_ref().unwrap().span.range, offset..offset + 1);
         assert_eq!(recovered.declarations.len(), 2);
         assert_eq!(recovered.declarations[0].name, "Next");
+        assert_eq!(recovered.declarations[0].range.start, source.find("pub struct").unwrap());
+        assert_eq!(recovered.declarations[1].name, "main");
+    }
+
+    #[test]
+    fn malformed_import_header_preserves_following_declarations() {
+        let source = "use \"valid.ae\";\nuse \"missing-terminator.ae\"\npub struct Item { value: i64 }\nfn main() {}";
+        let recovered = recover_declarations("case.ae", source);
+        assert_eq!(recovered.diagnostics.len(), 1);
+        assert_eq!(recovered.diagnostics[0], parse_declarations("case.ae", source).unwrap_err());
+        assert_eq!(recovered.declarations.len(), 2);
         assert_eq!(recovered.declarations[0].range.start, source.find("pub struct").unwrap());
         assert_eq!(recovered.declarations[1].name, "main");
     }
