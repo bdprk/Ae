@@ -19,6 +19,7 @@ pub enum ExpressionKind {
     Call { callee: Box<Expression>, arguments: Vec<Expression> },
     Index { base: Box<Expression>, index: Box<Expression> },
     Field { base: Box<Expression>, name: String },
+    Specialization { base: Box<Expression>, arguments: Vec<Range<usize>> },
     Qualified { base: Box<Expression>, name: String },
     Prefix { operator: Kind, operand: Box<Expression> },
     Binary { left: Box<Expression>, operator: Kind, right: Box<Expression> },
@@ -110,6 +111,15 @@ impl Parser<'_> {
                 })
             })
     }
+    fn index(&mut self, base: Expression) -> Result<ExpressionKind, Diagnostic> {
+        let index = self.expression(0)?;
+        if self.current().kind != Kind::RBracket {
+            return Err(self.error("expected closing bracket"));
+        }
+        self.cursor += 1;
+        Ok(ExpressionKind::Index { base: Box::new(base), index: Box::new(index) })
+    }
+
     fn postfix(&mut self, mut base: Expression) -> Result<Expression, Diagnostic> {
         while matches!(self.current().kind, Kind::LParen | Kind::LBracket | Kind::Dot | Kind::ColonColon) {
             self.count_node()?;
@@ -134,14 +144,20 @@ impl Parser<'_> {
                     self.cursor += 1;
                     ExpressionKind::Call { callee: Box::new(base), arguments }
                 }
-                Kind::LBracket => {
-                    let index = self.expression(0)?;
-                    if self.current().kind != Kind::RBracket {
-                        return Err(self.error("expected closing bracket"));
+                Kind::LBracket if matches!(&base.kind, ExpressionKind::Atom(Kind::Ident(_))) => {
+                    let start = self.cursor - 1;
+                    let end = crate::declaration::skip_type_parameter_list(self.tokens, start);
+                    if self.tokens.get(end).is_some_and(|token| token.kind == Kind::ColonColon) {
+                        let arguments = crate::declaration::expression_type_arguments(
+                            self.file, self.source, self.tokens, start,
+                        )?;
+                        self.cursor = end;
+                        ExpressionKind::Specialization { base: Box::new(base), arguments }
+                    } else {
+                        self.index(base)?
                     }
-                    self.cursor += 1;
-                    ExpressionKind::Index { base: Box::new(base), index: Box::new(index) }
                 }
+                Kind::LBracket => self.index(base)?,
                 Kind::Dot | Kind::ColonColon => {
                     let Kind::Ident(name) = &self.current().kind else {
                         let message = if *opener == Kind::Dot {
@@ -184,6 +200,23 @@ mod tests {
         let span = error.primary.unwrap().span;
         assert_eq!(span.file.as_deref(), Some("literal.ae"));
         assert_eq!(span.range, 1..2);
+    }
+
+    #[test]
+    fn qualified_specializations_preserve_nested_type_arguments() {
+        let source = "Outer[Inner[i64, string], bool]::Value";
+        let parsed = parse_operator_expression("case.ae", source).unwrap();
+        let ExpressionKind::Qualified { base, .. } = parsed.kind else {
+            panic!("expected qualified name");
+        };
+        let ExpressionKind::Specialization { arguments, .. } = base.kind else {
+            panic!("expected specialization");
+        };
+        let arguments: Vec<_> = arguments.into_iter().map(|range| &source[range]).collect();
+        assert_eq!(arguments, ["Inner[i64, string]", "bool"]);
+        assert!(matches!(parse_operator_expression("case.ae", "items[i]").unwrap().kind,
+            ExpressionKind::Index { .. }));
+        assert!(parse_operator_expression("case.ae", "Outer[]::Value").is_err());
     }
 
     #[test]

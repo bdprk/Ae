@@ -316,6 +316,22 @@ fn diagnostic_in_file(file: &str, mut error: Diagnostic) -> Diagnostic {
     error
 }
 
+pub(crate) fn expression_type_arguments(
+    file: &str,
+    source: &str,
+    tokens: &[Token],
+    start: usize,
+) -> Result<Vec<Range<usize>>, Diagnostic> {
+    let mut parser = DeclarationParser { file, source, tokens, pos: start + 1 };
+    let mut arguments = Vec::new();
+    loop {
+        arguments.push(parser.ty(&[Kind::Comma, Kind::RBracket], false)?);
+        if !parser.consume(Kind::Comma) {
+            return Ok(arguments);
+        }
+    }
+}
+
 struct DeclarationParser<'a> {
     file: &'a str,
     source: &'a str,
