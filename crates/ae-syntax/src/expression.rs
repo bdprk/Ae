@@ -24,6 +24,7 @@ pub enum ExpressionKind {
     Atom(Kind),
     Group(Box<Expression>),
     Propagate(Box<Expression>),
+    PointerCast { base: Box<Expression>, mutable: bool, pointee: Range<usize> },
     BorrowArgument { mutable: bool, name: String, name_range: Range<usize> },
     Array(Vec<Expression>),
     Vector(Vec<Expression>),
@@ -244,7 +245,7 @@ impl Parser<'_> {
     }
 
     fn postfix(&mut self, mut base: Expression) -> Result<Expression, Diagnostic> {
-        while matches!(self.current().kind, Kind::LParen | Kind::LBracket | Kind::Dot | Kind::ColonColon)
+        while matches!(self.current().kind, Kind::LParen | Kind::LBracket | Kind::Dot | Kind::ColonColon | Kind::As)
             || (self.current().kind == Kind::LBrace
                 && matches!(base.kind, ExpressionKind::Atom(Kind::Ident(_)) | ExpressionKind::Specialization { .. }))
         {
@@ -274,7 +275,7 @@ impl Parser<'_> {
                     let start = self.cursor - 1;
                     let end = crate::declaration::skip_type_parameter_list(self.tokens, start);
                     if self.tokens.get(end).is_some_and(|token| matches!(token.kind, Kind::ColonColon | Kind::LBrace)) {
-                        let arguments = crate::declaration::expression_type_arguments(
+                        let (arguments, _) = crate::declaration::expression_type_arguments(
                             self.file, self.source, self.tokens, start,
                         )?;
                         self.cursor = end;
@@ -287,6 +288,29 @@ impl Parser<'_> {
                 Kind::LBrace => {
                     let fields = self.struct_fields()?;
                     ExpressionKind::Struct { target: Box::new(base), fields }
+                }
+                Kind::As => {
+                    if self.current().kind != Kind::Star {
+                        return Err(self.error("expected '*' after 'as'"));
+                    }
+                    self.cursor += 1;
+                    let mutable = crate::declaration::pointer_mutability(
+                        self.file, self.source, self.current(),
+                    )?;
+                    self.cursor += 1;
+                    if !matches!(self.current().kind, Kind::Ident(_)) {
+                        return Err(self.error("expected a pointee type"));
+                    }
+                    let start = self.current().offset;
+                    self.cursor += 1;
+                    if self.current().kind == Kind::LBracket {
+                        let (_, end) = crate::declaration::expression_type_arguments(
+                            self.file, self.source, self.tokens, self.cursor,
+                        )?;
+                        self.cursor = end;
+                    }
+                    let pointee = start..self.tokens[self.cursor - 1].end;
+                    ExpressionKind::PointerCast { base: Box::new(base), mutable, pointee }
                 }
                 Kind::Dot | Kind::ColonColon => {
                     let Kind::Ident(name) = &self.current().kind else {
@@ -423,6 +447,26 @@ mod tests {
 
         let error = parse_operator_expression("case.ae", "Result::(value)").unwrap_err();
         assert_eq!(error.primary.unwrap().span.range, 8..9);
+    }
+
+    #[test]
+    fn pointer_cast_groups_before_method_call() {
+        let source = "ptr as *mut Boxed[i64].deref()";
+        let parsed = parse_operator_expression("case.ae", source).unwrap();
+        let ExpressionKind::Call { callee, .. } = parsed.kind else {
+            panic!("expected method call");
+        };
+        let ExpressionKind::Field { base, name } = callee.kind else {
+            panic!("expected method name");
+        };
+        assert_eq!(name, "deref");
+        let ExpressionKind::PointerCast { mutable, pointee, .. } = base.kind else {
+            panic!("expected pointer conversion");
+        };
+        assert!(mutable);
+        assert_eq!(&source[pointee], "Boxed[i64]");
+        assert_eq!(&source[base.range], "ptr as *mut Boxed[i64]");
+        assert!(parse_operator_expression("case.ae", "ptr as *const Boxed[Boxed[i64]").is_err());
     }
 
     #[test]
