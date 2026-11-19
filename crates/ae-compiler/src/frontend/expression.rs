@@ -298,12 +298,7 @@ impl Parser<'_> {
                     // variants of different types (ADR-21).
                     let gid = self.generics.names[&name];
                     self.pos += 1;
-                    let mut args = Vec::new();
-                    loop {
-                        args.push(self.type_argument()?);
-                        if *self.current() != Kind::Comma { break; }
-                        self.pos += 1;
-                    }
+                    let args = self.read_type_arguments(Self::type_argument)?;
                     self.take(Kind::RBracket)?;
                     let eid = self.instantiate_enum(gid, args.clone(), name_offset)?;
                     // `::` after the arguments: a variant name stays a variant
@@ -350,12 +345,7 @@ impl Parser<'_> {
                     // Pair[string, i64] and Pair[i64, i64] are different types.
                     let gid = self.generics.struct_names[&name];
                     self.pos += 1;
-                    let mut args = Vec::new();
-                    loop {
-                        args.push(self.named_type()?);
-                        if *self.current() != Kind::Comma { break; }
-                        self.pos += 1;
-                    }
+                    let args = self.read_type_arguments(Self::named_type)?;
                     self.take(Kind::RBracket)?;
                     let sid = self.instantiate_struct(gid, args, name_offset)?;
                     self.require_public("struct", &self.structs[sid].name.clone(), &self.structs[sid].file.clone(), self.structs[sid].public)?;
