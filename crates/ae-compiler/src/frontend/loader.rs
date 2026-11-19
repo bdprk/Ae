@@ -48,8 +48,8 @@ pub(super) fn parse_source(file: &str, source: &str, shared: &mut SharedFunction
         return Err(error(file, source, 0, "'use' is only supported when compiling a source file"));
     }
     let mut p = make_parser(file, source, tokens, shared, structs, struct_names, enums, enum_names, generics);
-    p.collect_functions(next_id, uses.body_start).map_err(|e| e.to_string())?;
-    let functions = p.program().map_err(|e| e.to_string())?;
+    let declarations = p.collect_functions(next_id, uses.body_start).map_err(|e| e.to_string())?;
+    let functions = p.program(&declarations).map_err(|e| e.to_string())?;
     if functions.iter().filter(|f| f.is_main).count() != 1 {
         return Err(error(file, source, 0, "missing main function"));
     }
@@ -256,9 +256,9 @@ fn load_file(path: &Path, root: &Path, visited: &mut HashMap<std::path::PathBuf,
         }
         let frame = stack.pop().expect("stack is nonempty");
         let mut parser = make_parser(&frame.file, &frame.source, Rc::clone(&frame.tokens), shared, structs, struct_names, enums, enum_names, generics);
-        parser.collect_functions(next_id, frame.body_start).map_err(FrontendError::Diagnostic)?;
+        let declarations = parser.collect_functions(next_id, frame.body_start).map_err(FrontendError::Diagnostic)?;
         let snapshot = recover.then(|| RecoveryState::capture(&parser));
-        let functions = match parser.program() {
+        let functions = match parser.program(&declarations) {
             Ok(functions) => functions,
             Err(first) => {
                 let mut diagnostics = Vec::new();

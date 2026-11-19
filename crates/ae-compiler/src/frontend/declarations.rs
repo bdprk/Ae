@@ -1,6 +1,6 @@
 //! Function and trait declaration collection and instantiation.
 use super::*;
-use ae_syntax::declaration::{parse_declaration_attribute, parse_extern_function_prefix, DeclarationAttribute};
+use ae_syntax::declaration::{parse_declaration_attribute, parse_extern_function_prefix, Declaration, DeclarationAttribute, DeclarationKind};
 use super::parser::moved_value_hint;
 
 impl Parser<'_> {
@@ -98,11 +98,11 @@ impl Parser<'_> {
         self.pos = boundary.unwrap_or_else(|end| end);
     }
 
-    pub(super) fn collect_functions(&mut self, next_id: &mut usize, body_start: usize) -> Result<(), ae_span::Diagnostic> {
+    pub(super) fn collect_functions(&mut self, next_id: &mut usize, body_start: usize) -> Result<Vec<Declaration>, ae_span::Diagnostic> {
         // Traits are registered before anything else so a bound in the same
         // file can name a trait declared later; cross-file traits already
         // exist because imports load first.
-        use ae_syntax::declaration::{parse_declaration_tokens, DeclarationKind};
+        use ae_syntax::declaration::parse_declaration_tokens;
 
         let declarations = parse_declaration_tokens(&self.file, self.source, &self.tokens, body_start);
         match &declarations {
@@ -326,7 +326,7 @@ impl Parser<'_> {
         }
         // main presence is checked once per program, not per file.
         self.pos = body_start;
-        Ok(())
+        Ok(declarations.unwrap_or_default())
     }
     // ---- traits and impls (ADR-47) ------------------------------------------
     // A trait method is only callable inside a generic body whose constrained
@@ -873,10 +873,28 @@ impl Parser<'_> {
         })
     }
 
-    pub(super) fn program(&mut self) -> Result<Vec<Function>, ae_span::Diagnostic> {
+    pub(super) fn program(&mut self, declarations: &[Declaration]) -> Result<Vec<Function>, ae_span::Diagnostic> {
         let mut result = Vec::new();
         let mut main_found = false;
+        let mut declarations = declarations.iter().peekable();
         while *self.current() != Kind::Eof {
+            let start = self.tokens[self.pos].offset;
+            while declarations.peek().is_some_and(|item| item.range.start < start) {
+                declarations.next();
+            }
+            if let Some(item) = declarations.next_if(|item| item.range.start == start) {
+                // Signatures are already registered. Only executable bodies
+                // and impl methods need this pass.
+                let already_collected = match item.kind {
+                    DeclarationKind::Struct { .. } | DeclarationKind::Enum { .. } | DeclarationKind::Trait => true,
+                    DeclarationKind::Function { .. } => !item.type_parameters.is_empty() || item.body.is_none(),
+                    DeclarationKind::Impl { .. } => false,
+                };
+                if already_collected {
+                    self.advance_to_body_end(item.range.end);
+                    continue;
+                }
+            }
             self.take_pub();
             let (_, end) = parse_declaration_attribute(&self.file, self.source, &self.tokens, self.pos)?;
             self.pos = end;
