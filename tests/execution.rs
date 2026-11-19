@@ -4075,6 +4075,26 @@ fn main() {{
 }
 
 #[test]
+fn json_check_does_not_merge_different_declaration_errors_at_the_same_span() {
+    let source = "fn first() { }\nfn second(value: i64 { }\nfn main() {}";
+    let syntax = ae_syntax::declaration::recover_declarations("main.ae", source);
+    assert_eq!(syntax.diagnostics.len(), 2);
+    let range = &syntax.diagnostics[0].primary.as_ref().unwrap().span.range;
+    let dir = unique_temp_dir("declaration-recovery-different-error");
+    let path = dir.join("main.ae");
+    fs::write(&path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["check", "--json"]).arg(&path).output().unwrap();
+    fs::remove_dir_all(dir).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let json = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(json.matches("\"message\":").count(), 1, "{json}");
+    assert!(json.contains("\"message\":\"expected Arrow, found LBrace\""), "{json}");
+    assert!(json.contains(&format!("\"byte_start\":{},\"byte_end\":{}", range.start, range.end)), "{json}");
+}
+
+#[test]
 fn json_check_recovers_independent_declaration_errors() {
     let source = "fn first(value: i64 { }\nfn second(value: i64 { }\nfn main() {}";
     let dir = unique_temp_dir("declaration-recovery");
