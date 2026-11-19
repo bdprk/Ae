@@ -61,6 +61,44 @@ pub enum DeclarationAttribute {
     NoMangle,
 }
 
+/// Parse an optional declaration attribute and return the next token index.
+pub fn parse_declaration_attribute(
+    file: &str,
+    source: &str,
+    tokens: &[Token],
+    start: usize,
+) -> Result<(Option<DeclarationAttribute>, usize), Diagnostic> {
+    let mut parser = DeclarationParser { file, source, tokens, pos: start };
+    if !parser.consume(Kind::Hash) {
+        return Ok((None, start));
+    }
+    fn take(parser: &mut DeclarationParser<'_>, expected: Kind) -> Result<(), Diagnostic> {
+        if parser.consume(expected.clone()) {
+            return Ok(());
+        }
+        Err(parser.error(&format!("expected {expected:?}, found {:?}", parser.current().kind)).with_code("E0010"))
+    }
+    fn identifier(parser: &mut DeclarationParser<'_>) -> Result<String, Diagnostic> {
+        parser.name().map_err(|_| parser.error("expected identifier").with_code("E0010"))
+    }
+    take(&mut parser, Kind::LBracket)?;
+    let attribute = match identifier(&mut parser)?.as_str() {
+        "repr" => {
+            take(&mut parser, Kind::LParen)?;
+            let inner = identifier(&mut parser)?;
+            if inner != "C" {
+                return Err(parser.error(&format!("only '#[repr(C)]' is supported, found '#[repr({inner})]'")));
+            }
+            take(&mut parser, Kind::RParen)?;
+            DeclarationAttribute::ReprC
+        }
+        "no_mangle" => DeclarationAttribute::NoMangle,
+        other => return Err(parser.error(&format!("unknown attribute '{other}'; the language has '#[repr(C)]' and '#[no_mangle]' only"))),
+    };
+    take(&mut parser, Kind::RBracket)?;
+    Ok((Some(attribute), parser.pos))
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Declaration {
     pub attribute: Option<DeclarationAttribute>,
@@ -285,34 +323,9 @@ impl DeclarationParser<'_> {
     }
 
     fn attribute(&mut self) -> Result<Option<DeclarationAttribute>, Diagnostic> {
-        if !self.consume(Kind::Hash) {
-            return Ok(None);
-        }
-        if !self.consume(Kind::LBracket) {
-            return Err(self.error("expected '[' after '#'"));
-        }
-        let name = self.name()?;
-        let attribute = match name.as_str() {
-            "repr" => {
-                if !self.consume(Kind::LParen) {
-                    return Err(self.error("expected '(' after 'repr'"));
-                }
-                if !matches!(&self.current().kind, Kind::Ident(name) if name == "C") {
-                    return Err(self.error("expected 'C' in representation attribute"));
-                }
-                self.pos += 1;
-                if !self.consume(Kind::RParen) {
-                    return Err(self.error("expected ')' after representation"));
-                }
-                DeclarationAttribute::ReprC
-            }
-            "no_mangle" => DeclarationAttribute::NoMangle,
-            _ => return Err(self.error("unknown declaration attribute")),
-        };
-        if !self.consume(Kind::RBracket) {
-            return Err(self.error("expected ']' after declaration attribute"));
-        }
-        Ok(Some(attribute))
+        let (attribute, end) = parse_declaration_attribute(self.file, self.source, self.tokens, self.pos)?;
+        self.pos = end;
+        Ok(attribute)
     }
 
     fn declaration(&mut self) -> Result<Declaration, Diagnostic> {

@@ -1,5 +1,6 @@
 //! Function and trait declaration collection and instantiation.
 use super::*;
+use ae_syntax::declaration::{parse_declaration_attribute, DeclarationAttribute};
 use super::parser::moved_value_hint;
 
 impl Parser<'_> {
@@ -135,33 +136,15 @@ impl Parser<'_> {
             // pins the struct's layout for the C ABI. The bracket shape is
             // parsed literally, and anything but repr(C) is rejected by
             // name so a typo cannot silently mean "no attribute".
-            let mut repr_c = false;
-            let mut no_mangle = false;
-            if *self.current() == Kind::Hash {
-                self.pos += 1;
-                self.take(Kind::LBracket)?;
-                let attr = self.identifier()?;
-                match attr.as_str() {
-                    "repr" => {
-                        self.take(Kind::LParen)?;
-                        let inner = self.identifier()?;
-                        if inner != "C" { return Err(self.fail(&format!("only '#[repr(C)]' is supported, found '#[repr({inner})]'"))); }
-                        self.take(Kind::RParen)?;
-                        self.take(Kind::RBracket)?;
-                        if *self.current() != Kind::Struct {
-                            return Err(self.fail("'#[repr(C)]' applies to a struct declaration"));
-                        }
-                        repr_c = true;
-                    }
-                    "no_mangle" => {
-                        self.take(Kind::RBracket)?;
-                        if *self.current() != Kind::Extern {
-                            return Err(self.fail("'#[no_mangle]' applies to an 'extern \"C\" fn' definition"));
-                        }
-                        no_mangle = true;
-                    }
-                    other => return Err(self.fail(&format!("unknown attribute '{other}'; the language has '#[repr(C)]' and '#[no_mangle]' only"))),
-                }
+            let (attribute, end) = parse_declaration_attribute(&self.file, self.source, &self.tokens, self.pos)?;
+            self.pos = end;
+            let repr_c = attribute == Some(DeclarationAttribute::ReprC);
+            let no_mangle = attribute == Some(DeclarationAttribute::NoMangle);
+            if repr_c && *self.current() != Kind::Struct {
+                return Err(self.fail("'#[repr(C)]' applies to a struct declaration"));
+            }
+            if no_mangle && *self.current() != Kind::Extern {
+                return Err(self.fail("'#[no_mangle]' applies to an 'extern \"C\" fn' definition"));
             }
             if *self.current() == Kind::Struct { self.parse_struct_def(public, repr_c)?; continue; }
             if *self.current() == Kind::Enum { self.parse_enum_def(public)?; continue; }
@@ -861,17 +844,8 @@ impl Parser<'_> {
         let mut main_found = false;
         while *self.current() != Kind::Eof {
             self.take_pub();
-            // The attribute was validated (and its struct registered) by
-            // the signature pass; this pass just steps over the tokens.
-            if *self.current() == Kind::Hash {
-                // #[repr(C)] is 7 tokens, #[no_mangle] is 4: skip to the
-                // closing bracket rather than counting.
-                while *self.current() != Kind::RBracket {
-                    if *self.current() == Kind::Eof { return Err(self.fail("expected ']' to close the attribute")); }
-                    self.pos += 1;
-                }
-                self.pos += 1;
-            }
+            let (_, end) = parse_declaration_attribute(&self.file, self.source, &self.tokens, self.pos)?;
+            self.pos = end;
             if *self.current() == Kind::Struct { self.skip_struct_def(); continue; }
             if *self.current() == Kind::Enum { self.skip_enum_def(); continue; }
             if *self.current() == Kind::Trait { self.skip_trait_def()?; continue; }
