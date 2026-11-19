@@ -91,6 +91,11 @@ impl<'a> TreePrinter<'a> {
 
     fn statement(&mut self, statement: &Statement) {
         match statement {
+            Statement::AtomicStore(handle, value) => {
+                let a = self.expression_text(handle);
+                let v = self.expression_text(value);
+                self.line(&format!("cell_store({}, {})", a, v));
+            }
             Statement::Return(expr, frees) => {
                 let value = self.expression_text(expr);
                 let drops = self.frees_text(frees);
@@ -338,6 +343,10 @@ impl<'a> TreePrinter<'a> {
                 out.push(')');
             }
             Expr::ClosureLit(cid) => out.push_str(&format!("closure#{}", cid)),
+            Expr::AtomicNew(value) => out.push_str(&format!("cell_new({})", self.expression_text(value))),
+            Expr::AtomicLoad(handle) => out.push_str(&format!("cell_load({})", self.expression_text(handle))),
+            Expr::AtomicAdd(handle, value) => out.push_str(&format!("cell_add({}, {})", self.expression_text(handle), self.expression_text(value))),
+            Expr::AtomicCas(handle, expect, new) => out.push_str(&format!("cell_cas({}, {}, {})", self.expression_text(handle), self.expression_text(expect), self.expression_text(new))),
             // The handle and the capture slots print like any expression; the
             // shape mirrors the surface form the programmer wrote.
             Expr::Spawn(slots, callable, ..) => {

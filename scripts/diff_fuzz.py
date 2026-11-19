@@ -113,7 +113,7 @@ class Gen:
         """
         if depth >= 3:
             return [f"print({self.int_expr(vars)});"]
-        kind = self.rnd() % 22
+        kind = self.rnd() % 23
         # With pointers in scope, a third of the draws land on the pointer
         # kinds (19/20): the fresh surface needs the pressure, and the shapes
         # are cheap to generate.
@@ -125,6 +125,33 @@ class Gen:
             kind = 3
         if kind in (19, 20) and (not vars or not pointers):
             kind = 3
+        if kind == 22:
+            # spec/concurrency.md §8 A1/A2: one shared cell, two threads each
+            # adding 10 five times. Each thread sums its own atomic_add old
+            # values locally; the two sums together are the pre-sequence
+            # {0,10,...,90} = 450 regardless of interleaving, and the final
+            # load is 100 — both deterministic under any schedule.
+            name = self.fresh("at")
+            first = self.fresh("t")
+            second = self.fresh("t")
+            return [
+                f"let {name} = cell_new(0);",
+                f"let {first} = spawn(|| -> i64 {{",
+                f"    var i = 0;",
+                f"    var seen = 0;",
+                f"    while i < 5 {{ seen = seen + cell_add({name}, 10); i = i + 1; }}",
+                f"    return seen;",
+                f"}});",
+                f"let {second} = spawn(|| -> i64 {{",
+                f"    var i = 0;",
+                f"    var seen = 0;",
+                f"    while i < 5 {{ seen = seen + cell_add({name}, 10); i = i + 1; }}",
+                f"    return seen;",
+                f"}});",
+                f"print(wait({first}) + wait({second}));",
+                f"print(cell_load({name}));",
+                *self.statement(vars, depth + 1, docs, pointers),
+            ]
         if kind == 21:
             # ADR-0214: a spawned closure moves its owned captures into the
             # thread and wait hands the result back. Scalars copy (they stay

@@ -477,6 +477,8 @@ pub(super) fn expr_type(expr: &Expr) -> Type {
     match expr {
         Expr::Spawn(_, _, tid, ..) => Type::Thread(*tid),
         Expr::Wait(_, ret, ..) => *ret,
+        Expr::AtomicNew(..) | Expr::AtomicLoad(..) | Expr::AtomicAdd(..) => Type::Int,
+        Expr::AtomicCas(..) => Type::Bool,
         Expr::Number(..) | Expr::Index(..) | Expr::Len(..) => Type::Int,
         Expr::VecIndex(_, _, _, _, _, ty) => *ty,
         Expr::StrVecIndex(..) => Type::String,

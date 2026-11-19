@@ -31,6 +31,9 @@ impl Parser<'_> {
             "f64" => Ok(Type::F64),
             "bool" => Ok(Type::Bool),
             "string" => Ok(Type::String),
+            // The copy-semantics cell handle (spec/concurrency.md §8): a
+            // parameter typed `atomic` shares the caller's cell.
+            "atomic" => Ok(Type::Atomic),
             "vec" => {
                 // `vec` alone is the i64 vector; `vec[string]` and `vec[f64]`
                 // (ADR-61) name the others, so a type annotation can say which

@@ -380,6 +380,13 @@ pub(super) fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker)
             if let Some(violation) = moved.read(*id) { return Some(violation); }
             walk_expr(value, moved)
         }
+        // An atomic store reads the handle and the value; copy semantics
+        // mean neither side moves (spec/concurrency.md §8).
+        Statement::AtomicStore(handle, value) => {
+            if let Some(violation) = walk_expr(handle, moved) { return Some(violation); }
+            if let Some(violation) = walk_expr(value, moved) { return Some(violation); }
+            None
+        }
     }
 }
 
@@ -411,6 +418,17 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
             None
         }
         Expr::Wait(handle, ..) => walk_moving_expr(handle, moved),
+        // An atomic operation reads its handle and value operands; copy
+        // semantics make every operand a read (spec/concurrency.md §8).
+        Expr::AtomicNew(value) => walk_expr(value, moved),
+        Expr::AtomicLoad(handle) => walk_expr(handle, moved),
+        Expr::AtomicAdd(handle, value) => { walk_expr(handle, moved); walk_expr(value, moved); None }
+        Expr::AtomicCas(handle, expect, new) => {
+            if let Some(violation) = walk_expr(handle, moved) { return Some(violation); }
+            if let Some(violation) = walk_expr(expect, moved) { return Some(violation); }
+            if let Some(violation) = walk_expr(new, moved) { return Some(violation); }
+            None
+        }
         Expr::BorrowAs(e, ..) | Expr::DerefPtr(e, ..) => walk_expr(e, moved),
         // The pointer itself is only read; the count can contain calls and
         // therefore reads or moves of its own, after evaluating the base.

@@ -31,6 +31,9 @@ pub(super) fn c_type_field(ty: Type) -> String {
         // Unreachable: thread handles bind as locals only (spec/concurrency.md
         // §2, like pointers); the pointer shape keeps a future slip valid C.
         Type::Thread(_) => "void *".to_owned(),
+        // Unreachable: an atomic-typed field has no syntax yet; the struct
+        // shape keeps a future slip valid C.
+        Type::Atomic => "ae_atomic".to_owned(),
         // Unreachable: no syntax for a pointer-typed field (M2.12 pointers
         // bind as locals only); the value keeps the pointer shape so a future
         // slip prints valid C.
@@ -69,6 +72,8 @@ pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         // The handle is one heap slot: spawn allocates it, join consumes it.
         Type::Thread(_) if declaration => format!("void *v{id}"),
         Type::Thread(_) => "void *".to_owned(),
+        Type::Atomic if declaration => format!("ae_atomic v{id}"),
+        Type::Atomic => "ae_atomic".to_owned(),
         // A function pointer parameter declares its name inside the pointer
         // parens, the way C requires.
         Type::Fn(sig) => {

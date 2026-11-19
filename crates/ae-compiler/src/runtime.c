@@ -1330,3 +1330,27 @@ static bool ae_thread_join(void *opaque) { /* win32-declared */
     return true;
 }
 // unit: -
+
+// unit: ae_atomic
+// ---- Atomics (ADR-0214, spec/concurrency.md §8) ------------------------------
+// One process-lifetime cell behind a copy-semantics handle: copying the
+// struct shares the cell, nothing frees it, and every operation is C11
+// seq_cst. The store is the release half of the handoff a load in another
+// thread observes after join provides the happens-before edge.
+typedef struct { _Atomic int64_t *cell; } ae_atomic;
+static ae_atomic ae_cell_new(int64_t seed) {
+    // The cell is process-lifetime, so the seed's allocation carries the
+    // main-call position (0, 0) — the operation itself cannot fail to
+    // report anything else.
+    _Atomic int64_t *cell = ae_alloc(sizeof(_Atomic int64_t), 0, 0);
+    atomic_store_explicit(cell, seed, memory_order_seq_cst);
+    return (ae_atomic){ cell };
+}
+static int64_t ae_cell_load(ae_atomic a) { return atomic_load_explicit(a.cell, memory_order_seq_cst); }
+static void ae_cell_store(ae_atomic a, int64_t value) { atomic_store_explicit(a.cell, value, memory_order_seq_cst); }
+static int64_t ae_cell_add(ae_atomic a, int64_t value) { return atomic_fetch_add_explicit(a.cell, value, memory_order_seq_cst); }
+static bool ae_cell_cas(ae_atomic a, int64_t expected, int64_t replacement) {
+    int64_t observed = expected;
+    return atomic_compare_exchange_strong_explicit(a.cell, &observed, replacement, memory_order_seq_cst, memory_order_seq_cst);
+}
+// unit: -
