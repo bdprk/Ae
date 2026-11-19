@@ -370,13 +370,7 @@ impl<'a> DeclarationParser<'a> {
         true
     }
 
-    fn name(&mut self) -> Result<String, Diagnostic> {
-        let Kind::Ident(name) = &self.tokens[self.pos].kind else {
-            return Err(self.error("expected a declaration name"));
-        };
-        self.pos += 1;
-        Ok(name.clone())
-    }
+
 
     fn ty(&mut self, stops: &[Kind], fields: bool) -> Result<Range<usize>, Diagnostic> {
         let start = self.pos;
@@ -485,7 +479,7 @@ impl<'a> DeclarationParser<'a> {
         let mut variants = Vec::new();
         while !self.consume(Kind::RBrace) {
             let start = self.current().offset;
-            let name = self.name()?;
+            let name = self.identifier()?.to_owned();
             let mut payload = Vec::new();
             if self.consume(Kind::LParen) && !self.consume(Kind::RParen) {
                 loop {
@@ -567,14 +561,14 @@ impl<'a> DeclarationParser<'a> {
             self.pos += 1;
             keyword
         };
-        let name = self.name()?;
+        let name = self.identifier()?.to_owned();
         let mut type_parameters: Vec<TypeParameter> = Vec::new();
         if self.consume(Kind::LBracket) {
             loop {
                 if type_parameters.len() >= MAX_TYPE_PARAMETERS {
                     return Err(self.error("type parameter limit exceeded (8)"));
                 }
-                let name = self.name()?;
+                let name = self.identifier()?.to_owned();
                 validate_type_parameter(&name, type_parameters.iter().map(|parameter| parameter.name.as_str()))
                     .map_err(|message| self.error(&message))?;
                 let mut bounds = Vec::new();
