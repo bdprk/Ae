@@ -3,9 +3,10 @@ use std::{env, ffi::{OsStr, OsString}, fs, path::{Path, PathBuf}, process::{Comm
 use ae_compiler::{fmt, frontend, harness, sha256};
 use frontend::compile_path;
 mod package;
+mod render;
 mod frontend_cache;
 
-const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae init [directory]\n       ae doc [--test] [source.ae|project]\n       ae explain <E0000>\n       ae add <path>\n       ae remove <name>\n       ae update [project]\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae check --render [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae init [directory]\n       ae doc [--test] [source.ae|project]\n       ae explain <E0000>\n       ae add <path>\n       ae remove <name>\n       ae update [project]\n       ae version";
 
 /// A toolchain failure with the exit code it maps to. Usage errors exit 2 and
 /// everything else exits 1, so a script can tell "you called it wrong" from
@@ -525,6 +526,50 @@ fn run(args: Vec<OsString>) -> Result<u8, Failure> {
             eprintln!("ae timing: frontend_ms={:.3}", started.elapsed().as_secs_f64() * 1000.0);
         }
         return Ok(if report == "[]" { 0 } else { 1 });
+    }
+    // `check --render` spells both ways like `--json`. Diagnostics keep the
+    // plain `ae: file:line:column: message` line and gain a source
+    // snippet whose underline follows the display policy (ADR-0212), so the
+    // terminal points at the same token an editor does. A diagnostic without
+    // a drawable span (a legacy text message, an unreadable file, a foreign
+    // path) prints without a snippet rather than inventing one.
+    let render_check = match (cmd.as_str(), &args[1..]) {
+        ("check", [flag]) if flag == "--render" => Some(package::discover_manifest()),
+        ("check", [flag, input]) | ("check", [input, flag]) if flag == "--render" => {
+            Some(Ok(PathBuf::from(input)))
+        }
+        _ => None,
+    };
+    if let Some(source) = render_check {
+        let outcome = source.and_then(|path| package::entry_path(&path))
+            .map_err(frontend::FrontendError::Legacy)
+            .and_then(|entry| frontend::with_package_imports(entry.imports, || frontend::check_path_diagnostic(&entry.path)));
+        match outcome {
+            Ok(()) => return Ok(0),
+            Err(frontend::FrontendError::Legacy(message)) => {
+                eprintln!("ae: {message}");
+                return Ok(1);
+            }
+            Err(error) => {
+                let diagnostics: Vec<frontend::FrontendDiagnostic> = match error {
+                    frontend::FrontendError::Diagnostic(diagnostic) => vec![diagnostic],
+                    frontend::FrontendError::Diagnostics(diagnostics)
+                    | frontend::FrontendError::LexDiagnostics(diagnostics) => diagnostics,
+                    frontend::FrontendError::Legacy(_) => unreachable!("handled above"),
+                };
+                for diagnostic in &diagnostics {
+                    eprintln!("ae: {diagnostic}");
+                    let Some(label) = &diagnostic.primary else { continue };
+                    let span = &label.span;
+                    let Some(file) = &span.file else { continue };
+                    let Ok(text) = fs::read_to_string(file) else { continue };
+                    if let Some(snippet) = render::render_snippet(&text, span.line, span.range.start, span.range.end) {
+                        eprintln!("{snippet}");
+                    }
+                }
+                return Ok(1);
+            }
+        }
     }
     let mut args = args;
     let first = args.get(1).and_then(|arg| arg.to_str());
