@@ -1024,6 +1024,22 @@ fn ownership_join_field_move_and_overwrite_release_are_enforced() {
 }
 
 #[test]
+fn vector_growth_during_iteration_is_rejected() {
+    // M2.3 gate: growth would reallocate the buffer the iteration loan
+    // points at, so the write is refused while the loan is live.
+    let output = execute(concat!(
+        "fn main() {\n",
+        "    var v = vec[1, 2];\n",
+        "    for x in v { print(x); push(v, 3); }\n",
+        "}\n"
+    ));
+    assert_eq!(output.status.code(), Some(1));
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("cannot modify 'v' while it is borrowed"),
+        "{error}");
+}
+
+#[test]
 fn returning_a_live_owned_local_keeps_the_buffer_valid() {
     // Regression: the exit release list must skip slots the return moved
     // out of, for both owned types.
