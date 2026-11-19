@@ -52,19 +52,31 @@ pub fn parse_operator_expression(file: &str, source: &str) -> Result<Expression,
         }
         diagnostic
     })?;
-    let mut parser = Parser { file, source, tokens: &tokens, cursor: 0, nodes: 0 };
+    let (expression, end) = parse_expression_tokens(file, source, &tokens, 0, true)?;
+    let token = &tokens[end];
+    if token.kind != Kind::Eof {
+        return Err(diagnostic_range(file, source, token.offset..token.end, "expected end of expression"));
+    }
+    Ok(expression)
+}
+
+/// Read one expression from an EOF-terminated lexer stream, returning the
+/// first unconsumed token. Statement callers can opt into a final '?'.
+pub fn parse_expression_tokens(
+    file: &str,
+    source: &str,
+    tokens: &[Token],
+    start: usize,
+    allow_propagation: bool,
+) -> Result<(Expression, usize), Diagnostic> {
+    let mut parser = Parser { file, source, tokens, cursor: start, nodes: 0 };
     let mut expression = parser.expression(0)?;
-    // The statement grammar permits a single propagation marker after the
-    // entire initializer or discarded expression.
-    if parser.current().kind == Kind::Question {
+    if allow_propagation && parser.current().kind == Kind::Question {
         let range = expression.range.start..parser.current().end;
         parser.cursor += 1;
         expression = Expression { kind: ExpressionKind::Propagate(Box::new(expression)), range };
     }
-    if parser.current().kind != Kind::Eof {
-        return Err(parser.error("expected end of expression"));
-    }
-    Ok(expression)
+    Ok((expression, parser.cursor))
 }
 
 /// Parse a borrowed call argument at an existing token cursor.
@@ -367,6 +379,22 @@ impl Parser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn token_entry_leaves_statement_boundaries_to_the_caller() {
+        let source = "let value = fetch()?; return value;";
+        let tokens = crate::lex_diagnostic(source).unwrap();
+        let (initializer, end) = parse_expression_tokens("case.ae", source, &tokens, 3, true).unwrap();
+        assert!(matches!(initializer.kind, ExpressionKind::Propagate(_)));
+        assert_eq!(&source[initializer.range], "fetch()?");
+        assert_eq!(tokens[end].kind, Kind::Semi);
+        let (_, end_without_propagation) =
+            parse_expression_tokens("case.ae", source, &tokens, 3, false).unwrap();
+        assert_eq!(tokens[end_without_propagation].kind, Kind::Question);
+        let (value, end) = parse_expression_tokens("case.ae", source, &tokens, end + 2, false).unwrap();
+        assert_eq!(&source[value.range], "value");
+        assert_eq!(tokens[end].kind, Kind::Semi);
+    }
 
     #[test]
     fn escaped_atoms_and_invalid_literals_preserve_source_ranges() {
