@@ -1,6 +1,6 @@
 //! Function and trait declaration collection and instantiation.
 use super::*;
-use ae_syntax::declaration::{parse_declaration_attribute, parse_extern_function_prefix, Declaration, DeclarationAttribute, DeclarationKind, MAX_FUNCTION_PARAMETERS};
+use ae_syntax::declaration::{parse_declaration_attribute, parse_extern_function_prefix, Declaration, DeclarationAttribute, DeclarationKind, TypedName, MAX_FUNCTION_PARAMETERS};
 use super::parser::moved_value_hint;
 
 impl Parser<'_> {
@@ -873,7 +873,8 @@ impl Parser<'_> {
             while declarations.peek().is_some_and(|item| item.range.start < start) {
                 declarations.next();
             }
-            if let Some(item) = declarations.next_if(|item| item.range.start == start) {
+            let declaration = declarations.next_if(|item| item.range.start == start);
+            if let Some(item) = declaration {
                 // Signatures are already registered. Only executable bodies
                 // and impl methods need this pass.
                 let already_collected = match item.kind {
@@ -886,6 +887,10 @@ impl Parser<'_> {
                     continue;
                 }
             }
+            let parsed_parameters = declaration.and_then(|item| match &item.kind {
+                DeclarationKind::Function { parameters, .. } => Some(parameters.as_slice()),
+                _ => None,
+            });
             self.take_pub();
             let (_, end) = parse_declaration_attribute(&self.file, self.source, &self.tokens, self.pos)?;
             self.pos = end;
@@ -909,7 +914,7 @@ impl Parser<'_> {
                 let exposed = self.functions.get(&exposure_name).map(|sig| !sig.extern_c).unwrap_or(false);
                 if exposed {
                     let id = self.id_order[result.len()];
-                    result.push(self.function_rest(false, id)?);
+                    result.push(self.function_rest_with_parameters(false, id, parsed_parameters)?);
                     continue;
                 }
                 while *self.current() != Kind::Semi {
@@ -929,7 +934,7 @@ impl Parser<'_> {
             if is_main && main_found { return Err(self.fail("duplicate main function")); }
             if is_main { main_found = true; }
             let id = self.id_order[result.len()];
-            result.push(self.function_rest(is_main, id)?);
+            result.push(self.function_rest_with_parameters(is_main, id, parsed_parameters)?);
         }
         // Instantiations discovered while parsing bodies have no place in the
         // file's own order, but they must still be emitted.
@@ -941,6 +946,15 @@ impl Parser<'_> {
     // list. Shared by the file's own functions and by generic instantiations,
     // which parse the same tokens with type parameters substituted.
     pub(super) fn function_rest(&mut self, is_main: bool, id: usize) -> Result<Function, ae_span::Diagnostic> {
+        self.function_rest_with_parameters(is_main, id, None)
+    }
+
+    fn function_rest_with_parameters(
+        &mut self,
+        is_main: bool,
+        id: usize,
+        parsed_parameters: Option<&[TypedName]>,
+    ) -> Result<Function, ae_span::Diagnostic> {
         self.take(Kind::LParen)?;
         // Variable ids restart per function, so move tracking must too.
         self.names.clear(); self.binding_ranges.clear(); self.next_var = 0; self.moved.clear(); self.scopes.clear(); self.borrows.clear(); self.call_borrows.clear(); self.mut_borrows.clear();
@@ -962,10 +976,16 @@ impl Parser<'_> {
                 // `var` marks the parameter slot writable. The value was moved
                 // in at the call site, so mutating this copy cannot be seen by
                 // the caller; that difference is what keeps it safe.
-                let mutable = *self.current() == Kind::Var;
-                if mutable { self.pos += 1; }
-                let binding_range = self.tokens[self.pos].offset..self.tokens[self.pos].end;
-                let param = self.identifier()?;
+                let parsed = parsed_parameters.and_then(|parameters| parameters.get(params.len()));
+                let (param, mutable, binding_range) = if let Some(parameter) = parsed {
+                    self.pos += 1 + usize::from(parameter.mutable);
+                    (parameter.name.clone(), parameter.mutable, parameter.name_range.clone())
+                } else {
+                    let mutable = *self.current() == Kind::Var;
+                    if mutable { self.pos += 1; }
+                    let binding_range = self.tokens[self.pos].offset..self.tokens[self.pos].end;
+                    (self.identifier()?, mutable, binding_range)
+                };
                 // A receiver carries its type from the impl, so the parameter
                 // list never writes it (M1.2). Everywhere else `self` is just
                 // an unknown name, which keeps the spelling from leaking out of
