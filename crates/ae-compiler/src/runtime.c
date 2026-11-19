@@ -1260,6 +1260,11 @@ static void ae_map_forfeit(ae_map *m) {
 // shows up in a leak check as a retained block, and joining twice is a
 // caller-visible contract violation safe code cannot spell because the
 // language surface never hands the handle out twice.
+// Platform-neutral shapes: the entry signature and the job block that pairs
+// it with its context. A typed member keeps the function pointer out of an
+// object pointer, which ISO C forbids converting.
+typedef void (*ae_thread_entry_fn)(void *ctx);
+typedef struct { ae_thread_entry_fn fn; void *ctx; } ae_thread_job;
 #ifdef _WIN32
 // Declared with the real spellings, not void: the argument-conversion part
 // of this file includes <windows.h> on Windows, and a `void *` first
@@ -1267,7 +1272,6 @@ static void ae_map_forfeit(ae_map *m) {
 // when that header arrives. The struct tag matches the header's own, so the
 // two declarations merge; this unit sits after that include for exactly this
 // reason, and a program that prunes the header declares them alone.
-typedef void (*ae_thread_entry_fn)(void *ctx);
 // The tag completes when the argument-conversion part pulls <windows.h>; the
 // forward declaration keeps the standalone spelling warning-free.
 struct _SECURITY_ATTRIBUTES;
@@ -1275,9 +1279,6 @@ extern void *CreateThread(struct _SECURITY_ATTRIBUTES *attributes, size_t stack,
 extern unsigned long WaitForSingleObject(void *handle, unsigned long milliseconds); /* win32-declared */
 extern int CloseHandle(void *handle); /* win32-declared */
 typedef struct { void *native; } ae_thread_handle;
-// The job block pairs the entry with its context; a typed member keeps the
-// function pointer out of an object pointer, which ISO C forbids converting.
-typedef struct { ae_thread_entry_fn fn; void *ctx; } ae_thread_job;
 static unsigned long ae_thread_body(void *raw) {
     ae_thread_job *job = raw;
     job->fn(job->ctx);
@@ -1287,7 +1288,6 @@ static unsigned long ae_thread_body(void *raw) {
 #else
 #include <threads.h>
 typedef struct { thrd_t native; } ae_thread_handle;
-typedef struct { ae_thread_entry_fn fn; void *ctx; } ae_thread_job;
 static int ae_thread_body(void *raw) {
     ae_thread_job *job = raw;
     job->fn(job->ctx);
