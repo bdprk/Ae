@@ -3568,6 +3568,25 @@ fn main() {{
 }
 
 #[test]
+fn json_check_recovers_independent_declaration_errors() {
+    let source = "fn first(value: i64 { }\nfn second(value: i64 { }\nfn main() {}";
+    let dir = unique_temp_dir("declaration-recovery");
+    let path = dir.join("main.ae");
+    fs::write(&path, source).unwrap();
+    let compiler = env!("CARGO_BIN_EXE_ae");
+    let strict = Command::new(compiler).arg("check").arg(&path).output().unwrap();
+    let recovered = Command::new(compiler).args(["check", "--json"]).arg(&path).output().unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    assert_eq!(strict.status.code(), Some(1));
+    assert_eq!(recovered.status.code(), Some(1));
+    let json = String::from_utf8_lossy(&recovered.stdout);
+    assert_eq!(json.matches("\"message\":").count(), 2, "{json}");
+    for (offset, _) in source.match_indices("{ }") {
+        assert!(json.contains(&format!("\"byte_start\":{offset},\"byte_end\":{}", offset + 1)), "{json}");
+    }
+}
+
+#[test]
 fn standalone_declarations_cover_example_and_run_corpus() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut failures = Vec::new();

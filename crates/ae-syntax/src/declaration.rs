@@ -242,17 +242,16 @@ pub struct RecoveredDeclarations {
 /// Continue at the next top-level declaration after a syntax error.
 /// Recovery is bounded to 32 diagnostics and does not enter brace bodies.
 pub fn recover_declarations(file: &str, source: &str) -> RecoveredDeclarations {
-    const MAX_DIAGNOSTICS: usize = 32;
     let mut result = RecoveredDeclarations { declarations: Vec::new(), diagnostics: Vec::new() };
     let tokens = match crate::lex_recovered(source) {
         crate::LexOutcome::Clean(tokens) => tokens,
         crate::LexOutcome::Recovered(tokens, errors) => {
-            result.diagnostics = errors.into_iter().take(MAX_DIAGNOSTICS)
+            result.diagnostics = errors.into_iter().take(MAX_DECLARATION_DIAGNOSTICS)
                 .map(|error| diagnostic_in_file(file, error)).collect();
             tokens
         }
         crate::LexOutcome::Fatal(errors) => {
-            result.diagnostics = errors.into_iter().take(MAX_DIAGNOSTICS)
+            result.diagnostics = errors.into_iter().take(MAX_DECLARATION_DIAGNOSTICS)
                 .map(|error| diagnostic_in_file(file, error)).collect();
             return result;
         }
@@ -260,7 +259,7 @@ pub fn recover_declarations(file: &str, source: &str) -> RecoveredDeclarations {
     let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: 0 };
     match crate::module::parse_use_headers(file, source, &tokens) {
         Ok(imports) => parser.pos = imports.body_start,
-        Err(_) if result.diagnostics.len() == MAX_DIAGNOSTICS => return result,
+        Err(_) if result.diagnostics.len() == MAX_DECLARATION_DIAGNOSTICS => return result,
         Err(error) => {
             // Start recovery at the rejected header token so a missing
             // semicolon cannot hide the declaration that follows it.
@@ -271,20 +270,39 @@ pub fn recover_declarations(file: &str, source: &str) -> RecoveredDeclarations {
             parser.synchronize(0);
         }
     }
-    while result.diagnostics.len() < MAX_DIAGNOSTICS && parser.current().kind != Kind::Eof {
+    recover_declaration_body(&mut parser, &mut result);
+    result
+}
+
+const MAX_DECLARATION_DIAGNOSTICS: usize = 32;
+
+/// Recover declaration syntax from the existing module token stream.
+pub fn recover_declaration_tokens(
+    file: &str,
+    source: &str,
+    tokens: &[Token],
+    body_start: usize,
+) -> RecoveredDeclarations {
+    let mut parser = DeclarationParser { file, source, tokens, pos: body_start };
+    let mut result = RecoveredDeclarations { declarations: Vec::new(), diagnostics: Vec::new() };
+    recover_declaration_body(&mut parser, &mut result);
+    result
+}
+
+fn recover_declaration_body(parser: &mut DeclarationParser<'_>, result: &mut RecoveredDeclarations) {
+    while result.diagnostics.len() < MAX_DECLARATION_DIAGNOSTICS && parser.current().kind != Kind::Eof {
         let start = parser.pos;
         match parser.declaration() {
             Ok(declaration) => result.declarations.push(declaration),
             Err(error) => {
                 result.diagnostics.push(error);
-                if result.diagnostics.len() == MAX_DIAGNOSTICS {
+                if result.diagnostics.len() == MAX_DECLARATION_DIAGNOSTICS {
                     break;
                 }
                 parser.synchronize(start);
             }
         }
     }
-    result
 }
 
 fn declaration_tokens(file: &str, source: &str) -> Result<Vec<Token>, Diagnostic> {

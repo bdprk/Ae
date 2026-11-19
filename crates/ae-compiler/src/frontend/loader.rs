@@ -256,7 +256,28 @@ fn load_file(path: &Path, root: &Path, visited: &mut HashMap<std::path::PathBuf,
         }
         let frame = stack.pop().expect("stack is nonempty");
         let mut parser = make_parser(&frame.file, &frame.source, Rc::clone(&frame.tokens), shared, structs, struct_names, enums, enum_names, generics);
-        let declarations = parser.collect_functions(next_id, frame.body_start).map_err(FrontendError::Diagnostic)?;
+        let declarations = match parser.collect_functions(next_id, frame.body_start) {
+            Ok(declarations) => declarations,
+            Err(first) if recover => {
+                let syntax = ae_syntax::declaration::recover_declaration_tokens(
+                    &frame.file, &frame.source, &frame.tokens, frame.body_start,
+                );
+                let mut diagnostics = frame.lex_diagnostics.clone();
+                let first_span = first.primary.as_ref().map(|label| &label.span.range);
+                let first_matches_syntax = syntax.diagnostics.first().is_some_and(|error|
+                    error.primary.as_ref().map(|label| &label.span.range) == first_span);
+                diagnostics.push(first);
+                if first_matches_syntax {
+                    let remaining = 32usize.saturating_sub(diagnostics.len());
+                    diagnostics.extend(syntax.diagnostics.into_iter().skip(1).take(remaining));
+                }
+                if diagnostics.len() == 1 {
+                    return Err(FrontendError::Diagnostic(diagnostics.pop().unwrap()));
+                }
+                return Err(FrontendError::Diagnostics(diagnostics));
+            }
+            Err(first) => return Err(FrontendError::Diagnostic(first)),
+        };
         let snapshot = recover.then(|| RecoveryState::capture(&parser));
         let functions = match parser.program(&declarations) {
             Ok(functions) => functions,
