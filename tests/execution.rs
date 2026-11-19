@@ -3512,6 +3512,26 @@ fn emit_tree_preserves_negation_and_multiplication_grouping() {
 }
 
 #[test]
+fn standalone_postfix_expression_matches_compiler_execution() {
+    let expression = "-combine(values[0], point.x) * 3";
+    let parsed = ae_syntax::expression::parse_operator_expression("main.ae", expression).unwrap();
+    assert_eq!(parsed.range, 0..expression.len());
+
+    let source = format!(
+        r#"struct Point {{ x: i64 }}
+fn combine(a: i64, b: i64) -> i64 {{ return a + b; }}
+fn main() {{
+    let values = vec[4];
+    let point = Point {{ x: 5 }};
+    print({expression});
+}}"#
+    );
+    let output = execute(&source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "-27");
+}
+
+#[test]
 fn emit_tree_dumps_the_lowered_statement_tree() {
     // `emit-tree` is the inspectable layer above the parser (M2.2 slice 1):
     // it prints declarations and every statement with its expression, and it
