@@ -4076,7 +4076,7 @@ fn main() {{
 
 #[test]
 fn json_check_does_not_merge_different_declaration_errors_at_the_same_span() {
-    let source = "struct First { : i64 }\nfn second(value: i64 { }\nfn main() {}";
+    let source = "struct { }\nfn second(value: i64 { }\nfn main() {}";
     let syntax = ae_syntax::declaration::recover_declarations("main.ae", source);
     assert_eq!(syntax.diagnostics.len(), 2);
     let range = &syntax.diagnostics[0].primary.as_ref().unwrap().span.range;
@@ -4096,7 +4096,7 @@ fn json_check_does_not_merge_different_declaration_errors_at_the_same_span() {
 
 #[test]
 fn json_check_recovers_independent_declaration_errors() {
-    let source = "extern \"C\" fn first() -> i64 { }\nfn second(value: i64 { }\nfn main() {}";
+    let source = "struct First { : i64 }\nstruct Second { value i64 }\nfn second(value: i64 { }\nfn main() {}";
     let dir = unique_temp_dir("declaration-recovery");
     let path = dir.join("main.ae");
     fs::write(&path, source).unwrap();
@@ -4107,12 +4107,17 @@ fn json_check_recovers_independent_declaration_errors() {
     assert_eq!(strict.status.code(), Some(1));
     assert_eq!(recovered.status.code(), Some(1));
     let json = String::from_utf8_lossy(&recovered.stdout);
-    assert_eq!(json.matches("\"message\":").count(), 2, "{json}");
-    assert!(json.contains("\"message\":\"expected Semi, found LBrace\""), "{json}");
-    assert!(json.contains("\"message\":\"expected RParen, found LBrace\""), "{json}");
-    assert_eq!(json.matches("\"code\":\"E0010\"").count(), 2, "{json}");
-    for (offset, _) in source.match_indices("{ }") {
-        assert!(json.contains(&format!("\"byte_start\":{offset},\"byte_end\":{}", offset + 1)), "{json}");
+    assert_eq!(json.matches("\"message\":").count(), 3, "{json}");
+    assert_eq!(json.matches("\"code\":\"E0010\"").count(), 3, "{json}");
+    for (marker, len, message) in [
+        (": i64", 1, "expected identifier"),
+        ("i64 }\nfn second", 3, "expected Colon, found Ident(\"i64\")"),
+        ("{ }\nfn main", 1, "expected RParen, found LBrace"),
+    ] {
+        let offset = source.find(marker).unwrap();
+        let escaped = message.replace('"', "\\\"");
+        let expected = format!("\"message\":\"{escaped}\",\"byte_start\":{offset},\"byte_end\":{}", offset + len);
+        assert!(json.contains(&expected), "{json}");
     }
 }
 

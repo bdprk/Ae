@@ -425,10 +425,8 @@ impl<'a> DeclarationParser<'a> {
             let mutable = !fields && self.consume(Kind::Var);
             let token = self.current();
             let name_range = token.offset..token.end;
-            let name = self.name()?;
-            if !self.consume(Kind::Colon) {
-                return Err(self.error("expected ':' after name"));
-            }
+            let name = self.identifier()?.to_owned();
+            self.take(Kind::Colon)?;
             let ty = if fields {
                 self.ty(&[Kind::Comma, Kind::RBrace], true)?
             } else {
