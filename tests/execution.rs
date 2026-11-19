@@ -8061,6 +8061,19 @@ fn threads_spawn_wait_and_move_captures() {
         "42\nhi there\n6\ndone\n12\n"
     );
 
+    // A `fn() -> T` function value spawns through the same lowering: the
+    // pointer rides the context and the trampoline calls through it.
+    let fn_value = r#"fn run_async(f: fn() -> i64) -> i64 {
+    let t = spawn(f);
+    return wait(t);
+}
+fn main() {
+    print(run_async(|| -> i64 { return 41; }) + 1);
+}"#;
+    let output = execute(fn_value);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "42\n");
+
     // The interpreter runs the same program with the same observable result
     // (the spawned callable completes at the spawn site).
     let path = std::env::temp_dir().join(format!("ae-spawn-interp-{}.ae", std::process::id()));

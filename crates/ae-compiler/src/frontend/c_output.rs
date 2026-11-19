@@ -615,28 +615,13 @@ pub(super) fn emit_program(program: Program) -> Result<GeneratedC, String> {
         out.push_str(&format!("{} {}({});
 ", c_return(ret), c_name, params_c));
     }
+
     let all: Vec<&Function> = files.iter().flatten().collect();
     for function in &all {
         if function.is_main { continue; }
         let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, false)).collect::<Vec<_>>().join(", ") };
         let ret = c_return(function.returns);
         out.push_str(&format!("\nstatic {ret} ae_fn_{}({params});\n", function.id));
-    }
-    for function in &all {
-        if function.is_main { continue; }
-        let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, true)).collect::<Vec<_>>().join(", ") };
-        let ret = c_return(function.returns);
-        let signature = match crate::frontend::exposure_name(function.id) {
-            // A `#[no_mangle]` exposure keeps its own name with external
-            // linkage (M2.12 U7); the rest stay internal to the unit.
-            Some(name) => format!("{ret} {name}({params})"),
-            None => format!("static {ret} ae_fn_{}({params})", function.id),
-        };
-        out.push_str(&format!("\n{signature} {{\n"));
-        emit_body(function, &mut out)?;
-        // Defensive backstop: even a future control-flow analysis bug must not
-        // produce a C function that falls through without returning a value.
-        out.push_str("    ae_fail(\"function exited without return\", 0, 0);\n}\n");
     }
     // Thread support (ADR-0214): the context layouts and trampolines the
     // program's spawn sites reference, then the one slot type. They sit after
@@ -687,6 +672,22 @@ typedef struct {{
 "));
             }
         }
+    }
+    for function in &all {
+        if function.is_main { continue; }
+        let params = if function.params.is_empty() { "void".to_owned() } else { function.params.iter().map(|&(id, ty)| c_type(ty, id, true)).collect::<Vec<_>>().join(", ") };
+        let ret = c_return(function.returns);
+        let signature = match crate::frontend::exposure_name(function.id) {
+            // A `#[no_mangle]` exposure keeps its own name with external
+            // linkage (M2.12 U7); the rest stay internal to the unit.
+            Some(name) => format!("{ret} {name}({params})"),
+            None => format!("static {ret} ae_fn_{}({params})", function.id),
+        };
+        out.push_str(&format!("\n{signature} {{\n"));
+        emit_body(function, &mut out)?;
+        // Defensive backstop: even a future control-flow analysis bug must not
+        // produce a C function that falls through without returning a value.
+        out.push_str("    ae_fail(\"function exited without return\", 0, 0);\n}\n");
     }
     let main = all.iter().find(|f| f.is_main).expect("load_program checks exactly one main");
     out.push_str("\nint main(int argc, char **argv) {\n    ae_args_init(argc, argv);\n    ae_argc_g = (int64_t)argc;\n    ae_argv_g = argv;\n");
