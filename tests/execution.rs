@@ -4076,7 +4076,7 @@ fn main() {{
 
 #[test]
 fn json_check_does_not_merge_different_declaration_errors_at_the_same_span() {
-    let source = "fn main() ;\nfn second(value: i64 { }\nfn main() {}";
+    let source = "fn first() -> { }\nfn second(value: i64 { }\nfn main() {}";
     let syntax = ae_syntax::declaration::recover_declarations("main.ae", source);
     assert_eq!(syntax.diagnostics.len(), 2);
     let range = &syntax.diagnostics[0].primary.as_ref().unwrap().span.range;
@@ -4090,13 +4090,13 @@ fn json_check_does_not_merge_different_declaration_errors_at_the_same_span() {
     assert_eq!(output.status.code(), Some(1));
     let json = String::from_utf8_lossy(&output.stdout);
     assert_eq!(json.matches("\"message\":").count(), 1, "{json}");
-    assert!(json.contains("\"message\":\"expected LBrace, found Semi\""), "{json}");
+    assert!(json.contains("\"message\":\"expected identifier\""), "{json}");
     assert!(json.contains(&format!("\"byte_start\":{},\"byte_end\":{}", range.start, range.end)), "{json}");
 }
 
 #[test]
 fn json_check_recovers_independent_declaration_errors() {
-    let source = "struct First { : i64 }\nstruct Second { value i64 }\nfn second(value: i64 { }\nfn main() {}";
+    let source = "struct First ;\nstruct Second { value i64 }\nfn second(value: i64 { }\nfn main() {}";
     let dir = unique_temp_dir("declaration-recovery");
     let path = dir.join("main.ae");
     fs::write(&path, source).unwrap();
@@ -4110,7 +4110,7 @@ fn json_check_recovers_independent_declaration_errors() {
     assert_eq!(json.matches("\"message\":").count(), 3, "{json}");
     assert_eq!(json.matches("\"code\":\"E0010\"").count(), 3, "{json}");
     for (marker, len, message) in [
-        (": i64", 1, "expected identifier"),
+        (";", 1, "expected LBrace, found Semi"),
         ("i64 }\nfn second", 3, "expected Colon, found Ident(\"i64\")"),
         ("{ }\nfn main", 1, "expected RParen, found LBrace"),
     ] {

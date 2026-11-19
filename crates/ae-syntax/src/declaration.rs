@@ -506,9 +506,7 @@ impl<'a> DeclarationParser<'a> {
 
     fn opaque_body(&mut self) -> Result<usize, Diagnostic> {
         let start = self.current().offset;
-        if !self.consume(Kind::LBrace) {
-            return Err(self.error("expected a declaration body"));
-        }
+        self.take(Kind::LBrace)?;
         match brace_body_end(self.tokens, self.pos) {
             Ok(end) => {
                 self.pos = end;
@@ -641,16 +639,12 @@ impl<'a> DeclarationParser<'a> {
             (DeclarationKind::Impl { target }, self.opaque_body()?)
         } else if keyword == Kind::Enum {
             let body_start = self.current().offset;
-            if !self.consume(Kind::LBrace) {
-                return Err(self.error("expected an enum body"));
-            }
+            self.take(Kind::LBrace)?;
             let variants = self.enum_variants()?;
             (DeclarationKind::Enum { variants }, body_start)
         } else {
             let body_start = self.current().offset;
-            if !self.consume(Kind::LBrace) {
-                return Err(self.error("expected a struct body"));
-            }
+            self.take(Kind::LBrace)?;
             let fields = self.typed_names(Kind::RBrace, true)?;
             if !self.consume(Kind::RBrace) {
                 return Err(self.error("expected '}' after fields"));
