@@ -32,6 +32,27 @@ pub fn parse_variant_pattern(file: &str, source: &str) -> Result<Pattern, Diagno
     Ok(pattern)
 }
 
+/// Read a variant name after the enum name, including its qualifier separator.
+/// Returns the variant and the token index immediately after its name.
+pub fn parse_variant_suffix(
+    file: &str,
+    source: &str,
+    tokens: &[Token],
+    start: usize,
+) -> Result<(String, usize), Diagnostic> {
+    let separator = &tokens[start];
+    if separator.kind != Kind::ColonColon {
+        return Err(diagnostic_range(file, source, separator.offset..separator.end,
+            &format!("expected ColonColon, found {:?}", separator.kind)).with_code("E0010"));
+    }
+    let token = &tokens[start + 1];
+    let Kind::Ident(name) = &token.kind else {
+        return Err(diagnostic_range(file, source, token.offset..token.end,
+            "expected identifier").with_code("E0010"));
+    };
+    Ok((name.clone(), start + 2))
+}
+
 struct Parser<'a> {
     file: &'a str,
     source: &'a str,
@@ -73,8 +94,9 @@ impl Parser<'_> {
         self.nodes += 1;
         let start = self.current().offset;
         let name = self.name()?;
-        let kind = if self.consume(Kind::ColonColon) {
-            let variant = self.name()?;
+        let kind = if qualified || self.current().kind == Kind::ColonColon {
+            let (variant, end) = parse_variant_suffix(self.file, self.source, self.tokens, self.cursor)?;
+            self.cursor = end;
             let payload = if self.consume(Kind::LParen) {
                 let mut fields = vec![self.pattern(false)?];
                 while self.consume(Kind::Comma) {
@@ -88,8 +110,6 @@ impl Parser<'_> {
                 None
             };
             PatternKind::Variant { enum_name: name, variant, payload }
-        } else if qualified {
-            return Err(self.error("expected '::' after enum name"));
         } else {
             PatternKind::Binding(name)
         };

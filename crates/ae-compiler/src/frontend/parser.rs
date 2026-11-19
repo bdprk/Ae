@@ -1023,8 +1023,10 @@ impl<'a> Parser<'a> {
             if pattern != def.pattern {
                 return Err(self.fail(&format!("pattern must name the matched enum ('{}::Variant')", def.pattern)));
             }
-            self.take(Kind::ColonColon)?;
-            let vname = self.identifier()?;
+            let (vname, end) = ae_syntax::pattern::parse_variant_suffix(
+                &self.file, self.source, &self.tokens, self.pos,
+            )?;
+            self.pos = end;
             let vidx = def.variants.iter().position(|(n, _)| *n == vname)
                 .ok_or_else(|| self.fail(&format!("enum '{}' has no variant '{}'", def.name, vname)))?;
             if seen[vidx] { return Err(self.fail(&format!("variant '{}::{}' is matched twice", def.name, vname))); }
