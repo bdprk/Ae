@@ -157,30 +157,21 @@ pub fn parse_declaration_attribute(
     if !parser.consume(Kind::Hash) {
         return Ok((None, start));
     }
-    fn take(parser: &mut DeclarationParser<'_>, expected: Kind) -> Result<(), Diagnostic> {
-        if parser.consume(expected.clone()) {
-            return Ok(());
-        }
-        Err(parser.error(&format!("expected {expected:?}, found {:?}", parser.current().kind)).with_code("E0010"))
-    }
-    fn identifier(parser: &mut DeclarationParser<'_>) -> Result<String, Diagnostic> {
-        parser.name().map_err(|_| parser.error("expected identifier").with_code("E0010"))
-    }
-    take(&mut parser, Kind::LBracket)?;
-    let attribute = match identifier(&mut parser)?.as_str() {
+    parser.take(Kind::LBracket)?;
+    let attribute = match parser.identifier()? {
         "repr" => {
-            take(&mut parser, Kind::LParen)?;
-            let inner = identifier(&mut parser)?;
+            parser.take(Kind::LParen)?;
+            let inner = parser.identifier()?;
             if inner != "C" {
                 return Err(parser.error(&format!("only '#[repr(C)]' is supported, found '#[repr({inner})]'")));
             }
-            take(&mut parser, Kind::RParen)?;
+            parser.take(Kind::RParen)?;
             DeclarationAttribute::ReprC
         }
         "no_mangle" => DeclarationAttribute::NoMangle,
         other => return Err(parser.error(&format!("unknown attribute '{other}'; the language has '#[repr(C)]' and '#[no_mangle]' only"))),
     };
-    take(&mut parser, Kind::RBracket)?;
+    parser.take(Kind::RBracket)?;
     Ok((Some(attribute), parser.pos))
 }
 
@@ -203,9 +194,7 @@ pub fn parse_extern_function_prefix<'a>(
     if abi != "C" {
         return Err(parser.error("only the C ABI is supported; write extern \"C\" fn"));
     }
-    if !parser.consume(Kind::Fn) {
-        return Err(parser.error(&format!("expected Fn, found {:?}", parser.current().kind)).with_code("E0010"));
-    }
+    parser.take(Kind::Fn)?;
     Ok((abi, parser.pos))
 }
 
@@ -351,7 +340,7 @@ struct DeclarationParser<'a> {
     pos: usize,
 }
 
-impl DeclarationParser<'_> {
+impl<'a> DeclarationParser<'a> {
     fn current(&self) -> &Token {
         &self.tokens[self.pos]
     }
@@ -359,6 +348,18 @@ impl DeclarationParser<'_> {
     fn error(&self, message: &str) -> Diagnostic {
         let token = self.current();
         crate::diagnostic_range(self.file, self.source, token.offset..token.end, message)
+    }
+
+    fn take(&mut self, expected: Kind) -> Result<(), Diagnostic> {
+        crate::expect_token(self.file, self.source, self.current(), expected)?;
+        self.pos += 1;
+        Ok(())
+    }
+
+    fn identifier(&mut self) -> Result<&'a str, Diagnostic> {
+        let name = crate::parse_identifier(self.file, self.source, &self.tokens[self.pos])?;
+        self.pos += 1;
+        Ok(name)
     }
 
     fn consume(&mut self, kind: Kind) -> bool {
