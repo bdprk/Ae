@@ -102,10 +102,37 @@ impl Parser<'_> {
         // Traits are registered before anything else so a bound in the same
         // file can name a trait declared later; cross-file traits already
         // exist because imports load first.
-        self.pos = body_start;
-        while let Some(trait_start) = ae_syntax::declaration::next_top_level_trait(&self.tokens, self.pos) {
-            self.pos = trait_start;
-            self.parse_trait_def()?;
+        use ae_syntax::declaration::{parse_declaration_tokens, DeclarationKind};
+
+        match parse_declaration_tokens(&self.file, self.source, &self.tokens, body_start) {
+            Ok(declarations) => {
+                let mut cursor = body_start;
+                for declaration in declarations {
+                    if declaration.kind != DeclarationKind::Trait {
+                        continue;
+                    }
+                    // A declaration range includes modifiers such as 'pub'.
+                    // The trait parser starts at the trait keyword itself.
+                    while self.tokens[cursor].offset < declaration.range.start {
+                        cursor += 1;
+                    }
+                    if self.tokens[cursor].kind != Kind::Trait {
+                        cursor += 1;
+                    }
+                    self.pos = cursor;
+                    self.parse_trait_def()?;
+                    cursor = self.pos;
+                }
+            }
+            Err(_) => {
+                // Keep the compiler's diagnostic precedence for malformed
+                // declarations while the syntax parser is being migrated.
+                self.pos = body_start;
+                while let Some(trait_start) = ae_syntax::declaration::next_top_level_trait(&self.tokens, self.pos) {
+                    self.pos = trait_start;
+                    self.parse_trait_def()?;
+                }
+            }
         }
         self.pos = body_start;
         let mut seen = std::collections::HashSet::new();
