@@ -1,4 +1,5 @@
 use super::*;
+use ae_syntax::module::parse_use_headers;
 use std::path::PathBuf;
 
 // Leading `use "path";` headers. Parsed from tokens before the Parser owns
@@ -39,33 +40,10 @@ fn resolve_import(file: &Path, canonical: &Path, import: &str) -> Result<PathBuf
     })
 }
 
-fn scan_uses(file: &str, source: &str, tokens: &[Token]) -> Result<Vec<String>, ae_span::Diagnostic> {
-    let mut uses = Vec::new();
-    let mut pos = 0;
-    while matches!(tokens.get(pos).map(|t| &t.kind), Some(Kind::Use)) {
-        pos += 1;
-        match tokens.get(pos).map(|t| t.kind.clone()) {
-            Some(Kind::Text(text)) => { uses.push(text); pos += 1; }
-            _ => {
-                let range = tokens.get(pos).map(|t| t.offset..t.end).unwrap_or(0..0);
-                return Err(ae_syntax::diagnostic_range(file, source, range, "expected a string path after 'use'"));
-            }
-        }
-        match tokens.get(pos).map(|t| &t.kind) {
-            Some(Kind::Semi) => pos += 1,
-            _ => {
-                let range = tokens.get(pos).map(|t| t.offset..t.end).unwrap_or(0..0);
-                return Err(ae_syntax::diagnostic_range(file, source, range, "expected ';' after 'use' path"));
-            }
-        }
-    }
-    Ok(uses)
-}
-
 #[allow(dead_code)] // exercised by in-memory unit tests
 pub(super) fn parse_source(file: &str, source: &str, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, generics: &mut Generics, next_id: &mut usize) -> Result<Vec<Function>, String> {
     let tokens = Rc::new(lex(source)?);
-    let uses = scan_uses(file, source, tokens.as_ref()).map_err(|error| error.to_string())?;
+    let uses = parse_use_headers(file, source, tokens.as_ref()).map_err(|error| error.to_string())?;
     if !uses.is_empty() {
         return Err(error(file, source, 0, "'use' is only supported when compiling a source file"));
     }
@@ -252,7 +230,7 @@ fn begin_file(path: &Path, visited: &mut HashMap<std::path::PathBuf, ModuleState
         ae_syntax::LexOutcome::Fatal(diagnostics) => return Err(FrontendError::LexDiagnostics(spell(diagnostics.clone()))),
     };
     let tokens = Rc::new(owned_tokens);
-    let uses = scan_uses(&file, &source, tokens.as_ref()).map_err(FrontendError::Diagnostic)?;
+    let uses = parse_use_headers(&file, &source, tokens.as_ref()).map_err(FrontendError::Diagnostic)?;
     if let ae_syntax::LexOutcome::Recovered(_, diagnostics) = outcome {
         if entry && uses.is_empty() {
             lex_diagnostics = spell(diagnostics);
@@ -407,7 +385,7 @@ fn verified_import_prefix(path: &Path, errors: &[ae_span::Diagnostic]) -> Option
         Err(_) => return None,
     };
     let tokens = Rc::new(tokens);
-    let uses = scan_uses(&file, prefix, tokens.as_ref()).ok()?;
+    let uses = parse_use_headers(&file, prefix, tokens.as_ref()).ok()?;
     if uses.is_empty() { return None; }
     Some(LoadingFile { canonical: std::fs::canonicalize(path).ok()?, path: path.to_owned(), source, file, lex_diagnostics: Vec::new(), tokens, uses, next_import: 0 })
 }
