@@ -99,6 +99,31 @@ pub fn parse_declaration_attribute(
     Ok((Some(attribute), parser.pos))
 }
 
+/// Parse an extern function prefix and return its ABI and following token index.
+/// The cursor must point to the `extern` keyword in a lexer-produced token stream.
+pub fn parse_extern_function_prefix<'a>(
+    file: &str,
+    source: &str,
+    tokens: &'a [Token],
+    start: usize,
+) -> Result<(&'a str, usize), Diagnostic> {
+    let mut parser = DeclarationParser { file, source, tokens, pos: start };
+    if !parser.consume(Kind::Extern) {
+        return Err(parser.error("expected 'extern'"));
+    }
+    let Kind::Text(abi) = &tokens[parser.pos].kind else {
+        return Err(parser.error(&format!("expected the ABI string \"C\", found {:?}", parser.current().kind)));
+    };
+    parser.pos += 1;
+    if abi != "C" {
+        return Err(parser.error("only the C ABI is supported; write extern \"C\" fn"));
+    }
+    if !parser.consume(Kind::Fn) {
+        return Err(parser.error(&format!("expected Fn, found {:?}", parser.current().kind)).with_code("E0010"));
+    }
+    Ok((abi, parser.pos))
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Declaration {
     pub attribute: Option<DeclarationAttribute>,
@@ -344,25 +369,28 @@ impl DeclarationParser<'_> {
             _ => {}
         }
         let unsafe_fn = self.consume(Kind::Unsafe);
-        let abi = if !unsafe_fn && self.consume(Kind::Extern) {
-            let Kind::Text(abi) = &self.tokens[self.pos].kind else {
-                return Err(self.error("expected an ABI string after 'extern'"));
-            };
-            self.pos += 1;
-            Some(abi.clone())
+        let abi = if !unsafe_fn && self.current().kind == Kind::Extern {
+            let (abi, next) = parse_extern_function_prefix(self.file, self.source, self.tokens, self.pos)?;
+            self.pos = next;
+            Some(abi.to_owned())
         } else {
             None
         };
-        if (unsafe_fn || abi.is_some()) && self.current().kind != Kind::Fn {
+        if unsafe_fn && self.current().kind != Kind::Fn {
             return Err(self.error("expected 'fn' after function qualifier"));
         }
-        let keyword = match self.current().kind {
-            Kind::Fn => Kind::Fn,
-            Kind::Struct => Kind::Struct,
-            Kind::Enum => Kind::Enum,
-            _ => return Err(self.error("expected a function, struct, or enum declaration")),
+        let keyword = if abi.is_some() {
+            Kind::Fn
+        } else {
+            let keyword = match self.current().kind {
+                Kind::Fn => Kind::Fn,
+                Kind::Struct => Kind::Struct,
+                Kind::Enum => Kind::Enum,
+                _ => return Err(self.error("expected a function, struct, or enum declaration")),
+            };
+            self.pos += 1;
+            keyword
         };
-        self.pos += 1;
         let name = self.name()?;
         let mut type_parameters = Vec::new();
         if self.consume(Kind::LBracket) {

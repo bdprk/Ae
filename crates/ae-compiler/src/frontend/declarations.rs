@@ -1,6 +1,6 @@
 //! Function and trait declaration collection and instantiation.
 use super::*;
-use ae_syntax::declaration::{parse_declaration_attribute, DeclarationAttribute};
+use ae_syntax::declaration::{parse_declaration_attribute, parse_extern_function_prefix, DeclarationAttribute};
 use super::parser::moved_value_hint;
 
 impl Parser<'_> {
@@ -156,13 +156,8 @@ impl Parser<'_> {
                 // definition in the generated C — the call site references
                 // the symbol by name. Slice 4 restricts the shapes to the
                 // scalars the C ABI passes in registers.
-                self.pos += 1;
-                let text = match self.current().clone() {
-                    Kind::Text(t) => { self.pos += 1; t }
-                    other => return Err(self.fail(&format!("expected the ABI string \"C\", found {other:?}"))),
-                };
-                if text != "C" { return Err(self.fail("only the C ABI is supported; write extern \"C\" fn")); }
-                self.take(Kind::Fn)?;
+                let (_, end) = parse_extern_function_prefix(&self.file, self.source, &self.tokens, self.pos)?;
+                self.pos = end;
                 let name = self.identifier()?;
                 if !seen.insert(name.clone()) { return Err(self.fail(&format!("duplicate function '{name}'"))); }
                 self.take(Kind::LParen)?;
@@ -856,7 +851,8 @@ impl Parser<'_> {
                 // exposure (`#[no_mangle]`, U7) has a body: it parses
                 // exactly like a file function, under the id the signature
                 // pass registered, so the emitter places it under the C name.
-                self.pos += 3; // Extern, the ABI string, Fn
+                let (_, end) = parse_extern_function_prefix(&self.file, self.source, &self.tokens, self.pos)?;
+                self.pos = end;
                 let exposure_name = self.identifier()?;
                 // The signature pass decided the shape: an exposure
                 // (extern_c false — its body is safe AE code) parses
