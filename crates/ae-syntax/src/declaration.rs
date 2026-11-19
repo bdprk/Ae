@@ -326,6 +326,22 @@ fn diagnostic_in_file(file: &str, mut error: Diagnostic) -> Diagnostic {
     error
 }
 
+/// Read a nonempty list of type arguments. The caller consumes the brackets
+/// and supplies the type representation and diagnostics for each argument.
+pub fn parse_type_argument_list<P, T, E>(
+    parser: &mut P,
+    mut parse_argument: impl FnMut(&mut P, usize) -> Result<T, E>,
+    mut consume_comma: impl FnMut(&mut P) -> bool,
+) -> Result<Vec<T>, E> {
+    let mut arguments = Vec::new();
+    loop {
+        arguments.push(parse_argument(parser, arguments.len())?);
+        if !consume_comma(parser) {
+            return Ok(arguments);
+        }
+    }
+}
+
 pub(crate) fn expression_type_arguments(
     file: &str,
     source: &str,
@@ -333,16 +349,15 @@ pub(crate) fn expression_type_arguments(
     start: usize,
 ) -> Result<(Vec<Range<usize>>, usize), Diagnostic> {
     let mut parser = DeclarationParser { file, source, tokens, pos: start + 1 };
-    let mut arguments = Vec::new();
-    loop {
-        arguments.push(parser.ty(&[Kind::Comma, Kind::RBracket], false)?);
-        if !parser.consume(Kind::Comma) {
-            if !parser.consume(Kind::RBracket) {
-                return Err(parser.error("expected ']' after type arguments"));
-            }
-            return Ok((arguments, parser.pos));
-        }
+    let arguments = parse_type_argument_list(
+        &mut parser,
+        |parser, _| parser.ty(&[Kind::Comma, Kind::RBracket], false),
+        |parser| parser.consume(Kind::Comma),
+    )?;
+    if !parser.consume(Kind::RBracket) {
+        return Err(parser.error("expected ']' after type arguments"));
     }
+    Ok((arguments, parser.pos))
 }
 
 struct DeclarationParser<'a> {
