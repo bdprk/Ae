@@ -1256,6 +1256,18 @@ impl Parser<'_> {
         Ok(Argument::FnPtr(def.fn_id))
     }
 
+    fn borrowed_argument_name(&mut self, mutable: bool) -> Result<String, ae_span::Diagnostic> {
+        use ae_syntax::expression::{parse_borrow_argument, ExpressionKind};
+        let (argument, end) = parse_borrow_argument(
+            &self.file, self.source, &self.tokens, self.pos, Some(mutable),
+        )?;
+        self.pos = end;
+        let ExpressionKind::BorrowArgument { name, .. } = argument.kind else {
+            unreachable!("borrow argument parser returns a borrowed binding");
+        };
+        Ok(name)
+    }
+
     pub(super) fn call_arguments(&mut self, name: &str, types: &[Type]) -> Result<Vec<Argument>, ae_span::Diagnostic> {
         self.pos += 1;
         let mut args = Vec::new();
@@ -1270,8 +1282,7 @@ impl Parser<'_> {
                     }
                     args.push(Argument::View(value));
                 } else if expected == Type::VecRef || expected == Type::StrVecRef || expected == Type::VecFRef {
-                    self.take(Kind::Amp)?;
-                    let arg = self.identifier()?;
+                    let arg = self.borrowed_argument_name(false)?;
                     let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown variable '{arg}'")).with_code("E0101"))?;
                     let owned_shape = match expected {
                         Type::VecRef => Type::Vec,
@@ -1292,8 +1303,7 @@ impl Parser<'_> {
                     // The flag means "take the address", not "is a vector".
                     args.push(Argument::Borrow(var, actual == owned_shape));
                 } else if let Type::Array(len) = expected {
-                    self.take(Kind::Amp)?;
-                    let arg = self.identifier()?;
+                    let arg = self.borrowed_argument_name(false)?;
                     let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown array '{arg}'")))?;
                     if actual != Type::Array(len) { return Err(self.fail(&format!("argument requires array of length {len}"))); }
                     args.push(Argument::Borrow(var, false));
@@ -1304,8 +1314,7 @@ impl Parser<'_> {
                     // the duration of the call, exactly like the container
                     // borrows: no move, no copy, and the caller may not write
                     // or move the struct while the borrow can be read.
-                    self.take(Kind::Amp)?;
-                    let arg = self.identifier()?;
+                    let arg = self.borrowed_argument_name(false)?;
                     let (var, _, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown variable '{arg}'")).with_code("E0101"))?;
                     match actual {
                         Type::Struct(actual_sid) | Type::StructMut(actual_sid) if actual_sid == sid => {
@@ -1335,12 +1344,7 @@ impl Parser<'_> {
                     // spelled `&mut value` at the call site, exclusive for the
                     // duration of the call, and the lender must own a mutable
                     // variable — the callee writes what the caller owns.
-                    self.take(Kind::Amp)?;
-                    if *self.current() != Kind::Mut {
-                        return Err(self.fail("this parameter borrows mutably; write the argument as '&mut name'"));
-                    }
-                    self.pos += 1;
-                    let arg = self.identifier()?;
+                    let arg = self.borrowed_argument_name(true)?;
                     let (var, mutable, actual) = *self.names.get(&arg).ok_or_else(|| self.fail(&format!("unknown variable '{arg}'")).with_code("E0101"))?;
                     match actual {
                         Type::Struct(actual_sid) | Type::StructMut(actual_sid) if actual_sid == sid => {
