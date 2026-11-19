@@ -3533,11 +3533,11 @@ fn main() {{
 
 #[test]
 fn syntax_body_boundaries_preserve_following_compiler_declarations() {
-    use ae_syntax::{declaration::brace_body_end, lex_diagnostic, Kind};
+    use ae_syntax::{declaration::{brace_body_end, parse_declarations, DeclarationKind}, lex_diagnostic, Kind};
 
-    let source = r#"fn earlier() -> i64 { if true { print("}"); } return 7; }
+    let source = r#"fn earlier(n: i64) -> i64 { if true { print("}"); } return n; }
 struct Boxed[T] { value: T }
-fn main() { print(earlier()); }"#;
+fn main() { print(earlier(7)); }"#;
     let tokens = lex_diagnostic(source).unwrap();
     let function_body = tokens.iter().position(|token| token.kind == Kind::LBrace).unwrap();
     let struct_start = brace_body_end(&tokens, function_body + 1).unwrap();
@@ -3548,6 +3548,24 @@ fn main() { print(earlier()); }"#;
     let main_start = brace_body_end(&tokens, struct_body + 1).unwrap();
     assert_eq!(tokens[main_start].kind, Kind::Fn);
     assert_eq!(tokens[main_start].offset, source.find("fn main").unwrap());
+
+    let declarations = parse_declarations("main.ae", source).unwrap();
+    assert_eq!(declarations.len(), 3);
+    assert_eq!(declarations[0].range.end, source.find("\nstruct Boxed").unwrap());
+    assert_eq!(declarations[1].range.start, tokens[struct_start].offset);
+    assert_eq!(declarations[2].range.start, tokens[main_start].offset);
+    let DeclarationKind::Function { parameters, returns: Some(returns) } = &declarations[0].kind else {
+        panic!("expected typed function");
+    };
+    assert_eq!(parameters[0].name, "n");
+    assert_eq!(&source[parameters[0].ty.clone()], "i64");
+    assert_eq!(&source[returns.clone()], "i64");
+    let DeclarationKind::Struct { fields } = &declarations[1].kind else {
+        panic!("expected generic struct");
+    };
+    assert_eq!(declarations[1].type_parameters[0].name, "T");
+    assert_eq!(fields[0].name, "value");
+    assert_eq!(&source[fields[0].ty.clone()], "T");
 
     let output = execute(source);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
