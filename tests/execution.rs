@@ -2385,6 +2385,38 @@ fn pattern_payload_shape_is_checked_against_the_declaration() {
 }
 
 #[test]
+fn standalone_closure_headers_match_compiler_execution() {
+    use ae_syntax::expression::{parse_operator_expression, ExpressionKind};
+
+    // The shared parser records the closure header: parameter order and
+    // spellings, the return type, and the brace-inclusive body range.
+    let literal = "|x: i64, y: i64| -> i64 { return x * 10 + y; }";
+    let parsed = parse_operator_expression("main.ae", literal).unwrap();
+    assert_eq!(parsed.range, 0..literal.len());
+    let ExpressionKind::Closure { params, return_type, body } = parsed.kind else {
+        panic!("expected a closure literal");
+    };
+    assert_eq!(params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(), ["x", "y"]);
+    assert_eq!(&literal[return_type.clone()], "i64");
+    assert_eq!(&literal[body.clone()], "{ return x * 10 + y; }");
+
+    // The compiler executes the same literals — a capture-inferred closure
+    // and the empty-parameter shorthand — with the shared parser untouched.
+    let source = r#"fn main() {
+    let base = 10;
+    let offset = |x: i64| -> i64 { return x + base; };
+    print(offset(3));
+    print(offset(4));
+    let roll = || -> i64 { return 7; };
+    print(roll());
+    print(roll());
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "13\n14\n7\n7\n");
+}
+
+#[test]
 fn enums_match_payloads_execute() {
     use ae_syntax::pattern::{parse_variant_pattern, PatternKind};
 

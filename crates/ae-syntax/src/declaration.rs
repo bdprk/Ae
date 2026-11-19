@@ -1,9 +1,27 @@
-use crate::{Kind, Token};
+use std::ops::Range;
+
+use crate::{Diagnostic, Kind, Token};
 
 /// Find the token immediately after the brace body whose opening brace has
 /// already been consumed. On failure, return the position of the end token.
 pub fn brace_body_end(tokens: &[Token], start: usize) -> Result<usize, usize> {
     delimited_body_end(tokens, start, Kind::LBrace, Kind::RBrace)
+}
+
+/// Capture a type spelling as a byte range, stopping before any of `stops`
+/// (bracket-nested tokens never stop the scan). Closure headers use this for
+/// parameter and return types; the spelling is re-resolved by the compiler,
+/// which owns the semantic type rules.
+pub fn type_spelling(
+    file: &str,
+    source: &str,
+    tokens: &[Token],
+    start: usize,
+    stops: &[Kind],
+) -> Result<(Range<usize>, usize), Diagnostic> {
+    let mut parser = DeclarationParser { file, source, tokens, pos: start };
+    let ty = parser.ty(stops, false)?;
+    Ok((ty, parser.pos))
 }
 
 /// Skip a generic parameter list if it starts at this token. An incomplete
@@ -52,10 +70,6 @@ pub fn next_top_level_trait(tokens: &[Token], mut cursor: usize) -> Option<usize
     }
     None
 }
-
-use std::ops::Range;
-
-use ae_span::Diagnostic;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TypedName {
