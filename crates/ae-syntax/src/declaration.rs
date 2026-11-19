@@ -37,9 +37,17 @@ pub struct TypeParameter {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct EnumVariant {
+    pub name: String,
+    pub payload: Vec<Range<usize>>,
+    pub range: Range<usize>,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum DeclarationKind {
     Function { parameters: Vec<TypedName>, returns: Option<Range<usize>> },
     Struct { fields: Vec<TypedName> },
+    Enum { variants: Vec<EnumVariant> },
 }
 
 #[derive(Debug, PartialEq)]
@@ -51,7 +59,7 @@ pub struct Declaration {
     pub body: Range<usize>,
 }
 
-/// Read function and struct declaration boundaries in a source fragment.
+/// Read function, struct, and enum declaration boundaries in a source fragment.
 /// Type spellings and function bodies are retained as source ranges.
 pub fn parse_declarations(file: &str, source: &str) -> Result<Vec<Declaration>, Diagnostic> {
     let tokens = declaration_tokens(file, source)?;
@@ -70,7 +78,7 @@ pub struct RecoveredDeclarations {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-/// Continue at the next top-level function or struct after a syntax error.
+/// Continue at the next top-level declaration after a syntax error.
 /// Recovery is bounded to 32 diagnostics and does not enter brace bodies.
 pub fn recover_declarations(file: &str, source: &str) -> RecoveredDeclarations {
     const MAX_DIAGNOSTICS: usize = 32;
@@ -218,8 +226,8 @@ impl DeclarationParser<'_> {
                     index = brace_body_end(self.tokens, index + 1).unwrap_or_else(|end| end);
                     continue;
                 }
-                Kind::Struct | Kind::Fn if index > failed_keyword && index >= self.pos => {
-                    if matches!(token.kind, Kind::Struct)
+                Kind::Struct | Kind::Enum | Kind::Fn if index > failed_keyword && index >= self.pos => {
+                    if matches!(token.kind, Kind::Struct | Kind::Enum)
                         || matches!(self.tokens.get(index + 1).map(|next| &next.kind), Some(Kind::Ident(_))) {
                         if index > start && matches!(&self.tokens[index - 1].kind, Kind::Ident(name) if name == "pub") {
                             index -= 1;
@@ -234,18 +242,41 @@ impl DeclarationParser<'_> {
         self.pos = index;
     }
 
+    fn enum_variants(&mut self) -> Result<Vec<EnumVariant>, Diagnostic> {
+        let mut variants = Vec::new();
+        while !self.consume(Kind::RBrace) {
+            let start = self.current().offset;
+            let name = self.name()?;
+            let mut payload = Vec::new();
+            if self.consume(Kind::LParen) && !self.consume(Kind::RParen) {
+                loop {
+                    payload.push(self.ty(&[Kind::Comma, Kind::RParen], false)?);
+                    if !self.consume(Kind::Comma) {
+                        break;
+                    }
+                }
+                if !self.consume(Kind::RParen) {
+                    return Err(self.error("expected ')' after enum payload"));
+                }
+            }
+            variants.push(EnumVariant { name, payload, range: start..self.tokens[self.pos - 1].end });
+            self.consume(Kind::Comma);
+        }
+        Ok(variants)
+    }
+
     fn declaration(&mut self) -> Result<Declaration, Diagnostic> {
         let start = self.current().offset;
         if matches!(&self.current().kind, Kind::Ident(name) if name == "pub") {
             self.pos += 1;
         }
-        let function = if self.consume(Kind::Fn) {
-            true
-        } else if self.consume(Kind::Struct) {
-            false
-        } else {
-            return Err(self.error("expected a function or struct declaration"));
+        let keyword = match self.current().kind {
+            Kind::Fn => Kind::Fn,
+            Kind::Struct => Kind::Struct,
+            Kind::Enum => Kind::Enum,
+            _ => return Err(self.error("expected a function, struct, or enum declaration")),
         };
+        self.pos += 1;
         let name = self.name()?;
         let mut type_parameters = Vec::new();
         if self.consume(Kind::LBracket) {
@@ -270,7 +301,7 @@ impl DeclarationParser<'_> {
             }
         }
 
-        let (kind, body_start) = if function {
+        let (kind, body_start) = if keyword == Kind::Fn {
             if !self.consume(Kind::LParen) {
                 return Err(self.error("expected '(' before parameters"));
             }
@@ -291,6 +322,13 @@ impl DeclarationParser<'_> {
                 }
             };
             (DeclarationKind::Function { parameters, returns }, body_start)
+        } else if keyword == Kind::Enum {
+            let body_start = self.current().offset;
+            if !self.consume(Kind::LBrace) {
+                return Err(self.error("expected an enum body"));
+            }
+            let variants = self.enum_variants()?;
+            (DeclarationKind::Enum { variants }, body_start)
         } else {
             let body_start = self.current().offset;
             if !self.consume(Kind::LBrace) {
@@ -311,6 +349,22 @@ impl DeclarationParser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enum_payload_spellings_and_variant_boundaries_are_preserved() {
+        let source = "pub enum Pair[T] { Empty Value(T, vec[string]), } fn main() {}";
+        let declarations = parse_declarations("case.ae", source).unwrap();
+        let DeclarationKind::Enum { variants } = &declarations[0].kind else {
+            panic!("expected enum declaration");
+        };
+        assert_eq!(variants.len(), 2);
+        assert_eq!(&source[variants[0].range.clone()], "Empty");
+        assert_eq!(&source[variants[1].range.clone()], "Value(T, vec[string])");
+        assert_eq!(&source[variants[1].payload[0].clone()], "T");
+        assert_eq!(&source[variants[1].payload[1].clone()], "vec[string]");
+        assert_eq!(declarations[1].name, "main");
+        assert!(parse_declarations("case.ae", include_str!("../../../examples/enums.ae")).is_ok());
+    }
 
     #[test]
     fn missing_parameter_delimiter_recovers_at_the_following_declaration() {
