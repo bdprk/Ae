@@ -37,7 +37,7 @@ Entry dependency: M0.1.
 
 - [x] M0.2.01. **Inventory grammar.** See [the active parser grammar inventory](architecture/grammar-inventory.md) for witnesses and documented gaps.
 - [ ] M0.2.02. **port literals.** The active compiler now consumes expression literal atoms from ae-syntax. Escape spelling, decoded CLI output, and malformed literal spans have regression coverage. Whole-parser parity remains pending.
-- [ ] M0.2.03. **expressions.** The active parser delegates binary grouping and binding-power recursion decisions to ae-syntax. The CLI tree matches the pre-extraction baseline for unparenthesized and grouped negation with multiplication. A separate expression parser and tree parity remain pending.
+- [ ] M0.2.03. **expressions.** The syntax crate parses operator expressions over literals, names, and groups. Tree tests compare its negation and multiplication grouping with the active compiler on the same inputs. Postfix and declaration-dependent expressions remain on the active compiler path.
 - [ ] M0.2.04. **patterns.** Pin nested variant payload bindings and the span of a malformed pattern.
 - [ ] M0.2.05. **declarations.** Compare function and generic struct boundaries across both parsers.
 - [ ] M0.2.06. **modules.** Resolve an imported declaration from examples/modules/main.ae through the new parser.

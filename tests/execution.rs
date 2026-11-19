@@ -3472,6 +3472,30 @@ fn emit_cfg_runs_clean_on_the_run_suite() {
 
 #[test]
 fn emit_tree_preserves_negation_and_multiplication_grouping() {
+    use ae_syntax::{expression::{parse_operator_expression, Expression, ExpressionKind}, Kind};
+
+    fn shape(expression: &Expression) -> String {
+        match &expression.kind {
+            ExpressionKind::Atom(Kind::Number(value)) => value.to_string(),
+            ExpressionKind::Group(inner) => shape(inner),
+            ExpressionKind::Prefix { operator: Kind::Minus, operand } => format!("(-{})", shape(operand)),
+            ExpressionKind::Binary { left, operator: Kind::Star, right } => {
+                format!("({} * {})", shape(left), shape(right))
+            }
+            other => panic!("unexpected expression node: {other:?}"),
+        }
+    }
+
+    for (source, expected) in [
+        ("-2 * 3", "((-2) * 3)"),
+        ("-(2 * 3)", "(-(2 * 3))"),
+        ("2 * -3", "(2 * (-3))"),
+    ] {
+        let parsed = parse_operator_expression("main.ae", source).unwrap();
+        assert_eq!(parsed.range, 0..source.len());
+        assert_eq!(shape(&parsed), expected);
+    }
+
     let dir = unique_temp_dir("operator-grouping");
     let path = dir.join("main.ae");
     fs::write(&path, "fn main() { print(-2 * 3); print(-(2 * 3)); print(2 * -3); }").unwrap();
