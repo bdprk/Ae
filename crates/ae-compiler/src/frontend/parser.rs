@@ -20,6 +20,17 @@ impl<'a> Parser<'a> {
         let token = &self.tokens[self.pos];
         ae_syntax::diagnostic_range(&self.file, self.source, token.offset..token.end, message)
     }
+    // The display form of one instantiation in the recursion trace (M1.3.06):
+    // names only, rendered never compared — cycles compare the interned key.
+    pub(super) fn instantiation_display(&self, name: &str, args: &[Type]) -> String {
+        if args.is_empty() { return name.to_owned(); }
+        format!("{}[{}]", name, args.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "))
+    }
+    pub(super) fn instantiation_trace(&self, current: Option<&str>) -> String {
+        let mut chain: Vec<&str> = self.generics.instantiation_trace.iter().map(|(_, display)| display.as_str()).collect();
+        if let Some(current) = current { chain.push(current); }
+        chain.join(" -> ")
+    }
     pub(super) fn error_at(&self, offset: usize, message: &str) -> ae_span::Diagnostic {
         let end = self.tokens.binary_search_by_key(&offset, |token| token.offset)
             .ok().map_or(offset, |index| self.tokens[index].end);
