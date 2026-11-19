@@ -63,17 +63,7 @@ impl Parser<'_> {
     pub(super) fn skip_struct_def(&mut self) {
         self.pos += 2; // 'struct' Name
         self.skip_type_params();
-        self.pos += 1; // the opening brace
-        let mut depth = 1usize;
-        while depth > 0 {
-            match self.current() {
-                Kind::LBrace => depth += 1,
-                Kind::RBrace => depth -= 1,
-                Kind::Eof => return,
-                _ => {}
-            }
-            self.pos += 1;
-        }
+        self.skip_collected_body();
     }
     // Enum bodies are collected in the first pass, skipped in the second.
     // Step over `[T, U]` when a declaration is skipped in the second pass.
@@ -96,34 +86,20 @@ impl Parser<'_> {
             if *self.current() == Kind::Eof { return Err(self.fail("expected '{' before end of file")); }
             self.pos += 1;
         }
-        self.pos += 1;
-        let mut depth = 1usize;
-        while depth > 0 {
-            match self.current() {
-                Kind::LBrace => depth += 1,
-                Kind::RBrace => depth -= 1,
-                Kind::Eof => return Err(self.fail("expected '}' before end of file")),
-                _ => {}
-            }
-            self.pos += 1;
-        }
+        self.skip_balanced_braces()?;
         Ok(self.pos)
     }
     pub(super) fn skip_enum_def(&mut self) {
         self.pos += 2; // 'enum' Name
         self.skip_type_params();
-        self.pos += 1; // the opening brace
-        let mut depth = 1usize;
-        while depth > 0 {
-            match self.current() {
-                Kind::LBrace => depth += 1,
-                Kind::RBrace => depth -= 1,
-                Kind::Eof => return,
-                _ => {}
-            }
-            self.pos += 1;
-        }
+        self.skip_collected_body();
     }
+
+    fn skip_collected_body(&mut self) {
+        let boundary = ae_syntax::declaration::brace_body_end(&self.tokens, self.pos + 1);
+        self.pos = boundary.unwrap_or_else(|end| end);
+    }
+
     pub(super) fn collect_functions(&mut self, next_id: &mut usize) -> Result<(), ae_span::Diagnostic> {
         // Traits are registered before anything else so a bound in the same
         // file can name a trait declared later; cross-file traits already
@@ -342,17 +318,7 @@ impl Parser<'_> {
                 }
                 if is_unsafe_fn { super::register_unsafe_fn(id); }
             }
-            self.take(Kind::LBrace)?;
-            let mut depth = 1usize;
-            while depth > 0 {
-                match self.current() {
-                    Kind::LBrace => depth += 1,
-                    Kind::RBrace => depth -= 1,
-                    Kind::Eof => return Err(self.fail("expected '}' before end of file")),
-                    _ => {}
-                }
-                self.pos += 1;
-            }
+            self.skip_balanced_braces()?;
         }
         // main presence is checked once per program, not per file.
         self.pos = 0;
@@ -439,17 +405,16 @@ impl Parser<'_> {
 
     pub(super) fn skip_balanced_braces(&mut self) -> Result<(), ae_span::Diagnostic> {
         self.take(Kind::LBrace)?;
-        let mut depth = 1usize;
-        while depth > 0 {
-            match self.current() {
-                Kind::LBrace => depth += 1,
-                Kind::RBrace => depth -= 1,
-                Kind::Eof => return Err(self.fail("expected '}' before end of file")),
-                _ => {}
+        match ae_syntax::declaration::brace_body_end(&self.tokens, self.pos) {
+            Ok(end) => {
+                self.pos = end;
+                Ok(())
             }
-            self.pos += 1;
+            Err(end) => {
+                self.pos = end;
+                Err(self.fail("expected '}' before end of file"))
+            }
         }
-        Ok(())
     }
 
     // Pass one for `impl Trait for Type { fn ... }`: register each method's

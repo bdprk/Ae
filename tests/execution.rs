@@ -3532,6 +3532,29 @@ fn main() {{
 }
 
 #[test]
+fn syntax_body_boundaries_preserve_following_compiler_declarations() {
+    use ae_syntax::{declaration::brace_body_end, lex_diagnostic, Kind};
+
+    let source = r#"fn earlier() -> i64 { if true { print("}"); } return 7; }
+struct Boxed[T] { value: T }
+fn main() { print(earlier()); }"#;
+    let tokens = lex_diagnostic(source).unwrap();
+    let function_body = tokens.iter().position(|token| token.kind == Kind::LBrace).unwrap();
+    let struct_start = brace_body_end(&tokens, function_body + 1).unwrap();
+    assert_eq!(tokens[struct_start].kind, Kind::Struct);
+    assert_eq!(tokens[struct_start].offset, source.find("struct Boxed").unwrap());
+    let struct_body = tokens.iter().enumerate().skip(struct_start)
+        .find(|(_, token)| token.kind == Kind::LBrace).unwrap().0;
+    let main_start = brace_body_end(&tokens, struct_body + 1).unwrap();
+    assert_eq!(tokens[main_start].kind, Kind::Fn);
+    assert_eq!(tokens[main_start].offset, source.find("fn main").unwrap());
+
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "}\n7\n");
+}
+
+#[test]
 fn emit_tree_dumps_the_lowered_statement_tree() {
     // `emit-tree` is the inspectable layer above the parser (M2.2 slice 1):
     // it prints declarations and every statement with its expression, and it
