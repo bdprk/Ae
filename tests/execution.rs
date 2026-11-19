@@ -4088,6 +4088,8 @@ fn json_check_recovers_independent_declaration_errors() {
     assert_eq!(recovered.status.code(), Some(1));
     let json = String::from_utf8_lossy(&recovered.stdout);
     assert_eq!(json.matches("\"message\":").count(), 2, "{json}");
+    assert_eq!(json.matches("\"message\":\"expected RParen, found LBrace\"").count(), 2, "{json}");
+    assert_eq!(json.matches("\"code\":\"E0010\"").count(), 2, "{json}");
     for (offset, _) in source.match_indices("{ }") {
         assert!(json.contains(&format!("\"byte_start\":{offset},\"byte_end\":{}", offset + 1)), "{json}");
     }

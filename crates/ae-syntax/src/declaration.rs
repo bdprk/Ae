@@ -429,7 +429,11 @@ impl<'a> DeclarationParser<'a> {
             if !self.consume(Kind::Colon) {
                 return Err(self.error("expected ':' after name"));
             }
-            let ty = self.ty(&[Kind::Comma, close.clone()], fields)?;
+            let ty = if fields {
+                self.ty(&[Kind::Comma, Kind::RBrace], true)?
+            } else {
+                self.ty(&[Kind::Comma, Kind::RParen, Kind::LBrace], false)?
+            };
             names.push(TypedName { name, name_range, mutable, ty });
             if !self.consume(Kind::Comma) && !(fields && self.at_field_name()) {
                 break;
@@ -597,13 +601,9 @@ impl<'a> DeclarationParser<'a> {
         }
 
         let (kind, body_start) = if keyword == Kind::Fn {
-            if !self.consume(Kind::LParen) {
-                return Err(self.error("expected '(' before parameters"));
-            }
+            self.take(Kind::LParen)?;
             let parameters = self.typed_names(Kind::RParen, false)?;
-            if !self.consume(Kind::RParen) {
-                return Err(self.error("expected ')' after parameters"));
-            }
+            self.take(Kind::RParen)?;
             let foreign = abi.is_some();
             let exposes_body = attribute == Some(DeclarationAttribute::NoMangle);
             let returns = if name == "main" {
