@@ -4,7 +4,7 @@
 
 - `use "relative/path.ae";` appears only at the top of a file; only comments may precede it.
 - Paths are resolved relative to **the directory containing the importing file**; a module's own `use` statements resolve relative to its own location. Loading is depth-first in source order, and import depth must not rely on recursive host-language calls.
-- Files are identified by canonicalized filesystem paths: a fully loaded file is loaded once, so duplicate imports and diamond dependencies are permitted; importing a file currently on the active loading chain is a cycle error.
+- Files are identified by canonicalized filesystem paths: a fully loaded file is loaded once, so duplicate imports and diamond dependencies are permitted; importing a file currently on the active loading chain is a cycle error. The diagnostic lists the modules from the first occurrence of the repeated file through the edge that returns to it, using the same label for both occurrences.
 - Loading errors prevent compilation; a failed module is never treated as successfully loaded. Loader errors without a verified source span report `null` location fields in JSON diagnostics (see `spec/diagnostics.md`).
 - `main` must be unique across the entire program; library files do not require `main`.
 
@@ -30,7 +30,7 @@
 | # | Case | Expected |
 |---|---|---|
 | M1 | Duplicate import of the same file (diamond) | Loaded once, compiles |
-| M2 | True import cycle | Rejected (cycle error) |
+| M2 | True import cycle | Rejected with the closed cycle in import order |
 | M3 | Cross-file use of a non-`pub` function | Rejected with the `mark it 'pub'` message |
 | M4 | `pub fn` exposing a file-private struct | Rejected at the definition site |
 | M5 | Same private name declared in two files | Rejected (collision) |

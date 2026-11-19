@@ -1011,10 +1011,12 @@ fn diamond_and_repeated_imports_load_one_module_and_cycles_still_fail() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(String::from_utf8_lossy(&output.stdout).lines().filter(|line| *line == "module shared.ae").count(), 1);
 
-    fs::write(dir.join("shared.ae"), "use \"left.ae\";\npub fn shared() -> i64 { return 7; }\n").unwrap();
+    fs::write(dir.join("shared.ae"), "use \"sub/bridge.ae\";\npub fn shared() -> i64 { return 7; }\n").unwrap();
+    fs::write(dir.join("sub/bridge.ae"), "use \"../left.ae\";\n").unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&main).output().unwrap();
     assert!(!output.status.success());
-    assert!(String::from_utf8_lossy(&output.stderr).contains("circular import"));
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert!(diagnostic.contains("circular import: left.ae -> shared.ae -> sub/bridge.ae -> left.ae"), "{diagnostic}");
     fs::remove_dir_all(dir).unwrap();
 }
 
