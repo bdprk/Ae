@@ -3,7 +3,7 @@ use std::ops::Range;
 use ae_span::Diagnostic;
 
 use crate::literal::parse_literal;
-use crate::operator::{parse_infix_tail, PREFIX_BINDING_POWER};
+use crate::operator::{parse_infix_tail, prefix_binding_power};
 use crate::{diagnostic_range, Kind, Token};
 
 #[derive(Debug, PartialEq)]
@@ -70,32 +70,33 @@ impl Parser<'_> {
         self.count_node()?;
         let token = &self.tokens[self.cursor];
         let mut range = token.offset..token.end;
-        let kind = match &token.kind {
-            Kind::Minus | Kind::Bang => {
-                self.cursor += 1;
-                let operand = self.expression(PREFIX_BINDING_POWER)?;
-                range.end = operand.range.end;
-                ExpressionKind::Prefix { operator: token.kind.clone(), operand: Box::new(operand) }
-            }
-            Kind::LParen => {
-                self.cursor += 1;
-                let inner = self.expression(0)?;
-                if self.current().kind != Kind::RParen {
-                    return Err(self.error("expected closing parenthesis"));
+        let kind = if let Some(power) = prefix_binding_power(&token.kind) {
+            self.cursor += 1;
+            let operand = self.expression(power)?;
+            range.end = operand.range.end;
+            ExpressionKind::Prefix { operator: token.kind.clone(), operand: Box::new(operand) }
+        } else {
+            match &token.kind {
+                Kind::LParen => {
+                    self.cursor += 1;
+                    let inner = self.expression(0)?;
+                    if self.current().kind != Kind::RParen {
+                        return Err(self.error("expected closing parenthesis"));
+                    }
+                    range.end = self.current().end;
+                    self.cursor += 1;
+                    ExpressionKind::Group(Box::new(inner))
                 }
-                range.end = self.current().end;
-                self.cursor += 1;
-                ExpressionKind::Group(Box::new(inner))
+                Kind::Ident(_) => {
+                    self.cursor += 1;
+                    ExpressionKind::Atom(token.kind.clone())
+                }
+                _ if parse_literal(token).is_some() => {
+                    self.cursor += 1;
+                    ExpressionKind::Atom(token.kind.clone())
+                }
+                _ => return Err(self.error("expected an expression")),
             }
-            Kind::Ident(_) => {
-                self.cursor += 1;
-                ExpressionKind::Atom(token.kind.clone())
-            }
-            _ if parse_literal(token).is_some() => {
-                self.cursor += 1;
-                ExpressionKind::Atom(token.kind.clone())
-            }
-            _ => return Err(self.error("expected an expression")),
         };
         let left = self.postfix(Expression { kind, range })?;
         parse_infix_tail(self, left, minimum, |parser| &parser.current().kind,

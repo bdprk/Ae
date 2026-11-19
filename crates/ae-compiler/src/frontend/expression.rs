@@ -89,7 +89,7 @@ impl Parser<'_> {
         result
     }
     pub(super) fn expression_inner(&mut self, min: u8, moving: bool) -> Result<(Expr, Type), ae_span::Diagnostic> {
-        use ae_syntax::operator::{parse_infix_tail, PREFIX_BINDING_POWER};
+        use ae_syntax::operator::{parse_infix_tail, prefix_binding_power};
 
         self.expression_nodes += 1;
         if self.expression_nodes > 128 { return Err(self.fail("expression complexity limit exceeded (128)")); }
@@ -113,19 +113,18 @@ impl Parser<'_> {
             // Or + '->' can only be an empty parameter list (ADR-0188).
             Kind::Pipe => self.closure_literal()?,
             Kind::Or if self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::Arrow) => self.closure_literal()?,
-            Kind::Minus => {
+            operator if prefix_binding_power(&operator).is_some() => {
                 let (line, column) = self.position();
                 self.pos += 1;
-                // Operands bind tighter than any binary operator: -a * b is (-a) * b.
-                let (operand, ty) = self.expression(PREFIX_BINDING_POWER, false)?;
-                if !matches!(ty, Type::Int | Type::F64) { return Err(self.fail("unary '-' requires an i64 or f64 operand").with_code("E0203")); }
-                (Expr::Neg(Box::new(operand), line, column), ty)
-            }
-            Kind::Bang => {
-                self.pos += 1;
-                let (operand, ty) = self.expression(PREFIX_BINDING_POWER, false)?;
-                if ty != Type::Bool { return Err(self.fail("'!' requires a boolean operand")); }
-                (Expr::Not(Box::new(operand)), Type::Bool)
+                let power = prefix_binding_power(&operator).expect("prefix operator");
+                let (operand, ty) = self.expression(power, false)?;
+                if operator == Kind::Minus {
+                    if !matches!(ty, Type::Int | Type::F64) { return Err(self.fail("unary '-' requires an i64 or f64 operand").with_code("E0203")); }
+                    (Expr::Neg(Box::new(operand), line, column), ty)
+                } else {
+                    if ty != Type::Bool { return Err(self.fail("'!' requires a boolean operand")); }
+                    (Expr::Not(Box::new(operand)), Type::Bool)
+                }
             }
             // A borrow expression exists only to be cast (M2.12 slice 2):
             // `&expr as *const T` takes the address of addressable storage.

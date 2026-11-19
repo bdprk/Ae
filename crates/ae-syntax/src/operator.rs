@@ -1,7 +1,12 @@
 use crate::Kind;
 
-/// Binding power required of a prefix operator's operand.
-pub const PREFIX_BINDING_POWER: u8 = 10;
+/// Binding power required of the operand of an arithmetic or logical prefix.
+pub fn prefix_binding_power(kind: &Kind) -> Option<u8> {
+    match kind {
+        Kind::Minus | Kind::Bang => Some(10),
+        _ => None,
+    }
+}
 
 /// Binding powers of a binary operator and its right operand.
 /// The higher right binding power makes operators left-associative.
