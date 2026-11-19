@@ -56,7 +56,14 @@ pub enum DeclarationKind {
 }
 
 #[derive(Debug, PartialEq)]
+pub enum DeclarationAttribute {
+    ReprC,
+    NoMangle,
+}
+
+#[derive(Debug, PartialEq)]
 pub struct Declaration {
+    pub attribute: Option<DeclarationAttribute>,
     pub name: String,
     pub type_parameters: Vec<TypeParameter>,
     pub kind: DeclarationKind,
@@ -231,12 +238,13 @@ impl DeclarationParser<'_> {
                     index = brace_body_end(self.tokens, index + 1).unwrap_or_else(|end| end);
                     continue;
                 }
-                Kind::Struct | Kind::Enum | Kind::Fn | Kind::Unsafe | Kind::Extern if index > failed_keyword && index >= self.pos => {
+                Kind::Struct | Kind::Enum | Kind::Fn | Kind::Unsafe | Kind::Extern | Kind::Hash if index > failed_keyword && index >= self.pos => {
                     let next = self.tokens.get(index + 1).map(|next| &next.kind);
                     let starts_declaration = match token.kind {
                         Kind::Fn => matches!(next, Some(Kind::Ident(_))),
                         Kind::Unsafe => matches!(next, Some(Kind::Fn)),
                         Kind::Extern => matches!(next, Some(Kind::Text(_))),
+                        Kind::Hash => matches!(next, Some(Kind::LBracket)),
                         _ => true,
                     };
                     if starts_declaration {
@@ -276,10 +284,51 @@ impl DeclarationParser<'_> {
         Ok(variants)
     }
 
+    fn attribute(&mut self) -> Result<Option<DeclarationAttribute>, Diagnostic> {
+        if !self.consume(Kind::Hash) {
+            return Ok(None);
+        }
+        if !self.consume(Kind::LBracket) {
+            return Err(self.error("expected '[' after '#'"));
+        }
+        let name = self.name()?;
+        let attribute = match name.as_str() {
+            "repr" => {
+                if !self.consume(Kind::LParen) {
+                    return Err(self.error("expected '(' after 'repr'"));
+                }
+                if !matches!(&self.current().kind, Kind::Ident(name) if name == "C") {
+                    return Err(self.error("expected 'C' in representation attribute"));
+                }
+                self.pos += 1;
+                if !self.consume(Kind::RParen) {
+                    return Err(self.error("expected ')' after representation"));
+                }
+                DeclarationAttribute::ReprC
+            }
+            "no_mangle" => DeclarationAttribute::NoMangle,
+            _ => return Err(self.error("unknown declaration attribute")),
+        };
+        if !self.consume(Kind::RBracket) {
+            return Err(self.error("expected ']' after declaration attribute"));
+        }
+        Ok(Some(attribute))
+    }
+
     fn declaration(&mut self) -> Result<Declaration, Diagnostic> {
         let start = self.current().offset;
         if matches!(&self.current().kind, Kind::Ident(name) if name == "pub") {
             self.pos += 1;
+        }
+        let attribute = self.attribute()?;
+        match attribute {
+            Some(DeclarationAttribute::ReprC) if self.current().kind != Kind::Struct => {
+                return Err(self.error("'#[repr(C)]' applies to a struct declaration"));
+            }
+            Some(DeclarationAttribute::NoMangle) if self.current().kind != Kind::Extern => {
+                return Err(self.error("'#[no_mangle]' applies to an extern function definition"));
+            }
+            _ => {}
         }
         let unsafe_fn = self.consume(Kind::Unsafe);
         let abi = if !unsafe_fn && self.consume(Kind::Extern) {
@@ -341,9 +390,13 @@ impl DeclarationParser<'_> {
                 None
             };
             let function = DeclarationKind::Function { parameters, returns, unsafe_fn, abi };
-            if foreign && self.consume(Kind::Semi) {
+            if foreign && self.current().kind == Kind::Semi {
+                if attribute == Some(DeclarationAttribute::NoMangle) {
+                    return Err(self.error("'#[no_mangle]' requires a function body"));
+                }
+                self.pos += 1;
                 let end = self.tokens[self.pos - 1].end;
-                return Ok(Declaration { name, type_parameters, kind: function, range: start..end, body: None });
+                return Ok(Declaration { attribute, name, type_parameters, kind: function, range: start..end, body: None });
             }
             let body_start = self.current().offset;
             if !self.consume(Kind::LBrace) {
@@ -376,7 +429,7 @@ impl DeclarationParser<'_> {
             (DeclarationKind::Struct { fields }, body_start)
         };
         let end = self.tokens[self.pos - 1].end;
-        Ok(Declaration { name, type_parameters, kind, range: start..end, body: Some(body_start..end) })
+        Ok(Declaration { attribute, name, type_parameters, kind, range: start..end, body: Some(body_start..end) })
     }
 }
 
@@ -384,6 +437,24 @@ impl DeclarationParser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_attributes_on_structs_and_foreign_definitions() {
+        let source = r#"pub #[repr(C)] struct Point { x: i64 }
+#[no_mangle] extern "C" fn identity(value: i64) -> i64 { return value; }"#;
+        let declarations = parse_declarations("case.ae", source).unwrap();
+        assert_eq!(declarations[0].attribute, Some(DeclarationAttribute::ReprC));
+        assert_eq!(declarations[0].range.start, 0);
+        assert_eq!(declarations[1].attribute, Some(DeclarationAttribute::NoMangle));
+        assert_eq!(declarations[1].range.start, source.find("#[no_mangle]").unwrap());
+        assert!(parse_declarations("case.ae",
+            r#"#[no_mangle] extern "C" fn identity(value: i64) -> i64;"#).is_err());
+
+        let broken = "fn broken(value: i64 { }\n".to_owned() + source;
+        let recovered = recover_declarations("case.ae", &broken);
+        assert_eq!(recovered.diagnostics.len(), 1);
+        assert_eq!(recovered.declarations[0].attribute, Some(DeclarationAttribute::ReprC));
+    }
 
     #[test]
     fn reads_foreign_prototypes_and_unsafe_definitions() {
