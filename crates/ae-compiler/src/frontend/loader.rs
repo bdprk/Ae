@@ -263,9 +263,7 @@ fn load_file(path: &Path, root: &Path, visited: &mut HashMap<std::path::PathBuf,
                     &frame.file, &frame.source, &frame.tokens, frame.body_start,
                 );
                 let mut diagnostics = frame.lex_diagnostics.clone();
-                let first_span = first.primary.as_ref().map(|label| &label.span.range);
-                let first_matches_syntax = syntax.diagnostics.first().is_some_and(|error|
-                    error.primary.as_ref().map(|label| &label.span.range) == first_span);
+                let first_matches_syntax = syntax.diagnostics.first() == Some(&first);
                 diagnostics.push(first);
                 if first_matches_syntax {
                     let remaining = 32usize.saturating_sub(diagnostics.len());
