@@ -37,7 +37,7 @@ thread_local! {
 
 // One spawn surface: a closure's generated function with its capture types in
 // order, or a zero-parameter function value keyed by its interned signature.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, PartialEq, Debug)]
 pub(super) enum SpawnedThread {
     Closure { fn_id: usize, captures: Vec<Type>, ret: Type },
     FnValue { sig: usize, ret: Type },
@@ -53,7 +53,8 @@ pub(super) fn record_spawned(entry: SpawnedThread) {
 }
 
 pub(super) fn take_spawned() -> Vec<SpawnedThread> {
-    SPAWNED.with(|spawned| std::mem::take(&mut *spawned.borrow_mut()))
+    let taken = SPAWNED.with(|spawned| std::mem::take(&mut *spawned.borrow_mut()));
+    taken
 }
 
 pub(super) fn intern_fn_sig(params: Vec<Type>, ret: Type) -> usize {

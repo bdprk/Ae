@@ -785,13 +785,15 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
         // means the spawn machinery ran out of memory, fatal like every
         // other allocation failure.
         Expr::Spawn(slots, callable, tid, line, column) => {
-            let (entry, ctx_ty) = match &**callable {
+            let (entry, ctx_ty, fn_member) = match &**callable {
                 Expr::ClosureLit(cid) | Expr::Variable(_, Type::Closure(cid), ..) => {
                     let fn_id = crate::frontend::closures::closure_fn_id(*cid);
-                    (format!("ae_thread_entry_{fn_id}"), format!("ae_thread_ctx_{fn_id}"))
+                    (format!("ae_thread_entry_{fn_id}"), format!("ae_thread_ctx_{fn_id}"), None)
                 }
+                // The function value rides the context: the trampoline calls
+                // through the packaged pointer.
                 Expr::Variable(_, Type::Fn(sig), ..) =>
-                    (format!("ae_thread_entry_f{sig}"), format!("ae_thread_fncall_{sig}")),
+                    (format!("ae_thread_entry_f{sig}"), format!("ae_thread_fncall_{sig}"), Some(callable.clone())),
                 other => unreachable!("spawn callable shape: {other:?}"),
             };
             let t = *next; *next += 1;
@@ -801,6 +803,11 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
                 let value = emit_expr(slot, out, next, true);
                 moves.extend(value.moves);
                 out.push_str(&format!("    ctx{t}->f{index} = {};\n", value.text));
+            }
+            if let Some(fn_value) = fn_member {
+                let value = emit_expr(&fn_value, out, next, false);
+                moves.extend(value.moves);
+                out.push_str(&format!("    ctx{t}->fn = {};\n", value.text));
             }
             out.push_str(&format!("    void *native{t} = ae_thread_spawn({entry}, ctx{t});\n"));
             out.push_str(&format!("    if (!native{t}) ae_fail(\"out of memory\", {line}, {column});\n"));
