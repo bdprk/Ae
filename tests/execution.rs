@@ -1938,10 +1938,46 @@ fn check_rejects(source: &str) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 #[test]
+fn malformed_variant_binding_has_the_same_span_in_both_parsers() {
+    let pattern = "Pair::Value(first, )";
+    let error = ae_syntax::pattern::parse_variant_pattern("main.ae", pattern).unwrap_err();
+    assert_eq!(error.code.as_deref(), Some("E0010"));
+    let range = error.primary.unwrap().span.range;
+
+    let source = format!(
+        "enum Pair {{ Value(i64, i64) }}\nfn main() {{ let pair = Pair::Value(4, 9); match pair {{ {pattern} => {{ print(first); }} }} }}"
+    );
+    let offset = source.find(pattern).unwrap();
+    let dir = unique_temp_dir("match-pattern-span");
+    let path = dir.join("main.ae");
+    fs::write(&path, &source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["check", "--json"]).arg(&path).output().unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let json = String::from_utf8_lossy(&output.stdout);
+    let expected = format!(
+        "\"byte_start\":{},\"byte_end\":{},\"code\":\"E0010\"",
+        offset + range.start, offset + range.end
+    );
+    assert!(json.contains(&expected), "{json}");
+    assert_eq!(&pattern[range], ")");
+}
+
+#[test]
 fn enums_match_payloads_execute() {
+    use ae_syntax::pattern::{parse_variant_pattern, PatternKind};
+
+    let parsed = parse_variant_pattern("main.ae", "Shape::Rect(w, h)").unwrap();
+    let PatternKind::Variant { payload: Some(bindings), .. } = parsed.kind else {
+        panic!("expected a variant payload");
+    };
+    assert_eq!(bindings[0].kind, PatternKind::Binding("w".into()));
+    assert_eq!(bindings[1].kind, PatternKind::Binding("h".into()));
+
     let source = "enum Shape { Circle(i64), Rect(i64, i64), Empty }
 enum Msg { Text(string), Flag(bool) }
-fn area(s: Shape) -> i64 { match s { Shape::Circle(r) => { return 3 * r * r; } Shape::Rect(w, h) => { return w * h; } Shape::Empty => { return 0; } } }
+fn area(s: Shape) -> i64 { match s { Shape::Circle(r) => { return 3 * r * r; } Shape::Rect(w, h) => { return 10 * w + h; } Shape::Empty => { return 0; } } }
 fn render(m: Msg) -> string { match m { Msg::Text(t) => { return \"t:\" + slice(t, 0, len(t)); } Msg::Flag(b) => { if b { return \"yes\"; } return \"no\"; } } }
 fn main() {
     print(area(Shape::Circle(3)));
@@ -1953,7 +1989,7 @@ fn main() {
 }";
     let output = execute(source);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "27\n20\n0\nt:hi\nno\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "27\n45\n0\nt:hi\nno\n");
 }
 #[test]
 fn match_arms_do_not_capture_loop_control_flow() {
