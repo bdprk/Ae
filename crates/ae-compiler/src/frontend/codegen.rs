@@ -28,6 +28,36 @@ pub(super) fn c_float_literal(value: f64) -> String {
 
 pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving: bool) -> Emitted {
     let emitted = match expr {
+        // spec/concurrency.md §8: copy-semantics atomics. The handle's C
+        // struct copies by value, so every copy reaches the same cell; no
+        // arm here moves or releases anything.
+        Expr::AtomicNew(value) => {
+            let v = emit_expr(value, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_atomic t{t} = ae_cell_new({});\n", v.text));
+            Emitted { text: format!("t{t}"), ty: Type::Atomic, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::AtomicLoad(handle) => {
+            let a = emit_expr(handle, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{t} = ae_cell_load({});\n", a.text));
+            Emitted { text: format!("t{t}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::AtomicAdd(handle, value) => {
+            let a = emit_expr(handle, out, next, false);
+            let v = emit_expr(value, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{t} = ae_cell_add({}, {});\n", a.text, v.text));
+            Emitted { text: format!("t{t}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::AtomicCas(handle, expect, new) => {
+            let a = emit_expr(handle, out, next, false);
+            let e = emit_expr(expect, out, next, false);
+            let n = emit_expr(new, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    bool t{t} = ae_cell_cas({}, {}, {});\n", a.text, e.text, n.text));
+            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
         // M2.12 slice 2: the address of addressable storage. The operand is a
         // variable or a field of one, so the C is an address-of; the pointer
         // itself is a plain value that neither moves nor releases.
@@ -988,6 +1018,9 @@ pub(super) fn release_var(out: &mut String, id: usize, ty: Type) {
         // §1 rule 3); the release is idempotent because wait nulls the
         // variable first.
         Type::Thread(_) => out.push_str(&format!("    ae_free(v{id});\n")),
+        // The cell is process-lifetime (spec/concurrency.md §8.1 rule 1):
+        // nothing releases it, and copies share it.
+        Type::Atomic => {}
         _ => out.push_str(&format!("    ae_str_release(&v{id});\n")),
     }
 }
@@ -1376,6 +1409,14 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                 out.push_str(&format!("    AE_PTR_WRITE(v{id}, {});
 ", t.text));
                 null_moves(out, &t.moves);
+            }
+            // spec/concurrency.md §8: the store is the seq_cst release that
+            // a later load in another thread observes.
+            Statement::AtomicStore(handle, value) => {
+                let a = emit_expr(handle, out, next, false);
+                let v = emit_expr(value, out, next, false);
+                out.push_str(&format!("    ae_cell_store({}, {});
+", a.text, v.text));
             }
         }
     }

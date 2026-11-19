@@ -8088,6 +8088,58 @@ fn main() {
 }
 
 #[test]
+fn atomics_share_one_cell_across_threads() {
+    // spec/concurrency.md §8 A1–A4: copying the handle shares the cell; two
+    // threads adding to it lose no update; the final load is exactly the
+    // sum; a store in a thread is visible to main after wait; and the old
+    // values' multiset is the deterministic pre-sequence, so summing the
+    // two threads' local sums is interleaving-independent.
+    let source = r#"fn add_many(cell: atomic, count: i64) -> i64 {
+    var i = 0;
+    var seen = 0;
+    while i < count {
+        seen = seen + cell_add(cell, 10);
+        i = i + 1;
+    }
+    return seen;
+}
+fn main() {
+    let cell = cell_new(0);
+    let first = spawn(|| -> i64 { return add_many(cell, 5); });
+    let second = spawn(|| -> i64 { return add_many(cell, 5); });
+    let lost = wait(first) + wait(second);
+    print(cell_load(cell));
+    print(lost);
+    cell_store(cell, 7);
+    let reader = spawn(|| -> i64 { return cell_load(cell); });
+    print(wait(reader));
+    let alias = cell;
+    let shifted = cell_add(alias, 3);
+    print(shifted - 3 + cell_load(cell));
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    // 10 adds of 10: the final load is 100; the lost-update check sums the
+    // pre-values {0,10,...,90} = 450; the store-then-read handoff yields 7;
+    // the alias shares the cell: the add saw 7 and made it 10.
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "100\n450\n7\n14\n"
+    );
+
+    // The interpreter's single-threaded ordering produces the same values.
+    let path = std::env::temp_dir().join(format!("ae-atomic-interp-{}.ae", std::process::id()));
+    fs::write(&path, source).unwrap();
+    let interp = Command::new(env!("CARGO_BIN_EXE_ae")).args(["run", path.to_str().unwrap(), "--interp"]).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(interp.status.success(), "{}", String::from_utf8_lossy(&interp.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout).replace("\r\n", "\n"),
+        "100\n450\n7\n14\n"
+    );
+}
+
+#[test]
 fn thread_boundaries_reject_nontransferable_shapes() {
     // spec/concurrency.md T2/T3/T5/T6: a borrow capture cannot cross, the
     // callable takes no visible parameters, a value capture moves (use after

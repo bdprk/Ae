@@ -40,6 +40,10 @@ enum Val {
     // completion at the spawn site and wait hands back the value, the same
     // observable behavior the compiled backends give a deterministic program.
     Thread(usize),
+    // A copy-semantics atomic handle (spec/concurrency.md §8): the index of
+    // the shared cell. Cloning the value shares the cell, matching the C
+    // struct copy the compiled backends perform.
+    Atomic(usize),
     Moved,
 }
 
@@ -60,6 +64,10 @@ struct Env<'a> {
     // Spawned results, indexed by handle (ADR-0214). `None` marks a handle
     // whose value wait already took.
     threads: Vec<Option<Val>>,
+    // Atomic cells (spec/concurrency.md §8), indexed by handle: the
+    // single-threaded interpreter orders operations naturally, so the cell
+    // is a plain i64 and the handle shares it by copy.
+    atomics: Vec<i64>,
 }
 
 const MAX_STEPS: usize = 5_000_000;
@@ -77,7 +85,7 @@ pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
         }
     }
     let main_fn = main_fn.ok_or_else(|| (String::new(), "program must define a main function".to_owned()))?;
-    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new() };
+    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new() };
     let mut locals: HashMap<usize, Val> = HashMap::new();
     match eval_stmts(&mut env, &main_fn.body, &mut locals, &mut None) {
         Flow::Next | Flow::Return(_) => Ok((env.out, 0)),
@@ -868,6 +876,20 @@ fn eval_stmts(
             // `*p = value;` (M2.12 slice 3): the pointer variable evaluates to
             // the slot it names; the write replaces that slot's current value,
             // exactly what the compiled backends' `*ptr = value` does.
+            // spec/concurrency.md §8: the store writes the shared cell.
+            Statement::AtomicStore(handle, value) => {
+                let cell = match eval_expr(env, handle, locals, caller_locals, false) {
+                    Ok(Val::Atomic(cell)) => cell,
+                    Ok(_) => return Flow::Trap("internal: cell_store on a non-handle".to_owned()),
+                    Err(flow) => return flow,
+                };
+                let stored = match eval_expr(env, value, locals, caller_locals, false) {
+                    Ok(Val::Int(n)) => n,
+                    Ok(_) => return Flow::Trap("internal: cell_store value".to_owned()),
+                    Err(flow) => return flow,
+                };
+                env.atomics[cell] = stored;
+            }
             Statement::PtrStore(id, value, ..) => {
                 let pointer = match eval_expr(env, &Expr::Variable(*id, Type::Int, 0, 0), locals, caller_locals, false) {
                     Ok(val) => val,
@@ -1953,6 +1975,53 @@ fn eval_expr(
             },
             _ => Err(Flow::Trap("internal: wait on a non-handle".to_owned())),
         },
+        // spec/concurrency.md §8: the cell table is indexed by handle, so a
+        // cloned handle reads and writes the same cell.
+        Expr::AtomicNew(value) => {
+            let seed = match eval_expr(env, value, locals, caller_locals, false)? {
+                Val::Int(n) => n,
+                _ => return Err(Flow::Trap("internal: cell_new seed".to_owned())),
+            };
+            env.atomics.push(seed);
+            Ok(Val::Atomic(env.atomics.len() - 1))
+        }
+        Expr::AtomicLoad(handle) => match eval_expr(env, handle, locals, caller_locals, false)? {
+            Val::Atomic(cell) => Ok(Val::Int(env.atomics[cell])),
+            _ => Err(Flow::Trap("internal: cell_load on a non-handle".to_owned())),
+        },
+        Expr::AtomicAdd(handle, value) => {
+            let cell = match eval_expr(env, handle, locals, caller_locals, false)? {
+                Val::Atomic(cell) => cell,
+                _ => return Err(Flow::Trap("internal: cell_add on a non-handle".to_owned())),
+            };
+            let delta = match eval_expr(env, value, locals, caller_locals, false)? {
+                Val::Int(n) => n,
+                _ => return Err(Flow::Trap("internal: cell_add delta".to_owned())),
+            };
+            let old_value = env.atomics[cell];
+            env.atomics[cell] = env.atomics[cell].wrapping_add(delta);
+            Ok(Val::Int(old_value))
+        }
+        Expr::AtomicCas(handle, expect, new) => {
+            let cell = match eval_expr(env, handle, locals, caller_locals, false)? {
+                Val::Atomic(cell) => cell,
+                _ => return Err(Flow::Trap("internal: cell_cas on a non-handle".to_owned())),
+            };
+            let expected = match eval_expr(env, expect, locals, caller_locals, false)? {
+                Val::Int(n) => n,
+                _ => return Err(Flow::Trap("internal: cell_cas expected".to_owned())),
+            };
+            let replacement = match eval_expr(env, new, locals, caller_locals, false)? {
+                Val::Int(n) => n,
+                _ => return Err(Flow::Trap("internal: cell_cas replacement".to_owned())),
+            };
+            if env.atomics[cell] == expected {
+                env.atomics[cell] = replacement;
+                Ok(Val::Bool(true))
+            } else {
+                Ok(Val::Bool(false))
+            }
+        }
         other => Err(Flow::Trap(format!("unsupported expression in MIR interpreter: {}", format!("{other:?}").chars().take(60).collect::<String>()))),
     }
 }

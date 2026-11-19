@@ -407,6 +407,19 @@ impl<'a> Parser<'a> {
                     }
                     // Built-in mutation statements come before assignment so
                     // they stay unambiguous: push(v, x); pop(v);
+                    // atomic_store(handle, value); — the seq_cst release
+                    // half of the handoff (spec/concurrency.md §8).
+                    if name == "cell_store" && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
+                        self.pos += 2;
+                        let (handle, handle_ty) = self.expression(0, false)?;
+                        if handle_ty != Type::Atomic { return Err(self.fail("cell_store expects an atomic handle")); }
+                        self.take(Kind::Comma)?;
+                        let (value, value_ty) = self.expression(0, false)?;
+                        if value_ty != Type::Int { return Err(self.fail("cell_store expects an i64 value")); }
+                        self.take(Kind::RParen)?; self.take(Kind::Semi)?;
+                        result.push(Statement::AtomicStore(Box::new(handle), Box::new(value)));
+                        continue;
+                    }
                     if matches!(name.as_str(), "push" | "pop" | "sort" | "reverse") && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
                         let (line, col) = self.position();
                         self.pos += 2;

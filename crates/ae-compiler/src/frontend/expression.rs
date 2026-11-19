@@ -81,6 +81,52 @@ impl Parser<'_> {
         None
     }
 
+    // The four atomic operations parse in helpers, not inline in the
+    // dispatch: each arm's locals would otherwise grow expression_inner's
+    // frame, and the deep-import probe pins a 512KB stack across that
+    // recursion (spec/concurrency.md §8).
+    #[inline(never)]
+    fn cell_new_expr(&mut self, _line: usize, _col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::LParen)?;
+        let (seed, seed_ty) = self.expression(0, false)?;
+        if seed_ty != Type::Int { return Err(self.fail("cell_new expects an i64 seed")); }
+        self.take(Kind::RParen)?;
+        Ok((Expr::AtomicNew(Box::new(seed)), Type::Atomic))
+    }
+    #[inline(never)]
+    fn cell_load_expr(&mut self, _line: usize, _col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::LParen)?;
+        let (handle, handle_ty) = self.expression(0, false)?;
+        if handle_ty != Type::Atomic { return Err(self.fail("cell_load expects an atomic handle")); }
+        self.take(Kind::RParen)?;
+        Ok((Expr::AtomicLoad(Box::new(handle)), Type::Int))
+    }
+    #[inline(never)]
+    fn cell_add_expr(&mut self, _line: usize, _col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::LParen)?;
+        let (handle, handle_ty) = self.expression(0, false)?;
+        if handle_ty != Type::Atomic { return Err(self.fail("cell_add expects an atomic handle")); }
+        self.take(Kind::Comma)?;
+        let (value, value_ty) = self.expression(0, false)?;
+        if value_ty != Type::Int { return Err(self.fail("cell_add expects an i64 delta")); }
+        self.take(Kind::RParen)?;
+        Ok((Expr::AtomicAdd(Box::new(handle), Box::new(value)), Type::Int))
+    }
+    #[inline(never)]
+    fn cell_cas_expr(&mut self, _line: usize, _col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::LParen)?;
+        let (handle, handle_ty) = self.expression(0, false)?;
+        if handle_ty != Type::Atomic { return Err(self.fail("cell_cas expects an atomic handle")); }
+        self.take(Kind::Comma)?;
+        let (expect, expect_ty) = self.expression(0, false)?;
+        if expect_ty != Type::Int { return Err(self.fail("cell_cas expects an i64 expected value")); }
+        self.take(Kind::Comma)?;
+        let (new, new_ty) = self.expression(0, false)?;
+        if new_ty != Type::Int { return Err(self.fail("cell_cas expects an i64 new value")); }
+        self.take(Kind::RParen)?;
+        Ok((Expr::AtomicCas(Box::new(handle), Box::new(expect), Box::new(new)), Type::Bool))
+    }
+
     // One interned shape per distinct return type: wait's result type comes
     // from the handle (spec/concurrency.md §2).
     pub(super) fn intern_thread(&mut self, ret: Type) -> usize {
@@ -653,6 +699,14 @@ impl Parser<'_> {
                     if !matches!(sep_ty, Type::String | Type::StrView) { return Err(self.fail("join expects a string or string view separator")); }
                     self.take(Kind::RParen)?;
                     (Expr::Join(vid, Box::new(sep), line, col), Type::String)
+                } else if name == "cell_new" && *self.current() == Kind::LParen {
+                    return self.cell_new_expr(vline, vcol);
+                } else if name == "cell_load" && *self.current() == Kind::LParen {
+                    return self.cell_load_expr(vline, vcol);
+                } else if name == "cell_add" && *self.current() == Kind::LParen {
+                    return self.cell_add_expr(vline, vcol);
+                } else if name == "cell_cas" && *self.current() == Kind::LParen {
+                    return self.cell_cas_expr(vline, vcol);
                 } else if name == "spawn" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     let at = self.tokens[self.pos - 1].offset;
@@ -683,7 +737,7 @@ impl Parser<'_> {
                                 // closure/pointer values have no byte layout to
                                 // package; owned scalars, strings, vectors,
                                 // maps, structs, and enums move.
-                                if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..)) {
+                                if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic) {
                                     return Err(self.fail("spawn moves its captures into the thread; this capture's storage cannot cross"));
                                 }
                                 if self.moved.contains(outer_id) {

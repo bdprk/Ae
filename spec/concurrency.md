@@ -65,3 +65,25 @@ Rejections are compile-time: borrow-capture crossing (§3), non-zero visible par
 | T10 | Failure inside the thread | Process exits nonzero (abort contract) |
 
 Evidence anchors: `scripts/thread_harness.c` (runtime layer, dual platform), the spawn slice's UI/execution fixtures (language layer), `bench/results/2026-11-20-linux-threads/`.
+
+## 8. Atomics (M4.1.04)
+
+Status: target for the atomics slice — this section governs the implementation that follows; the ground rules are ADR-0214's.
+
+### 8.1 Design Rules
+
+1. **The Cell Is Shared by Copying the Handle**: the `atomic` type's value is a handle to one process-lifetime cell (`i64`). Copying the handle — assignment, a by-value argument, a spawn capture — copies the pointer, so every copy reaches the same cell. There is no explicit clone and no refcount: the cell lives for the whole program and a leak check reports the retained cells as a documented baseline (the same honesty as the argv cache).
+2. **Copy, Never Borrow**: `atomic` (the type spelling) is a copy-semantics type like the scalars — it never moves, never borrows, and no operation takes it by reference. The borrow checker's move/borrow tracking does not apply to it.
+3. **Sequentially Consistent, Always**: every operation is C11 seq_cst (`v1` has no ordering parameter). A store in one thread followed by a load in another that observed it is the release/acquire handoff M4.1.04 requires; weaker orderings are future work and would need their own evidence.
+4. **i64 Cells Only (v1)**: `cell_new(v) -> atomic` seeds a cell; `cell_load(a) -> i64`, `cell_store(a, v)`, `cell_add(a, v) -> i64` (returns the previous value), and `cell_cas(a, expect, new) -> bool` are the whole surface. The names say `cell` because `std/core/atomic.ae` — the self-hosted M1.4 model of the future standard-library surface — already owns the `atomic_` prefix. All five are reserved names.
+5. **Spawn Captures Share**: the owned-only boundary admits `atomic` captures because copying the handle into the thread's context is the sharing. Two threads capturing one handle increment the same cell.
+
+### 8.2 Test Matrix
+
+| # | Case | Expected |
+|---|---|---|
+| A1 | One cell, two threads each add N times, print the final load | Exactly 2N additions; deterministic total |
+| A2 | `atomic_add`'s return values across threads | Each old value observed exactly once (no lost update) |
+| A3 | Store in a thread, load in `main` after `wait` | The store is visible (the handoff) |
+| A4 | Copying the handle to a second name | Both names reach one cell |
+| A5 | Cell count in a leak check | Retained cells reported as the documented baseline |
