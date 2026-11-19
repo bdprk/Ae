@@ -5,6 +5,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>
+// ---- Raw pointer access (M2.4.03) -------------------------------------------
+// Every unchecked read and write the language allows is emitted through these
+// two macros, so generated C has one spelling for "the caller promised this
+// address is valid" and grepping it lists every such promise. The
+// preconditions are the caller's: the address must lie inside a live
+// allocation (or a live local), be aligned for the pointee type, hold an
+// initialized value before a read, and overlap no tracked borrow.
+// spec/unsafe.md 2.4 states the contract; the compiler cannot check it.
+#define AE_PTR_READ(place) (*(place))
+#define AE_PTR_WRITE(place, ...) (*(place) = (__VA_ARGS__))
 // ---- Output (ADR-55) --------------------------------------------------------
 // A console decodes the bytes it receives with its own output code page (936 on
 // a Chinese Windows), so raw UTF-8 showed up there as unrelated characters.
@@ -944,6 +954,16 @@ static void ae_args_init(int argc, char **argv) {
     (void)argc;
     (void)argv;
 }
+// The converted argv is cached for the process lifetime, but exit returns the
+// blocks it owns so a leak check reports only the allocator's retained state.
+static char **ae_args_cached = NULL;
+static char *ae_args_text = NULL;
+static void ae_args_release_cache(void) {
+    ae_free(ae_args_text);
+    ae_free(ae_args_cached);
+    ae_args_text = NULL;
+    ae_args_cached = NULL;
+}
 static ae_strvec ae_args(size_t line, size_t column) { /* win32-declared */
     ae_strvec out = ae_strvec_new(line, column);
 #ifdef _WIN32
@@ -965,17 +985,30 @@ static ae_strvec ae_args(size_t line, size_t column) { /* win32-declared */
         int count = 0;
         wchar_t **tokens = CommandLineToArgvW(GetCommandLineW(), &count);
         if (tokens && count == (int)ae_argc_g) {
+            // One block holds every converted string, so the cache is two
+            // allocations that exit can return (nulls stay the fallback).
+            size_t total = 0;
+            for (int i = 0; i < count; i++) {
+                const int units = lstrlenW(tokens[i]);
+                const int bytes = WideCharToMultiByte(65001, 0, tokens[i], units, NULL, 0, NULL, NULL);
+                total += (size_t)(bytes > 0 ? bytes : 0) + 1;
+            }
             char **utf8 = ae_alloc((size_t)count * sizeof(char *), line, column);
+            char *text_block = ae_alloc(total, line, column);
+            char *cursor = text_block;
             for (int i = 0; i < count; i++) {
                 const int units = lstrlenW(tokens[i]);
                 const int bytes = WideCharToMultiByte(65001, 0, tokens[i], units, NULL, 0, NULL, NULL);
                 if (bytes <= 0) { utf8[i] = ae_argv_g[i]; continue; }
-                char *text = ae_alloc((size_t)bytes + 1, line, column);
-                WideCharToMultiByte(65001, 0, tokens[i], units, text, bytes, NULL, NULL);
-                text[bytes] = 0;
-                utf8[i] = text;
+                WideCharToMultiByte(65001, 0, tokens[i], units, cursor, bytes, NULL, NULL);
+                cursor[bytes] = 0;
+                utf8[i] = cursor;
+                cursor += (size_t)bytes + 1;
             }
             ae_argv_g = utf8;
+            ae_args_cached = utf8;
+            ae_args_text = text_block;
+            atexit(ae_args_release_cache);
         }
         if (tokens) LocalFree(tokens);
     }
