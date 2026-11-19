@@ -305,16 +305,17 @@ impl Parser<'_> {
             self.cursor += 1;
             let kind = match opener {
                 Kind::LParen => {
-                    let mut arguments = Vec::new();
-                    if self.current().kind != Kind::RParen {
-                        loop {
-                            arguments.push(self.call_argument()?);
-                            if self.current().kind != Kind::Comma {
-                                break;
+                    let arguments = if self.current().kind == Kind::RParen {
+                        Vec::new()
+                    } else {
+                        crate::parse_comma_list(self, |parser, _| parser.call_argument(), |parser| {
+                            if parser.current().kind != Kind::Comma {
+                                return false;
                             }
-                            self.cursor += 1;
-                        }
-                    }
+                            parser.cursor += 1;
+                            true
+                        })?
+                    };
                     if self.current().kind != Kind::RParen {
                         return Err(self.error("expected ',' or ')' after argument"));
                     }
