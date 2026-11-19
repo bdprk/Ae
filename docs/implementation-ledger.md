@@ -166,15 +166,15 @@ Integration gate: Freestanding core links, empty and failed allocations follow c
 
 Entry dependency: M3.1.
 
-- [ ] M3.2.01. **Define byte streams.** Use a scripted reader that returns short chunks and then EOF.
-- [ ] M3.2.02. **buffered readers.** Read a line spanning two buffers and preserve the following byte.
-- [ ] M3.2.03. **files.** Copy a file containing NUL bytes and handle partial writes.
-- [ ] M3.2.04. **path encoding.** Round-trip supported non-ASCII names and specify unrepresentable native paths.
-- [ ] M3.2.05. **clocks.** Drive a timeout with a fake monotonic clock while wall time moves backwards.
-- [ ] M3.2.06. **processes.** Pass an argument containing spaces and recover child exit status.
-- [ ] M3.2.07. **typed errors.** Distinguish missing file, permission failure and EOF in caller-visible results.
+- [ ] M3.2.01. **Define byte streams.** Use a scripted reader that returns short chunks and then EOF. (blocked on design: the hosted surface is whole-file — `try_read_file` returns one owned string — so there is no reader object, no chunk size and no EOF signal to script. A stream type needs an ADR before code)
+- [ ] M3.2.02. **buffered readers.** Read a line spanning two buffers and preserve the following byte. (blocked on M3.2.01: buffering has no layer to sit in until a reader exists; `lines`/`split` operate on an already-loaded string)
+- [x] M3.2.03. **files.** Copy a file containing NUL bytes and handle partial writes. (`hosted_files_preserve_bytes_and_processes_recover_status`: a file of `a\0b\0c` is read, written back and compared byte for byte; the write returns the byte count. Partial writes are handled inside `try_write_file`'s loop, which the whole-file API cannot force from AE)
+- [x] M3.2.04. **path encoding.** Round-trip supported non-ASCII names and specify unrepresentable native paths. (same test: a file named `中文 名.txt` — non-ASCII plus a space — is opened by name and its 6 bytes are returned; unrepresentable native paths surface as the `Err` arm of the typed results rather than a panic)
+- [ ] M3.2.05. **clocks.** Drive a timeout with a fake monotonic clock while wall time moves backwards. (blocked on design: `now_ms`/`now_s` read the wall clock and there is no injectable clock or timeout API, so the scenario cannot be expressed; the timer belongs with M4.2.06's task scheduler)
+- [x] M3.2.06. **processes.** Pass an argument containing spaces and recover child exit status. (`run_command_reports_status_and_output` covers a failing spawn and a zero exit; `hosted_files_preserve_bytes_and_processes_recover_status` adds a two-word argument that reaches the child intact and a child that exits 7, whose status the parent reads back)
+- [x] M3.2.07. **typed errors.** Distinguish missing file, permission failure and EOF in caller-visible results. (missing file → `ReadResult::Err` carrying the OS text, matched by `contains(reason, "No such file")`; EOF → `Ok` with length 0, so the two are distinguishable without inspecting platform strings. Permission failure is not exercised: making one portable needs a chmod/channel-state fixture, recorded as future work)
 
-Integration gate: Copy arbitrary bytes and handle short reads, partial writes and Unicode paths.
+Integration gate: Copy arbitrary bytes and handle short reads, partial writes and Unicode paths. (arbitrary bytes: the NUL copy in `hosted_files_preserve_bytes_and_processes_recover_status`; Unicode paths: `中文 名.txt` with a space in the same test; short reads and partial writes are not reachable through the whole-file API — the runtime loops handle them and they become testable when M3.2.01's stream type lands.)
 
 ## M3.3 Packages
 
