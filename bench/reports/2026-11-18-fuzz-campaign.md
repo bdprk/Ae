@@ -67,6 +67,10 @@ host including evaluate-3 once its sandbox woke at 08:10 (`md5 e9e0f426…`); ai
 seed 40,117,992 (the old 7.6 h segment stays in the log as history). ¹ ai's failure column excludes the
 one environmental timeout; its segment before the relaunch had 0 differential failures.
 
+## Fleet upgrade plan — driver 1103ec5+ (spawn/cell shapes)
+
+The driver gained kind 21 (spawn with moved scalar/string captures) and kind 22 (two threads sharing one `cell_*` handle) — the thread surface's differential coverage. The fleet's running segments carry the fixed driver (`e9e0f426`) and an older compiler; upgrading a host mid-segment requires a compiler rebuild and a segment restart, which resets that host's 24-hour M2.13 gate clock. Plan: upgrade each host at its next natural segment boundary (the supervisor's relaunch), never mid-segment; the new shapes are already covered locally (80+ seeds across two ranges, plus the execution tests).
+
 ## Collection
 
 ```sh
