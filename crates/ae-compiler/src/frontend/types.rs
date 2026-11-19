@@ -473,7 +473,12 @@ impl Parser<'_> {
         }
         Ok(sid)
     }
-    pub(super) fn parse_struct_def(&mut self, public: bool, repr_c: bool) -> Result<(), ae_span::Diagnostic> {
+    pub(super) fn parse_struct_def(
+        &mut self,
+        public: bool,
+        repr_c: bool,
+        parsed_fields: Option<&[ae_syntax::declaration::TypedName]>,
+    ) -> Result<(), ae_span::Diagnostic> {
         self.pos += 1;
         let name_offset = self.tokens[self.pos].offset;
         let name = self.identifier()?;
@@ -485,7 +490,14 @@ impl Parser<'_> {
         let mut fields: Vec<(String, Payload)> = Vec::new();
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::RBrace {
-            let fname = self.identifier()?;
+            let parsed_field = parsed_fields.and_then(|items| items.get(fields.len()));
+            let fname = match parsed_field {
+                Some(field) if field.name_range.start == self.tokens[self.pos].offset => {
+                    self.pos += 1;
+                    field.name.clone()
+                }
+                _ => self.identifier()?,
+            };
             if !seen.insert(fname.clone()) { return Err(self.fail(&format!("duplicate field '{}' in struct '{}'", fname, name))); }
             self.take(Kind::Colon)?;
             let fty = self.field_type(&params)?;
