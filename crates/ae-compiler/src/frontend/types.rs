@@ -753,5 +753,5 @@ impl Parser<'_> {
         self.named_type()
     }
     // First pass collects only signatures. Bodies are checked in the second pass.
-    // scan_uses validated the headers; skip them before collecting.
+    // The syntax parser validated the headers; skip them before collecting.
 }

@@ -40,7 +40,7 @@ Entry dependency: M0.1.
 - [ ] M0.2.03. **expressions.** The syntax crate parses operator expressions over literals, names, and groups. Tree tests compare its negation and multiplication grouping with the active compiler on the same inputs. The standalone parser also captures calls, index expressions, and field access with byte ranges. Declaration-dependent forms and type restrictions remain on the active compiler path.
 - [ ] M0.2.04. **patterns.** The standalone syntax parser records nested variant payloads in source order and locates malformed bindings. The active compiler still accepts only flat payload binding patterns, so nested semantic lowering and CLI parity remain pending.
 - [ ] M0.2.05. **declarations.** Compare function and generic struct boundaries across both parsers.
-- [ ] M0.2.06. **modules.** Resolve an imported declaration from examples/modules/main.ae through the new parser.
+- [x] M0.2.06. **modules.** The active loader uses ae-syntax to parse import headers. Running `examples/modules/main.ae` resolves declarations from both imported modules and prints `3 entries, 6 words`. The import integration tests cover recovery, cycles, and canonicalized duplicate paths.
 - [ ] M0.2.07. **recover after bad token.** Inject a missing delimiter before a valid declaration and require bounded recovery.
 - [ ] M0.2.08. **switch CLI route.** Run the CLI corpus through both routes before removing the old default.
 
