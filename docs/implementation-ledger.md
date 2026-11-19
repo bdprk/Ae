@@ -140,13 +140,13 @@ Integration gate: Reject dangling views, vector reallocation under loan and esca
 
 Entry dependency: M2.3.
 
-- [ ] M2.4.01. **Inventory pointer primitives.** List each raw operation in the C runtime with its caller and owner.
-- [ ] M2.4.02. **specify alignment and provenance.** Specify permitted origin, extent and alignment for one typed pointer read.
-- [ ] M2.4.03. **isolate runtime calls.** Move one pointer operation behind a reviewed interface and compare generated behavior.
-- [ ] M2.4.04. **audit safe wrappers.** For each safe constructor show which check enforces length, alignment and lifetime.
-- [ ] M2.4.05. **run sanitizer corpus.** Exercise empty, boundary-sized and repeatedly freed-owner paths in supervised test fixtures.
+- [x] M2.4.01. **Inventory pointer primitives.** List each raw operation in the C runtime with its caller and owner. (docs/architecture/raw-pointer-inventory.md: every language-level operation with its AST node, emitted C and guarding check, plus the runtime entry points that receive pointers and who releases them)
+- [x] M2.4.02. **specify alignment and provenance.** Specify permitted origin, extent and alignment for one typed pointer read. (spec/unsafe.md 2.4: origin, extent, alignment and initialization/aliasing as four conditions; breaking any is UB, safe code cannot reach a violation because `&owned as *const T` is rejected, and nothing checks alignment at runtime)
+- [x] M2.4.03. **isolate runtime calls.** Move one pointer operation behind a reviewed interface and compare generated behavior. (every unchecked read, expression write and `*p = v` store now emits `AE_PTR_READ` / `AE_PTR_WRITE`, two documented macros in runtime.c; `raw_pointer_access_goes_through_the_reviewed_macros` pins the emission and the run, and both binaries (3e8ba9b vs this revision) produced identical stdout/stderr/exit over all 109 `tests/run` programs)
+- [x] M2.4.04. **audit safe wrappers.** For each safe constructor show which check enforces length, alignment and lifetime. (raw-pointer-inventory.md section 3: slice_view and the token cursor trap on bad bounds/UTF-8 and rely on the NLL loan for lifetime; `&v as *const T` inherits extent 1 and natural alignment but is refused for owned types; `#[repr(C)]` layout queries are constants)
+- [x] M2.4.05. **run sanitizer corpus.** Exercise empty, boundary-sized and repeatedly freed-owner paths in supervised test fixtures. (`scripts/verify_generated_c.py --sanitize` on Linux: 41 programs, ASan+UBSan, exit 0; `--leak` on Windows: 41 programs, exit 0. The leak mode surfaced a real retention in the Windows argv cache: `ae_args` kept the UTF-16-to-UTF-8 pointer array and one block per argument forever. The cache now converts into a single text block and releases both blocks from an `atexit` handler, so an args-reading program ends at the 2-block baseline)
 
-Integration gate: Every safe wrapper has a documented invariant and adversarial boundary tests.
+Integration gate: Every safe wrapper has a documented invariant and adversarial boundary tests. (Section 3 of the inventory states each wrapper's enforced check; the adversarial side is the borrow/ui fixtures (borrow_view_escape, borrow_move_during_view), the empty/boundary cases of `verify_generated_c.py`, and the 41-program ASan/UBSan plus leak runs.)
 
 ## M3.1 Library layers
 

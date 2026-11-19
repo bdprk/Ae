@@ -54,7 +54,7 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             let address = *next; *next += 1;
             out.push_str(&format!("    {}t{address} = {};\n", pointer.ty.c_temp(), pointer.text));
             let value = emit_expr(value, out, next, true);
-            out.push_str(&format!("    *t{address} = {};\n", value.text));
+            out.push_str(&format!("    AE_PTR_WRITE(t{address}, {});\n", value.text));
             null_moves(out, &value.moves);
             Emitted::value("(int64_t)0".to_owned(), Type::Int)
         }
@@ -96,7 +96,7 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
         }
         Expr::DerefPtr(pointer, ..) => {
             let t = emit_expr(pointer, out, next, false);
-            Emitted::value(format!("*({})", t.text), crate::frontend::mir::expr_type(expr))
+            Emitted::value(format!("AE_PTR_READ({})", t.text), crate::frontend::mir::expr_type(expr))
         }
         Expr::Number(n) => Emitted::value(format!("INT64_C({n})"), Type::Int),
         Expr::FloatLit(x) => Emitted::value(c_float_literal(*x), Type::F64),
@@ -1310,7 +1310,7 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
             // M2.12 slice 3: the write goes through the pointer's address.
             Statement::PtrStore(id, value, _line, _column) => {
                 let t = emit_expr(value, out, next, false);
-                out.push_str(&format!("    *v{id} = {};
+                out.push_str(&format!("    AE_PTR_WRITE(v{id}, {});
 ", t.text));
                 null_moves(out, &t.moves);
             }

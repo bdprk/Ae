@@ -1024,6 +1024,40 @@ fn ownership_join_field_move_and_overwrite_release_are_enforced() {
 }
 
 #[test]
+fn raw_pointer_access_goes_through_the_reviewed_macros() {
+    // M2.4.03: the only unchecked memory accesses in generated C are the two
+    // AE_PTR_* macros, so one grep lists every promise a program makes.
+    let source = concat!(
+        "fn main() {\n",
+        "    var v = 41;\n",
+        "    let p = &mut v as *mut i64;\n",
+        "    unsafe { let _w = ptr_write(p, 42); print(p.deref()); }\n",
+        "}\n"
+    );
+    let path = std::env::temp_dir().join(format!(
+        "ae-ptr-macro-{}-{}.ae",
+        std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(&path, source).unwrap();
+    let emitted = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("emit-c").arg(&path).output().unwrap();
+    let run = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("run").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(emitted.status.success(), "{}",
+        String::from_utf8_lossy(&emitted.stderr));
+    let c = String::from_utf8_lossy(&emitted.stdout);
+    assert!(c.contains("#define AE_PTR_READ(place) (*(place))"), "{c}");
+    assert!(c.contains("AE_PTR_WRITE(t"), "{c}");
+    assert!(c.contains("AE_PTR_READ("), "{c}");
+    assert!(run.status.success(), "{}",
+        String::from_utf8_lossy(&run.stderr));
+    let printed: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines().map(str::to_owned).collect();
+    assert_eq!(printed, ["42"]);
+}
+
+#[test]
 fn vector_growth_during_iteration_is_rejected() {
     // M2.3 gate: growth would reallocate the buffer the iteration loan
     // points at, so the write is refused while the loan is live.

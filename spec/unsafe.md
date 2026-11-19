@@ -34,6 +34,17 @@ Status: target specification for the M2.12 milestone. The current language (2026
 - Dereferencing outside `unsafe` is rejected: `dereferencing a raw pointer requires 'unsafe'` (E0700).
 - A raw pointer escapes to a non-pointer type only through an explicit cast; no inference bridges.
 
+### 2.4 Alignment and Provenance of One Typed Read
+
+A read `p.deref()` — and the writes `ptr_write(p, v)` / `*p = v` — is defined only when all four hold:
+
+1. **Origin.** `p` came from `&v as *const T` / `&mut v as *mut T` on a live binding of type `T`, from a C pointer received through `extern "C"`, or from `offset` / `byte_offset` / an explicit cast applied to such a pointer.
+2. **Extent.** The address and the `c_size_of[T]()` bytes after it lie inside the same allocation, or the same live local, that the origin named. `offset(n)` and `byte_offset(n)` are unchecked: keeping the result inside that extent is the caller's obligation.
+3. **Alignment.** The address is a multiple of `c_align_of[T]()` — 8 for `i64`, `f64` and pointers, 1 for `bool`, the maximum field alignment for a `#[repr(C)]` struct. Taking `&v` supplies it; only arithmetic and C-supplied pointers can break it.
+4. **Initialization and aliasing.** The bytes hold a value of `T` written earlier, and no tracked borrow that overlaps them is live at the access.
+
+Breaking any of the four is undefined behavior (hard rule 3). Safe code cannot reach a violation: `&owned as *const T` is rejected, a pointer to a moved value is not constructible from safe spellings, and the interpreter's per-slot model traps a same-typed read of a moved or unwritten slot. Nothing checks alignment at runtime, so an `unsafe` block that computes an address owes rule 3 itself.
+
 ## 3. `unsafe` Blocks and Functions
 
 ### 3.1 Syntax
