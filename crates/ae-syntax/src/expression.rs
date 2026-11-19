@@ -23,6 +23,7 @@ pub struct FieldInitializer {
 pub enum ExpressionKind {
     Atom(Kind),
     Group(Box<Expression>),
+    Propagate(Box<Expression>),
     Array(Vec<Expression>),
     Vector(Vec<Expression>),
     Struct { target: Box<Expression>, fields: Vec<FieldInitializer> },
@@ -46,7 +47,14 @@ pub fn parse_operator_expression(file: &str, source: &str) -> Result<Expression,
         diagnostic
     })?;
     let mut parser = Parser { file, source, tokens: &tokens, cursor: 0, nodes: 0 };
-    let expression = parser.expression(0)?;
+    let mut expression = parser.expression(0)?;
+    // The statement grammar permits a single propagation marker after the
+    // entire initializer or discarded expression.
+    if parser.current().kind == Kind::Question {
+        let range = expression.range.start..parser.current().end;
+        parser.cursor += 1;
+        expression = Expression { kind: ExpressionKind::Propagate(Box::new(expression)), range };
+    }
     if parser.current().kind != Kind::Eof {
         return Err(parser.error("expected end of expression"));
     }
@@ -298,6 +306,22 @@ mod tests {
             ExpressionKind::Vector(elements) if elements.is_empty()));
         let error = parse_operator_expression("case.ae", "[]").unwrap_err();
         assert_eq!(error.primary.unwrap().span.range, 1..2);
+    }
+
+    #[test]
+    fn propagation_wraps_the_whole_statement_operand() {
+        let source = "  maybe_find(flag)?";
+        let expression = parse_operator_expression("case.ae", source).unwrap();
+        assert_eq!(expression.range, 2..source.len());
+        let ExpressionKind::Propagate(operand) = expression.kind else {
+            panic!("expected a propagation marker");
+        };
+        assert!(matches!(operand.kind, ExpressionKind::Call { .. }));
+        assert_eq!(&source[operand.range], "maybe_find(flag)");
+
+        let error = parse_operator_expression("case.ae", "consume(maybe_find(flag)?)").unwrap_err();
+        assert_eq!(error.primary.unwrap().span.range, 24..25);
+        assert!(parse_operator_expression("case.ae", "maybe_find(flag)??").is_err());
     }
 
     #[test]
