@@ -48,7 +48,7 @@ load-independent.
 | 07:59 | eva | 82,914 | 0 |
 | 07:59 | evaluate-1 | 10,114,162 | 0 |
 | 07:59 | evaluate-2 | 20,090,567 | 0 |
-| 07:59 | evaluate-3 | (asleep: sandbox cool-down, retry after 08:10) | — |
+| 08:12 | evaluate-3 | 30,111,497 | 0 |
 | 07:59 | ai | 40,118,240 | 0¹ |
 
 
@@ -63,7 +63,7 @@ environmental timeouts and OS errors retry once and are reported as `ENV` with a
 (`N environmental`) and excluded from the exit code, while a compiler rejection of a generated program
 (`RuntimeError`) stays a real differential FAILURE. `--save-corpus` also crashed on an undefined name
 before writing anything; it now saves the sources that actually ran. The fixed driver is deployed to every
-reachable host (`md5 e9e0f426…`); ai's supervisor was relaunched under a fresh 24-hour budget resuming at
+host including evaluate-3 once its sandbox woke at 08:10 (`md5 e9e0f426…`); ai's supervisor was relaunched under a fresh 24-hour budget resuming at
 seed 40,117,992 (the old 7.6 h segment stays in the log as history). ¹ ai's failure column excludes the
 one environmental timeout; its segment before the relaunch had 0 differential failures.
 
