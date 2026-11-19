@@ -575,3 +575,19 @@ mod doc_tests {
     }
 }
 
+
+/// Read a nonempty comma-separated list. The caller handles the enclosing
+/// delimiters and supplies the parser and diagnostics for each item.
+pub fn parse_comma_list<P, T, E>(
+    parser: &mut P,
+    mut parse_argument: impl FnMut(&mut P, usize) -> Result<T, E>,
+    mut consume_comma: impl FnMut(&mut P) -> bool,
+) -> Result<Vec<T>, E> {
+    let mut arguments = Vec::new();
+    loop {
+        arguments.push(parse_argument(parser, arguments.len())?);
+        if !consume_comma(parser) {
+            return Ok(arguments);
+        }
+    }
+}

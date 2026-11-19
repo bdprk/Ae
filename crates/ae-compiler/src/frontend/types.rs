@@ -7,7 +7,7 @@ impl Parser<'_> {
         parse_type: impl FnMut(&mut Self) -> Result<Type, ae_span::Diagnostic>,
     ) -> Result<Vec<Type>, ae_span::Diagnostic> {
         let mut parse_type = parse_type;
-        ae_syntax::declaration::parse_type_argument_list(
+        ae_syntax::parse_comma_list(
             self,
             |parser, _| parse_type(parser),
             |parser| {

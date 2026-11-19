@@ -203,20 +203,20 @@ impl Parser<'_> {
     }
     fn collection(&mut self, allow_empty: bool) -> Result<Vec<Expression>, Diagnostic> {
         self.cursor += 1;
-        let mut elements = Vec::new();
-        if self.current().kind == Kind::RBracket {
+        let elements = if self.current().kind == Kind::RBracket {
             if !allow_empty {
                 return Err(self.error("array must contain at least one element"));
             }
+            Vec::new()
         } else {
-            loop {
-                elements.push(self.expression(0)?);
-                if self.current().kind != Kind::Comma {
-                    break;
+            crate::parse_comma_list(self, |parser, _| parser.expression(0), |parser| {
+                if parser.current().kind != Kind::Comma {
+                    return false;
                 }
-                self.cursor += 1;
-            }
-        }
+                parser.cursor += 1;
+                true
+            })?
+        };
         if self.current().kind != Kind::RBracket {
             return Err(self.error("expected closing bracket after collection elements"));
         }

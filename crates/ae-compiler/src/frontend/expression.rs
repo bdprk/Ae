@@ -187,29 +187,40 @@ impl Parser<'_> {
                 if name == "vec" && *self.current() == Kind::LBracket {
                     let (line, column) = (vline, vcol);
                     self.pos += 1;
-                    let mut values = Vec::new();
                     let mut element_ty: Option<Type> = None;
-                    if *self.current() != Kind::RBracket {
-                        loop {
-                            if values.len() >= 65536 { return Err(self.fail("vector element limit exceeded (65536)")); }
-                            let (element, ty) = self.expression(0, false)?;
-                            // The first element decides the vector: all i64 is
-                            // `vec`, all f64 is `vec[f64]` (ADR-61). Mixing
-                            // them is an error — the language has no implicit
-                            // conversion, including inside a literal.
-                            match element_ty {
-                                None => {
-                                    if ty == Type::Int || ty == Type::F64 { element_ty = Some(ty); }
-                                    else { return Err(self.fail(&format!("vector elements must be i64 or f64, found {}", ty.name()))); }
+                    let values = if *self.current() == Kind::RBracket {
+                        Vec::new()
+                    } else {
+                        ae_syntax::parse_comma_list(
+                            self,
+                            |parser, count| {
+                                if count >= 65536 {
+                                    return Err(parser.fail("vector element limit exceeded (65536)"));
                                 }
-                                Some(same) if ty == same => {}
-                                Some(same) => return Err(self.fail(&format!("vector elements must all be {}; {} does not convert implicitly", same.name(), ty.name()))),
-                            }
-                            values.push(element);
-                            if *self.current() != Kind::Comma { break; }
-                            self.pos += 1;
-                        }
-                    }
+                                let (element, ty) = parser.expression(0, false)?;
+                                // The first element decides the vector: all i64 is
+                                // `vec`, all f64 is `vec[f64]` (ADR-61). Mixing
+                                // them is an error — the language has no implicit
+                                // conversion, including inside a literal.
+                                match element_ty {
+                                    None => {
+                                        if ty == Type::Int || ty == Type::F64 { element_ty = Some(ty); }
+                                        else { return Err(parser.fail(&format!("vector elements must be i64 or f64, found {}", ty.name()))); }
+                                    }
+                                    Some(same) if ty == same => {}
+                                    Some(same) => return Err(parser.fail(&format!("vector elements must all be {}; {} does not convert implicitly", same.name(), ty.name()))),
+                                }
+                                Ok(element)
+                            },
+                            |parser| {
+                                if *parser.current() != Kind::Comma {
+                                    return false;
+                                }
+                                parser.pos += 1;
+                                true
+                            },
+                        )?
+                    };
                     // Empty literal defaults to the i64 vector; the f64
                     // elements chose vec[f64] (ADR-61).
                     let vector_ty = match element_ty {
@@ -1036,7 +1047,7 @@ impl Parser<'_> {
                         return Err(self.error_at(name_offset, &format!("'{name}' is a generic function; write its type arguments, e.g. {name}[i64](...)")));
                     }
                     self.pos += 1;
-                    let type_args = ae_syntax::declaration::parse_type_argument_list(
+                    let type_args = ae_syntax::parse_comma_list(
                         self,
                         |parser, count| {
                             if count >= 8 {
