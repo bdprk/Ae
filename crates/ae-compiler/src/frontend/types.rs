@@ -2,6 +2,24 @@
 use super::*;
 
 impl Parser<'_> {
+    fn read_type_arguments(
+        &mut self,
+        parse_type: impl FnMut(&mut Self) -> Result<Type, ae_span::Diagnostic>,
+    ) -> Result<Vec<Type>, ae_span::Diagnostic> {
+        let mut parse_type = parse_type;
+        ae_syntax::declaration::parse_type_argument_list(
+            self,
+            |parser, _| parse_type(parser),
+            |parser| {
+                if *parser.current() != Kind::Comma {
+                    return false;
+                }
+                parser.pos += 1;
+                true
+            },
+        )
+    }
+
     pub(super) fn named_type(&mut self) -> Result<Type, ae_span::Diagnostic> {
         let name = self.identifier()?;
         // Inside a generic instantiation a type parameter stands for the
@@ -48,12 +66,7 @@ impl Parser<'_> {
                     }
                     let offset = self.tokens[self.pos].offset;
                     self.pos += 1;
-                    let mut args = Vec::new();
-                    loop {
-                        args.push(self.type_argument()?);
-                        if *self.current() != Kind::Comma { break; }
-                        self.pos += 1;
-                    }
+                    let args = self.read_type_arguments(Self::type_argument)?;
                     self.take(Kind::RBracket)?;
                     let eid = self.instantiate_enum(gid, args, offset)?;
                     let def = &self.enums[eid];
@@ -66,12 +79,7 @@ impl Parser<'_> {
                     }
                     let offset = self.tokens[self.pos].offset;
                     self.pos += 1;
-                    let mut args = Vec::new();
-                    loop {
-                        args.push(self.named_type()?);
-                        if *self.current() != Kind::Comma { break; }
-                        self.pos += 1;
-                    }
+                    let args = self.read_type_arguments(Self::named_type)?;
                     self.take(Kind::RBracket)?;
                     let sid = self.instantiate_struct(gid, args, offset)?;
                     let def = &self.structs[sid];
@@ -691,12 +699,7 @@ impl Parser<'_> {
                         return Err(self.fail(&format!("'&mut {borrowed}' is a generic struct; write its type arguments, e.g. &mut {borrowed}[string]")));
                     }
                     self.pos += 1;
-                    let mut args = Vec::new();
-                    loop {
-                        args.push(self.named_type()?);
-                        if *self.current() != Kind::Comma { break; }
-                        self.pos += 1;
-                    }
+                    let args = self.read_type_arguments(Self::named_type)?;
                     self.take(Kind::RBracket)?;
                     let sid = self.instantiate_struct(gid, args, offset)?;
                     let def = &self.structs[sid];
@@ -734,12 +737,7 @@ impl Parser<'_> {
                         return Err(self.fail(&format!("'&{borrowed}' is a generic struct; write its type arguments, e.g. &{borrowed}[string]")));
                     }
                     self.pos += 1;
-                    let mut args = Vec::new();
-                    loop {
-                        args.push(self.named_type()?);
-                        if *self.current() != Kind::Comma { break; }
-                        self.pos += 1;
-                    }
+                    let args = self.read_type_arguments(Self::named_type)?;
                     self.take(Kind::RBracket)?;
                     let sid = self.instantiate_struct(gid, args, offset)?;
                     let def = &self.structs[sid];
