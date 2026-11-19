@@ -24,6 +24,7 @@ pub enum ExpressionKind {
     Atom(Kind),
     Group(Box<Expression>),
     Propagate(Box<Expression>),
+    BorrowArgument { mutable: bool, name: String, name_range: Range<usize> },
     Array(Vec<Expression>),
     Vector(Vec<Expression>),
     Struct { target: Box<Expression>, fields: Vec<FieldInitializer> },
@@ -199,6 +200,29 @@ impl Parser<'_> {
         Ok(fields)
     }
 
+    fn call_argument(&mut self) -> Result<Expression, Diagnostic> {
+        if self.current().kind != Kind::Amp {
+            return self.expression(0);
+        }
+        self.count_node()?;
+        let start = self.current().offset;
+        self.cursor += 1;
+        let mutable = self.current().kind == Kind::Mut;
+        self.cursor += usize::from(mutable);
+        let token = self.current();
+        let Kind::Ident(name) = &token.kind else {
+            return Err(self.error("expected a binding name after borrow marker"));
+        };
+        let range = start..token.end;
+        let kind = ExpressionKind::BorrowArgument {
+            mutable,
+            name: name.clone(),
+            name_range: token.offset..token.end,
+        };
+        self.cursor += 1;
+        Ok(Expression { kind, range })
+    }
+
     fn postfix(&mut self, mut base: Expression) -> Result<Expression, Diagnostic> {
         while matches!(self.current().kind, Kind::LParen | Kind::LBracket | Kind::Dot | Kind::ColonColon)
             || (self.current().kind == Kind::LBrace
@@ -213,7 +237,7 @@ impl Parser<'_> {
                     let mut arguments = Vec::new();
                     if self.current().kind != Kind::RParen {
                         loop {
-                            arguments.push(self.expression(0)?);
+                            arguments.push(self.call_argument()?);
                             if self.current().kind != Kind::Comma {
                                 break;
                             }
@@ -379,6 +403,29 @@ mod tests {
 
         let error = parse_operator_expression("case.ae", "Result::(value)").unwrap_err();
         assert_eq!(error.primary.unwrap().span.range, 8..9);
+    }
+
+    #[test]
+    fn call_borrows_are_distinct_from_bitwise_and() {
+        let source = "apply(&items, &mut point, x & y)";
+        let parsed = parse_operator_expression("case.ae", source).unwrap();
+        let ExpressionKind::Call { arguments, .. } = parsed.kind else {
+            panic!("expected call");
+        };
+        for (argument, expected, expected_mutability) in [
+            (&arguments[0], "items", false),
+            (&arguments[1], "point", true),
+        ] {
+            let ExpressionKind::BorrowArgument { mutable, name, name_range } = &argument.kind else {
+                panic!("expected a borrowed argument");
+            };
+            assert_eq!(name, expected);
+            assert_eq!(*mutable, expected_mutability);
+            assert_eq!(&source[name_range.clone()], expected);
+        }
+        assert!(matches!(arguments[2].kind, ExpressionKind::Binary { operator: Kind::Amp, .. }));
+        let error = parse_operator_expression("case.ae", "apply(&mut )").unwrap_err();
+        assert_eq!(error.primary.unwrap().span.range, 11..12);
     }
 
     #[test]
