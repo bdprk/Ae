@@ -354,22 +354,20 @@ impl Parser<'_> {
                     let (mutable, pointee) = self.pointer_cast_target()?;
                     ExpressionKind::PointerCast { base: Box::new(base), mutable, pointee }
                 }
-                Kind::Dot | Kind::ColonColon => {
+                Kind::Dot => {
                     let Kind::Ident(name) = &self.current().kind else {
-                        let message = if *opener == Kind::Dot {
-                            "expected a field or method name"
-                        } else {
-                            "expected an associated name after '::'"
-                        };
-                        return Err(self.error(message));
+                        return Err(self.error("expected a field or method name"));
                     };
                     let name = name.clone();
                     self.cursor += 1;
-                    if *opener == Kind::Dot {
-                        ExpressionKind::Field { base: Box::new(base), name }
-                    } else {
-                        ExpressionKind::Qualified { base: Box::new(base), name }
-                    }
+                    ExpressionKind::Field { base: Box::new(base), name }
+                }
+                Kind::ColonColon => {
+                    let (name, end) = crate::pattern::parse_variant_suffix(
+                        self.file, self.source, self.tokens, self.cursor - 1,
+                    )?;
+                    self.cursor = end;
+                    ExpressionKind::Qualified { base: Box::new(base), name }
                 }
                 _ => unreachable!("postfix opener"),
             };
@@ -512,6 +510,7 @@ mod tests {
         assert_eq!(&source[base.range], "Result");
 
         let error = parse_operator_expression("case.ae", "Result::(value)").unwrap_err();
+        assert_eq!(error, crate::pattern::parse_variant_pattern("case.ae", "Result::(value)").unwrap_err());
         assert_eq!(error.primary.unwrap().span.range, 8..9);
     }
 
