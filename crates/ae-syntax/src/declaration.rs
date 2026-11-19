@@ -622,8 +622,8 @@ impl<'a> DeclarationParser<'a> {
                 let stops = if foreign { &[Kind::LBrace, Kind::Semi][..] } else { &[Kind::LBrace][..] };
                 Some(self.ty(stops, false)?)
             };
-            if foreign && !exposes_body && self.current().kind != Kind::Semi {
-                return Err(self.error("expected ';' after extern function declaration"));
+            if foreign && !exposes_body {
+                crate::expect_token(self.file, self.source, self.current(), Kind::Semi)?;
             }
             let function = DeclarationKind::Function { parameters, returns, unsafe_fn, abi };
             if foreign && self.current().kind == Kind::Semi {
@@ -759,7 +759,7 @@ mod tests {
     fn extern_declarations_require_a_return_type_and_semicolon() {
         for (source, expected) in [
             (r#"extern "C" fn foreign();"#, "expected Arrow, found Semi"),
-            (r#"extern "C" fn foreign() -> i64 {}"#, "expected ';' after extern function declaration"),
+            (r#"extern "C" fn foreign() -> i64 {}"#, "expected Semi, found LBrace"),
         ] {
             let error = parse_declarations("case.ae", source).unwrap_err();
             assert_eq!(error.message, expected);
