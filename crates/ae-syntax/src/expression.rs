@@ -352,10 +352,7 @@ impl Parser<'_> {
                     ExpressionKind::PointerCast { base: Box::new(base), mutable, pointee }
                 }
                 Kind::Dot => {
-                    let Kind::Ident(name) = &self.current().kind else {
-                        return Err(self.error("expected a field or method name"));
-                    };
-                    let name = name.clone();
+                    let name = crate::parse_identifier(self.file, self.source, self.current())?.to_owned();
                     self.cursor += 1;
                     ExpressionKind::Field { base: Box::new(base), name }
                 }

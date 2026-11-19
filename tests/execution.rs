@@ -2270,6 +2270,34 @@ fn check_rejects(source: &str) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 #[test]
+fn missing_field_name_has_the_same_diagnostic_in_both_parsers() {
+    let expression = "point.()";
+    let syntax = ae_syntax::expression::parse_operator_expression("main.ae", expression).unwrap_err();
+    assert_eq!(syntax.message, "expected identifier");
+    assert_eq!(syntax.code.as_deref(), Some("E0010"));
+    let range = syntax.primary.unwrap().span.range;
+    assert_eq!(&expression[range.clone()], "(");
+
+    let source = format!(
+        "struct Point {{ x: i64 }}\nfn main() {{ let point = Point {{ x: 7 }}; print({expression}); }}"
+    );
+    let offset = source.find(expression).unwrap();
+    let dir = unique_temp_dir("missing-field-name");
+    let path = dir.join("main.ae");
+    fs::write(&path, &source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["check", "--json"]).arg(&path).output().unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let json = String::from_utf8_lossy(&output.stdout);
+    let expected = format!(
+        "\"message\":\"expected identifier\",\"byte_start\":{},\"byte_end\":{},\"code\":\"E0010\"",
+        offset + range.start, offset + range.end
+    );
+    assert!(json.contains(&expected), "{json}");
+}
+
+#[test]
 fn malformed_variant_binding_has_the_same_span_in_both_parsers() {
     let pattern = "Pair::Value(first, )";
     let error = ae_syntax::pattern::parse_variant_pattern("main.ae", pattern).unwrap_err();
