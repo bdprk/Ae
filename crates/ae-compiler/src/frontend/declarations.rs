@@ -104,7 +104,8 @@ impl Parser<'_> {
         // exist because imports load first.
         use ae_syntax::declaration::{parse_declaration_tokens, DeclarationKind};
 
-        match parse_declaration_tokens(&self.file, self.source, &self.tokens, body_start) {
+        let declarations = parse_declaration_tokens(&self.file, self.source, &self.tokens, body_start);
+        match &declarations {
             Ok(declarations) => {
                 let mut cursor = body_start;
                 for declaration in declarations {
@@ -134,6 +135,15 @@ impl Parser<'_> {
                 }
             }
         }
+        let function_bodies: Vec<_> = declarations.as_ref().map(|declarations| {
+            declarations.iter().filter_map(|declaration| {
+                if matches!(declaration.kind, DeclarationKind::Function { .. }) {
+                    declaration.body.clone()
+                } else {
+                    None
+                }
+            }).collect()
+        }).unwrap_or_default();
         self.pos = body_start;
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::Eof {
@@ -222,7 +232,7 @@ impl Parser<'_> {
                     // The id joins id_order at this position: the body pass
                     // lines up result.len() against it (main included).
                     self.id_order.push(id);
-                    self.skip_balanced_braces()?;
+                    self.skip_signature_body(&function_bodies)?;
                 } else {
                     self.take(Kind::Semi)?;
                 }
@@ -302,7 +312,7 @@ impl Parser<'_> {
                 }
                 if is_unsafe_fn { super::register_unsafe_fn(id); }
             }
-            self.skip_balanced_braces()?;
+            self.skip_signature_body(&function_bodies)?;
         }
         // main presence is checked once per program, not per file.
         self.pos = body_start;
@@ -382,6 +392,16 @@ impl Parser<'_> {
         while *self.current() != Kind::LBrace {
             if *self.current() == Kind::Eof { return Err(self.fail("expected '{' in trait declaration")); }
             self.pos += 1;
+        }
+        self.skip_balanced_braces()
+    }
+
+    fn skip_signature_body(&mut self, bodies: &[std::ops::Range<usize>]) -> Result<(), ae_span::Diagnostic> {
+        let start = self.tokens[self.pos].offset;
+        if let Ok(index) = bodies.binary_search_by_key(&start, |body| body.start) {
+            let end = bodies[index].end;
+            self.pos += self.tokens[self.pos..].partition_point(|token| token.offset < end);
+            return Ok(());
         }
         self.skip_balanced_braces()
     }
