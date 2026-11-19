@@ -2325,6 +2325,66 @@ fn malformed_variant_binding_has_the_same_span_in_both_parsers() {
 }
 
 #[test]
+fn pattern_parser_diagnostics_align_with_check_json() {
+    // The compiler reads arm patterns through the shared syntax parser, so a
+    // malformed pattern reports the same code and byte range through both
+    // routes. The standalone string includes the trailing context the error
+    // points at (an arrow, not EOF), keeping the ranges comparable.
+    let cases = [
+        ("Pair::Value(2, second)", Some("E0010")),
+        ("Pair::Value(first =>", None),
+    ];
+    let ae = env!("CARGO_BIN_EXE_ae");
+    for (pattern, code) in cases {
+        let standalone = ae_syntax::pattern::parse_variant_pattern("main.ae", pattern).unwrap_err();
+        assert_eq!(standalone.code.as_deref(), code, "{pattern:?}");
+        let range = standalone.primary.as_ref().expect("primary label").span.range.clone();
+
+        let source = format!(
+            "enum Pair {{ Value(i64, i64), Zero }}\nfn main() {{ let pair = Pair::Value(4, 9); match pair {{ {pattern} {{ print(first); }} Pair::Zero => {{}} }} }}"
+        );
+        let offset = source.find(pattern).unwrap();
+        let dir = unique_temp_dir("match-pattern-parity");
+        let path = dir.join("main.ae");
+        fs::write(&path, &source).unwrap();
+        let output = Command::new(ae).args(["check", "--json"]).arg(&path).output().unwrap();
+        fs::remove_dir_all(dir).unwrap();
+        assert_eq!(output.status.code(), Some(1), "{pattern:?}");
+        let json = String::from_utf8_lossy(&output.stdout);
+        let code_json = match code {
+            Some(code) => format!("\"code\":\"{code}\""),
+            None => "\"code\":null".to_owned(),
+        };
+        let expected = format!(
+            "\"byte_start\":{},\"byte_end\":{},{}",
+            offset + range.start, offset + range.end, code_json
+        );
+        assert!(json.contains(&expected), "{pattern:?}: expected {expected:?} in {json}");
+    }
+}
+
+#[test]
+fn pattern_payload_shape_is_checked_against_the_declaration() {
+    // The shared parser accepts the whole grammar surface; the declaration
+    // decides which shapes are meaningful. Each rejection names the variant.
+    let base = "enum Pair { Value(i64, i64), Zero }\nfn main() { let pair = Pair::Value(4, 9); match pair { {ARM} } }";
+    let cases = [
+        ("Pair::Value(Pair::Zero(x), second) => { print(second); }", "pattern payloads must be plain names"),
+        ("Pair::Value(a, b, c) => { print(a); }", "binds 2 payload value(s)"),
+        ("Pair::Value(a) => { print(a); }", "needs 2 binding(s)"),
+        ("Pair::Value() => { print(1); }", "needs 2 binding(s)"),
+        ("Pair::Zero(x) => { print(x); }", "has no payload"),
+        ("Pair::Value(a, a) => { print(a); }", "duplicate variable 'a'"),
+        ("Pair::Value(len, b) => { print(b); }", "is a built-in name and cannot be a pattern binding"),
+    ];
+    for (arm, expected) in cases {
+        let source = base.replace("{ARM}", arm);
+        let message = check_rejects(&source);
+        assert!(message.contains(expected), "{arm}\n  expected '{expected}', got '{message}'");
+    }
+}
+
+#[test]
 fn enums_match_payloads_execute() {
     use ae_syntax::pattern::{parse_variant_pattern, PatternKind};
 

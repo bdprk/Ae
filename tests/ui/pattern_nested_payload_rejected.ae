@@ -1,0 +1,12 @@
+// M0.2.04: the shared pattern grammar records nested payloads, but the
+// language's binding rules (spec/patterns.md, M1.9 future work) only bind
+// plain names — nesting is rejected against the declaration with a span on
+// the nested pattern itself.
+enum Pair { Value(i64, i64), Zero }
+fn main() {
+    let pair = Pair::Value(4, 9);
+    match pair {
+        Pair::Value(Pair::Zero(x), second) => { print(second); }
+        Pair::Zero => { print(0); }
+    }
+}
