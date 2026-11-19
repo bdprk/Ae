@@ -1,0 +1,9 @@
+AE thread primitives + atomic allocator accounting — Linux (direct, CI billing-blocked)
+
+Host: InstaBox evaluate-3 sandbox (Debian 13 x86-64, rustc 1.99.0, cargo 1.99.0, gcc 14.2.0)
+Revision: 99464a4 (git archive of HEAD)
+Linux: cargo test --workspace --locked EXIT=0, 430 passed (14+308+3+44+2+59), 0 failed;
+scripts unittest discover: the first attempt used `python` (absent on the sandbox; see harness-run.log for the corrected run) — test_thread_harness then ran with python3 on the C11 thrd branch, gcc 14.2, OK;
+verify_generated_c.py --sanitize then --leak: 82 PASS / 0 FAIL, leak blocks=0.
+Windows: same suite 430 green, harness OK (Win32 branch), 41 C verifications, leak clean.
+GitHub Actions remains billing-blocked; direct runs, not CI.
