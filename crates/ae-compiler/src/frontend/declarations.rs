@@ -139,6 +139,14 @@ impl Parser<'_> {
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::Eof {
             let declaration_start = self.tokens[self.pos].offset;
+            let parsed_declaration = declarations.as_ref().ok().and_then(|items| {
+                let index = items.binary_search_by_key(&declaration_start, |item| item.range.start).ok()?;
+                Some(&items[index])
+            });
+            let parsed_parameters = parsed_declaration.and_then(|item| match &item.kind {
+                DeclarationKind::Function { parameters, .. } => Some(parameters.as_slice()),
+                _ => None,
+            });
             let public = self.take_pub();
             // `#[repr(C)]` is the language's one attribute (M2.12 U8): it
             // pins the struct's layout for the C ABI. The bracket shape is
@@ -174,8 +182,8 @@ impl Parser<'_> {
                 if *self.current() != Kind::RParen {
                     loop {
                         if types.len() >= MAX_FUNCTION_PARAMETERS { return Err(self.fail(&format!("function parameter limit exceeded ({MAX_FUNCTION_PARAMETERS})"))); }
-                        if *self.current() == Kind::Var { self.pos += 1; }
-                        let _parameter = self.identifier()?;
+                        let parsed = parsed_parameters.and_then(|parameters| parameters.get(types.len()));
+                        self.parameter_binding(parsed)?;
                         self.take(Kind::Colon)?;
                         types.push(self.parameter_type()?);
                         if *self.current() != Kind::Comma { break; }
@@ -259,10 +267,6 @@ impl Parser<'_> {
                 let bounds: Vec<Vec<Bound>> = declared.iter().map(|(_, b, _)| b.clone()).collect();
                 let trait_bounds: Vec<Vec<usize>> = declared.into_iter().map(|(_, _, t)| t).collect();
                 let start = self.pos;
-                let parsed_declaration = declarations.as_ref().ok().and_then(|items| {
-                    let index = items.binary_search_by_key(&declaration_start, |item| item.range.start).ok()?;
-                    Some(&items[index])
-                });
                 let end = if let Some(body) = parsed_declaration.and_then(|item| item.body.as_ref()) {
                     self.advance_to_body_end(body.end);
                     self.pos
@@ -272,10 +276,7 @@ impl Parser<'_> {
                 audit_generic_fn(&self.file, self.source, self.tokens.as_ref(), start, end, &name, &params, &bounds, declared_at)?;
                 let gid = self.generics.fn_defs.len();
                 self.generics.fn_names.insert(name.clone(), gid);
-                let bindings = parsed_declaration.and_then(|item| match &item.kind {
-                    DeclarationKind::Function { parameters, .. } => Some(Rc::from(parameters.as_slice())),
-                    _ => None,
-                });
+                let bindings = parsed_parameters.map(Rc::from);
                 self.generics.fn_defs.push(GenericFn { name, bindings, params, bounds, trait_bounds, start, tokens: Rc::clone(&self.tokens), source: Rc::clone(&self.shared_source), file: self.file.clone(), public });
                 continue;
             }
@@ -284,8 +285,8 @@ impl Parser<'_> {
             if *self.current() != Kind::RParen {
                 loop {
                     if types.len() >= MAX_FUNCTION_PARAMETERS { return Err(self.fail(&format!("function parameter limit exceeded ({MAX_FUNCTION_PARAMETERS})"))); }
-                    if *self.current() == Kind::Var { self.pos += 1; }
-                    let parameter = self.identifier()?;
+                    let parsed = parsed_parameters.and_then(|parameters| parameters.get(types.len()));
+                    let (parameter, _, _) = self.parameter_binding(parsed)?;
                     if RESERVED.contains(&parameter.as_str()) { return Err(self.fail(&format!("'{parameter}' is a built-in name and cannot be a parameter"))); }
                     self.take(Kind::Colon)?;
                     types.push(self.parameter_type()?);
@@ -953,6 +954,21 @@ impl Parser<'_> {
         self.function_rest_with_parameters(is_main, id, None)
     }
 
+    fn parameter_binding(
+        &mut self,
+        parsed: Option<&TypedName>,
+    ) -> Result<(String, bool, std::ops::Range<usize>), ae_span::Diagnostic> {
+        if let Some(parameter) = parsed {
+            self.pos += 1 + usize::from(parameter.mutable);
+            return Ok((parameter.name.clone(), parameter.mutable, parameter.name_range.clone()));
+        }
+        let mutable = *self.current() == Kind::Var;
+        if mutable { self.pos += 1; }
+        let token = &self.tokens[self.pos];
+        let range = token.offset..token.end;
+        Ok((self.identifier()?, mutable, range))
+    }
+
     fn function_rest_with_parameters(
         &mut self,
         is_main: bool,
@@ -981,15 +997,7 @@ impl Parser<'_> {
                 // in at the call site, so mutating this copy cannot be seen by
                 // the caller; that difference is what keeps it safe.
                 let parsed = parsed_parameters.and_then(|parameters| parameters.get(params.len()));
-                let (param, mutable, binding_range) = if let Some(parameter) = parsed {
-                    self.pos += 1 + usize::from(parameter.mutable);
-                    (parameter.name.clone(), parameter.mutable, parameter.name_range.clone())
-                } else {
-                    let mutable = *self.current() == Kind::Var;
-                    if mutable { self.pos += 1; }
-                    let binding_range = self.tokens[self.pos].offset..self.tokens[self.pos].end;
-                    (self.identifier()?, mutable, binding_range)
-                };
+                let (param, mutable, binding_range) = self.parameter_binding(parsed)?;
                 // A receiver carries its type from the impl, so the parameter
                 // list never writes it (M1.2). Everywhere else `self` is just
                 // an unknown name, which keeps the spelling from leaking out of
