@@ -62,7 +62,9 @@ impl<'a> Parser<'a> {
         self.pos += 1; Ok(())
     }
     pub(super) fn identifier(&mut self) -> Result<String, ae_span::Diagnostic> {
-        match self.current().clone() { Kind::Ident(s) => { self.pos += 1; Ok(s) }, _ => Err(self.fail("expected identifier").with_code("E0010")) }
+        let name = ae_syntax::parse_identifier(&self.file, self.source, &self.tokens[self.pos])?;
+        self.pos += 1;
+        Ok(name.to_owned())
     }
     // Whether an `unsafe` block's body contains any operation the block
     // exists to legalize: a raw dereference, a pointer store, or a call to
@@ -1028,7 +1030,7 @@ impl<'a> Parser<'a> {
         let mut seen = vec![false; def.variants.len()];
         self.borrows.push((sid, self.scopes.len(), BorrowKind::Container));
         while *self.current() != Kind::RBrace {
-            let pattern = ae_syntax::pattern::parse_pattern_name(
+            let pattern = ae_syntax::parse_identifier(
                 &self.file, self.source, &self.tokens[self.pos],
             )?;
             self.pos += 1;
@@ -1053,7 +1055,7 @@ impl<'a> Parser<'a> {
                 if fields.is_empty() { return Err(self.fail(&format!("variant '{}::{}' has no payload", def.name, vname))); }
                 self.pos += 1;
                 for (index, field) in fields.iter().copied().enumerate() {
-                    let bname = ae_syntax::pattern::parse_pattern_name(
+                    let bname = ae_syntax::parse_identifier(
                         &self.file, self.source, &self.tokens[self.pos],
                     )?.to_owned();
                     self.pos += 1;

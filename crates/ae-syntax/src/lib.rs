@@ -591,3 +591,16 @@ pub fn parse_comma_list<P, T, E>(
         }
     }
 }
+
+/// Read an identifier without advancing the caller's token cursor.
+pub fn parse_identifier<'a>(
+    file: &str,
+    source: &str,
+    token: &'a Token,
+) -> Result<&'a str, Diagnostic> {
+    match &token.kind {
+        Kind::Ident(name) => Ok(name),
+        _ => Err(diagnostic_range(file, source, token.offset..token.end,
+            "expected identifier").with_code("E0010")),
+    }
+}

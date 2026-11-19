@@ -45,21 +45,8 @@ pub fn parse_variant_suffix(
         return Err(diagnostic_range(file, source, separator.offset..separator.end,
             &format!("expected ColonColon, found {:?}", separator.kind)).with_code("E0010"));
     }
-    let name = parse_pattern_name(file, source, &tokens[start + 1])?;
+    let name = crate::parse_identifier(file, source, &tokens[start + 1])?;
     Ok((name.to_owned(), start + 2))
-}
-
-/// Read an enum, variant, or binding name at the current pattern token.
-pub fn parse_pattern_name<'a>(
-    file: &str,
-    source: &str,
-    token: &'a Token,
-) -> Result<&'a str, Diagnostic> {
-    match &token.kind {
-        Kind::Ident(name) => Ok(name),
-        _ => Err(diagnostic_range(file, source, token.offset..token.end,
-            "expected identifier").with_code("E0010")),
-    }
 }
 
 struct Parser<'a> {
@@ -94,7 +81,7 @@ impl Parser<'_> {
         }
         self.nodes += 1;
         let start = self.current().offset;
-        let name = parse_pattern_name(self.file, self.source, self.current())?.to_owned();
+        let name = crate::parse_identifier(self.file, self.source, self.current())?.to_owned();
         self.cursor += 1;
         let kind = if qualified || self.current().kind == Kind::ColonColon {
             let (variant, end) = parse_variant_suffix(self.file, self.source, self.tokens, self.cursor)?;
