@@ -2,7 +2,7 @@
 use super::*;
 
 impl Parser<'_> {
-    fn read_type_arguments(
+    pub(super) fn read_type_arguments(
         &mut self,
         parse_type: impl FnMut(&mut Self) -> Result<Type, ae_span::Diagnostic>,
     ) -> Result<Vec<Type>, ae_span::Diagnostic> {
