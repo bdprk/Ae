@@ -101,27 +101,11 @@ impl Parser<'_> {
     pub(super) fn collect_functions(&mut self, next_id: &mut usize, body_start: usize) -> Result<(), ae_span::Diagnostic> {
         // Traits are registered before anything else so a bound in the same
         // file can name a trait declared later; cross-file traits already
-        // exist because imports load first. The scan walks tokens directly:
-        // a `{` inside a string literal is part of its Text token, so brace
-        // depth over tokens is exact.
-        let mut depth = 0usize;
-        let mut i = body_start;
-        while i < self.tokens.len() - 1 {
-            match self.tokens[i].kind {
-                Kind::LBrace => depth += 1,
-                // The scan runs before anything validates the file, so a
-                // malformed `}` at depth zero must not panic (the
-                // malformed-input test feeds exactly such files).
-                Kind::RBrace => depth = depth.saturating_sub(1),
-                Kind::Trait if depth == 0 => {
-                    self.pos = i;
-                    self.parse_trait_def()?;
-                    i = self.pos;
-                    continue;
-                }
-                _ => {}
-            }
-            i += 1;
+        // exist because imports load first.
+        self.pos = body_start;
+        while let Some(trait_start) = ae_syntax::declaration::next_top_level_trait(&self.tokens, self.pos) {
+            self.pos = trait_start;
+            self.parse_trait_def()?;
         }
         self.pos = body_start;
         let mut seen = std::collections::HashSet::new();
