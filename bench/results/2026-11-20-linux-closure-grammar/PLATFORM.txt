@@ -1,0 +1,8 @@
+AE M0.2.03 closure grammar verification — Linux (direct, CI billing-blocked)
+
+Host: InstaBox evaluate-3 sandbox (Debian 13 x86-64, rustc 1.99.0, cargo 1.99.0, gcc 14.2.0)
+Revision: 0ae8019 (git archive of HEAD)
+Windows: cargo test --workspace --locked 430 green (14+308+3+44+2+59), fuzz 40 seeds 0 failures, verify_generated_c 41 PASS.
+Linux: cargo test --workspace --locked EXIT=0, identical counts (430, 0 failed);
+verify_generated_c.py --sanitize then --leak in one log: 82 PASS / 0 FAIL, leak blocks=0.
+GitHub Actions did not start for this revision (account payments/spending limit).
