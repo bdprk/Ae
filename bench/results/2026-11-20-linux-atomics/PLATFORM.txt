@@ -1,0 +1,10 @@
+AE cell_* atomics — Linux (direct, CI billing-blocked)
+
+Host: InstaBox evaluate-3 (Debian 13 x86-64, rustc 1.99.0, gcc 14.2.0)
+Revision: 26a2754 (git archive of HEAD)
+Linux: cargo test --workspace --locked EXIT=0, 434 passed (14+311+3+44+2+59), 0 failed;
+scripts unittest all OK (incl. thread harness, C11 branch); verify_generated_c
+sanitize 41 PASS and leak 41 PASS.
+Windows: same suite 434 green, fuzz 40 seeds 0 failures (incl. the shared-cell
+shape), verify 41 PASS, scripts OK.
+GitHub Actions remains billing-blocked; direct runs, not CI.
