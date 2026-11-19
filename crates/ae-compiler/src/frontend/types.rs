@@ -309,23 +309,29 @@ impl Parser<'_> {
         let key = format!("{gid}:{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
         if let Some(&eid) = self.generics.done.get(&key) { return Ok(eid); }
         let display = self.instantiation_display(&def.name, &args);
-        if self.generics.instantiation_trace.iter().any(|(active, _)| *active == key) {
+        if self.generics.instantiation_trace.iter().any(|(kind, active, _)| *kind == "enum" && *active == key) {
             return Err(self.error_at(offset, &format!("'{}' is already being instantiated with these type arguments; the expansion would never finish (instantiated: {})",
-                def.name, self.instantiation_trace(Some(&display)))));
+                def.name, self.instantiation_trace(&display))));
         }
-        self.generics.instantiation_trace.push((key.clone(), display));
-        if self.enums.len() >= MAX_ENUM_TYPES {
+        let active_layouts = self.generics.instantiation_trace.iter().filter(|(kind, _, _)| *kind == "enum").count();
+        if self.enums.len() + active_layouts >= MAX_ENUM_TYPES {
             return Err(self.error_at(offset, &format!("generic instantiation budget exceeded ({MAX_ENUM_TYPES} enum types) at '{}' (instantiated: {})",
-                def.name, self.instantiation_trace(None))));
+                def.name, self.instantiation_trace(&display))));
         }
-        let mut variants: Vec<(String, Vec<Type>)> = Vec::new();
-        for (vname, fields) in def.variants.iter() {
-            let mut types = Vec::new();
-            for p in fields.iter() {
-                types.push(self.resolve_payload(p, &args, offset)?);
+        self.generics.instantiation_trace.push(("enum", key.clone(), display));
+        let variants = (|| {
+            let mut variants: Vec<(String, Vec<Type>)> = Vec::new();
+            for (vname, fields) in def.variants.iter() {
+                let mut types = Vec::new();
+                for p in fields.iter() {
+                    types.push(self.resolve_payload(p, &args, offset)?);
+                }
+                variants.push((vname.clone(), types));
             }
-            variants.push((vname.clone(), types));
-        }
+            Ok(variants)
+        })();
+        self.generics.instantiation_trace.pop();
+        let variants = variants?;
         let display = format!("{}[{}]", def.name, args.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "));
         let interned: &'static str = Box::leak(display.into_boxed_str());
         let eid = self.enums.len();
@@ -334,7 +340,6 @@ impl Parser<'_> {
         // Method calls on the instantiation resolve through its generic impl
         // block (same machinery as generic structs, ADR-0187/0196).
         self.generics.enum_origin.insert(eid, (gid, args));
-        self.generics.instantiation_trace.pop();
         Ok(eid)
     }
     // A concrete type argument. Structs and enums are rejected for the same
@@ -432,20 +437,26 @@ impl Parser<'_> {
         let key = format!("{gid}:{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
         if let Some(&sid) = self.generics.struct_done.get(&key) { return Ok(sid); }
         let display = self.instantiation_display(&def.name, &args);
-        if self.generics.instantiation_trace.iter().any(|(active, _)| *active == key) {
+        if self.generics.instantiation_trace.iter().any(|(kind, active, _)| *kind == "struct" && *active == key) {
             return Err(self.error_at(offset, &format!("'{}' is already being instantiated with these type arguments; the expansion would never finish (instantiated: {})",
-                def.name, self.instantiation_trace(Some(&display)))));
+                def.name, self.instantiation_trace(&display))));
         }
-        self.generics.instantiation_trace.push((key.clone(), display));
-        if self.structs.len() >= MAX_STRUCT_TYPES {
+        let active_layouts = self.generics.instantiation_trace.iter().filter(|(kind, _, _)| *kind == "struct").count();
+        if self.structs.len() + active_layouts >= MAX_STRUCT_TYPES {
             return Err(self.error_at(offset, &format!("generic instantiation budget exceeded ({MAX_STRUCT_TYPES} struct types) at '{}' (instantiated: {})",
-                def.name, self.instantiation_trace(None))));
+                def.name, self.instantiation_trace(&display))));
         }
-        let mut fields: Vec<(String, Type)> = Vec::new();
-        for (fname, payload) in def.fields.iter() {
-            let ty = self.resolve_payload(payload, &args, offset)?;
-            fields.push((fname.clone(), ty));
-        }
+        self.generics.instantiation_trace.push(("struct", key.clone(), display));
+        let fields = (|| {
+            let mut fields: Vec<(String, Type)> = Vec::new();
+            for (fname, payload) in def.fields.iter() {
+                let ty = self.resolve_payload(payload, &args, offset)?;
+                fields.push((fname.clone(), ty));
+            }
+            Ok(fields)
+        })();
+        self.generics.instantiation_trace.pop();
+        let fields = fields?;
         let display = format!("{}[{}]", def.name, args.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "));
         let sid = self.structs.len();
         self.structs.push(StructDef { name: display, fields, file: def.file, public: def.public, repr_c: false, drop_fn: None });
@@ -458,7 +469,6 @@ impl Parser<'_> {
             let drop_inst = self.instantiate_impl_method(&def.name, "drop", sid, gid, &args, offset)?;
             self.structs[sid].drop_fn = Some(drop_inst.0);
         }
-        self.generics.instantiation_trace.pop();
         Ok(sid)
     }
     pub(super) fn parse_struct_def(&mut self, public: bool, repr_c: bool) -> Result<(), ae_span::Diagnostic> {

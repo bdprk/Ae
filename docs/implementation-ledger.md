@@ -81,7 +81,7 @@ Entry dependency: M1.2.
 - [x] M1.3.03. **check generic body.** Reject an unused generic function that invokes an operation absent from its bounds. (constraint-bound half verified: unused generic body rejected for operators outside its bounds, ADR-40. The trait-method half is governed by ADR-0047, which deliberately defers declaration-site pre-checking of trait calls - instantiation-site reporting is more accurate via 'required by', and overriding the deferral needs the evidence ADR-47 asks for. The M1.3 gate's 'even when unused' therefore holds for the bounds the spec gives declaration-site power over.)
 - [x] M1.3.04. **test overlap.** Reject two applicable implementations and identify both declarations. (overlap in the blanket sense is impossible (impl Area for T rejected by design); the achievable overlap, an exact duplicate (trait, type) pair, is diagnosed naming both declarations)
 - [ ] M1.3.05. **canonicalize instances.** Emit one instance for two call sites using the same concrete arguments.
-- [ ] M1.3.06. **limit recursion.** Stop expanding a growing type chain and print the instantiation trace. (expansion stops deterministically (instantiation-cycle closure for fixed points, 256-type budget for growing chains) but the instantiation trace is not printed: the diagnostic names only the offending site/type)
+- [x] M1.3.06. **limit recursion.** Reject repeated instantiations and over-budget nested layouts with the ordered instantiation trace.
 
 Integration gate: Invalid body rejected even when unused, repeated instances share code.
 
@@ -420,12 +420,13 @@ Method: an evidence sweep over the 284 execution tests plus new CLI fixtures (te
 | M1.3.01 | Decisive probe m13/n2: `Box[i64] { inner: Wrap[i64] {...} }` where the field is `Wrap[string]` → `field 'inner' must be struct #0` — same-spelling parameters stay distinct. |
 | M1.3.02 | `add[bool](true, false)` → `type argument 'bool' for 'add' does not satisfy 'Add'; that constraint allows i64, string, f64`; trait: `no impl of trait 'Area' for 'string'; required by 'report'`. |
 | M1.3.05 | `emit-c` of three `identity[i64]` call sites + one `identity[string]` emits exactly one function per argument list (fixture m13/ci.ae). |
+| M1.3.06 | CLI regression tests cover a repeated generic call, a 257-layout chain with the full trace, an enum budget diagnostic, and a valid function-to-struct instantiation with matching internal IDs. |
 | M1.4.01 | `enums_match_payloads_execute` (`Shape::Rect(w, h)` → 45 from Rect(4,5), declaration order); wrong arity → parse-level rejection. |
 | M1.4.02 | `match is not exhaustive: 'Shape::Empty' is not handled`; duplicate arm → `variant 'Shape::Empty' is matched twice`; `_ =>` → `pattern must name the matched enum`. |
 | M1.4.03 | Read/write/move distinguished: borrow captures allow repeated calls; `a closure cannot mutate captured variable 'counter' in this version`; value captures → `cannot call 'exists' again because a value capture was already moved by the first call`. |
 | M1.4.05 | Borrow-capture double call accepted (m14/i1); value-capture second call rejected with E0102 + `binding declared here` secondary. |
 
-Gaps kept open on the checklist: M1.1.05 (closed-path rendering for module cycles), M1.3.06 (instantiation trace not printed). M1.3.03's trait-method half is ADR-0047's recorded deferral, not a gap. The closure-example comment discrepancy (examples/closures.ae, tests/run/closures.ae claiming a move capture for concatenation) is fixed in this pass: the compiler and spec/closures.md agree the capture is a borrow.
+M1.1.05 remains open for closed-path rendering of module cycles. M1.3.03's trait-method half is ADR-0047's recorded deferral, not a gap. The closure-example comment discrepancy (examples/closures.ae, tests/run/closures.ae claiming a move capture for concatenation) is fixed in this pass: the compiler and spec/closures.md agree the capture is a borrow.
 
 ## Verified 2026-11-19 — M3.1.01 pay-as-you-go allocator (ADR-0213)
 
