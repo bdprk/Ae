@@ -113,7 +113,7 @@ class Gen:
         """
         if depth >= 3:
             return [f"print({self.int_expr(vars)});"]
-        kind = self.rnd() % 21
+        kind = self.rnd() % 22
         # With pointers in scope, a third of the draws land on the pointer
         # kinds (19/20): the fresh surface needs the pressure, and the shapes
         # are cheap to generate.
@@ -125,6 +125,32 @@ class Gen:
             kind = 3
         if kind in (19, 20) and (not vars or not pointers):
             kind = 3
+        if kind == 21:
+            # ADR-0214: a spawned closure moves its owned captures into the
+            # thread and wait hands the result back. Scalars copy (they stay
+            # usable outside), and a string capture is consumed by the body's
+            # return — the shape that forces a value capture, since a borrow
+            # capture cannot cross. The capture variables are retired after
+            # the spawn, so no later statement reads a moved name.
+            name = self.fresh("th")
+            if self.rnd() % 2 == 0:
+                return [
+                    f"let {name} = spawn(|| -> i64 {{ return ({self.int_expr(vars)}) + 1; }});",
+                    f"print(wait({name}));",
+                    *self.statement(vars, depth + 1, docs, pointers),
+                ]
+            sname = self.fresh("s")
+            a = '"f' + str(self.rnd() % 1000) + '"'
+            # The body's plain return fails the borrow probe (a view cannot
+            # satisfy the owned string return), so the capture classifies as
+            # a value and moves — a concat would stay a legal borrow and the
+            # spawn would reject it.
+            return [
+                f"var {sname} = {a};",
+                f"let {name} = spawn(|| -> string {{ return {sname}; }});",
+                f"print(wait({name}));",
+                *self.statement(vars, depth + 1, docs, pointers),
+            ]
         if kind == 13:
             # A string vector with the full mutation surface: pushes, an
             # indexed store (releasing the old element), and reads. The
