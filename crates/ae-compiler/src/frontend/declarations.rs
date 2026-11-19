@@ -66,16 +66,7 @@ impl Parser<'_> {
     // Enum bodies are collected in the first pass, skipped in the second.
     // Step over `[T, U]` when a declaration is skipped in the second pass.
     pub(super) fn skip_type_params(&mut self) {
-        if *self.current() != Kind::LBracket { return; }
-        let mut depth = 0usize;
-        while *self.current() != Kind::Eof {
-            match self.current() {
-                Kind::LBracket => depth += 1,
-                Kind::RBracket => { depth -= 1; if depth == 0 { self.pos += 1; return; } }
-                _ => {}
-            }
-            self.pos += 1;
-        }
+        self.pos = ae_syntax::declaration::skip_type_parameter_list(&self.tokens, self.pos);
     }
     // Skip `(params) -> Ret { body }` without interpreting it. Used for a
     // generic declaration, whose body is parsed at each instantiation instead.
