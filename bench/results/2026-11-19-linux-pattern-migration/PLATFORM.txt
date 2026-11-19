@@ -1,0 +1,8 @@
+AE M0.2.04 pattern migration verification — Linux (direct, CI billing-blocked)
+
+Host: InstaBox evaluate-3 sandbox (Debian 13 x86-64, rustc 1.99.0, cargo 1.99.0, gcc 14.2.0)
+Revision: 8771dfc (git archive of HEAD, tar SHA-256 315e1478b474a65cc7a7f74f23176589500f32a787ab57ee2940d8f2da1a4261)
+Windows: same revision, cargo test --workspace --locked 425 green (14+307+3+44+2+55), fuzz 40 seeds 0 failures, verify_generated_c 41 PASS.
+Linux: cargo test --workspace --locked EXIT=0, identical counts (14+307+3+44+2+55 = 425, 0 failed);
+verify_generated_c.py --sanitize 41 PASS / 0 FAIL; --leak 41 PASS / 0 FAIL, leak blocks=0.
+GitHub Actions for this revision did not start: account payments/spending limit (see agent-failure-log/2026-11-19.md).
