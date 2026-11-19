@@ -3,11 +3,30 @@ use crate::{Kind, Token};
 /// Find the token immediately after the brace body whose opening brace has
 /// already been consumed. On failure, return the position of the end token.
 pub fn brace_body_end(tokens: &[Token], start: usize) -> Result<usize, usize> {
+    delimited_body_end(tokens, start, Kind::LBrace, Kind::RBrace)
+}
+
+/// Skip a generic parameter list if it starts at this token. An incomplete
+/// list stops at EOF so the caller can handle it in its normal error path.
+pub fn skip_type_parameter_list(tokens: &[Token], start: usize) -> usize {
+    if !tokens.get(start).is_some_and(|token| token.kind == Kind::LBracket) {
+        return start;
+    }
+    delimited_body_end(tokens, start + 1, Kind::LBracket, Kind::RBracket)
+        .unwrap_or_else(|end| end)
+}
+
+fn delimited_body_end(
+    tokens: &[Token],
+    start: usize,
+    open: Kind,
+    close: Kind,
+) -> Result<usize, usize> {
     let mut depth = 1;
     for (index, token) in tokens.iter().enumerate().skip(start) {
         match token.kind {
-            Kind::LBrace => depth += 1,
-            Kind::RBrace => {
+            ref kind if *kind == open => depth += 1,
+            ref kind if *kind == close => {
                 depth -= 1;
                 if depth == 0 {
                     return Ok(index + 1);
