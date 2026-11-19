@@ -55,7 +55,8 @@ pub struct Declaration {
 /// Type spellings and function bodies are retained as source ranges.
 pub fn parse_declarations(file: &str, source: &str) -> Result<Vec<Declaration>, Diagnostic> {
     let tokens = declaration_tokens(file, source)?;
-    let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: 0 };
+    let imports = crate::module::parse_use_headers(file, source, &tokens)?;
+    let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: imports.len() * 3 };
     let mut declarations = Vec::new();
     while parser.current().kind != Kind::Eof {
         declarations.push(parser.declaration()?);
@@ -81,7 +82,14 @@ pub fn recover_declarations(file: &str, source: &str) -> RecoveredDeclarations {
             return result;
         }
     };
-    let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: 0 };
+    let imports = match crate::module::parse_use_headers(file, source, &tokens) {
+        Ok(imports) => imports,
+        Err(error) => {
+            result.diagnostics.push(error);
+            return result;
+        }
+    };
+    let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: imports.len() * 3 };
     while parser.current().kind != Kind::Eof {
         let start = parser.pos;
         match parser.declaration() {
@@ -317,6 +325,18 @@ mod tests {
         assert_eq!(recovered.declarations[0].name, "Next");
         assert_eq!(recovered.declarations[0].range.start, source.find("pub struct").unwrap());
         assert_eq!(recovered.declarations[1].name, "main");
+    }
+
+    #[test]
+    fn reads_declarations_after_headers_in_the_module_example() {
+        let source = include_str!("../../../examples/modules/main.ae");
+        let declarations = parse_declarations("main.ae", source).unwrap();
+        assert_eq!(declarations.len(), 1);
+        assert_eq!(declarations[0].name, "main");
+        assert_eq!(declarations[0].range.start, source.find("fn main").unwrap());
+        let recovered = recover_declarations("main.ae", source);
+        assert!(recovered.diagnostics.is_empty());
+        assert_eq!(recovered.declarations, declarations);
     }
 
     #[test]
