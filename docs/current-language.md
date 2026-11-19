@@ -173,7 +173,7 @@ The exclusive mutable borrow: a parameter `fn bump(c: &mut Counter) -> i64` or t
 A closure literal is `|a: i64, b: i64| -> R { body }` (`||` for no parameters); parameter and return annotations are required, and the body must return on every path. A closure compiles to an ordinary function whose leading parameters are its captures, so calling one is a plain call:
 
 - **Read-only captures borrow**: a body that only reads a `string`, `vec`, or `struct` captures it as a view/`&T` — the closure is callable any number of times, and the outer variable cannot move or be written while the closure name is live.
-- **Consumed captures travel by value**: a body that needs ownership (`return note + "!"`) makes every capture a value capture — each call moves the outer variable, so a second call is a use-after-move error.
+- **Consumed captures travel by value**: a body that needs ownership (`return note;` hands the capture over) makes every capture a value capture — each call moves the outer variable, so a second call is a use-after-move error.
 - **Scalars always copy.** Maps travel by value (they cannot be borrowed).
 - Mutating a captured container or field is rejected: writes would hit a copy. A closure has no storage, so it cannot be returned or stored, and closures nest.
 

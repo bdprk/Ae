@@ -17,7 +17,7 @@ The C backend offered a shortcut that shaped the whole design: every generated f
 **Capture classification is Rust's Fn/FnOnce split, inferred from two probes.** The literal parses its body twice:
 
 1. The *borrow probe* binds every borrowable capture in its read-only form (`string`→view, `vec`→`&vec`, `struct`→`&Struct`) and the rest as-is. If the body parses, every capture it moved would have been a type error — so all captures are borrows, and the closure is callable any number of times.
-2. If that body fails — some capture is used where an owned value is required (`return note + "!"` builds a string from it) — the *owned probe* binds everything by value, and every used capture becomes a value capture: **each call moves the outer variable**, exactly like a plain call, which is what makes a second call a compile-time use-after-move instead of a double free.
+2. If that body fails — some capture is used where an owned value is required (`return note;` returns the capture itself) — the *owned probe* binds everything by value, and every used capture becomes a value capture: **each call moves the outer variable**, exactly like a plain call, which is what makes a second call a compile-time use-after-move instead of a double free.
 
 Both probes are throwaway; only the last parse is emitted. An AST walk over the probe decides *which* names are captures (used parameter slots, in capture order) and rejects the one shape that cannot be honored: mutating a captured container or field, which would silently write a copy — the diagnostic says to write the loop in the enclosing scope.
 
