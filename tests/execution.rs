@@ -4076,7 +4076,7 @@ fn main() {{
 
 #[test]
 fn json_check_does_not_merge_different_declaration_errors_at_the_same_span() {
-    let source = "struct { }\nfn second(value: i64 { }\nfn main() {}";
+    let source = "fn main() ;\nfn second(value: i64 { }\nfn main() {}";
     let syntax = ae_syntax::declaration::recover_declarations("main.ae", source);
     assert_eq!(syntax.diagnostics.len(), 2);
     let range = &syntax.diagnostics[0].primary.as_ref().unwrap().span.range;
@@ -4090,7 +4090,7 @@ fn json_check_does_not_merge_different_declaration_errors_at_the_same_span() {
     assert_eq!(output.status.code(), Some(1));
     let json = String::from_utf8_lossy(&output.stdout);
     assert_eq!(json.matches("\"message\":").count(), 1, "{json}");
-    assert!(json.contains("\"message\":\"expected identifier\""), "{json}");
+    assert!(json.contains("\"message\":\"expected LBrace, found Semi\""), "{json}");
     assert!(json.contains(&format!("\"byte_start\":{},\"byte_end\":{}", range.start, range.end)), "{json}");
 }
 
