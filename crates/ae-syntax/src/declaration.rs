@@ -618,14 +618,7 @@ impl<'a> DeclarationParser<'a> {
                 }
                 None
             } else {
-                if !self.consume(Kind::Arrow) {
-                    let message = if foreign {
-                        "expected '->' before extern return type"
-                    } else {
-                        "expected '->' before function return type"
-                    };
-                    return Err(self.error(message));
-                }
+                self.take(Kind::Arrow)?;
                 let stops = if foreign { &[Kind::LBrace, Kind::Semi][..] } else { &[Kind::LBrace][..] };
                 Some(self.ty(stops, false)?)
             };
@@ -755,7 +748,7 @@ mod tests {
         assert_eq!(recovered.declarations.len(), 1);
         assert_eq!(recovered.declarations[0].name, "main");
         assert_eq!(recovered.diagnostics.len(), 1);
-        assert_eq!(recovered.diagnostics[0].message, "expected '->' before function return type");
+        assert_eq!(recovered.diagnostics[0].message, "expected Arrow, found LBrace");
 
         for invalid in ["fn main() -> i64 {}", "fn main[T]() {}", "fn main(x: i64) {}"] {
             assert!(parse_declarations("case.ae", invalid).is_err(), "{invalid}");
@@ -765,7 +758,7 @@ mod tests {
     #[test]
     fn extern_declarations_require_a_return_type_and_semicolon() {
         for (source, expected) in [
-            (r#"extern "C" fn foreign();"#, "expected '->' before extern return type"),
+            (r#"extern "C" fn foreign();"#, "expected Arrow, found Semi"),
             (r#"extern "C" fn foreign() -> i64 {}"#, "expected ';' after extern function declaration"),
         ] {
             let error = parse_declarations("case.ae", source).unwrap_err();
