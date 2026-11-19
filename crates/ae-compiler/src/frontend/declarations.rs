@@ -259,11 +259,11 @@ impl Parser<'_> {
                 let bounds: Vec<Vec<Bound>> = declared.iter().map(|(_, b, _)| b.clone()).collect();
                 let trait_bounds: Vec<Vec<usize>> = declared.into_iter().map(|(_, _, t)| t).collect();
                 let start = self.pos;
-                let parsed_body = declarations.as_ref().ok().and_then(|items| {
+                let parsed_declaration = declarations.as_ref().ok().and_then(|items| {
                     let index = items.binary_search_by_key(&declaration_start, |item| item.range.start).ok()?;
-                    items[index].body.as_ref()
+                    Some(&items[index])
                 });
-                let end = if let Some(body) = parsed_body {
+                let end = if let Some(body) = parsed_declaration.and_then(|item| item.body.as_ref()) {
                     self.advance_to_body_end(body.end);
                     self.pos
                 } else {
@@ -272,7 +272,11 @@ impl Parser<'_> {
                 audit_generic_fn(&self.file, self.source, self.tokens.as_ref(), start, end, &name, &params, &bounds, declared_at)?;
                 let gid = self.generics.fn_defs.len();
                 self.generics.fn_names.insert(name.clone(), gid);
-                self.generics.fn_defs.push(GenericFn { name, params, bounds, trait_bounds, start, tokens: Rc::clone(&self.tokens), source: Rc::clone(&self.shared_source), file: self.file.clone(), public });
+                let bindings = parsed_declaration.and_then(|item| match &item.kind {
+                    DeclarationKind::Function { parameters, .. } => Some(Rc::from(parameters.as_slice())),
+                    _ => None,
+                });
+                self.generics.fn_defs.push(GenericFn { name, bindings, params, bounds, trait_bounds, start, tokens: Rc::clone(&self.tokens), source: Rc::clone(&self.shared_source), file: self.file.clone(), public });
                 continue;
             }
             self.take(Kind::LParen)?;
@@ -1099,7 +1103,7 @@ impl Parser<'_> {
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
             borrows: Vec::new(), deferred_write_conflicts: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(), subst, trait_bounds, receiver: None, impl_self: None, shadow_ok: false, pending: Vec::new(),
         };
-        let parsed = sub.function_rest(false, id);
+        let parsed = sub.function_rest_with_parameters(false, id, def.bindings.as_deref());
         let mut nested = std::mem::take(&mut sub.pending);
         drop(sub);
         self.generics.fn_in_progress.remove(&key);
