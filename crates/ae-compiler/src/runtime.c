@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <inttypes.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -122,28 +123,43 @@ static void ae_os_release(void *block) { free(block); }
 static ae_allocator ae_allocator_impl = { ae_os_alloc, ae_os_resize, ae_os_release };
 // `AE_ALLOC_LIMIT` caps the cumulative number of bytes handed out, which is
 // how the test suite reaches the out-of-memory path on purpose. It is a
-// diagnostic, not a policy knob: the default is unlimited.
-static uint64_t ae_alloc_budget = UINT64_MAX;
-static uint64_t ae_alloc_total = 0;
-static bool ae_alloc_ready = false;
+// diagnostic, not a policy knob: the default is unlimited. The counters are
+// C11 atomics (ADR-0214): threads share one heap and one budget, and a data
+// race on plain globals would be undefined behavior even where a torn read is
+// impossible on x86-64.
+static _Atomic uint64_t ae_alloc_budget = UINT64_MAX;
+static _Atomic uint64_t ae_alloc_total = 0;
+static _Atomic bool ae_alloc_ready = false;
 // unit: -
+// The lazy environment read is guarded by an exchange so concurrent first
+// allocations cannot race getenv; the winner initializes, everyone else
+// proceeds.
 static void ae_alloc_env(void) {
-    ae_alloc_ready = true;
     const char *limit = getenv("AE_ALLOC_LIMIT");
     if (!limit || !*limit) return;
     char *end = NULL;
     unsigned long long value = strtoull(limit, &end, 10);
     if (end == limit || *end) return;
-    ae_alloc_budget = (uint64_t)value;
+    atomic_store(&ae_alloc_budget, (uint64_t)value);
 }
 // NULL-returning variant for helpers that report failure through their own
 // return value (path widening, for instance) instead of terminating.
+// The budget check charges first and rolls back, so two threads cannot both
+// pass a check against the same stale total: the limit may trip marginally
+// earlier than a serial run, but never overshot (ADR-0214).
 static void *ae_alloc_try(size_t size) {
-    if (!ae_alloc_ready) ae_alloc_env();
-    if (size > ae_alloc_budget - ae_alloc_total) return NULL;
+    if (!atomic_exchange(&ae_alloc_ready, true)) ae_alloc_env();
+    if ((uint64_t)size > atomic_load(&ae_alloc_budget)) return NULL;
+    uint64_t previous = atomic_fetch_add(&ae_alloc_total, (uint64_t)size);
+    if (previous > atomic_load(&ae_alloc_budget) - (uint64_t)size) {
+        atomic_fetch_sub(&ae_alloc_total, (uint64_t)size);
+        return NULL;
+    }
     void *block = ae_allocator_impl.alloc(size);
-    if (!block) return NULL;
-    ae_alloc_total += (uint64_t)size;
+    if (!block) {
+        atomic_fetch_sub(&ae_alloc_total, (uint64_t)size);
+        return NULL;
+    }
     return block;
 }
 static void *ae_alloc(size_t size, size_t line, size_t column) {
@@ -152,17 +168,21 @@ static void *ae_alloc(size_t size, size_t line, size_t column) {
     return block;
 }
 static void *ae_alloc_resize(void *block, size_t size, size_t line, size_t column) {
-    if (!ae_alloc_ready) ae_alloc_env();
+    if (!atomic_exchange(&ae_alloc_ready, true)) ae_alloc_env();
     // The budget is charged for the whole new size: the accounting is a coarse
     // "how much did this program ask for" measure, not a live byte count.
-    if (size > ae_alloc_budget - ae_alloc_total) { ae_allocator_impl.release(block); ae_fail("out of memory", line, column); }
+    if ((uint64_t)size > atomic_load(&ae_alloc_budget) ||
+        atomic_fetch_add(&ae_alloc_total, (uint64_t)size) > atomic_load(&ae_alloc_budget) - (uint64_t)size) {
+        ae_allocator_impl.release(block);
+        ae_fail("out of memory", line, column);
+    }
     void *resized = ae_allocator_impl.resize(block, size);
     if (!resized) ae_fail("out of memory", line, column);
-    ae_alloc_total += (uint64_t)size;
     return resized;
 }
 static void ae_free(void *block) { if (block) ae_allocator_impl.release(block); }
 static void ae_set_allocator(ae_allocator impl) { ae_allocator_impl = impl; }
+
 
 static int64_t ae_add(int64_t a, int64_t b, size_t line, size_t column) {
     if ((b > 0 && a > INT64_MAX - b) || (b < 0 && a < INT64_MIN - b)) ae_fail("integer overflow", line, column);
@@ -1228,3 +1248,77 @@ static void ae_map_forfeit(ae_map *m) {
     m->len = 0;
     m->used = 0;
 }
+
+// unit: ae_thread
+// ---- Threads (ADR-0214) ------------------------------------------------------
+// One spelling per primitive: spawn runs a void fn(void *ctx) on an operating
+// system thread and returns an opaque handle; join waits for it to finish and
+// releases the handle. Return values ride a heap slot the language layer
+// packages into ctx, so this layer stays type-free. The unit is pruned with
+// the rest: a program that never spawns carries none of it (charter rule 8).
+// Handles are heap blocks the caller must join exactly once; a leaked handle
+// shows up in a leak check as a retained block, and joining twice is a
+// caller-visible contract violation safe code cannot spell because the
+// language surface never hands the handle out twice.
+#ifdef _WIN32
+// Declared with the real spellings, not void: the argument-conversion part
+// of this file includes <windows.h> on Windows, and a `void *` first
+// parameter would conflict with processthreadsapi.h's LPSECURITY_ATTRIBUTES
+// when that header arrives. The struct tag matches the header's own, so the
+// two declarations merge; this unit sits after that include for exactly this
+// reason, and a program that prunes the header declares them alone.
+extern void *CreateThread(struct _SECURITY_ATTRIBUTES *attributes, size_t stack, unsigned long (*start)(void *), void *parameter, unsigned long flags, unsigned long *id); /* win32-declared */
+extern unsigned long WaitForSingleObject(void *handle, unsigned long milliseconds); /* win32-declared */
+extern int CloseHandle(void *handle); /* win32-declared */
+typedef struct { void *native; } ae_thread_handle;
+static unsigned long ae_thread_body(void *raw) {
+    void (**job)(void *) = raw;
+    job[0](((void **)raw)[1]);
+    ae_free(raw);
+    return 0;
+}
+#else
+#include <threads.h>
+typedef struct { thrd_t native; } ae_thread_handle;
+static int ae_thread_body(void *raw) {
+    void (**job)(void *) = raw;
+    job[0](((void **)raw)[1]);
+    ae_free(raw);
+    return 0;
+}
+#endif
+static void *ae_thread_spawn(void (*entry)(void *), void *ctx) { /* win32-declared */
+    // Two slots: the entry function and its context. The block is owned by
+    // the thread body, which frees it after the call; the handle is a
+    // separate allocation so a leaked join stays one leak, not two.
+    void **job = ae_alloc_try(2 * sizeof(void *));
+    if (!job) return NULL;
+    job[0] = (void *)entry;
+    job[1] = ctx;
+    ae_thread_handle *handle = ae_alloc_try(sizeof(ae_thread_handle));
+    if (!handle) { ae_free(job); return NULL; }
+#ifdef _WIN32
+    handle->native = CreateThread(NULL, 0, ae_thread_body, job, 0, NULL);
+    if (!handle->native) { ae_free(job); ae_free(handle); return NULL; }
+#else
+    if (thrd_create(&handle->native, ae_thread_body, job) != thrd_success) {
+        ae_free(job);
+        ae_free(handle);
+        return NULL;
+    }
+#endif
+    return handle;
+}
+static bool ae_thread_join(void *opaque) { /* win32-declared */
+    ae_thread_handle *handle = opaque;
+    if (!handle) return false;
+#ifdef _WIN32
+    if (WaitForSingleObject(handle->native, 0xFFFFFFFFu) != 0) return false;
+    CloseHandle(handle->native);
+#else
+    if (thrd_join(handle->native, NULL) != thrd_success) return false;
+#endif
+    ae_free(handle);
+    return true;
+}
+// unit: -
