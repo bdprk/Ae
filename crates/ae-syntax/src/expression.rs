@@ -62,6 +62,39 @@ pub fn parse_operator_expression(file: &str, source: &str) -> Result<Expression,
     Ok(expression)
 }
 
+/// Parse a borrowed call argument at an existing token cursor.
+pub fn parse_borrow_argument(
+    file: &str,
+    source: &str,
+    tokens: &[Token],
+    start: usize,
+    required_mutability: Option<bool>,
+) -> Result<(Expression, usize), Diagnostic> {
+    let error = |token: &Token, message: &str| {
+        diagnostic_range(file, source, token.offset..token.end, message)
+    };
+    let amp = &tokens[start];
+    if amp.kind != Kind::Amp {
+        return Err(error(amp, &format!("expected Amp, found {:?}", amp.kind)).with_code("E0010"));
+    }
+    let marker = &tokens[start + 1];
+    let mutable = marker.kind == Kind::Mut && required_mutability != Some(false);
+    if required_mutability == Some(true) && !mutable {
+        return Err(error(marker, "this parameter borrows mutably; write the argument as '&mut name'"));
+    }
+    let index = start + 1 + usize::from(mutable);
+    let token = &tokens[index];
+    let Kind::Ident(name) = &token.kind else {
+        return Err(error(token, "expected identifier").with_code("E0010"));
+    };
+    let kind = ExpressionKind::BorrowArgument {
+        mutable,
+        name: name.clone(),
+        name_range: token.offset..token.end,
+    };
+    Ok((Expression { kind, range: amp.offset..token.end }, index + 1))
+}
+
 struct Parser<'a> {
     file: &'a str,
     source: &'a str,
@@ -205,22 +238,9 @@ impl Parser<'_> {
             return self.expression(0);
         }
         self.count_node()?;
-        let start = self.current().offset;
-        self.cursor += 1;
-        let mutable = self.current().kind == Kind::Mut;
-        self.cursor += usize::from(mutable);
-        let token = self.current();
-        let Kind::Ident(name) = &token.kind else {
-            return Err(self.error("expected a binding name after borrow marker"));
-        };
-        let range = start..token.end;
-        let kind = ExpressionKind::BorrowArgument {
-            mutable,
-            name: name.clone(),
-            name_range: token.offset..token.end,
-        };
-        self.cursor += 1;
-        Ok(Expression { kind, range })
+        let (argument, end) = parse_borrow_argument(self.file, self.source, self.tokens, self.cursor, None)?;
+        self.cursor = end;
+        Ok(argument)
     }
 
     fn postfix(&mut self, mut base: Expression) -> Result<Expression, Diagnostic> {
