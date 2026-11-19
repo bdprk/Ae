@@ -20,6 +20,20 @@ pub fn brace_body_end(tokens: &[Token], start: usize) -> Result<usize, usize> {
     Err(tokens.len())
 }
 
+/// Locate the next top-level trait for forward registration. A malformed
+/// trailing body is left for the declaration parser to diagnose.
+pub fn next_top_level_trait(tokens: &[Token], mut cursor: usize) -> Option<usize> {
+    while let Some(token) = tokens.get(cursor) {
+        match token.kind {
+            Kind::Trait => return Some(cursor),
+            Kind::LBrace => cursor = brace_body_end(tokens, cursor + 1).ok()?,
+            Kind::Eof => break,
+            _ => cursor += 1,
+        }
+    }
+    None
+}
+
 use std::ops::Range;
 
 use ae_span::Diagnostic;
