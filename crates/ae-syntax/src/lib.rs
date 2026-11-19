@@ -1,5 +1,6 @@
 //! Lexer: source text to tokens, plus location helpers.
 pub mod fmt;
+pub mod literal;
 use ae_span::{Diagnostic, SourceFile};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kind {

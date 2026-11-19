@@ -92,14 +92,19 @@ impl Parser<'_> {
         self.expression_nodes += 1;
         if self.expression_nodes > 128 { return Err(self.fail("expression complexity limit exceeded (128)")); }
         let mut lhs = match self.current().clone() {
-            Kind::Number(n) => { self.pos += 1; (Expr::Number(n), Type::Int) }
-            Kind::Float(x) => { self.pos += 1; (Expr::FloatLit(x), Type::F64) }
-            Kind::True => { self.pos += 1; (Expr::BoolLit(true), Type::Bool) }
-            Kind::False => { self.pos += 1; (Expr::BoolLit(false), Type::Bool) }
-            Kind::Text(text) => {
-                let (line, column) = self.position();
+            Kind::Number(_) | Kind::Float(_) | Kind::True | Kind::False | Kind::Text(_) => {
+                use ae_syntax::literal::{parse_literal, LiteralValue};
+
+                let literal = parse_literal(&self.tokens[self.pos]).expect("literal token");
                 self.pos += 1;
-                (Expr::StrLit(text, line, column), Type::String)
+                match literal.value {
+                    LiteralValue::Integer(value) => (Expr::Number(value), Type::Int),
+                    LiteralValue::Float(value) => (Expr::FloatLit(value), Type::F64),
+                    LiteralValue::Boolean(value) => (Expr::BoolLit(value), Type::Bool),
+                    LiteralValue::String(value) => {
+                        (Expr::StrLit(value.to_owned(), literal.line, literal.column), Type::String)
+                    }
+                }
             }
             // A closure starts with a pipe — or with `||`, which the lexer
             // keeps as Or: an or-expression is never followed by an arrow, so
