@@ -344,6 +344,35 @@ mod diagnostic_tests {
     }
 
     #[test]
+    fn strict_and_recovering_lexers_agree_on_string_literal_boundaries() {
+        let prefix = "// \u{00e9}\n";
+        let literal = r#""é\n\t\r\\\"""#;
+        let source = format!("{prefix}{literal};");
+        let strict = lex_diagnostic(&source).unwrap();
+        let LexOutcome::Clean(recovered) = lex_recovered(&source) else {
+            panic!("valid string did not lex cleanly");
+        };
+        assert_eq!(strict.len(), recovered.len());
+        for (left, right) in strict.iter().zip(&recovered) {
+            assert_eq!(left.kind, right.kind);
+            assert_eq!((left.offset, left.end, left.line, left.column),
+                       (right.offset, right.end, right.line, right.column));
+        }
+        let token = &strict[0];
+        assert_eq!((token.offset, token.end), (prefix.len(), prefix.len() + literal.len()));
+        assert_eq!(token.kind, Kind::Text(literal[1..literal.len() - 1].to_owned()));
+
+        let unterminated = format!("{prefix}\"\\n");
+        let strict = lex_diagnostic(&unterminated).unwrap_err();
+        let LexOutcome::Fatal(recovered) = lex_recovered(&unterminated) else {
+            panic!("unterminated string did not stop lexing");
+        };
+        assert_eq!(recovered, vec![strict.clone()]);
+        assert_eq!(strict.code.as_deref(), Some("E0003"));
+        assert_eq!(strict.primary.unwrap().span.range, prefix.len()..prefix.len() + 1);
+    }
+
+    #[test]
     fn lexical_errors_keep_byte_offset_and_unicode_column() {
         let source = "// 中文\n  @";
         let diagnostic = lex_diagnostic(source).unwrap_err();
