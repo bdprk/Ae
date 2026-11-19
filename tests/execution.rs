@@ -5318,6 +5318,59 @@ fn check_json_preserves_diagnostic_location_in_imported_file() {
 }
 
 #[test]
+fn json_spans_pin_utf8_byte_offsets_and_char_columns_after_multibyte_text() {
+    let dir = unique_temp_dir("json-multibyte-policy");
+    let file = dir.join("main.ae");
+    // `é` is 2 UTF-8 bytes and each of `世界` is 3 bytes, but one char each:
+    // byte_start/byte_end must be absolute UTF-8 byte offsets while columns
+    // stay 1-based char positions, so an editor and a terminal both point at
+    // the same token (M0.1.03).
+    let source = "fn main() {\n    let s = \"héllo世界\"; print(nope);\n}\n";
+    fs::write(&file, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("check").arg("--json").arg(&file).output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let start = source.find("nope").unwrap();
+    let line_start = source[..start].rfind('\n').unwrap() + 1;
+    let column = source[line_start..start].chars().count() + 1;
+    let escaped = file.display().to_string().replace('\\', "\\\\").replace('"', "\\\"");
+    let expected = format!("[{{\"file\":\"{escaped}\",\"line\":2,\"column\":{column},\"message\":\"unknown variable 'nope'\",\"byte_start\":{start},\"byte_end\":{},\"code\":\"E0101\",\"suggestions\":[],\"secondary\":[]}}]", start + "nope".len());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn check_render_underlines_tokens_after_tabs_and_wide_characters() {
+    // M0.1.04: `check --render` pins the terminal display policy — a tab
+    // advances to the next multiple of 4 cells and a CJK character occupies
+    // two — so the editor (1-based char columns) and the terminal (cells)
+    // point at the same token.
+    let dir = unique_temp_dir("check-render-policy");
+    let file = dir.join("main.ae");
+    let source = "fn main() {\n\tlet s = \"中文\"; print(nope);\n}\n";
+    fs::write(&file, source).unwrap();
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let render = || Command::new(cli).arg("check").arg("--render").arg(&file).output().unwrap();
+
+    let output = render();
+    assert!(!output.status.success() && output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("2:22: unknown variable 'nope'"), "{stderr}");
+    let line2_start = "fn main() {\n".len();
+    let line2_end = line2_start + source[line2_start..].find('\n').unwrap();
+    assert!(stderr.contains(&format!(" 2 | {}", &source[line2_start..line2_end])), "{stderr}");
+    // tab→4, `let s = "`→13, `中文`→17, `"; print(`→26 cells; `nope` is 4.
+    assert!(stderr.contains(&format!("   | {}^^^^", " ".repeat(26))), "{stderr}");
+
+    let clean = dir.join("clean.ae");
+    fs::write(&clean, "fn main() { print(7); }\n").unwrap();
+    let ok = Command::new(cli).arg("check").arg("--render").arg(&clean).output().unwrap();
+    assert!(ok.status.success() && ok.stdout.is_empty() && ok.stderr.is_empty());
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn numeric_lexical_errors_recover_in_json_without_accepting_program() {
     let dir = unique_temp_dir("json-numeric-recovery");
     let path = dir.join("bad.ae");

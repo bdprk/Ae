@@ -23,13 +23,13 @@ Each numbered item names a change and its individual acceptance experiment. Work
 
 Entry dependency: Baseline.
 
-- [ ] M0.1.01. **Index files.** Load two different main.ae files and resolve each diagnostic to its own path.
-- [ ] M0.1.02. **normalize revision IDs.** Edit one file twice and reject spans retained from the first revision.
-- [ ] M0.1.03. **map byte spans.** Select the exact UTF-8 bytes for a token after a non-ASCII character.
-- [ ] M0.1.04. **render tabs and multibyte text.** Underline a bad token following a tab and a wide character against a pinned display policy.
-- [ ] M0.1.05. **pin JSON diagnostics.** Parse check --json output and assert path, range and stable error identifier.
+- [x] M0.1.01. **Index files.** Load two different main.ae files and resolve each diagnostic to its own path.
+- [ ] M0.1.02. **normalize revision IDs.** Edit one file twice and reject spans retained from the first revision. (Deferred to M6.2.01/M6.2.02: the CLI holds no unsaved buffers or revision spans — the contract is vacuous here and becomes real with editor session state.)
+- [x] M0.1.03. **map byte spans.** Select the exact UTF-8 bytes for a token after a non-ASCII character.
+- [x] M0.1.04. **render tabs and multibyte text.** Underline a bad token following a tab and a wide character against a pinned display policy.
+- [x] M0.1.05. **pin JSON diagnostics.** Parse check --json output and assert path, range and stable error identifier.
 
-Integration gate: Editor and terminal point to the same token.
+Integration gate: Editor and terminal point to the same token. (Editor side pinned at the position contract; the terminal side is `check --render`. Revision-aware buffers join at M6.2.)
 
 ## M0.2 Parser migration
 
@@ -399,6 +399,21 @@ Debian 13 x86-64, InstaBox evaluate-2 (`rustc 1.99.0`, `cargo 1.99.0`, gcc 14.2.
 Baseline B01–B10 are verified at this revision. Still unverified: everything from M0.1 onward that this table does not name.
 
 
+
+
+## Verified 2026-11-19 — M0.1 source fidelity (partial: M0.1.02 deferred to M6.2)
+
+Host: Windows 11 x86-64 (`rustc 1.99.1`, `cargo 1.99.1`); all fixtures are platform-neutral (non-ASCII paths covered separately by `check_json_preserves_diagnostic_location_in_imported_file`, which already passes on Linux CI).
+
+| Item | Evidence |
+|---|---|
+| M0.1.01 | `check_error_identifies_file_and_location`, `check_json_collects_lexical_errors_across_sibling_imports` (two sibling files, each diagnostic carries its own path), `directory_traversal_is_sorted_and_reports_errors`, `check_json_preserves_diagnostic_location_in_imported_file` (non-ASCII file name). |
+| M0.1.03 | `json_spans_pin_utf8_byte_offsets_and_char_columns_after_multibyte_text`: a token after `héllo世界` on one line pins `byte_start`/`byte_end` as absolute UTF-8 byte offsets and `column` as a 1-based character position (30 chars / byte 46 — the two disagree, proving both semantics). |
+| M0.1.04 | ADR-0212 + `src/render.rs` (tab → next multiple of 4 cells; pinned BMP wide ranges → 2 cells; else 1) with four unit tests including the caret geometry after `	中文` and multi-line/CRLF handling; CLI `ae check --render` pinned end-to-end by `check_render_underlines_tokens_after_tabs_and_wide_characters` (message `2:22`, source line, caret at cell 26, 4 carets) plus the silent success path. Default `check` output unchanged. |
+| M0.1.05 | `check_json_assigns_stable_codes_to_common_semantic_errors` (stable codes), the exact-JSON fixtures at `tests/execution.rs` (unexpected character `@`/`use` path/`E0101` with byte ranges), `check_json_recovers_independent_function_body_errors`, `numeric_lexical_errors_recover_in_json_without_accepting_program`. |
+| Gate | Editor: byte offsets + char columns (M0.1.03). Terminal: the same token underlined via the cell policy (M0.1.04). Revision-aware buffers (M0.1.02) join when editor session state exists (M6.2.01/02). |
+
+Suite after this pass: `cargo test --workspace --locked` 14 bin + 284 execution + 3 run + 43 compiler + 2 span + 23 syntax = 369, 0 failures.
 
 ## Verified 2026-11-19 — M3.3 packages
 
