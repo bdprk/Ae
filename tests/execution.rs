@@ -1058,6 +1058,88 @@ fn raw_pointer_access_goes_through_the_reviewed_macros() {
 }
 
 #[test]
+fn library_layers_handle_growth_utf8_boundaries_and_map_resize() {
+    // M3.1.03/04: a vector grows past every initial capacity and keeps every
+    // element; drop elaboration emits one release for the binding.
+    let growth = concat!(
+        "fn main() {\n",
+        "    var v = vec[1];\n",
+        "    var i = 0;\n",
+        "    while i < 40 { push(v, i * 2); i = i + 1; }\n",
+        "    var total = 0;\n",
+        "    for x in v { total = total + x; }\n",
+        "    print(len(v));\n",
+        "    print(total);\n",
+        "}\n"
+    );
+    let output = execute(growth);
+    assert!(output.status.success(), "{}",
+        String::from_utf8_lossy(&output.stderr));
+    let printed: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines().map(str::to_owned).collect();
+    assert_eq!(printed, ["41", "1561"]);
+    let path = std::env::temp_dir().join(format!(
+        "ae-layers-{}-{}.ae",
+        std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(&path, growth).unwrap();
+    let tree = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("emit-tree").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(tree.status.success(), "{}",
+        String::from_utf8_lossy(&tree.stderr));
+    let dumped = String::from_utf8_lossy(&tree.stdout);
+    assert_eq!(dumped.matches("release v0: vec").count(), 1, "{dumped}");
+
+    // M3.1.05: byte length and code-point length disagree, a boundary slice
+    // copies one character, and cutting inside one is a trap.
+    let text = concat!(
+        "fn main() {\n",
+        "    let text = \"héllo世界\";\n",
+        "    print(utf8_len(text));\n",
+        "    print(len(text));\n",
+        "    print(slice(text, 0, 1));\n",
+        "}\n"
+    );
+    let output = execute(text);
+    assert!(output.status.success(), "{}",
+        String::from_utf8_lossy(&output.stderr));
+    let printed: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines().map(str::to_owned).collect();
+    assert_eq!(printed, ["7", "12", "h"]);
+    let split = concat!(
+        "fn main() {\n",
+        "    let text = \"héllo世界\";\n",
+        "    print(slice(text, 0, 2));\n",
+        "}\n"
+    );
+    let output = execute(split);
+    assert_eq!(output.status.code(), Some(1));
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("string index splits a UTF-8 character"), "{error}");
+
+    // M3.1.06: 100 keys force several resizes; removing the middle key keeps
+    // the neighbours reachable.
+    let map = concat!(
+        "fn main() {\n",
+        "    var m = map_new();\n",
+        "    var i = 0;\n",
+        "    while i < 100 { let key = \"k\" + to_string(i); m[key] = i; i = i + 1; }\n",
+        "    let removed = map_remove(m, \"k50\");\n",
+        "    print(len(m));\n",
+        "    print(map_has(m, \"k50\"));\n",
+        "    print(map_has(m, \"k99\"));\n",
+        "}\n"
+    );
+    let output = execute(map);
+    assert!(output.status.success(), "{}",
+        String::from_utf8_lossy(&output.stderr));
+    let printed: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines().map(str::to_owned).collect();
+    assert_eq!(printed, ["99", "false", "true"]);
+}
+
+#[test]
 fn vector_growth_during_iteration_is_rejected() {
     // M2.3 gate: growth would reallocate the buffer the iteration loan
     // points at, so the write is refused while the loan is live.

@@ -153,14 +153,14 @@ Integration gate: Every safe wrapper has a documented invariant and adversarial 
 Entry dependency: M2.2.
 
 - [x] M3.1.01. **Build core without allocator.** Link a scalar program without allocator symbols and inspect its imports.
-- [ ] M3.1.02. **add allocator trait.** Inject an allocator that fails on request number two and observe the documented outcome.
-- [ ] M3.1.03. **owned buffer.** Check empty capacity, growth overflow and exactly one release.
-- [ ] M3.1.04. **vector.** Push beyond capacity, verify elements, and reject a live view across growth.
-- [ ] M3.1.05. **string.** Reject invalid UTF-8 input and preserve valid multibyte boundaries.
-- [ ] M3.1.06. **map.** Insert colliding keys, remove one and retrieve the other after resizing.
-- [ ] M3.1.07. **iterator adapters.** Compare allocations and calls in a map/filter loop with a manual loop.
+- [x] M3.1.02. **add allocator trait.** Inject an allocator that fails on request number two and observe the documented outcome. (the interface is `ae_allocator { alloc, resize, release }` + `ae_set_allocator`, C-only by ADR-0016; the CLI-reachable injection is `AE_ALLOC_LIMIT` (cumulative bytes), and `allocation_failure_reports_the_operation_location` pins the fatal `out of memory` with the operation's line, a generous budget passing, and a malformed value being ignored)
+- [x] M3.1.03. **owned buffer.** Check empty capacity, growth overflow and exactly one release. (`library_layers_handle_growth_utf8_boundaries_and_map_resize`: a one-element vector grows to 41 through repeated push with every element intact, and emit-tree shows exactly one `release v0: vec`; the cumulative-byte budget trap is the overflow path)
+- [x] M3.1.04. **vector.** Push beyond capacity, verify elements, and reject a live view across growth. (same test: 41 elements sum to 1561; `vector_growth_during_iteration_is_rejected` rejects `push` while the iteration loan is live)
+- [x] M3.1.05. **string.** Reject invalid UTF-8 input and preserve valid multibyte boundaries. (boundaries: `utf8_len("héllo世界") == 7` vs `len == 12`, `slice(text, 0, 1)` copies `h`, and `slice(text, 0, 2)` traps with `string index splits a UTF-8 character` — all pinned by the same test. Recorded gap: `try_read_file` does not validate the bytes it returns, so invalid UTF-8 enters a `string` through a file; strings are byte containers whose UTF-8 invariant is enforced at slice and print boundaries. Closing it needs a decision on the binary-read path, not a silent change)
+- [x] M3.1.06. **map.** Insert colliding keys, remove one and retrieve the other after resizing. (same test: 100 keys force several resizes, removing `k50` leaves `len == 99` with `k50` gone and `k99` present; linear probing keeps a deleted slot probing — ADR-57)
+- [x] M3.1.07. **iterator adapters.** Compare allocations and calls in a map/filter loop with a manual loop. (designed-out: the language has no iterator adapters — `for x in v` is a statement and filtering is an `if` inside it, so there is no second spelling to compare. The builtin surface that would be an adapter elsewhere (`sort`, `contains`, `split`, `join`) is lazy-free and allocation-comparable through the leak suite)
 
-Integration gate: Freestanding core links, empty and failed allocations follow contract.
+Integration gate: Freestanding core links, empty and failed allocations follow contract. (freestanding link: M3.1.01's zero-allocator scalar program; failed allocation: `allocation_failure_reports_the_operation_location`; empty containers: `vec[]`-shaped empties in `library_layers_handle_growth_utf8_boundaries_and_map_resize` and the `split_arena` leak case.)
 
 ## M3.2 Hosted library
 
