@@ -52,7 +52,7 @@ Entry dependency: M0.2.
 
 - [x] M1.1.01. **Intern symbols.** Intern repeated spellings to one symbol while retaining separate occurrence spans. (behavioral contract verified: repeated spellings resolve consistently and keep per-occurrence spans; the interner is not a separable stage, name resolution works on strings)
 - [x] M1.1.02. **allocate definition IDs.** Assign distinct IDs to same-named items in different modules. (by-design unobservable: same-named items across modules are rejected as collisions (spec/modules.md), so the specified outcome is the rejection; interned per-item ids exist internally)
-- [ ] M1.1.03. **collect declarations.** Resolve a call to a later declaration and reject duplicate definitions.
+- [x] M1.1.03. **collect declarations.** Resolve a call to a later declaration and reject duplicate definitions. (verified this pass: a call to a function declared later compiles; the second `fn later` → `duplicate function 'later'`; table row M1.1.03 names the two regression tests)
 - [x] M1.1.04. **resolve imports.** Resolve a renamed import and flag two imports binding the same local name. (no renamed-import syntax exists (parse error); the renaming mechanism the spec defines is package aliases (use "@alias"), and the collision analog (two files exporting one name) is rejected)
 - [x] M1.1.05. **detect cycles.** Render the closed dependency path for a three-module cycle.
 - [x] M1.1.06. **resolve locals and shadowing.** Resolve an inner binding to itself and restore the outer binding on exit. (verified for the designed shape: sibling blocks reuse names, block-scoped bindings restore the outer name; nested-scope shadowing is by design a duplicate-variable error (spec/modules.md))
@@ -63,11 +63,11 @@ Integration gate: Forward references and ambiguous names have specified outcomes
 
 Entry dependency: M1.1.
 
-- [ ] M1.2.01. **Intern types.** Canonicalize repeated vector types while keeping different element types distinct.
-- [ ] M1.2.02. **infer locals.** Infer a local from its initializer and point at an incompatible reassignment.
-- [ ] M1.2.03. **unify calls.** Bind repeated parameters consistently and reject conflicting argument types.
+- [x] M1.2.01. **Intern types.** Canonicalize repeated vector types while keeping different element types distinct. (table row M1.2.01: one layout per argument list for generic enums, `vec[1,2]` where `vec[f64]` is expected → `argument 1 to 'take' must be vec[f64]`)
+- [x] M1.2.02. **infer locals.** Infer a local from its initializer and point at an incompatible reassignment. (table row M1.2.02: `cannot assign a string value to i64 variable 'n'`)
+- [x] M1.2.03. **unify calls.** Bind repeated parameters consistently and reject conflicting argument types. (table row M1.2.03: `first[i64]("x", 1)` → `argument 1 to 'first' must be i64`)
 - [x] M1.2.04. **occurs check.** Reject an equation requiring a finite type to contain itself. (realized at the design level: generics have no inference (spec/generics.md), self-containing types are impossible (declaration bodies cannot see their own name), instantiation cycles close deterministically, and a 256-type budget bounds growing chains)
-- [ ] M1.2.05. **type return paths.** Diagnose the branch that returns an incompatible value.
+- [x] M1.2.05. **type return paths.** Diagnose the branch that returns an incompatible value. (re-probed this pass: `fn pick(flag: bool) -> i64 { if flag { return 1; } else { return "x"; } }` → `return type must be i64` at the string branch)
 - [x] M1.2.06. **reject unconstrained variables.** Require an annotation when an empty constructor leaves its element type unknown. (implemented as outright rejection: locals carry no type annotations in this dialect, so an empty constructor leaving the element type unknown is rejected, not annotated)
 
 Integration gate: Type dumps stable across repeated builds.
@@ -76,8 +76,8 @@ Integration gate: Type dumps stable across repeated builds.
 
 Entry dependency: M1.2.
 
-- [ ] M1.3.01. **Bind parameters.** Keep a nested type parameter distinct from an outer one with the same spelling.
-- [ ] M1.3.02. **collect obligations.** List the required operations of a bounded generic call.
+- [x] M1.3.01. **Bind parameters.** Keep a nested type parameter distinct from an outer one with the same spelling. (re-probed this pass: `Box[i64] { inner: Inner[string] { .. } }` → `field 'inner' must be struct #0`, so the two `T`s stay distinct)
+- [x] M1.3.02. **collect obligations.** List the required operations of a bounded generic call. (table row M1.3.02: `add[bool](true, false)` → `type argument 'bool' for 'add' does not satisfy 'Add'; that constraint allows i64, string, f64`; missing impl → `no impl of trait 'Area' for 'string'`)
 - [x] M1.3.03. **check generic body.** Reject an unused generic function that invokes an operation absent from its bounds. (constraint-bound half verified: unused generic body rejected for operators outside its bounds, ADR-40. The trait-method half is governed by ADR-0047, which deliberately defers declaration-site pre-checking of trait calls - instantiation-site reporting is more accurate via 'required by', and overriding the deferral needs the evidence ADR-47 asks for. The M1.3 gate's 'even when unused' therefore holds for the bounds the spec gives declaration-site power over.)
 - [x] M1.3.04. **test overlap.** Reject two applicable implementations and identify both declarations. (overlap in the blanket sense is impossible (impl Area for T rejected by design); the achievable overlap, an exact duplicate (trait, type) pair, is diagnosed naming both declarations)
 - [x] M1.3.05. **canonicalize instances.** Emit one instance for two call sites using the same concrete arguments. (verified twice: `emit-c` of three calls with one argument list plus one call with another emits one function per list (table row M1.3.05, fixture m13/ci.ae); `identical_concrete_arguments_share_one_instance` counts the emitted `ae_t<N>_release` helpers — 1 for two `Box[i64]` sites, 2 once a `Box[string]` site joins)
