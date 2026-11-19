@@ -155,7 +155,18 @@ pub struct Declaration {
 pub fn parse_declarations(file: &str, source: &str) -> Result<Vec<Declaration>, Diagnostic> {
     let tokens = declaration_tokens(file, source)?;
     let imports = crate::module::parse_use_headers(file, source, &tokens)?;
-    let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: imports.body_start };
+    parse_declaration_tokens(file, source, &tokens, imports.body_start)
+}
+
+/// Read declarations from lexer-produced tokens ending in EOF. Start at the
+/// module body index returned by the import-header parser.
+pub fn parse_declaration_tokens(
+    file: &str,
+    source: &str,
+    tokens: &[Token],
+    body_start: usize,
+) -> Result<Vec<Declaration>, Diagnostic> {
+    let mut parser = DeclarationParser { file, source, tokens, pos: body_start };
     let mut declarations = Vec::new();
     while parser.current().kind != Kind::Eof {
         declarations.push(parser.declaration()?);
