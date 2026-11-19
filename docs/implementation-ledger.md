@@ -127,12 +127,12 @@ Integration gate: Every owned resource dropped exactly once across exit paths.
 
 Entry dependency: M2.2.
 
-- [ ] M2.3.01. **Generate loans.** Attach each loan to its originating place and creation span.
-- [ ] M2.3.02. **compute liveness.** Permit mutation after the last shared use and reject it before that use.
-- [ ] M2.3.03. **compare projections.** Distinguish disjoint struct fields and conservatively handle unknown indices.
-- [ ] M2.3.04. **reject conflicting accesses.** Reject owner movement while a subsequently used view remains live.
-- [ ] M2.3.05. **model reborrows.** Suspend parent exclusive access while a child reborrow remains live.
-- [ ] M2.3.06. **validate escaping references.** Reject returning a view of local storage and accept a return tied to a valid input.
+- [x] M2.3.01. **Generate loans.** Attach each loan to its originating place and creation span. (every loan diagnostic names the borrowed place and the offending use: `cannot move 's' while a view binding of it may still be read`, `cannot mutate 'd' while a view binding of it may still be read` — ui fixtures borrow_move_during_view / borrow_mut_call_during_cursor)
+- [x] M2.3.02. **compute liveness.** Permit mutation after the last shared use and reject it before that use. (rejected before: borrow_write_during_view, borrow_mut_arg_during_view; allowed after: run fixtures borrow_write_after_last_use, borrow_move_after_last_use, borrow_mut_call_after_last_use)
+- [x] M2.3.03. **compare projections.** Distinguish disjoint struct fields and conservatively handle unknown indices. (`field_granularity_borrows_freeze_their_own_field_only`: a view of `p.name` blocks writing `p.name` but not `p.note`; ui fixture borrow_element_write covers the conservative element/index case)
+- [x] M2.3.04. **reject conflicting accesses.** Reject owner movement while a subsequently used view remains live. (ui fixtures borrow_move_during_view, borrow_mut_call_in_branch, borrow_mut_call_in_loop, borrow_mut_call_read_after_in_statement)
+- [x] M2.3.05. **model reborrows.** Suspend parent exclusive access while a child reborrow remains live. (token cursor holds a view loan: a `&mut` call during the cursor is rejected (borrow_mut_call_during_cursor) and accepted once the cursor's region ends (run fixture borrow_mut_call_after_cursor))
+- [x] M2.3.06. **validate escaping references.** Reject returning a view of local storage and accept a return tied to a valid input. (ui fixture borrow_view_escape rejects assigning a view out of the loop scope; `generic_borrow_parameters_resolve_at_each_call_site` pins a `&T` parameter's view being returned and a concrete argument with no such borrow being rejected)
 
 Integration gate: Reject dangling views, vector reallocation under loan and escaping captures.
 
