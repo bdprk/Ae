@@ -53,6 +53,8 @@ pub enum DeclarationKind {
     },
     Struct { fields: Vec<TypedName> },
     Enum { variants: Vec<EnumVariant> },
+    Trait,
+    Impl { target: Option<Range<usize>> },
 }
 
 #[derive(Debug, PartialEq)]
@@ -134,7 +136,7 @@ pub struct Declaration {
     pub body: Option<Range<usize>>,
 }
 
-/// Read function, struct, and enum declaration boundaries in a source fragment.
+/// Read top-level declaration boundaries in a source fragment.
 /// Type spellings and function bodies are retained as source ranges.
 pub fn parse_declarations(file: &str, source: &str) -> Result<Vec<Declaration>, Diagnostic> {
     let tokens = declaration_tokens(file, source)?;
@@ -301,7 +303,7 @@ impl DeclarationParser<'_> {
                     index = brace_body_end(self.tokens, index + 1).unwrap_or_else(|end| end);
                     continue;
                 }
-                Kind::Struct | Kind::Enum | Kind::Fn | Kind::Unsafe | Kind::Extern | Kind::Hash if index > failed_keyword && index >= self.pos => {
+                Kind::Struct | Kind::Enum | Kind::Trait | Kind::Impl | Kind::Fn | Kind::Unsafe | Kind::Extern | Kind::Hash if index > failed_keyword && index >= self.pos => {
                     let next = self.tokens.get(index + 1).map(|next| &next.kind);
                     let starts_declaration = match token.kind {
                         Kind::Fn => matches!(next, Some(Kind::Ident(_))),
@@ -353,6 +355,23 @@ impl DeclarationParser<'_> {
         Ok(attribute)
     }
 
+    fn opaque_body(&mut self) -> Result<usize, Diagnostic> {
+        let start = self.current().offset;
+        if !self.consume(Kind::LBrace) {
+            return Err(self.error("expected a declaration body"));
+        }
+        match brace_body_end(self.tokens, self.pos) {
+            Ok(end) => {
+                self.pos = end;
+                Ok(start)
+            }
+            Err(end) => {
+                self.pos = end;
+                Err(self.error("expected '}' before end of file"))
+            }
+        }
+    }
+
     fn declaration(&mut self) -> Result<Declaration, Diagnostic> {
         let start = self.current().offset;
         if matches!(&self.current().kind, Kind::Ident(name) if name == "pub") {
@@ -386,7 +405,9 @@ impl DeclarationParser<'_> {
                 Kind::Fn => Kind::Fn,
                 Kind::Struct => Kind::Struct,
                 Kind::Enum => Kind::Enum,
-                _ => return Err(self.error("expected a function, struct, or enum declaration")),
+                Kind::Trait => Kind::Trait,
+                Kind::Impl => Kind::Impl,
+                _ => return Err(self.error("expected a top-level declaration")),
             };
             self.pos += 1;
             keyword
@@ -439,18 +460,19 @@ impl DeclarationParser<'_> {
                 let end = self.tokens[self.pos - 1].end;
                 return Ok(Declaration { attribute, name, type_parameters, kind: function, range: start..end, body: None });
             }
-            let body_start = self.current().offset;
-            if !self.consume(Kind::LBrace) {
-                return Err(self.error("expected a function body"));
-            }
-            self.pos = match brace_body_end(self.tokens, self.pos) {
-                Ok(end) => end,
-                Err(end) => {
-                    self.pos = end;
-                    return Err(self.error("expected '}' before end of file"));
-                }
-            };
+            let body_start = self.opaque_body()?;
             (function, body_start)
+        } else if keyword == Kind::Trait {
+            (DeclarationKind::Trait, self.opaque_body()?)
+        } else if keyword == Kind::Impl {
+            // Without a 'for' clause the declaration name is the inherent
+            // implementation target. With one, it names the trait.
+            let target = if self.consume(Kind::For) {
+                Some(self.ty(&[Kind::LBrace], false)?)
+            } else {
+                None
+            };
+            (DeclarationKind::Impl { target }, self.opaque_body()?)
         } else if keyword == Kind::Enum {
             let body_start = self.current().offset;
             if !self.consume(Kind::LBrace) {
@@ -478,6 +500,27 @@ impl DeclarationParser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trait_and_impl_ranges_follow_the_repository_examples() {
+        let source = include_str!("../../../examples/traits.ae");
+        let declarations = parse_declarations("traits.ae", source).unwrap();
+        assert!(matches!(declarations[0].kind, DeclarationKind::Trait));
+        assert_eq!(declarations[0].name, "Area");
+        let DeclarationKind::Impl { target: Some(target) } = &declarations[1].kind else {
+            panic!("expected trait implementation");
+        };
+        assert_eq!(&source[target.clone()], "i64");
+        assert!(source[declarations[1].body.clone().unwrap()].contains("return shape * shape;"));
+
+        let source = include_str!("../../../examples/generic_impl.ae");
+        let declarations = parse_declarations("generic_impl.ae", source).unwrap();
+        let implementation = declarations.iter().find(|declaration|
+            matches!(declaration.kind, DeclarationKind::Impl { target: None })).unwrap();
+        assert_eq!(implementation.name, "Pair");
+        let parameters: Vec<_> = implementation.type_parameters.iter().map(|parameter| parameter.name.as_str()).collect();
+        assert_eq!(parameters, ["K", "V"]);
+    }
 
     #[test]
     fn reads_attributes_on_structs_and_foreign_definitions() {
