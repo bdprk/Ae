@@ -58,7 +58,7 @@ impl<'a> Parser<'a> {
         }
     }
     pub(super) fn take(&mut self, expected: Kind) -> Result<(), ae_span::Diagnostic> {
-        if *self.current() != expected { return Err(self.fail(&format!("expected {expected:?}, found {:?}", self.current())).with_code("E0010")); }
+        ae_syntax::expect_token(&self.file, self.source, &self.tokens[self.pos], expected)?;
         self.pos += 1; Ok(())
     }
     pub(super) fn identifier(&mut self) -> Result<String, ae_span::Diagnostic> {

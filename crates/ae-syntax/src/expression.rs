@@ -159,9 +159,7 @@ impl Parser<'_> {
                 Kind::LParen => {
                     self.cursor += 1;
                     let inner = self.expression(0)?;
-                    if self.current().kind != Kind::RParen {
-                        return Err(self.error("expected closing parenthesis"));
-                    }
+                    crate::expect_token(self.file, self.source, self.current(), Kind::RParen)?;
                     range.end = self.current().end;
                     self.cursor += 1;
                     ExpressionKind::Group(Box::new(inner))
@@ -217,18 +215,14 @@ impl Parser<'_> {
                 true
             })?
         };
-        if self.current().kind != Kind::RBracket {
-            return Err(self.error("expected closing bracket after collection elements"));
-        }
+        crate::expect_token(self.file, self.source, self.current(), Kind::RBracket)?;
         self.cursor += 1;
         Ok(elements)
     }
 
     fn index(&mut self, base: Expression) -> Result<ExpressionKind, Diagnostic> {
         let index = self.expression(0)?;
-        if self.current().kind != Kind::RBracket {
-            return Err(self.error("expected closing bracket"));
-        }
+        crate::expect_token(self.file, self.source, self.current(), Kind::RBracket)?;
         self.cursor += 1;
         Ok(ExpressionKind::Index { base: Box::new(base), index: Box::new(index) })
     }
@@ -313,9 +307,7 @@ impl Parser<'_> {
                             true
                         })?
                     };
-                    if self.current().kind != Kind::RParen {
-                        return Err(self.error("expected ',' or ')' after argument"));
-                    }
+                    crate::expect_token(self.file, self.source, self.current(), Kind::RParen)?;
                     self.cursor += 1;
                     ExpressionKind::Call { callee: Box::new(base), arguments }
                 }

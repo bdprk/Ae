@@ -604,3 +604,12 @@ pub fn parse_identifier<'a>(
             "expected identifier").with_code("E0010")),
     }
 }
+
+/// Check an expected token while preserving the original byte range.
+pub fn expect_token(file: &str, source: &str, token: &Token, expected: Kind) -> Result<(), Diagnostic> {
+    if token.kind == expected {
+        return Ok(());
+    }
+    Err(diagnostic_range(file, source, token.offset..token.end,
+        &format!("expected {expected:?}, found {:?}", token.kind)).with_code("E0010"))
+}
