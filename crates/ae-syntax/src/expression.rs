@@ -24,6 +24,7 @@ pub enum ExpressionKind {
     Atom(Kind),
     Group(Box<Expression>),
     Propagate(Box<Expression>),
+    AddressCast { binding: String, mutable: bool, pointee: Range<usize> },
     PointerCast { base: Box<Expression>, mutable: bool, pointee: Range<usize> },
     BorrowArgument { mutable: bool, name: String, name_range: Range<usize> },
     Array(Vec<Expression>),
@@ -133,6 +134,25 @@ impl Parser<'_> {
             ExpressionKind::Prefix { operator: token.kind.clone(), operand: Box::new(operand) }
         } else {
             match &token.kind {
+                Kind::Amp => {
+                    let (argument, end) = parse_borrow_argument(
+                        self.file, self.source, self.tokens, self.cursor, None,
+                    )?;
+                    self.cursor = end;
+                    let ExpressionKind::BorrowArgument { name, mutable, .. } = argument.kind else {
+                        unreachable!("expected a borrowed binding");
+                    };
+                    if self.current().kind != Kind::As {
+                        return Err(self.error("a borrow expression must be cast to a pointer"));
+                    }
+                    self.cursor += 1;
+                    let (target_mutable, pointee) = self.pointer_cast_target()?;
+                    if mutable != target_mutable {
+                        return Err(self.error("pointer qualifier must match the address borrow"));
+                    }
+                    range.end = pointee.end;
+                    ExpressionKind::AddressCast { binding: name, mutable, pointee }
+                }
                 Kind::LParen => {
                     self.cursor += 1;
                     let inner = self.expression(0)?;
@@ -238,10 +258,37 @@ impl Parser<'_> {
         if self.current().kind != Kind::Amp {
             return self.expression(0);
         }
+        let name_index = self.cursor + 1 + usize::from(self.tokens[self.cursor + 1].kind == Kind::Mut);
+        if self.tokens.get(name_index + 1).is_some_and(|token| token.kind == Kind::As) {
+            return self.expression(0);
+        }
         self.count_node()?;
         let (argument, end) = parse_borrow_argument(self.file, self.source, self.tokens, self.cursor, None)?;
         self.cursor = end;
         Ok(argument)
+    }
+
+    fn pointer_cast_target(&mut self) -> Result<(bool, Range<usize>), Diagnostic> {
+        if self.current().kind != Kind::Star {
+            return Err(self.error("expected '*' after 'as'"));
+        }
+        self.cursor += 1;
+        let mutable = crate::declaration::pointer_mutability(
+            self.file, self.source, self.current(),
+        )?;
+        self.cursor += 1;
+        if !matches!(self.current().kind, Kind::Ident(_)) {
+            return Err(self.error("expected a pointee type"));
+        }
+        let start = self.current().offset;
+        self.cursor += 1;
+        if self.current().kind == Kind::LBracket {
+            let (_, end) = crate::declaration::expression_type_arguments(
+                self.file, self.source, self.tokens, self.cursor,
+            )?;
+            self.cursor = end;
+        }
+        Ok((mutable, start..self.tokens[self.cursor - 1].end))
     }
 
     fn postfix(&mut self, mut base: Expression) -> Result<Expression, Diagnostic> {
@@ -290,26 +337,7 @@ impl Parser<'_> {
                     ExpressionKind::Struct { target: Box::new(base), fields }
                 }
                 Kind::As => {
-                    if self.current().kind != Kind::Star {
-                        return Err(self.error("expected '*' after 'as'"));
-                    }
-                    self.cursor += 1;
-                    let mutable = crate::declaration::pointer_mutability(
-                        self.file, self.source, self.current(),
-                    )?;
-                    self.cursor += 1;
-                    if !matches!(self.current().kind, Kind::Ident(_)) {
-                        return Err(self.error("expected a pointee type"));
-                    }
-                    let start = self.current().offset;
-                    self.cursor += 1;
-                    if self.current().kind == Kind::LBracket {
-                        let (_, end) = crate::declaration::expression_type_arguments(
-                            self.file, self.source, self.tokens, self.cursor,
-                        )?;
-                        self.cursor = end;
-                    }
-                    let pointee = start..self.tokens[self.cursor - 1].end;
+                    let (mutable, pointee) = self.pointer_cast_target()?;
                     ExpressionKind::PointerCast { base: Box::new(base), mutable, pointee }
                 }
                 Kind::Dot | Kind::ColonColon => {
@@ -447,6 +475,23 @@ mod tests {
 
         let error = parse_operator_expression("case.ae", "Result::(value)").unwrap_err();
         assert_eq!(error.primary.unwrap().span.range, 8..9);
+    }
+
+    #[test]
+    fn address_casts_and_borrow_arguments_are_distinct() {
+        let source = "call(&mut value as *mut i64, &other)";
+        let parsed = parse_operator_expression("case.ae", source).unwrap();
+        let ExpressionKind::Call { arguments, .. } = parsed.kind else {
+            panic!("expected a call");
+        };
+        let ExpressionKind::AddressCast { binding, mutable, pointee } = &arguments[0].kind else {
+            panic!("expected an address conversion");
+        };
+        assert_eq!(binding, "value");
+        assert!(*mutable);
+        assert_eq!(&source[pointee.clone()], "i64");
+        assert!(matches!(arguments[1].kind, ExpressionKind::BorrowArgument { mutable: false, .. }));
+        assert!(parse_operator_expression("case.ae", "&value as *mut i64").is_err());
     }
 
     #[test]
