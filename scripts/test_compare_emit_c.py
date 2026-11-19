@@ -52,6 +52,26 @@ class ComparisonTest(unittest.TestCase):
             return subprocess.CompletedProcess([], 1, b"", b"failed")
         self.assertEqual(self.run_comparison(emit), 1)
 
+    def test_cli_corpus_detects_exit_and_output_differences(self):
+        for suite in ("ui", "ui-json", "run"):
+            directory = self.root / "tests" / suite
+            directory.mkdir(parents=True)
+            (directory / "case.ae").write_text("fixture", encoding="utf-8")
+
+        def invoke(command, **_options):
+            release = "--release" in command
+            candidate = command[0] == str(self.candidate)
+            return subprocess.CompletedProcess(
+                command, 1 if release and candidate else 0,
+                b"changed" if release and candidate else b"expected", b"",
+            )
+
+        errors = io.StringIO()
+        with patch.object(compare, "ROOT", self.root), patch.object(compare.subprocess, "run", side_effect=invoke), \
+             contextlib.redirect_stderr(errors):
+            self.assertEqual(compare.compare_cli_corpus([self.baseline, self.candidate]), (4, 1))
+        self.assertIn("tests/run/case.ae --release: returncode, stdout", errors.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
