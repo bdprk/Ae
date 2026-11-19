@@ -147,6 +147,7 @@ impl Parser<'_> {
         self.pos = body_start;
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::Eof {
+            let declaration_start = self.tokens[self.pos].offset;
             let public = self.take_pub();
             // `#[repr(C)]` is the language's one attribute (M2.12 U8): it
             // pins the struct's layout for the C ABI. The bracket shape is
@@ -267,7 +268,16 @@ impl Parser<'_> {
                 let bounds: Vec<Vec<Bound>> = declared.iter().map(|(_, b, _)| b.clone()).collect();
                 let trait_bounds: Vec<Vec<usize>> = declared.into_iter().map(|(_, _, t)| t).collect();
                 let start = self.pos;
-                let end = self.skip_function_body()?;
+                let parsed_body = declarations.as_ref().ok().and_then(|items| {
+                    let index = items.binary_search_by_key(&declaration_start, |item| item.range.start).ok()?;
+                    items[index].body.as_ref()
+                });
+                let end = if let Some(body) = parsed_body {
+                    self.advance_to_body_end(body.end);
+                    self.pos
+                } else {
+                    self.skip_function_body()?
+                };
                 audit_generic_fn(&self.file, self.source, self.tokens.as_ref(), start, end, &name, &params, &bounds, declared_at)?;
                 let gid = self.generics.fn_defs.len();
                 self.generics.fn_names.insert(name.clone(), gid);
@@ -400,10 +410,14 @@ impl Parser<'_> {
         let start = self.tokens[self.pos].offset;
         if let Ok(index) = bodies.binary_search_by_key(&start, |body| body.start) {
             let end = bodies[index].end;
-            self.pos += self.tokens[self.pos..].partition_point(|token| token.offset < end);
+            self.advance_to_body_end(end);
             return Ok(());
         }
         self.skip_balanced_braces()
+    }
+
+    fn advance_to_body_end(&mut self, end: usize) {
+        self.pos += self.tokens[self.pos..].partition_point(|token| token.offset < end);
     }
 
     pub(super) fn skip_balanced_braces(&mut self) -> Result<(), ae_span::Diagnostic> {
