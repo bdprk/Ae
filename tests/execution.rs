@@ -3554,7 +3554,7 @@ fn main() { print(earlier(7)); }"#;
     assert_eq!(declarations[0].range.end, source.find("\nstruct Boxed").unwrap());
     assert_eq!(declarations[1].range.start, tokens[struct_start].offset);
     assert_eq!(declarations[2].range.start, tokens[main_start].offset);
-    let DeclarationKind::Function { parameters, returns: Some(returns) } = &declarations[0].kind else {
+    let DeclarationKind::Function { parameters, returns: Some(returns), .. } = &declarations[0].kind else {
         panic!("expected typed function");
     };
     assert_eq!(parameters[0].name, "n");
