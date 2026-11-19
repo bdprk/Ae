@@ -3471,6 +3471,23 @@ fn emit_cfg_runs_clean_on_the_run_suite() {
 }
 
 #[test]
+fn emit_tree_preserves_negation_and_multiplication_grouping() {
+    let dir = unique_temp_dir("operator-grouping");
+    let path = dir.join("main.ae");
+    fs::write(&path, "fn main() { print(-2 * 3); print(-(2 * 3)); print(2 * -3); }").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-tree").arg(&path).output().unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let tree = String::from_utf8_lossy(&output.stdout);
+    let expressions: Vec<_> = tree.lines().filter_map(|line| line.strip_prefix("  print ")).collect();
+    assert_eq!(expressions, [
+        "-2 @ 1:19 * 3 (i64 @ 1:22)",
+        "-2 * 3 (i64 @ 1:38) @ 1:34",
+        "2 * -3 @ 1:55 (i64 @ 1:53)",
+    ]);
+}
+
+#[test]
 fn emit_tree_dumps_the_lowered_statement_tree() {
     // `emit-tree` is the inspectable layer above the parser (M2.2 slice 1):
     // it prints declarations and every statement with its expression, and it
