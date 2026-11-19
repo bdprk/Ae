@@ -1058,6 +1058,101 @@ fn raw_pointer_access_goes_through_the_reviewed_macros() {
 }
 
 #[test]
+fn hosted_files_preserve_bytes_and_processes_recover_status() {
+    // M3.2.03/04/06/07: bytes (NUL included) survive a copy, a non-ASCII path
+    // round-trips, an empty file is Ok with length 0 while a missing one is a
+    // typed Err, and a child receives an argument with spaces and reports its
+    // own exit code.
+    let dir = unique_temp_dir("hosted");
+    let input = dir.join("nul_in.bin");
+    let output = dir.join("nul_out.bin");
+    fs::write(&input, b"a\0b\0c").unwrap();
+    fs::write(dir.join("中文 名.txt"), "héllo").unwrap();
+    fs::write(dir.join("empty.txt"), "").unwrap();
+    let spawn = if cfg!(windows) {
+        concat!(
+            "    var argv = strvec_new();\n",
+            "    push(argv, \"/c\");\n",
+            "    push(argv, \"echo\");\n",
+            "    push(argv, \"two words\");\n",
+            "    let first = run_command(\"cmd\", argv);\n",
+            "    var code = strvec_new();\n",
+            "    push(code, \"/c\");\n",
+            "    push(code, \"exit\");\n",
+            "    push(code, \"7\");\n",
+            "    let second = run_command(\"cmd\", code);\n"
+        )
+    } else {
+        concat!(
+            "    var argv = strvec_new();\n",
+            "    push(argv, \"-c\");\n",
+            "    push(argv, \"echo two words\");\n",
+            "    let first = run_command(\"sh\", argv);\n",
+            "    var code = strvec_new();\n",
+            "    push(code, \"-c\");\n",
+            "    push(code, \"exit 7\");\n",
+            "    let second = run_command(\"sh\", code);\n"
+        )
+    };
+    let source = format!(concat!(
+        "fn main() {{\n",
+        "    let parts = args();\n",
+        "    let read = try_read_file(parts[1]);\n",
+        "    match read {{\n",
+        "        ReadResult::Ok(text) => {{\n",
+        "            print(len(text));\n",
+        "            let wrote = try_write_file(parts[2], text);\n",
+        "            match wrote {{\n",
+        "                WriteResult::Ok(n) => {{ print(n); }}\n",
+        "                WriteResult::Err(reason) => {{ print(\"w \" + reason); }}\n",
+        "            }}\n",
+        "        }}\n",
+        "        ReadResult::Err(reason) => {{ print(\"r \" + reason); }}\n",
+        "    }}\n",
+        "    let wide = try_read_file(parts[3]);\n",
+        "    match wide {{\n",
+        "        ReadResult::Ok(text) => {{ print(len(text)); print(text); }}\n",
+        "        ReadResult::Err(reason) => {{ print(\"wide \" + reason); }}\n",
+        "    }}\n",
+        "    let empty = try_read_file(parts[4]);\n",
+        "    match empty {{\n",
+        "        ReadResult::Ok(text) => {{ print(len(text)); }}\n",
+        "        ReadResult::Err(reason) => {{ print(\"empty \" + reason); }}\n",
+        "    }}\n",
+        "    let missing = try_read_file(parts[5]);\n",
+        "    match missing {{\n",
+        "        ReadResult::Ok(text) => {{ print(\"unexpected\"); }}\n",
+        "        ReadResult::Err(reason) => {{ print(contains(reason, \"No such file\")); }}\n",
+        "    }}\n",
+        "{}",
+        "    match first {{\n",
+        "        CommandResult::Ok(status, out) => {{ print(status); print(contains(out, \"two words\")); }}\n",
+        "        CommandResult::Err(reason) => {{ print(\"spawn \" + reason); }}\n",
+        "    }}\n",
+        "    match second {{\n",
+        "        CommandResult::Ok(status, out) => {{ print(status); }}\n",
+        "        CommandResult::Err(reason) => {{ print(\"spawn \" + reason); }}\n",
+        "    }}\n",
+        "}}\n"
+    ), spawn);
+    let path = dir.join("main.ae");
+    fs::write(&path, source).unwrap();
+    let run = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("run").arg(&path).arg("--")
+        .arg(&input).arg(&output)
+        .arg(dir.join("中文 名.txt")).arg(dir.join("empty.txt"))
+        .arg(dir.join("no_such.txt")).output().unwrap();
+    let copied = fs::read(&output).unwrap();
+    let _ = fs::remove_dir_all(&dir);
+    assert!(run.status.success(), "{}",
+        String::from_utf8_lossy(&run.stderr));
+    assert_eq!(copied, b"a\0b\0c");
+    let printed: Vec<String> = String::from_utf8_lossy(&run.stdout)
+        .lines().map(str::to_owned).collect();
+    assert_eq!(printed, ["5", "5", "6", "héllo", "0", "true", "0", "true", "7"]);
+}
+
+#[test]
 fn library_layers_handle_growth_utf8_boundaries_and_map_resize() {
     // M3.1.03/04: a vector grows past every initial capacity and keeps every
     // element; drop elaboration emits one release for the binding.
