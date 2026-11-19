@@ -170,7 +170,14 @@ impl Parser<'_> {
                 self.parse_struct_def(public, repr_c, parsed_fields)?;
                 continue;
             }
-            if *self.current() == Kind::Enum { self.parse_enum_def(public)?; continue; }
+            if *self.current() == Kind::Enum {
+                let parsed_variants = parsed_declaration.and_then(|item| match &item.kind {
+                    DeclarationKind::Enum { variants } => Some(variants.as_slice()),
+                    _ => None,
+                });
+                self.parse_enum_def(public, parsed_variants)?;
+                continue;
+            }
             if *self.current() == Kind::Trait { self.skip_trait_def()?; continue; }
             if *self.current() == Kind::Impl { self.collect_impl(next_id)?; continue; }
             if *self.current() == Kind::Extern {

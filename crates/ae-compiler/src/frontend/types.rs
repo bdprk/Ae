@@ -168,7 +168,11 @@ impl Parser<'_> {
     }
     // `enum Name { ... }` or `enum Name[T, U] { ... }`. A generic declaration
     // produces no layout at all; only instantiations do (ADR-21).
-    pub(super) fn parse_enum_def(&mut self, public: bool) -> Result<(), ae_span::Diagnostic> {
+    pub(super) fn parse_enum_def(
+        &mut self,
+        public: bool,
+        parsed_variants: Option<&[ae_syntax::declaration::EnumVariant]>,
+    ) -> Result<(), ae_span::Diagnostic> {
         self.pos += 1;
         let name = self.identifier()?;
         if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{}' is a built-in name and cannot be an enum", name))); }
@@ -179,7 +183,14 @@ impl Parser<'_> {
         let mut variants: Vec<(String, Vec<Payload>)> = Vec::new();
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::RBrace {
-            let vname = self.identifier()?;
+            let parsed_variant = parsed_variants.and_then(|items| items.get(variants.len()));
+            let vname = match parsed_variant {
+                Some(variant) if variant.range.start == self.tokens[self.pos].offset => {
+                    self.pos += 1;
+                    variant.name.clone()
+                }
+                _ => self.identifier()?,
+            };
             if !seen.insert(vname.clone()) { return Err(self.fail(&format!("duplicate variant '{}' in enum '{}'", vname, name))); }
             let mut fields = Vec::new();
             if *self.current() == Kind::LParen {
