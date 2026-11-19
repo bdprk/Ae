@@ -1074,9 +1074,11 @@ impl Parser<'_> {
         let key = format!("{gid}:{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
         if let Some(instance) = self.generics.fn_done.get(&key) { return Ok(instance.clone()); }
         if self.generics.fn_in_progress.contains(&key) {
-            return Err(self.error_at(offset, &format!("'{}' is already being instantiated with these type arguments; the expansion would never finish", def.name)));
+            let trace = self.instantiation_trace(Some(&self.instantiation_display(&def.name, &args)));
+            return Err(self.error_at(offset, &format!("'{}' is already being instantiated with these type arguments; the expansion would never finish (instantiated: {})", def.name, trace)));
         }
         self.generics.fn_in_progress.insert(key.clone());
+        self.generics.instantiation_trace.push((key.clone(), self.instantiation_display(&def.name, &args)));
         let id = self.generics.next_fn_id;
         self.generics.next_fn_id += 1;
         let mut subst = HashMap::new();
@@ -1103,6 +1105,7 @@ impl Parser<'_> {
         self.pending.append(&mut nested);
         self.generics.fn_done.insert(key.clone(), instance.clone());
         self.generics.fn_in_progress.remove(&key);
+        self.generics.instantiation_trace.pop();
         Ok(instance)
     }
     // One instantiation of a generic impl method (ADR-0187). The receiver's
@@ -1125,9 +1128,12 @@ impl Parser<'_> {
         let key = format!("{gid}#{method}#{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
         if let Some(instance) = self.generics.generic_impl_done.get(&key) { return Ok(instance.clone()); }
         if self.generics.impl_in_progress.contains(&key) {
-            return Err(self.error_at(offset, &format!("'{impl_name}#{method}' is already being instantiated with these type arguments; the expansion would never finish")));
+            let display = format!("{}::{}", self.instantiation_display(impl_name, &args), method);
+            let trace = self.instantiation_trace(Some(&display));
+            return Err(self.error_at(offset, &format!("'{impl_name}#{method}' is already being instantiated with these type arguments; the expansion would never finish (instantiated: {trace})")));
         }
         self.generics.impl_in_progress.insert(key.clone());
+        self.generics.instantiation_trace.push((key.clone(), format!("{}::{}", self.instantiation_display(impl_name, &args), method)));
         let id = self.generics.next_fn_id;
         self.generics.next_fn_id += 1;
         // Enum receivers are by value only (ADR-0196): the Shared/Mutable
@@ -1173,6 +1179,7 @@ impl Parser<'_> {
         self.pending.append(&mut nested);
         self.generics.generic_impl_done.insert(key.clone(), instance.clone());
         self.generics.impl_in_progress.remove(&key);
+        self.generics.instantiation_trace.pop();
         Ok(instance)
     }
     // The argument list of a call, starting at '(' (ADR-31 shares it between
