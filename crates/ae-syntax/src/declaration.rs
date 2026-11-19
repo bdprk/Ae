@@ -60,6 +60,8 @@ use ae_span::Diagnostic;
 #[derive(Debug, PartialEq)]
 pub struct TypedName {
     pub name: String,
+    pub name_range: Range<usize>,
+    pub mutable: bool,
     pub ty: Range<usize>,
 }
 
@@ -352,18 +354,18 @@ impl DeclarationParser<'_> {
     fn typed_names(&mut self, close: Kind, fields: bool) -> Result<Vec<TypedName>, Diagnostic> {
         let mut names = Vec::new();
         while self.current().kind != close {
-            if !fields {
-                if names.len() >= MAX_FUNCTION_PARAMETERS {
-                    return Err(self.error(&format!("function parameter limit exceeded ({MAX_FUNCTION_PARAMETERS})")));
-                }
-                self.consume(Kind::Var);
+            if !fields && names.len() >= MAX_FUNCTION_PARAMETERS {
+                return Err(self.error(&format!("function parameter limit exceeded ({MAX_FUNCTION_PARAMETERS})")));
             }
+            let mutable = !fields && self.consume(Kind::Var);
+            let token = self.current();
+            let name_range = token.offset..token.end;
             let name = self.name()?;
             if !self.consume(Kind::Colon) {
                 return Err(self.error("expected ':' after name"));
             }
             let ty = self.ty(&[Kind::Comma, close.clone()], fields)?;
-            names.push(TypedName { name, ty });
+            names.push(TypedName { name, name_range, mutable, ty });
             if !self.consume(Kind::Comma) && !(fields && self.at_field_name()) {
                 break;
             }
@@ -652,6 +654,20 @@ mod tests {
         let recovered = recover_declarations("case.ae", &broken);
         assert_eq!(recovered.diagnostics.len(), 1);
         assert_eq!(recovered.declarations[0].attribute, Some(DeclarationAttribute::ReprC));
+    }
+
+    #[test]
+    fn signature_retains_mutability_and_callable_and_borrowed_types() {
+        let source = "fn apply(var value: i64, call: fn(i64, &string) -> i64, values: &[i64; 3]) -> i64 { return value; }";
+        let declarations = parse_declarations("case.ae", source).unwrap();
+        let DeclarationKind::Function { parameters, .. } = &declarations[0].kind else {
+            panic!("expected function declaration");
+        };
+        assert!(parameters[0].mutable);
+        assert_eq!(&source[parameters[0].name_range.clone()], "value");
+        assert!(!parameters[1].mutable);
+        assert_eq!(&source[parameters[1].ty.clone()], "fn(i64, &string) -> i64");
+        assert_eq!(&source[parameters[2].ty.clone()], "&[i64; 3]");
     }
 
     #[test]
