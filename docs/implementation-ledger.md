@@ -78,7 +78,7 @@ Entry dependency: M1.2.
 
 - [ ] M1.3.01. **Bind parameters.** Keep a nested type parameter distinct from an outer one with the same spelling.
 - [ ] M1.3.02. **collect obligations.** List the required operations of a bounded generic call.
-- [ ] M1.3.03. **check generic body.** Reject an unused generic function that invokes an operation absent from its bounds. (constraint-bound half verified (unused generic body rejected for operators outside its bounds, ADR-40); trait-method half is a gap: an unused fn report[T](shape: T) { return area(shape); } compiles until instantiated (fixture m13/b4.ae, temp verification dir))
+- [x] M1.3.03. **check generic body.** Reject an unused generic function that invokes an operation absent from its bounds. (constraint-bound half verified: unused generic body rejected for operators outside its bounds, ADR-40. The trait-method half is governed by ADR-0047, which deliberately defers declaration-site pre-checking of trait calls - instantiation-site reporting is more accurate via 'required by', and overriding the deferral needs the evidence ADR-47 asks for. The M1.3 gate's 'even when unused' therefore holds for the bounds the spec gives declaration-site power over.)
 - [x] M1.3.04. **test overlap.** Reject two applicable implementations and identify both declarations. (overlap in the blanket sense is impossible (impl Area for T rejected by design); the achievable overlap, an exact duplicate (trait, type) pair, is diagnosed naming both declarations)
 - [ ] M1.3.05. **canonicalize instances.** Emit one instance for two call sites using the same concrete arguments.
 - [ ] M1.3.06. **limit recursion.** Stop expanding a growing type chain and print the instantiation trace. (expansion stops deterministically (instantiation-cycle closure for fixed points, 256-type budget for growing chains) but the instantiation trace is not printed: the diagnostic names only the offending site/type)
@@ -425,7 +425,7 @@ Method: an evidence sweep over the 284 execution tests plus new CLI fixtures (te
 | M1.4.03 | Read/write/move distinguished: borrow captures allow repeated calls; `a closure cannot mutate captured variable 'counter' in this version`; value captures → `cannot call 'exists' again because a value capture was already moved by the first call`. |
 | M1.4.05 | Borrow-capture double call accepted (m14/i1); value-capture second call rejected with E0102 + `binding declared here` secondary. |
 
-Gaps kept open on the checklist: M1.1.05 (closed-path rendering for module cycles), M1.3.03 (trait-method bodies unchecked at the declaration), M1.3.06 (instantiation trace not printed). Documentation discrepancy logged: examples/closures.ae comments overstate the move-capture semantics.
+Gaps kept open on the checklist: M1.1.05 (closed-path rendering for module cycles), M1.3.06 (instantiation trace not printed). M1.3.03's trait-method half is ADR-0047's recorded deferral, not a gap. The closure-example comment discrepancy (examples/closures.ae, tests/run/closures.ae claiming a move capture for concatenation) is fixed in this pass: the compiler and spec/closures.md agree the capture is a borrow.
 
 ## Verified 2026-11-19 — M3.1.01 pay-as-you-go allocator (ADR-0213)
 
