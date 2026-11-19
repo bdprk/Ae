@@ -54,18 +54,57 @@ pub struct Declaration {
 /// Read function and struct declaration boundaries in a source fragment.
 /// Type spellings and function bodies are retained as source ranges.
 pub fn parse_declarations(file: &str, source: &str) -> Result<Vec<Declaration>, Diagnostic> {
-    let tokens = crate::lex_diagnostic(source).map_err(|mut error| {
-        if let Some(label) = &mut error.primary {
-            label.span.file = Some(file.to_owned());
-        }
-        error
-    })?;
+    let tokens = declaration_tokens(file, source)?;
     let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: 0 };
     let mut declarations = Vec::new();
     while parser.current().kind != Kind::Eof {
         declarations.push(parser.declaration()?);
     }
     Ok(declarations)
+}
+
+#[derive(Debug)]
+pub struct RecoveredDeclarations {
+    pub declarations: Vec<Declaration>,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Continue at the next top-level function or struct after a syntax error.
+/// Recovery is bounded to 32 diagnostics and does not enter brace bodies.
+pub fn recover_declarations(file: &str, source: &str) -> RecoveredDeclarations {
+    const MAX_DIAGNOSTICS: usize = 32;
+    let mut result = RecoveredDeclarations { declarations: Vec::new(), diagnostics: Vec::new() };
+    let tokens = match declaration_tokens(file, source) {
+        Ok(tokens) => tokens,
+        Err(error) => {
+            result.diagnostics.push(error);
+            return result;
+        }
+    };
+    let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: 0 };
+    while parser.current().kind != Kind::Eof {
+        let start = parser.pos;
+        match parser.declaration() {
+            Ok(declaration) => result.declarations.push(declaration),
+            Err(error) => {
+                result.diagnostics.push(error);
+                if result.diagnostics.len() == MAX_DIAGNOSTICS {
+                    break;
+                }
+                parser.synchronize(start);
+            }
+        }
+    }
+    result
+}
+
+fn declaration_tokens(file: &str, source: &str) -> Result<Vec<Token>, Diagnostic> {
+    crate::lex_diagnostic(source).map_err(|mut error| {
+        if let Some(label) = &mut error.primary {
+            label.span.file = Some(file.to_owned());
+        }
+        error
+    })
 }
 
 struct DeclarationParser<'a> {
@@ -156,6 +195,37 @@ impl DeclarationParser<'_> {
         Ok(names)
     }
 
+    fn synchronize(&mut self, start: usize) {
+        // A failed declaration may already have consumed a brace opener.
+        // Restart at its first token to skip complete bodies consistently.
+        let mut index = start;
+        let failed_keyword = start + usize::from(matches!(
+            &self.tokens[start].kind, Kind::Ident(name) if name == "pub"
+        ));
+        loop {
+            let token = &self.tokens[index];
+            match &token.kind {
+                Kind::Eof => break,
+                Kind::LBrace => {
+                    index = brace_body_end(self.tokens, index + 1).unwrap_or_else(|end| end);
+                    continue;
+                }
+                Kind::Struct | Kind::Fn if index > failed_keyword && index >= self.pos => {
+                    if matches!(token.kind, Kind::Struct)
+                        || matches!(self.tokens.get(index + 1).map(|next| &next.kind), Some(Kind::Ident(_))) {
+                        if index > start && matches!(&self.tokens[index - 1].kind, Kind::Ident(name) if name == "pub") {
+                            index -= 1;
+                        }
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+        self.pos = index;
+    }
+
     fn declaration(&mut self) -> Result<Declaration, Diagnostic> {
         let start = self.current().offset;
         if matches!(&self.current().kind, Kind::Ident(name) if name == "pub") {
@@ -226,5 +296,38 @@ impl DeclarationParser<'_> {
         };
         let end = self.tokens[self.pos - 1].end;
         Ok(Declaration { name, type_parameters, kind, range: start..end, body: body_start..end })
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_parameter_delimiter_recovers_at_the_following_declaration() {
+        let source = "fn broken(value: i64 { print(1); }\npub struct Next[T] { value: T }\nfn main() {}";
+        let recovered = recover_declarations("case.ae", source);
+        assert_eq!(recovered.diagnostics.len(), 1);
+        let diagnostic = recovered.diagnostics.first().unwrap();
+        assert_eq!(parse_declarations("case.ae", source).unwrap_err(), *diagnostic);
+        let offset = source.find('{').unwrap();
+        assert_eq!(diagnostic.primary.as_ref().unwrap().span.range, offset..offset + 1);
+        assert_eq!(recovered.declarations.len(), 2);
+        assert_eq!(recovered.declarations[0].name, "Next");
+        assert_eq!(recovered.declarations[0].range.start, source.find("pub struct").unwrap());
+        assert_eq!(recovered.declarations[1].name, "main");
+    }
+
+    #[test]
+    fn recovery_caps_repeated_declaration_errors() {
+        let source = format!("{}fn main() {{}}", "fn broken( { }\n".repeat(40));
+        let recovered = recover_declarations("case.ae", &source);
+        assert_eq!(recovered.diagnostics.len(), 32);
+        assert!(recovered.declarations.is_empty());
+        assert!(recovered.diagnostics.windows(2).all(|pair| {
+            pair[0].primary.as_ref().unwrap().span.range.start
+                < pair[1].primary.as_ref().unwrap().span.range.start
+        }));
     }
 }
