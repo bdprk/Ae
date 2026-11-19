@@ -162,7 +162,14 @@ impl Parser<'_> {
             if no_mangle && *self.current() != Kind::Extern {
                 return Err(self.fail("'#[no_mangle]' applies to an 'extern \"C\" fn' definition"));
             }
-            if *self.current() == Kind::Struct { self.parse_struct_def(public, repr_c)?; continue; }
+            if *self.current() == Kind::Struct {
+                let parsed_fields = parsed_declaration.and_then(|item| match &item.kind {
+                    DeclarationKind::Struct { fields } => Some(fields.as_slice()),
+                    _ => None,
+                });
+                self.parse_struct_def(public, repr_c, parsed_fields)?;
+                continue;
+            }
             if *self.current() == Kind::Enum { self.parse_enum_def(public)?; continue; }
             if *self.current() == Kind::Trait { self.skip_trait_def()?; continue; }
             if *self.current() == Kind::Impl { self.collect_impl(next_id)?; continue; }
