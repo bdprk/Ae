@@ -89,7 +89,7 @@ impl Parser<'_> {
         result
     }
     pub(super) fn expression_inner(&mut self, min: u8, moving: bool) -> Result<(Expr, Type), ae_span::Diagnostic> {
-        use ae_syntax::operator::{infix_binding_power, PREFIX_BINDING_POWER};
+        use ae_syntax::operator::{parse_infix_tail, PREFIX_BINDING_POWER};
 
         self.expression_nodes += 1;
         if self.expression_nodes > 128 { return Err(self.fail("expression complexity limit exceeded (128)")); }
@@ -1445,83 +1445,86 @@ impl Parser<'_> {
                 None => {}
             }
         }
-        while let Some((left_power, right_power)) = infix_binding_power(self.current()) {
-            if left_power < min { break; }
-            let op = self.current().clone();
-            let (line, column) = self.position();
-            self.pos += 1;
-            // `+` always consumes its string operands, even in borrow contexts.
-            // A string `+` reads fields and vector elements rather than
-            // rejecting them, so the right-hand side is parsed with the
-            // plus-operand flag raised: variables are still move-checked,
-            // but borrow-shaped operands are copied by the emitter.
-            self.plus_operand_depth += 1;
-            let parsed = self.expression(right_power, op == Kind::Plus);
-            self.plus_operand_depth -= 1;
-            let (rhs, rhs_ty) = parsed?;
-            let (lhs_expr, lhs_ty) = lhs;
-            let ty = match op {
-                Kind::And | Kind::Or => {
-                    if lhs_ty != Type::Bool || rhs_ty != Type::Bool { return Err(self.fail(&format!("'{}' requires boolean operands", if op == Kind::And { "&&" } else { "||" }))); }
-                    Type::Bool
+        parse_infix_tail(self, lhs, min, |parser| parser.current(), Self::combine_infix)
+    }
+
+    fn combine_infix(
+        &mut self,
+        lhs: (Expr, Type),
+        op: Kind,
+        right_power: u8,
+    ) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        let (line, column) = self.position();
+        self.pos += 1;
+        // `+` always consumes its string operands, even in borrow contexts.
+        // A string `+` reads fields and vector elements rather than
+        // rejecting them, so the right-hand side is parsed with the
+        // plus-operand flag raised: variables are still move-checked,
+        // but borrow-shaped operands are copied by the emitter.
+        self.plus_operand_depth += 1;
+        let parsed = self.expression(right_power, op == Kind::Plus);
+        self.plus_operand_depth -= 1;
+        let (rhs, rhs_ty) = parsed?;
+        let (lhs_expr, lhs_ty) = lhs;
+        let ty = match op {
+            Kind::And | Kind::Or => {
+                if lhs_ty != Type::Bool || rhs_ty != Type::Bool { return Err(self.fail(&format!("'{}' requires boolean operands", if op == Kind::And { "&&" } else { "||" }))); }
+                Type::Bool
+            }
+            Kind::Pipe | Kind::Caret | Kind::Amp | Kind::Shl | Kind::Shr => {
+                if lhs_ty != Type::Int || rhs_ty != Type::Int { return Err(self.fail("bitwise operator requires i64 operands")); }
+                Type::Int
+            }
+            Kind::EqEq | Kind::NotEq | Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq => {
+                let comparable = match (lhs_ty, rhs_ty) {
+                    (Type::Int, Type::Int) => true,
+                    (Type::F64, Type::F64) => true,
+                    (Type::Bool, Type::Bool) => op == Kind::EqEq || op == Kind::NotEq,
+                    (Type::String | Type::StrView, Type::String | Type::StrView) => op == Kind::EqEq || op == Kind::NotEq,
+                    _ => false,
+                };
+                if !comparable {
+                    return Err(self.fail("comparison requires two i64, two f64, or two strings/views with == or !=").with_code("E0202"));
                 }
-                Kind::Pipe | Kind::Caret | Kind::Amp | Kind::Shl | Kind::Shr => {
-                    if lhs_ty != Type::Int || rhs_ty != Type::Int { return Err(self.fail("bitwise operator requires i64 operands")); }
+                // String/view equality gets a dedicated node so emission
+                // never confuses it with C pointer comparison.
+                if (op == Kind::EqEq || op == Kind::NotEq) && matches!(lhs_ty, Type::String | Type::StrView) {
+                    return Ok((Expr::StrEq(Box::new(lhs_expr), Box::new(rhs), op == Kind::NotEq), Type::Bool));
+                }
+                Type::Bool
+            }
+            Kind::Plus if matches!(lhs_ty, Type::String | Type::StrView) || matches!(rhs_ty, Type::String | Type::StrView) => {
+                // `+` builds a new owned string. Two views are read only and
+                // copied into the result, so no view can be consumed.
+                let stringlike = |ty: Type| matches!(ty, Type::String | Type::StrView);
+                if !stringlike(lhs_ty) || !stringlike(rhs_ty) { return Err(self.fail("'+' requires two strings, two string views, or two integers")); }
+                // The left operand was parsed in the caller's mode; using it
+                // here consumes it, so retroactively record the move. Only a
+                // plain owned variable is consumed: fields, vector elements
+                // and views are borrowed and get copied by the emitter. The
+                // right operand follows the same rule.
+                if lhs_ty == Type::String {
+                    if let Expr::Variable(id, ty, _, _) = &lhs_expr {
+                        if ty.owned() && !self.moved.contains(id) { self.moved.insert(*id); }
+                    }
+                }
+                Type::String
+            }
+            _ => {
+                if lhs_ty == Type::F64 || rhs_ty == Type::F64 {
+                    if lhs_ty != Type::F64 || rhs_ty != Type::F64 {
+                        return Err(self.fail("mixed i64/f64 arithmetic is not allowed; convert one side explicitly with to_f64 or to_i64"));
+                    }
+                    if op == Kind::Percent {
+                        return Err(self.fail("'%' is defined for i64 operands only"));
+                    }
+                    Type::F64
+                } else {
+                    if lhs_ty != Type::Int || rhs_ty != Type::Int { return Err(self.fail("arithmetic requires integer operands").with_code("E0203")); }
                     Type::Int
                 }
-                Kind::EqEq | Kind::NotEq | Kind::Less | Kind::LessEq | Kind::Greater | Kind::GreaterEq => {
-                    let comparable = match (lhs_ty, rhs_ty) {
-                        (Type::Int, Type::Int) => true,
-                        (Type::F64, Type::F64) => true,
-                        (Type::Bool, Type::Bool) => op == Kind::EqEq || op == Kind::NotEq,
-                        (Type::String | Type::StrView, Type::String | Type::StrView) => op == Kind::EqEq || op == Kind::NotEq,
-                        _ => false,
-                    };
-                    if !comparable {
-                        return Err(self.fail("comparison requires two i64, two f64, or two strings/views with == or !=").with_code("E0202"));
-                    }
-                    // String/view equality gets a dedicated node so emission
-                    // never confuses it with C pointer comparison.
-                    if (op == Kind::EqEq || op == Kind::NotEq) && matches!(lhs_ty, Type::String | Type::StrView) {
-                        lhs = (Expr::StrEq(Box::new(lhs_expr), Box::new(rhs), op == Kind::NotEq), Type::Bool);
-                        continue;
-                    }
-                    Type::Bool
-                }
-                Kind::Plus if matches!(lhs_ty, Type::String | Type::StrView) || matches!(rhs_ty, Type::String | Type::StrView) => {
-                    // `+` builds a new owned string. Two views are read only and
-                    // copied into the result, so no view can be consumed.
-                    let stringlike = |ty: Type| matches!(ty, Type::String | Type::StrView);
-                    if !stringlike(lhs_ty) || !stringlike(rhs_ty) { return Err(self.fail("'+' requires two strings, two string views, or two integers")); }
-                    // The left operand was parsed in the caller's mode; using it
-                    // here consumes it, so retroactively record the move. Only a
-                    // plain owned variable is consumed: fields, vector elements
-                    // and views are borrowed and get copied by the emitter. The
-                    // right operand follows the same rule.
-                    if lhs_ty == Type::String {
-                        if let Expr::Variable(id, ty, _, _) = &lhs_expr {
-                            if ty.owned() && !self.moved.contains(id) { self.moved.insert(*id); }
-                        }
-                    }
-                    Type::String
-                }
-                _ => {
-                    if lhs_ty == Type::F64 || rhs_ty == Type::F64 {
-                        if lhs_ty != Type::F64 || rhs_ty != Type::F64 {
-                            return Err(self.fail("mixed i64/f64 arithmetic is not allowed; convert one side explicitly with to_f64 or to_i64"));
-                        }
-                        if op == Kind::Percent {
-                            return Err(self.fail("'%' is defined for i64 operands only"));
-                        }
-                        Type::F64
-                    } else {
-                        if lhs_ty != Type::Int || rhs_ty != Type::Int { return Err(self.fail("arithmetic requires integer operands").with_code("E0203")); }
-                        Type::Int
-                    }
-                }
-            };
-            lhs = (Expr::Binary(Box::new(lhs_expr), op, Box::new(rhs), line, column, ty), ty);
-        }
-        Ok(lhs)
+            }
+        };
+        Ok((Expr::Binary(Box::new(lhs_expr), op, Box::new(rhs), line, column, ty), ty))
     }
 }
