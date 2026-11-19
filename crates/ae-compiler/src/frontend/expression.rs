@@ -1046,13 +1046,22 @@ impl Parser<'_> {
                         return Err(self.error_at(name_offset, &format!("'{name}' is a generic function; write its type arguments, e.g. {name}[i64](...)")));
                     }
                     self.pos += 1;
-                    let mut type_args = Vec::new();
-                    loop {
-                        if type_args.len() >= 8 { return Err(self.fail("type argument limit exceeded (8)")); }
-                        type_args.push(self.named_type()?);
-                        if *self.current() != Kind::Comma { break; }
-                        self.pos += 1;
-                    }
+                    let type_args = ae_syntax::declaration::parse_type_argument_list(
+                        self,
+                        |parser, count| {
+                            if count >= 8 {
+                                return Err(parser.fail("type argument limit exceeded (8)"));
+                            }
+                            parser.named_type()
+                        },
+                        |parser| {
+                            if *parser.current() != Kind::Comma {
+                                return false;
+                            }
+                            parser.pos += 1;
+                            true
+                        },
+                    )?;
                     self.take(Kind::RBracket)?;
                     let (id, types, ret) = self.instantiate_fn(gid, type_args, name_offset)?;
                     let args = self.call_arguments(&name, &types)?;
