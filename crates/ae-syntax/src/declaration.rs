@@ -45,7 +45,12 @@ pub struct EnumVariant {
 
 #[derive(Debug, PartialEq)]
 pub enum DeclarationKind {
-    Function { parameters: Vec<TypedName>, returns: Option<Range<usize>> },
+    Function {
+        parameters: Vec<TypedName>,
+        returns: Option<Range<usize>>,
+        unsafe_fn: bool,
+        abi: Option<String>,
+    },
     Struct { fields: Vec<TypedName> },
     Enum { variants: Vec<EnumVariant> },
 }
@@ -56,7 +61,7 @@ pub struct Declaration {
     pub type_parameters: Vec<TypeParameter>,
     pub kind: DeclarationKind,
     pub range: Range<usize>,
-    pub body: Range<usize>,
+    pub body: Option<Range<usize>>,
 }
 
 /// Read function, struct, and enum declaration boundaries in a source fragment.
@@ -226,9 +231,15 @@ impl DeclarationParser<'_> {
                     index = brace_body_end(self.tokens, index + 1).unwrap_or_else(|end| end);
                     continue;
                 }
-                Kind::Struct | Kind::Enum | Kind::Fn if index > failed_keyword && index >= self.pos => {
-                    if matches!(token.kind, Kind::Struct | Kind::Enum)
-                        || matches!(self.tokens.get(index + 1).map(|next| &next.kind), Some(Kind::Ident(_))) {
+                Kind::Struct | Kind::Enum | Kind::Fn | Kind::Unsafe | Kind::Extern if index > failed_keyword && index >= self.pos => {
+                    let next = self.tokens.get(index + 1).map(|next| &next.kind);
+                    let starts_declaration = match token.kind {
+                        Kind::Fn => matches!(next, Some(Kind::Ident(_))),
+                        Kind::Unsafe => matches!(next, Some(Kind::Fn)),
+                        Kind::Extern => matches!(next, Some(Kind::Text(_))),
+                        _ => true,
+                    };
+                    if starts_declaration {
                         if index > start && matches!(&self.tokens[index - 1].kind, Kind::Ident(name) if name == "pub") {
                             index -= 1;
                         }
@@ -270,6 +281,19 @@ impl DeclarationParser<'_> {
         if matches!(&self.current().kind, Kind::Ident(name) if name == "pub") {
             self.pos += 1;
         }
+        let unsafe_fn = self.consume(Kind::Unsafe);
+        let abi = if !unsafe_fn && self.consume(Kind::Extern) {
+            let Kind::Text(abi) = &self.tokens[self.pos].kind else {
+                return Err(self.error("expected an ABI string after 'extern'"));
+            };
+            self.pos += 1;
+            Some(abi.clone())
+        } else {
+            None
+        };
+        if (unsafe_fn || abi.is_some()) && self.current().kind != Kind::Fn {
+            return Err(self.error("expected 'fn' after function qualifier"));
+        }
         let keyword = match self.current().kind {
             Kind::Fn => Kind::Fn,
             Kind::Struct => Kind::Struct,
@@ -309,7 +333,18 @@ impl DeclarationParser<'_> {
             if !self.consume(Kind::RParen) {
                 return Err(self.error("expected ')' after parameters"));
             }
-            let returns = if self.consume(Kind::Arrow) { Some(self.ty(&[Kind::LBrace], false)?) } else { None };
+            let foreign = abi.is_some();
+            let stops = if foreign { &[Kind::LBrace, Kind::Semi][..] } else { &[Kind::LBrace][..] };
+            let returns = if self.consume(Kind::Arrow) {
+                Some(self.ty(stops, false)?)
+            } else {
+                None
+            };
+            let function = DeclarationKind::Function { parameters, returns, unsafe_fn, abi };
+            if foreign && self.consume(Kind::Semi) {
+                let end = self.tokens[self.pos - 1].end;
+                return Ok(Declaration { name, type_parameters, kind: function, range: start..end, body: None });
+            }
             let body_start = self.current().offset;
             if !self.consume(Kind::LBrace) {
                 return Err(self.error("expected a function body"));
@@ -321,7 +356,7 @@ impl DeclarationParser<'_> {
                     return Err(self.error("expected '}' before end of file"));
                 }
             };
-            (DeclarationKind::Function { parameters, returns }, body_start)
+            (function, body_start)
         } else if keyword == Kind::Enum {
             let body_start = self.current().offset;
             if !self.consume(Kind::LBrace) {
@@ -341,7 +376,7 @@ impl DeclarationParser<'_> {
             (DeclarationKind::Struct { fields }, body_start)
         };
         let end = self.tokens[self.pos - 1].end;
-        Ok(Declaration { name, type_parameters, kind, range: start..end, body: body_start..end })
+        Ok(Declaration { name, type_parameters, kind, range: start..end, body: Some(body_start..end) })
     }
 }
 
@@ -349,6 +384,21 @@ impl DeclarationParser<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_foreign_prototypes_and_unsafe_definitions() {
+        let source = "extern \"C\" fn foreign(value: i64) -> i64; unsafe fn local() -> i64 { return 1; }";
+        let declarations = parse_declarations("case.ae", source).unwrap();
+        assert!(matches!(&declarations[0].kind,
+            DeclarationKind::Function { abi: Some(abi), unsafe_fn: false, .. } if abi == "C"));
+        assert_eq!(declarations[0].body, None);
+        assert_eq!(&source[declarations[0].range.clone()], "extern \"C\" fn foreign(value: i64) -> i64;");
+        assert!(matches!(&declarations[1].kind,
+            DeclarationKind::Function { abi: None, unsafe_fn: true, .. }));
+        assert_eq!(&source[declarations[1].body.clone().unwrap()], "{ return 1; }");
+        assert!(parse_declarations("case.ae", include_str!("../../../tests/run/extern_c_call.ae")).is_ok());
+        assert!(parse_declarations("case.ae", include_str!("../../../tests/run/unsafe_fn_call.ae")).is_ok());
+    }
 
     #[test]
     fn enum_payload_spellings_and_variant_boundaries_are_preserved() {
