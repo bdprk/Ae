@@ -1,4 +1,5 @@
 //! Lexer: source text to tokens, plus location helpers.
+pub mod declaration;
 pub mod expression;
 pub mod fmt;
 pub mod literal;
