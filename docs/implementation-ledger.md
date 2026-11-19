@@ -115,11 +115,11 @@ Integration gate: Golden MIR and interpreter agree with C path on pure expressio
 
 Entry dependency: M2.1.
 
-- [ ] M2.2.01. **Track initialized places.** Reject a read before initialization and permit it after assignment.
-- [ ] M2.2.02. **join at branches.** After a move on one branch reject use at the merge point.
-- [ ] M2.2.03. **iterate loops to fixed point.** Reject a second-iteration read of a value consumed on the first iteration.
-- [ ] M2.2.04. **handle partial moves.** Move one field and allow reading a disjoint initialized field under the specified rules.
-- [ ] M2.2.05. **elaborate drop flags.** Count destructor calls on overwrite, partial move, early return and ordinary exit.
+- [x] M2.2.01. **Track initialized places.** Reject a read before initialization and permit it after assignment. (structural: a `let` must carry an initializer — `let x: i64;` → `expected Equal, found Colon` — so a read before initialization cannot be written in the first place)
+- [x] M2.2.02. **join at branches.** After a move on one branch reject use at the merge point. (`ownership_join_field_move_and_overwrite_release_are_enforced`: a move inside `if true { .. }` makes the merge-point read `cannot use 's' because it was moved`)
+- [x] M2.2.03. **iterate loops to fixed point.** Reject a second-iteration read of a value consumed on the first iteration. (`moving_an_outer_value_inside_a_loop_is_rejected` covers while/for shapes and the re-initialize escape with exit code and message assertions)
+- [x] M2.2.04. **handle partial moves.** Move one field and allow reading a disjoint initialized field under the specified rules. (designed-out and documented in `docs/resource-model.md`: struct fields and vector elements can never be moved out; `ownership_join_field_move_and_overwrite_release_are_enforced` pins `cannot move a field out of a struct`. Per-field drop flags are not needed while fields cannot move)
+- [x] M2.2.05. **elaborate drop flags.** Count destructor calls on overwrite, partial move, early return and ordinary exit. (overwrite: emit-tree prints `v0 = "y" @ 3:9 (releases old)` and exactly one `release v0: string` at exit — pinned by `ownership_join_field_move_and_overwrite_release_are_enforced`; partial move cannot arise (M2.2.04); early return and ordinary exit are the drop-elaboration fixtures of ADR-0204)
 
 Integration gate: Every owned resource dropped exactly once across exit paths.
 

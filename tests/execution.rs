@@ -957,6 +957,73 @@ fn moving_an_outer_value_inside_a_loop_is_rejected() {
     assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "1\n2\nyy\n");
 }
 #[test]
+fn ownership_join_field_move_and_overwrite_release_are_enforced() {
+    // M2.2: a move on one branch is dead at the merge point; a struct field
+    // can never be moved out (docs/resource-model.md); overwriting an owned
+    // local releases the old value, which emit-tree makes visible.
+    let cases = [
+        (concat!(
+            "fn main() {\n",
+            "    let s = \"x\";\n",
+            "    if true { let t = s; print(t); }\n",
+            "    print(s);\n",
+            "}\n"
+        ), "cannot use 's' because it was moved"),
+        (concat!(
+            "struct P { a: string, b: string }\n",
+            "fn main() {\n",
+            "    let p = P { a: \"x\", b: \"y\" };\n",
+            "    let q = p.a;\n",
+            "    print(q);\n",
+            "    print(p.b);\n",
+            "}\n"
+        ), "cannot move a field out of a struct"),
+    ];
+    for (source, message) in cases {
+        let path = std::env::temp_dir().join(format!(
+            "ae-ownership-{}-{}.ae",
+            std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&path, source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+            .arg("check").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert_eq!(output.status.code(), Some(1), "{source}");
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains(message), "{source}: {error}");
+    }
+
+    let output = execute(concat!(
+        "fn main() {\n",
+        "    var s = \"x\";\n",
+        "    s = \"y\";\n",
+        "    print(s);\n",
+        "}\n"
+    ));
+    assert!(output.status.success(), "{}",
+        String::from_utf8_lossy(&output.stderr));
+    let tree_path = std::env::temp_dir().join(format!(
+        "ae-drop-{}-{}.ae",
+        std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(&tree_path, concat!(
+        "fn main() {\n",
+        "    var s = \"x\";\n",
+        "    s = \"y\";\n",
+        "    print(s);\n",
+        "}\n"
+    )).unwrap();
+    let tree = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("emit-tree").arg(&tree_path).output().unwrap();
+    fs::remove_file(tree_path).unwrap();
+    assert!(tree.status.success(), "{}",
+        String::from_utf8_lossy(&tree.stderr));
+    let dumped = String::from_utf8_lossy(&tree.stdout);
+    assert!(dumped.contains("(releases old)"), "{dumped}");
+    assert_eq!(dumped.matches("release v0: string").count(), 1, "{dumped}");
+}
+
+#[test]
 fn returning_a_live_owned_local_keeps_the_buffer_valid() {
     // Regression: the exit release list must skip slots the return moved
     // out of, for both owned types.
