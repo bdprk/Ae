@@ -26,9 +26,9 @@ impl<'a> Parser<'a> {
         if args.is_empty() { return name.to_owned(); }
         format!("{}[{}]", name, args.iter().map(|t| t.name()).collect::<Vec<_>>().join(", "))
     }
-    pub(super) fn instantiation_trace(&self, current: Option<&str>) -> String {
-        let mut chain: Vec<&str> = self.generics.instantiation_trace.iter().map(|(_, display)| display.as_str()).collect();
-        if let Some(current) = current { chain.push(current); }
+    pub(super) fn instantiation_trace(&self, current: &str) -> String {
+        let mut chain: Vec<&str> = self.generics.instantiation_trace.iter().map(|(_, _, display)| display.as_str()).collect();
+        chain.push(current);
         chain.join(" -> ")
     }
     pub(super) fn error_at(&self, offset: usize, message: &str) -> ae_span::Diagnostic {

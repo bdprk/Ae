@@ -1074,11 +1074,11 @@ impl Parser<'_> {
         let key = format!("{gid}:{}", args.iter().map(|t| t.name()).collect::<Vec<_>>().join(","));
         if let Some(instance) = self.generics.fn_done.get(&key) { return Ok(instance.clone()); }
         if self.generics.fn_in_progress.contains(&key) {
-            let trace = self.instantiation_trace(Some(&self.instantiation_display(&def.name, &args)));
+            let trace = self.instantiation_trace(&self.instantiation_display(&def.name, &args));
             return Err(self.error_at(offset, &format!("'{}' is already being instantiated with these type arguments; the expansion would never finish (instantiated: {})", def.name, trace)));
         }
         self.generics.fn_in_progress.insert(key.clone());
-        self.generics.instantiation_trace.push((key.clone(), self.instantiation_display(&def.name, &args)));
+        self.generics.instantiation_trace.push(("function", key.clone(), self.instantiation_display(&def.name, &args)));
         let id = self.generics.next_fn_id;
         self.generics.next_fn_id += 1;
         let mut subst = HashMap::new();
@@ -1099,13 +1099,13 @@ impl Parser<'_> {
         let parsed = sub.function_rest(false, id);
         let mut nested = std::mem::take(&mut sub.pending);
         drop(sub);
+        self.generics.fn_in_progress.remove(&key);
+        self.generics.instantiation_trace.pop();
         let function = parsed?;
         let instance: Instance = (id, function.params.iter().map(|&(_, ty)| ty).collect(), function.returns);
         self.pending.push(function);
         self.pending.append(&mut nested);
         self.generics.fn_done.insert(key.clone(), instance.clone());
-        self.generics.fn_in_progress.remove(&key);
-        self.generics.instantiation_trace.pop();
         Ok(instance)
     }
     // One instantiation of a generic impl method (ADR-0187). The receiver's
@@ -1129,11 +1129,11 @@ impl Parser<'_> {
         if let Some(instance) = self.generics.generic_impl_done.get(&key) { return Ok(instance.clone()); }
         if self.generics.impl_in_progress.contains(&key) {
             let display = format!("{}::{}", self.instantiation_display(impl_name, &args), method);
-            let trace = self.instantiation_trace(Some(&display));
+            let trace = self.instantiation_trace(&display);
             return Err(self.error_at(offset, &format!("'{impl_name}#{method}' is already being instantiated with these type arguments; the expansion would never finish (instantiated: {trace})")));
         }
         self.generics.impl_in_progress.insert(key.clone());
-        self.generics.instantiation_trace.push((key.clone(), format!("{}::{}", self.instantiation_display(impl_name, &args), method)));
+        self.generics.instantiation_trace.push(("method", key.clone(), format!("{}::{}", self.instantiation_display(impl_name, &args), method)));
         let id = self.generics.next_fn_id;
         self.generics.next_fn_id += 1;
         // Enum receivers are by value only (ADR-0196): the Shared/Mutable
@@ -1173,13 +1173,13 @@ impl Parser<'_> {
         let parsed = sub.function_rest(false, id);
         let mut nested = std::mem::take(&mut sub.pending);
         drop(sub);
+        self.generics.impl_in_progress.remove(&key);
+        self.generics.instantiation_trace.pop();
         let function = parsed?;
         let instance: Instance = (id, function.params.iter().map(|&(_, ty)| ty).collect(), function.returns);
         self.pending.push(function);
         self.pending.append(&mut nested);
         self.generics.generic_impl_done.insert(key.clone(), instance.clone());
-        self.generics.impl_in_progress.remove(&key);
-        self.generics.instantiation_trace.pop();
         Ok(instance)
     }
     // The argument list of a call, starting at '(' (ADR-31 shares it between

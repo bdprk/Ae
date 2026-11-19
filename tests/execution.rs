@@ -1302,7 +1302,7 @@ fn main() {
         // A body is checked after substitution, against the concrete type.
         ("fn bad[T](x: T) -> i64 { return x + 1; } fn main() { print(bad[string](\"a\")); }", "'+' requires two strings"),
         // Instantiating itself with the same arguments would never finish.
-        ("fn again[T](x: T) -> T { return again[T](x); } fn main() { print(again[i64](1)); }", "would never finish"),
+        ("fn again[T](x: T) -> T { return again[T](x); } fn main() { print(again[i64](1)); }", "instantiated: again[i64] -> again[i64]"),
         // main cannot be generic, and a generic name is still one name.
         ("fn main[T]() -> i64 { return 1; }", "main cannot be generic"),
         ("fn id[T](x: T) -> T { return x; } fn id(x: i64) -> i64 { return x; } fn main() { print(1); }", "duplicate function 'id'"),
@@ -2898,6 +2898,42 @@ fn invalid_generic_enums_are_rejected() {
     }
 }
 #[test]
+fn generic_functions_can_instantiate_a_struct_with_the_same_internal_id() {
+    let source = "struct Boxed[T] { value: T }
+                  fn boxed[T](value: T) -> Boxed[T] { return Boxed[T] { value: value }; }
+                  fn main() { let item = boxed[i64](7); print(item.value); }";
+    let path = std::env::temp_dir().join(format!(
+        "ae-generic-layout-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(&path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+#[test]
+fn nested_generic_layouts_report_the_full_budget_trace() {
+    let mut source = String::from("struct Layer0[T] { value: T }\n");
+    for index in 1..=256 {
+        source.push_str(&format!(
+            "struct Layer{index}[T] {{ value: Layer{}[T] }}\n", index - 1
+        ));
+    }
+    source.push_str("fn main() { let layer = Layer256[i64] { value: 0 }; }");
+    let path = std::env::temp_dir().join(format!(
+        "ae-generic-chain-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(&path, source).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    let expected = (0..=256).rev().map(|index| format!("Layer{index}[i64]"))
+        .collect::<Vec<_>>().join(" -> ");
+    assert!(diagnostic.contains(&format!(
+        "generic instantiation budget exceeded (256 struct types) at 'Layer0' (instantiated: {expected})"
+    )), "{diagnostic}");
+}
+#[test]
 fn generic_instantiation_budget_is_enforced() {
     // Four parameters and four argument types give 256 combinations, which is
     // past the budget: the point is a diagnostic, not a compiler OOM.
@@ -2916,6 +2952,7 @@ fn generic_instantiation_budget_is_enforced() {
     assert!(!output.status.success(), "a program past the instantiation budget must be rejected");
     let err = String::from_utf8_lossy(&output.stderr);
     assert!(err.contains("generic instantiation budget exceeded"), "{err}");
+    assert!(err.contains("instantiated: Tag["), "{err}");
 }
 #[test]
 fn generic_enums_respect_file_visibility() {
