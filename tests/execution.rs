@@ -6918,6 +6918,39 @@ fn one_program_cannot_link_two_versions_of_the_same_package() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn malformed_dependency_declarations_are_reported_at_the_manifest_location() {
+    let dir = unique_temp_dir("package_malformed_manifest");
+    let app = dir.join("app");
+    fs::create_dir_all(app.join("src")).unwrap();
+    fs::write(app.join("src/main.ae"), "fn main() {}\n").unwrap();
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let manifest_path = app.join("ae.toml");
+    let check = |dependency: &str| {
+        fs::write(&manifest_path, format!(
+            "[package]\nname = 'app'\nversion = '0.1.0'\nae = '0.1'\n\n[dependencies]\n{dependency}"
+        )).unwrap();
+        let output = Command::new(cli).current_dir(&app).arg("deps").output().unwrap();
+        (output.status.success(), String::from_utf8_lossy(&output.stderr).to_string())
+    };
+    for (dependency, needle) in [
+        ("lib = 'not a table'", "requires a nonempty path table"),
+        ("lib = { path = '' }", "requires a nonempty path table"),
+        ("lib = { path = '/abs' }", "path must be relative to its manifest"),
+        ("lib = { path = '../lib', version = 3 }", "version must be a string"),
+        ("lib = { path = '../lib', version = '3' }", "must be a major.minor version"),
+        ("lib = { path = '../lib', registry = 'x' }", "unsupported key 'registry'"),
+    ] {
+        let (ok, stderr) = check(dependency);
+        assert!(!ok, "{dependency}: {stderr}");
+        // The location is the declaring manifest, not just a bare message.
+        assert!(stderr.contains(manifest_path.file_name().unwrap().to_str().unwrap())
+            && stderr.contains(&manifest_path.parent().unwrap().file_name().unwrap().to_str().unwrap()),
+            "{dependency}: {stderr}");
+        assert!(stderr.contains(needle), "{dependency}: {stderr}");
+    }
+    fs::remove_dir_all(dir).unwrap();
+}
 
 #[test]
 fn doc_command_renders_comments_and_runs_fenced_examples() {
