@@ -44,6 +44,22 @@ pub struct TypedName {
     pub ty: Range<usize>,
 }
 
+pub const MAX_TYPE_PARAMETERS: usize = 8;
+
+/// Validate the spelling and uniqueness of a generic parameter name.
+pub fn validate_type_parameter<'a>(
+    name: &str,
+    mut existing: impl Iterator<Item = &'a str>,
+) -> Result<(), String> {
+    if !matches!(name.as_bytes(), [b'A'..=b'Z']) {
+        return Err("type parameters are single uppercase letters, e.g. 'T'".into());
+    }
+    if existing.any(|previous| previous == name) {
+        return Err(format!("duplicate type parameter '{name}'"));
+    }
+    Ok(())
+}
+
 #[derive(Debug, PartialEq)]
 pub struct TypeParameter {
     pub name: String,
@@ -439,10 +455,15 @@ impl DeclarationParser<'_> {
             keyword
         };
         let name = self.name()?;
-        let mut type_parameters = Vec::new();
+        let mut type_parameters: Vec<TypeParameter> = Vec::new();
         if self.consume(Kind::LBracket) {
             loop {
+                if type_parameters.len() >= MAX_TYPE_PARAMETERS {
+                    return Err(self.error("type parameter limit exceeded (8)"));
+                }
                 let name = self.name()?;
+                validate_type_parameter(&name, type_parameters.iter().map(|parameter| parameter.name.as_str()))
+                    .map_err(|message| self.error(&message))?;
                 let mut bounds = Vec::new();
                 if self.consume(Kind::Colon) {
                     loop {

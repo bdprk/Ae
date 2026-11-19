@@ -224,14 +224,16 @@ impl Parser<'_> {
     // `[T, U]` or `[T: Add + Ord, U: Copy]`. Constraints are parsed here for
     // every generic declaration, but only generic functions may use them.
     pub(super) fn type_params_with_bounds(&mut self) -> Result<Vec<(String, Vec<Bound>, Vec<usize>)>, ae_span::Diagnostic> {
+        use ae_syntax::declaration::{validate_type_parameter, MAX_TYPE_PARAMETERS};
+
         let mut params: Vec<(String, Vec<Bound>, Vec<usize>)> = Vec::new();
         if *self.current() != Kind::LBracket { return Ok(params); }
         self.pos += 1;
         loop {
-            if params.len() >= 8 { return Err(self.fail("type parameter limit exceeded (8)")); }
+            if params.len() >= MAX_TYPE_PARAMETERS { return Err(self.fail("type parameter limit exceeded (8)")); }
             let param = self.identifier()?;
-            if param.len() != 1 || !param.chars().all(|c| c.is_ascii_uppercase()) { return Err(self.fail("type parameters are single uppercase letters, e.g. 'T'")); }
-            if params.iter().any(|(n, _, _)| n == &param) { return Err(self.fail(&format!("duplicate type parameter '{param}'"))); }
+            validate_type_parameter(&param, params.iter().map(|(name, _, _)| name.as_str()))
+                .map_err(|message| self.fail(&message))?;
             let mut bounds = Vec::new();
             let mut traits = Vec::new();
             if *self.current() == Kind::Colon {
