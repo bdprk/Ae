@@ -216,10 +216,17 @@ struct LoadingFile {
     next_import: usize,
 }
 
-fn begin_file(path: &Path, visited: &mut HashMap<std::path::PathBuf, ModuleState>, entry: bool) -> Result<Option<LoadingFile>, FrontendError> {
+fn begin_file(path: &Path, visited: &mut HashMap<std::path::PathBuf, ModuleState>, entry: bool, stack: &[LoadingFile]) -> Result<Option<LoadingFile>, FrontendError> {
     let canonical = std::fs::canonicalize(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
     match visited.get(&canonical) {
-        Some(ModuleState::Loading) => return Err(format!("circular import of {}", path.display()).into()),
+        Some(ModuleState::Loading) => {
+            let start = stack.iter().position(|frame| frame.canonical == canonical)
+                .expect("loading modules are on the active stack");
+            let root = stack[0].path.parent().unwrap_or(Path::new(""));
+            let cycle = stack[start..].iter().chain(std::iter::once(&stack[start]))
+                .map(|frame| module_label(&frame.path, root)).collect::<Vec<_>>().join(" -> ");
+            return Err(format!("circular import: {cycle}").into());
+        }
         Some(ModuleState::Loaded) => return Ok(None),
         None => { visited.insert(canonical.clone(), ModuleState::Loading); }
     }
@@ -258,14 +265,14 @@ fn begin_file(path: &Path, visited: &mut HashMap<std::path::PathBuf, ModuleState
 
 #[allow(clippy::too_many_arguments)]
 fn load_file(path: &Path, root: &Path, visited: &mut HashMap<std::path::PathBuf, ModuleState>, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, generics: &mut Generics, next_id: &mut usize, out: &mut Vec<Vec<Function>>, mains: &mut usize, modules: &mut Vec<ModuleInfo>, recover: bool) -> Result<(), FrontendError> {
-    let Some(first) = begin_file(path, visited, true)? else { return Ok(()) };
+    let Some(first) = begin_file(path, visited, true, &[])? else { return Ok(()) };
     let mut stack = vec![first];
     while let Some(frame) = stack.last_mut() {
         if let Some(import) = frame.uses.get(frame.next_import) {
             frame.next_import += 1;
 
             let child = resolve_import(&frame.path, &frame.canonical, import)?;
-            if let Some(next) = begin_file(&child, visited, false)? { stack.push(next); }
+            if let Some(next) = begin_file(&child, visited, false, &stack)? { stack.push(next); }
             continue;
         }
         let frame = stack.pop().expect("stack is nonempty");
@@ -411,7 +418,7 @@ fn collect_import_lex_errors(entry: &Path) -> Vec<ae_span::Diagnostic> {
     const LIMIT: usize = 32;
     let mut visited = HashMap::new();
     let mut diagnostics = Vec::new();
-    let mut stack = match begin_file(entry, &mut visited, false) {
+    let mut stack = match begin_file(entry, &mut visited, false, &[]) {
         Ok(Some(frame)) => vec![frame],
         Err(FrontendError::LexDiagnostics(errors)) => {
             let frame = verified_import_prefix(entry, &errors);
@@ -426,7 +433,7 @@ fn collect_import_lex_errors(entry: &Path) -> Vec<ae_span::Diagnostic> {
             let Ok(child) = resolve_import(&frame.path, &frame.canonical, import) else { continue; };
             let canonical = std::fs::canonicalize(&child).ok();
             let was_visited = canonical.as_ref().is_some_and(|path| visited.contains_key(path));
-            match begin_file(&child, &mut visited, false) {
+            match begin_file(&child, &mut visited, false, &stack) {
                 Ok(Some(next)) => stack.push(next),
                 Ok(None) => {},
                 Err(error) => {

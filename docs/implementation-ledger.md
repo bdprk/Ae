@@ -54,7 +54,7 @@ Entry dependency: M0.2.
 - [x] M1.1.02. **allocate definition IDs.** Assign distinct IDs to same-named items in different modules. (by-design unobservable: same-named items across modules are rejected as collisions (spec/modules.md), so the specified outcome is the rejection; interned per-item ids exist internally)
 - [ ] M1.1.03. **collect declarations.** Resolve a call to a later declaration and reject duplicate definitions.
 - [x] M1.1.04. **resolve imports.** Resolve a renamed import and flag two imports binding the same local name. (no renamed-import syntax exists (parse error); the renaming mechanism the spec defines is package aliases (use "@alias"), and the collision analog (two files exporting one name) is rejected)
-- [ ] M1.1.05. **detect cycles.** Render the closed dependency path for a three-module cycle. (detection verified (circular import rejected for a three-module cycle) but the module-level diagnostic names only the re-entered file, not the closed path; closed-path rendering exists at the package level only)
+- [x] M1.1.05. **detect cycles.** Render the closed dependency path for a three-module cycle.
 - [x] M1.1.06. **resolve locals and shadowing.** Resolve an inner binding to itself and restore the outer binding on exit. (verified for the designed shape: sibling blocks reuse names, block-scoped bindings restore the outer name; nested-scope shadowing is by design a duplicate-variable error (spec/modules.md))
 
 Integration gate: Forward references and ambiguous names have specified outcomes.
@@ -410,6 +410,7 @@ Method: an evidence sweep over the 284 execution tests plus new CLI fixtures (te
 | Item | Decisive evidence |
 |---|---|
 | M1.1.03 | `forward_calls_and_mutual_recursion_work_in_both_build_modes`, `forward_declarations_still_enforce_arity_and_unique_names`. |
+| M1.1.05 | `diamond_and_repeated_imports_load_one_module_and_cycles_still_fail` checks a three-file loop with an aliased closing edge and excludes the entry module from the cycle. |
 | M1.1.06 | `sibling_blocks_reuse_names_without_affecting_outer_scope`, `block_variables_do_not_escape`; nested re-declaration → `duplicate variable 'outer'` (fixture m116). |
 | M1.2.01 | `float_vectors_store_index_and_iterate` vs `float_vector_misuse_is_rejected`; `generic_enums_reuse_one_layout_per_argument_list`; fixture: `vec[1,2]` where `vec[f64]` expected → `argument 1 to 'take' must be vec[f64]`. |
 | M1.2.02 | `cannot assign a string value to i64 variable 'n'` (fixture inf2); `cannot assign to immutable variable 'x'`. |
@@ -426,7 +427,7 @@ Method: an evidence sweep over the 284 execution tests plus new CLI fixtures (te
 | M1.4.03 | Read/write/move distinguished: borrow captures allow repeated calls; `a closure cannot mutate captured variable 'counter' in this version`; value captures → `cannot call 'exists' again because a value capture was already moved by the first call`. |
 | M1.4.05 | Borrow-capture double call accepted (m14/i1); value-capture second call rejected with E0102 + `binding declared here` secondary. |
 
-M1.1.05 remains open for closed-path rendering of module cycles. M1.3.03's trait-method half is ADR-0047's recorded deferral, not a gap. The closure-example comment discrepancy (examples/closures.ae, tests/run/closures.ae claiming a move capture for concatenation) is fixed in this pass: the compiler and spec/closures.md agree the capture is a borrow.
+M1.3.03's trait-method half is ADR-0047's recorded deferral, not a gap. The closure-example comment discrepancy (examples/closures.ae, tests/run/closures.ae claiming a move capture for concatenation) is fixed in this pass: the compiler and spec/closures.md agree the capture is a borrow.
 
 ## Verified 2026-11-19 — M3.1.01 pay-as-you-go allocator (ADR-0213)
 
