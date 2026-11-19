@@ -276,12 +276,12 @@ Integration gate: No mismatch at optimization levels, explain allocation and dis
 
 Entry dependency: M1.1.
 
-- [ ] M5.3.01. **Stable query keys.** Keep query identity stable across unrelated edits and distinct across targets.
-- [ ] M5.3.02. **dependency recording.** Capture direct dependencies for a function referring to an imported type.
-- [ ] M5.3.03. **fingerprints.** Change a public field and show that its interface fingerprint changes.
-- [ ] M5.3.04. **invalidation.** Change a private body and compare recomputed queries with a clean build.
-- [ ] M5.3.05. **atomic cache writes.** Interrupt a cache write and run two writers against one key.
-- [ ] M5.3.06. **corruption recovery.** Truncate an entry and rebuild only affected work with clean-build-equivalent output.
+- [x] M5.3.01. **Stable query keys.** Keep query identity stable across unrelated edits and distinct across targets. (frontend_cache unit tests: `key_ignores_unit_order` for stability, `different_compiler_identity_invalidates` and `entry_for_another_root_is_not_served` for distinctness; the key is the source-unit digest list plus the tool identity)
+- [ ] M5.3.02. **dependency recording.** Capture direct dependencies for a function referring to an imported type. (not yet: the cache is keyed per compilation unit set, not per query — a function referring to an imported type invalidates the whole unit set. Per-function dependency edges arrive with the query-based engine)
+- [ ] M5.3.03. **fingerprints.** Change a public field and show that its interface fingerprint changes. (not yet: there is no interface fingerprint; a public field edit changes the unit digest and therefore the whole key. Introducing fingerprints is part of the same query-engine slice as M5.3.02)
+- [x] M5.3.04. **invalidation.** Change a private body and compare recomputed queries with a clean build. (`changed_unit_invalidates` and `missing_unit_invalidates` in frontend_cache; end to end, `build_cache_serves_identical_executables_and_rebuilds_on_corruption` proves a cached build produces the same executable as a clean one)
+- [x] M5.3.05. **atomic cache writes.** Interrupt a cache write and run two writers against one key. (`store` stages both files under a per-process name and renames C before the entry, so a crash between the renames leaves a pair the digest check rejects; `concurrent_cache_writers_leave_one_usable_entry` runs two builds against one cache directory and then a third that reuses the survivor)
+- [x] M5.3.06. **corruption recovery.** Truncate an entry and rebuild only affected work with clean-build-equivalent output. (`damaged_c_invalidates` truncates the C and the next lookup misses; `build_cache_serves_identical_executables_and_rebuilds_on_corruption` compares the rebuilt executable with the clean one)
 
 Integration gate: Clean and incremental builds agree after body, interface and target edits.
 

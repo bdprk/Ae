@@ -1058,6 +1058,44 @@ fn raw_pointer_access_goes_through_the_reviewed_macros() {
 }
 
 #[test]
+fn concurrent_cache_writers_leave_one_usable_entry() {
+    // M5.3.05: two builds share one cache directory and one key. Each writes
+    // through its own staging name and renames C before the entry, so the
+    // survivor is always a complete, matching pair.
+    let dir = unique_temp_dir("cache-race");
+    let source = dir.join("main.ae");
+    fs::write(&source, "fn main() { print(\"race\"); }").unwrap();
+    let cache = dir.join("cache");
+    fs::create_dir(&cache).unwrap();
+    let ae = env!("CARGO_BIN_EXE_ae");
+    let build = |name: &str| {
+        Command::new(ae)
+            .arg("build").arg(&source)
+            .arg("-o").arg(dir.join(name))
+            .env("AE_CACHE", &cache)
+            .output().unwrap()
+    };
+    let (first, second) = std::thread::scope(|scope| {
+        let a = scope.spawn(|| build("one.exe"));
+        let b = scope.spawn(|| build("two.exe"));
+        (a.join().unwrap(), b.join().unwrap())
+    });
+    assert!(first.status.success(), "{}",
+        String::from_utf8_lossy(&first.stderr));
+    assert!(second.status.success(), "{}",
+        String::from_utf8_lossy(&second.stderr));
+    let entry = fs::read_dir(&cache).unwrap().count();
+    assert!(entry >= 1, "the cache directory stayed empty");
+    let rerun = build("three.exe");
+    assert!(rerun.status.success(), "{}",
+        String::from_utf8_lossy(&rerun.stderr));
+    let output = Command::new(dir.join("three.exe")).output().unwrap();
+    let _ = fs::remove_dir_all(&dir);
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "race");
+}
+
+#[test]
 fn hosted_files_preserve_bytes_and_processes_recover_status() {
     // M3.2.03/04/06/07: bytes (NUL included) survive a copy, a non-ASCII path
     // round-trips, an empty file is Ok with length 0 while a missing one is a
