@@ -535,13 +535,28 @@ impl DeclarationParser<'_> {
             }
             let foreign = abi.is_some();
             let exposes_body = attribute == Some(DeclarationAttribute::NoMangle);
-            let stops = if foreign { &[Kind::LBrace, Kind::Semi][..] } else { &[Kind::LBrace][..] };
-            let returns = if self.consume(Kind::Arrow) {
-                Some(self.ty(stops, false)?)
-            } else if foreign {
-                return Err(self.error("expected '->' before extern return type"));
-            } else {
+            let returns = if name == "main" {
+                if foreign {
+                    return Err(self.error("main cannot be an extern declaration"));
+                }
+                if !type_parameters.is_empty() {
+                    return Err(self.error("main cannot be generic"));
+                }
+                if !parameters.is_empty() {
+                    return Err(self.error("main cannot have parameters"));
+                }
                 None
+            } else {
+                if !self.consume(Kind::Arrow) {
+                    let message = if foreign {
+                        "expected '->' before extern return type"
+                    } else {
+                        "expected '->' before function return type"
+                    };
+                    return Err(self.error(message));
+                }
+                let stops = if foreign { &[Kind::LBrace, Kind::Semi][..] } else { &[Kind::LBrace][..] };
+                Some(self.ty(stops, false)?)
             };
             if foreign && !exposes_body && self.current().kind != Kind::Semi {
                 return Err(self.error("expected ';' after extern function declaration"));
@@ -633,6 +648,20 @@ mod tests {
         let recovered = recover_declarations("case.ae", &broken);
         assert_eq!(recovered.diagnostics.len(), 1);
         assert_eq!(recovered.declarations[0].attribute, Some(DeclarationAttribute::ReprC));
+    }
+
+    #[test]
+    fn function_return_annotations_follow_the_entry_point_rule() {
+        let source = "fn helper() {} fn main() {}";
+        let recovered = recover_declarations("case.ae", source);
+        assert_eq!(recovered.declarations.len(), 1);
+        assert_eq!(recovered.declarations[0].name, "main");
+        assert_eq!(recovered.diagnostics.len(), 1);
+        assert_eq!(recovered.diagnostics[0].message, "expected '->' before function return type");
+
+        for invalid in ["fn main() -> i64 {}", "fn main[T]() {}", "fn main(x: i64) {}"] {
+            assert!(parse_declarations("case.ae", invalid).is_err(), "{invalid}");
+        }
     }
 
     #[test]
