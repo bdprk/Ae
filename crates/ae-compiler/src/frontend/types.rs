@@ -114,8 +114,10 @@ impl Parser<'_> {
     // `::Variant(payload, ...)` once the enum type is known. Payload values are
     // moved in, so a variant owns whatever it carries.
     pub(super) fn enum_literal(&mut self, eid: usize, offset: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
-        self.take(Kind::ColonColon)?;
-        let vname = self.identifier()?;
+        let (vname, end) = ae_syntax::pattern::parse_variant_suffix(
+            &self.file, self.source, &self.tokens, self.pos,
+        )?;
+        self.pos = end;
         let def = self.enums[eid].clone();
         self.require_public("enum", def.name, &def.file, def.public)?;
         let vidx = def.variants.iter().position(|(n, _)| *n == vname)
