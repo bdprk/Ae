@@ -2957,6 +2957,51 @@ fn generic_functions_can_instantiate_a_struct_with_the_same_internal_id() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 }
 #[test]
+fn identical_concrete_arguments_share_one_instance() {
+    // Two call sites with the same argument list reuse one layout; a
+    // different list is a second instance. The C emitter gives every layout
+    // a release helper named ae_t<N>_release, which is countable.
+    let emit = |program: &str| -> String {
+        let path = std::env::temp_dir().join(format!(
+            "ae-instance-{}-{}.ae",
+            std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::write(&path, program).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+            .arg("emit-c").arg(&path).output().unwrap();
+        fs::remove_file(path).unwrap();
+        assert!(output.status.success(), "{}",
+            String::from_utf8_lossy(&output.stderr));
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let layouts = |c: &str| -> usize {
+        c.lines()
+            .filter(|line| line.starts_with("static void ae_t"))
+            .filter(|line| line.contains("_release("))
+            .count()
+    };
+    let same = emit(concat!(
+        "struct Box[T] { v: T }\n",
+        "fn main() {\n",
+        "    let a = Box[i64] { v: 1 };\n",
+        "    let b = Box[i64] { v: 2 };\n",
+        "    print(a.v + b.v);\n",
+        "}\n"
+    ));
+    assert_eq!(layouts(&same), 1, "{same}");
+    let different = emit(concat!(
+        "struct Box[T] { v: T }\n",
+        "fn main() {\n",
+        "    let a = Box[i64] { v: 1 };\n",
+        "    let b = Box[string] { v: \"s\" };\n",
+        "    print(a.v);\n",
+        "    print(b.v);\n",
+        "}\n"
+    ));
+    assert_eq!(layouts(&different), 2, "{different}");
+}
+
+#[test]
 fn nested_generic_layouts_report_the_full_budget_trace() {
     let mut source = String::from("struct Layer0[T] { value: T }\n");
     for index in 1..=256 {
@@ -4120,6 +4165,54 @@ fn closure_can_query_captured_map() {
         assert!(String::from_utf8_lossy(&checked.stderr).contains(diagnostic), "{}", String::from_utf8_lossy(&checked.stderr));
     }
     fs::remove_dir_all(dir).unwrap();
+}
+
+
+
+#[test]
+fn concatenation_keeps_a_capture_borrowed_and_returning_it_moves() {
+    // String plus copies (spec/generics.md): a body that only concatenates
+    // passes the borrow probe, so the closure stays reusable and the outer
+    // binding keeps its value. Returning the capture needs ownership, which
+    // makes every call a move.
+    let concatenating = [
+        "fn main() {",
+        "    let note = \"memo\";",
+        "    let shout = || -> string { return note + \"!\"; };",
+        "    print(shout());",
+        "    print(shout());",
+        "    print(note);",
+        "}",
+    ].join("\n");
+    let output = execute(&concatenating);
+    assert!(output.status.success(), "{}",
+        String::from_utf8_lossy(&output.stderr));
+    let printed: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines().map(str::to_owned).collect();
+    assert_eq!(printed, ["memo!", "memo!", "memo"]);
+
+    let returning = [
+        "fn main() {",
+        "    let note = \"memo\";",
+        "    let hand = || -> string { return note; };",
+        "    print(hand());",
+        "    print(hand());",
+        "}",
+    ].join("\n");
+    let path = std::env::temp_dir().join(format!(
+        "ae-capture-move-{}-{}.ae",
+        std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::write(&path, returning).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("check").arg(&path).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains(concat!(
+        "cannot call 'hand' again because a value capture was already ",
+        "moved by the first call"
+    )), "{error}");
 }
 
 #[test]

@@ -33,7 +33,7 @@ let tick = || -> i64 { return 1; };                  // `||` is the empty parame
 The literal parses its body twice; both probes are throwaway, only the last parse is emitted:
 
 1. **Borrow probe** — every borrowable capture is bound in its read-only form (`string` → view, `vec` → `&vec`, `struct` → `&Struct`) and the rest as-is. If the body parses, every capture is a borrow: the closure is callable any number of times, and the outer variable cannot move or be written while the closure name is live (`cannot assign to 'greeting' while it is borrowed`).
-2. **Owned probe** — if the borrow probe fails (some capture is used where an owned value is required, e.g. `return note + "!"`), everything is bound by value and every used capture becomes a **value capture**: each call moves the outer variable, exactly like a plain call. A second call is a compile-time use-after-move (`cannot call 'f' again because a value capture was already moved by the first call`, E0102), not a runtime double free.
+2. **Owned probe** — if the borrow probe fails (some capture is used where an owned value is required, e.g. `return note;` hands the captured string's ownership to the call), everything is bound by value and every used capture becomes a **value capture**: each call moves the outer variable, exactly like a plain call. A second call is a compile-time use-after-move (`cannot call 'f' again because a value capture was already moved by the first call`, E0102), not a runtime double free.
 
 An AST walk over the surviving probe decides *which* names are captures (used parameter slots, in capture order) and rejects the one shape that cannot be honored: mutating a captured container or field (`a closure cannot mutate captured variable 'items' in this version`).
 
