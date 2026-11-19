@@ -1,1 +1,1 @@
-ae: $DIR/spawn_borrow_capture_rejected.ae:7:13: spawn moves its captures into the thread; 's' is captured by reference and cannot cross
+ae: $DIR/spawn_borrow_capture_rejected.ae:7:13: spawn borrows from the caller but the handle is not joined before this function exits on every path; add a wait of the handle on the escaping path

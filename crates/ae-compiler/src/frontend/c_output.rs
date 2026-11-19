@@ -641,8 +641,10 @@ typedef struct { void *native; void *ctx; } ae_thread_slot;
     }
     for entry in &spawned {
         match entry {
-            crate::frontend::closures::SpawnedThread::Closure { fn_id, captures, ret } => {
-                let fields = captures.iter().enumerate()
+            crate::frontend::closures::SpawnedThread::Closure { fn_id, captures, borrows, ret } => {
+                let mut all = captures.clone();
+                all.extend(borrows.iter().map(|(_, ty)| *ty));
+                let fields = all.iter().enumerate()
                     .map(|(index, ty)| format!("    {} f{index};
 ", c_type_field(*ty)))
                     .collect::<Vec<_>>().join("");
@@ -651,10 +653,10 @@ typedef struct {{
     {} ret;
 {fields}}} ae_thread_ctx_{fn_id};
 ", c_type_field(*ret)));
-                let arguments = if captures.is_empty() {
+                let arguments = if all.is_empty() {
                     String::new()
                 } else {
-                    (0..captures.len()).map(|index| format!("c->f{index}")).collect::<Vec<_>>().join(", ")
+                    (0..all.len()).map(|index| format!("c->f{index}")).collect::<Vec<_>>().join(", ")
                 };
                 out.push_str(&format!("static void ae_thread_entry_{fn_id}(void *raw) {{
     ae_thread_ctx_{fn_id} *c = raw;

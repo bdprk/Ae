@@ -8140,6 +8140,54 @@ fn main() {
 }
 
 #[test]
+fn scoped_borrow_captures_join_before_the_region_ends() {
+    // ADR-0215 (M4.1.02): a borrow capture is accepted when every path from
+    // the spawn reaches a wait of the handle before any exit. The frozen
+    // variable lifts... the freeze lasts to scope end (conservative), so
+    // reads stay legal and writes stay rejected.
+    let positive = r#"fn main() {
+    var s = "a long analysis result";
+    let t = spawn(|| -> i64 { return len(s); });
+    print(wait(t));
+    print(len(s));
+}"#;
+    let output = execute(positive);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "22\n22\n");
+
+    // A loop-spawned handle joined inside the same iteration is provable.
+    let joined_in_loop = r#"fn main() {
+    var s = "loop body";
+    var total = 0;
+    var i = 0;
+    while i < 3 {
+        let t = spawn(|| -> i64 { return len(s) + i; });
+        total = total + wait(t);
+        i = i + 1;
+    }
+    print(total);
+}"#;
+    let output = execute(joined_in_loop);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "30\n");
+
+    // The adversarial shapes: an unjoined branch exits without the wait, and
+    // a wait that only runs inside a conditional body cannot cover the
+    // spawn's escaping path.
+    let cases = [
+        ("fn main() { var s = \"hello\"; let t = spawn(|| -> i64 { return len(s); }); if 1 < 2 { print(wait(t)); } print(1); }",
+         "the handle is not joined before this function exits"),
+        ("fn main() { var s = \"hello\"; if 1 < 2 { let t = spawn(|| -> i64 { return len(s); }); } print(1); }",
+         "the handle is not joined before this function exits"),
+    ];
+    for (source, expected) in cases {
+        let message = check_rejects(source);
+        assert!(message.contains(expected), "{source}
+  expected '{expected}', got '{message}'");
+    }
+}
+
+#[test]
 fn thread_boundaries_reject_nontransferable_shapes() {
     // spec/concurrency.md T2/T3/T5/T6: a borrow capture cannot cross, the
     // callable takes no visible parameters, a value capture moves (use after
@@ -8147,7 +8195,7 @@ fn thread_boundaries_reject_nontransferable_shapes() {
     let cases = [
         // T2: the borrow probe classifies `s` as a string view — rejected.
         ("fn main() { var s = \"hello\"; let t = spawn(|| -> i64 { return len(s); }); print(1); }",
-         "spawn moves its captures into the thread; 's' is captured by reference and cannot cross"),
+         "the handle is not joined before this function exits"),
         // T3: a spawned callable takes no visible parameters.
         ("fn main() { let t = spawn(|x: i64| -> i64 { return x; }); print(1); }",
          "the spawned closure must take no parameters"),
