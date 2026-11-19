@@ -51,7 +51,13 @@ impl<'a> Parser<'a> {
         }
     }
     pub(super) fn duplicate_binding_error(&self, name: &str) -> ae_span::Diagnostic {
-        let diagnostic = self.fail(&format!("duplicate variable '{name}'")).with_code("E0104");
+        self.duplicate_binding_error_at(self.tokens[self.pos].offset, name)
+    }
+
+    // The tree-driven callers know the offending token's range already, so
+    // they name it directly instead of relying on the moving cursor.
+    pub(super) fn duplicate_binding_error_at(&self, at: usize, name: &str) -> ae_span::Diagnostic {
+        let diagnostic = self.error_at(at, &format!("duplicate variable '{name}'")).with_code("E0104");
         match self.names.get(name) {
             Some(&(id, _, _)) => self.binding_label(diagnostic, id),
             None => diagnostic,
@@ -1016,6 +1022,10 @@ impl<'a> Parser<'a> {
     // Coverage must be exhaustive and each variant may appear once, so there is
     // no fall-through path to reason about. The subject is borrowed for the
     // whole match: arms can read payloads but never move or overwrite it.
+    //
+    // The arm pattern itself comes from the shared syntax parser, so both
+    // parsers agree on the grammar and its byte ranges; the checks below are
+    // the semantic layer (declaration shape, binding kinds, exhaustiveness).
     pub(super) fn match_statement(&mut self) -> Result<Statement, ae_span::Diagnostic> {
         self.pos += 1;
         let (subject, subject_ty) = self.expression(0, false)?;
@@ -1030,60 +1040,96 @@ impl<'a> Parser<'a> {
         let mut seen = vec![false; def.variants.len()];
         self.borrows.push((sid, self.scopes.len(), BorrowKind::Container));
         while *self.current() != Kind::RBrace {
-            let pattern = ae_syntax::parse_identifier(
-                &self.file, self.source, &self.tokens[self.pos],
-            )?;
-            self.pos += 1;
-            // An instantiated enum is matched by its declaration name:
-            // `Option::Some(v)` covers Option[string] and Option[i64] alike.
-            if pattern != def.pattern {
+            // A bare name cannot reach a variant: keep the specific remedy
+            // instead of the shared parser's generic separator error.
+            if matches!(self.current(), Kind::Ident(_))
+                && self.tokens.get(self.pos + 1).is_some_and(|token| token.kind != Kind::ColonColon)
+            {
                 return Err(self.fail(&format!("pattern must name the matched enum ('{}::Variant')", def.pattern)));
             }
-            let (vname, end) = ae_syntax::pattern::parse_variant_suffix(
+            let (tree, end) = ae_syntax::pattern::parse_pattern_tokens(
                 &self.file, self.source, &self.tokens, self.pos,
             )?;
             self.pos = end;
+            let ae_syntax::pattern::PatternKind::Variant {
+                enum_name, variant: vname, variant_range, payload,
+            } = tree.kind
+            else {
+                return Err(ae_syntax::diagnostic_range(
+                    &self.file, self.source, tree.range, "expected a qualified variant pattern",
+                ));
+            };
+            // An instantiated enum is matched by its declaration name:
+            // `Option::Some(v)` covers Option[string] and Option[i64] alike.
+            if enum_name != def.pattern {
+                return Err(self.error_at(tree.range.start,
+                    &format!("pattern must name the matched enum ('{}::Variant')", def.pattern)));
+            }
             let vidx = def.variants.iter().position(|(n, _)| *n == vname)
-                .ok_or_else(|| self.fail(&format!("enum '{}' has no variant '{}'", def.name, vname)))?;
-            if seen[vidx] { return Err(self.fail(&format!("variant '{}::{}' is matched twice", def.name, vname))); }
+                .ok_or_else(|| self.error_at(variant_range.start,
+                    &format!("enum '{}' has no variant '{}'", def.name, vname)))?;
+            if seen[vidx] {
+                return Err(self.error_at(variant_range.start,
+                    &format!("variant '{}::{}' is matched twice", def.name, vname)));
+            }
             seen[vidx] = true;
             let fields = def.variants[vidx].1.clone();
+            // The declaration decides the payload shape; `()` is a parse-level
+            // empty list, so an empty or mismatched list lands here.
+            let payloads = match payload {
+                Some(_) if fields.is_empty() => {
+                    return Err(self.error_at(variant_range.end,
+                        &format!("variant '{}::{}' has no payload", def.name, vname)));
+                }
+                None if !fields.is_empty() => {
+                    return Err(self.error_at(variant_range.start,
+                        &format!("variant '{}::{}' needs {} binding(s)", def.name, vname, fields.len())));
+                }
+                Some(patterns) if patterns.len() > fields.len() => {
+                    return Err(self.error_at(patterns[fields.len()].range.start,
+                        &format!("variant '{}::{}' binds {} payload value(s)", def.name, vname, fields.len())));
+                }
+                Some(patterns) if patterns.len() < fields.len() => {
+                    return Err(self.error_at(variant_range.start,
+                        &format!("variant '{}::{}' needs {} binding(s)", def.name, vname, fields.len())));
+                }
+                Some(patterns) => patterns,
+                None => Vec::new(),
+            };
             self.scopes.push(Vec::new());
             let mut bindings = Vec::new();
             let mut bound: Vec<String> = Vec::new();
-            if *self.current() == Kind::LParen {
-                if fields.is_empty() { return Err(self.fail(&format!("variant '{}::{}' has no payload", def.name, vname))); }
-                self.pos += 1;
-                for (index, field) in fields.iter().copied().enumerate() {
-                    let bname = ae_syntax::parse_identifier(
-                        &self.file, self.source, &self.tokens[self.pos],
-                    )?.to_owned();
-                    self.pos += 1;
-                    if RESERVED.contains(&bname.as_str()) { return Err(self.fail(&format!("'{bname}' is a built-in name and cannot be a pattern binding"))); }
-                    if self.names.contains_key(&bname) { return Err(self.duplicate_binding_error(&bname)); }
-                    let id = self.next_var; self.next_var += 1;
-                    // String payloads bind as read-only views and vec payloads
-                    // as read-only borrows: nothing can be moved out of the
-                    // matched enum.
-                    let bty = match field {
-                        Type::String => Type::StrView,
-                        Type::Vec => Type::VecRef,
-                        Type::StrVec => Type::StrVecRef,
-                        Type::VecF => Type::VecFRef,
-                        other => other,
-                    };
-                    self.names.insert(bname.clone(), (id, false, bty));
-                    self.scopes.last_mut().unwrap().push((id, bty));
-                    bound.push(bname);
-                    bindings.push((id, field, index));
-                    if index + 1 < fields.len() { self.take(Kind::Comma)?; }
+            for (index, (field, payload_pattern)) in fields.iter().copied().zip(payloads).enumerate() {
+                let bname = match payload_pattern.kind {
+                    ae_syntax::pattern::PatternKind::Binding(name) => name,
+                    ae_syntax::pattern::PatternKind::Variant { .. } => {
+                        return Err(self.error_at(payload_pattern.range.start,
+                            "pattern payloads must be plain names"));
+                    }
+                };
+                let name_at = payload_pattern.range.start;
+                if RESERVED.contains(&bname.as_str()) {
+                    return Err(self.error_at(name_at,
+                        &format!("'{bname}' is a built-in name and cannot be a pattern binding")));
                 }
-                if *self.current() == Kind::Comma {
-                    return Err(self.fail(&format!("variant '{}::{}' binds {} payload value(s)", def.name, vname, fields.len())));
+                if self.names.contains_key(&bname) {
+                    return Err(self.duplicate_binding_error_at(name_at, &bname));
                 }
-                self.take(Kind::RParen)?;
-            } else if !fields.is_empty() {
-                return Err(self.fail(&format!("variant '{}::{}' needs {} binding(s)", def.name, vname, fields.len())));
+                let id = self.next_var; self.next_var += 1;
+                // String payloads bind as read-only views and vec payloads
+                // as read-only borrows: nothing can be moved out of the
+                // matched enum.
+                let bty = match field {
+                    Type::String => Type::StrView,
+                    Type::Vec => Type::VecRef,
+                    Type::StrVec => Type::StrVecRef,
+                    Type::VecF => Type::VecFRef,
+                    other => other,
+                };
+                self.names.insert(bname.clone(), (id, false, bty));
+                self.scopes.last_mut().unwrap().push((id, bty));
+                bound.push(bname);
+                bindings.push((id, field, index));
             }
             self.take(Kind::FatArrow)?;
             let body = self.block()?;

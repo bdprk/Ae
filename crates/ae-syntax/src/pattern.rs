@@ -13,7 +13,14 @@ pub struct Pattern {
 #[derive(Debug, PartialEq)]
 pub enum PatternKind {
     Binding(String),
-    Variant { enum_name: String, variant: String, payload: Option<Vec<Pattern>> },
+    /// `variant_range` is the variant name's byte span; semantic checks point
+    /// at the variant (or the `(` that follows it) with this range.
+    Variant {
+        enum_name: String,
+        variant: String,
+        variant_range: Range<usize>,
+        payload: Option<Vec<Pattern>>,
+    },
 }
 
 /// Parse a qualified variant pattern and preserve payload order and source ranges.
@@ -30,6 +37,20 @@ pub fn parse_variant_pattern(file: &str, source: &str) -> Result<Pattern, Diagno
         return Err(parser.error("expected end of pattern"));
     }
     Ok(pattern)
+}
+
+/// Read one qualified variant pattern from an EOF-terminated lexer stream,
+/// returning the first unconsumed token. Match-arm callers continue from
+/// there, so statement boundaries stay with the caller.
+pub fn parse_pattern_tokens(
+    file: &str,
+    source: &str,
+    tokens: &[Token],
+    start: usize,
+) -> Result<(Pattern, usize), Diagnostic> {
+    let mut parser = Parser { file, source, tokens, cursor: start, nodes: 0 };
+    let pattern = parser.pattern(true)?;
+    Ok((pattern, parser.cursor))
 }
 
 /// Read a variant name after the enum name, including its qualifier separator.
@@ -85,20 +106,29 @@ impl Parser<'_> {
         self.cursor += 1;
         let kind = if qualified || self.current().kind == Kind::ColonColon {
             let (variant, end) = parse_variant_suffix(self.file, self.source, self.tokens, self.cursor)?;
+            let name_token = &self.tokens[self.cursor + 1];
+            let variant_range = name_token.offset..name_token.end;
             self.cursor = end;
+            // Empty parentheses parse as an empty payload list; whether a
+            // variant may carry payloads is a semantic question, so the
+            // compiler rejects the shape against the declaration.
             let payload = if self.consume(Kind::LParen) {
-                let mut fields = vec![self.pattern(false)?];
-                while self.consume(Kind::Comma) {
-                    fields.push(self.pattern(false)?);
+                if self.consume(Kind::RParen) {
+                    Some(Vec::new())
+                } else {
+                    let mut fields = vec![self.pattern(false)?];
+                    while self.consume(Kind::Comma) {
+                        fields.push(self.pattern(false)?);
+                    }
+                    if !self.consume(Kind::RParen) {
+                        return Err(self.error("expected ',' or ')' after payload pattern"));
+                    }
+                    Some(fields)
                 }
-                if !self.consume(Kind::RParen) {
-                    return Err(self.error("expected ',' or ')' after payload pattern"));
-                }
-                Some(fields)
             } else {
                 None
             };
-            PatternKind::Variant { enum_name: name, variant, payload }
+            PatternKind::Variant { enum_name: name, variant, variant_range, payload }
         } else {
             PatternKind::Binding(name)
         };
@@ -136,5 +166,40 @@ mod tests {
         let span = error.primary.unwrap().span;
         let start = source.find(')').unwrap();
         assert_eq!(span.range, start..start + 1);
+    }
+
+    #[test]
+    fn token_entry_stops_before_the_arm_arrow() {
+        let source = "Option::Some(value) => { print(value); }";
+        let tokens = crate::lex_diagnostic(source).unwrap();
+        let (tree, end) = parse_pattern_tokens("case.ae", source, &tokens, 0).unwrap();
+        assert_eq!(&source[tree.range], "Option::Some(value)");
+        assert_eq!(tokens[end].kind, Kind::FatArrow);
+
+        let source = "Pair::Value(first, second) => {}";
+        let tokens = crate::lex_diagnostic(source).unwrap();
+        let (tree, end) = parse_pattern_tokens("case.ae", source, &tokens, 0).unwrap();
+        let PatternKind::Variant { variant, payload: Some(fields), .. } = tree.kind else {
+            panic!("expected a variant payload");
+        };
+        assert_eq!(variant, "Value");
+        assert_eq!(fields.iter().map(|f| &source[f.range.clone()]).collect::<Vec<_>>(), ["first", "second"]);
+        assert_eq!(tokens[end].kind, Kind::FatArrow);
+    }
+
+    #[test]
+    fn empty_parentheses_parse_as_an_empty_payload() {
+        // The grammar accepts `()`; the compiler decides against the
+        // declaration whether the variant may carry payloads at all.
+        let source = "Option::None()";
+        let tree = parse_variant_pattern("case.ae", source).unwrap();
+        let PatternKind::Variant { variant, variant_range, payload: Some(fields), .. } = tree.kind
+        else {
+            panic!("expected an empty payload list");
+        };
+        assert_eq!(variant, "None");
+        assert!(fields.is_empty());
+        let start = source.find("None").unwrap();
+        assert_eq!(variant_range, start..start + 4);
     }
 }
