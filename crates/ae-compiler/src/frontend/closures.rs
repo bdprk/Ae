@@ -33,13 +33,18 @@ thread_local! {
     // assembly emits exactly the context layouts and trampolines that are
     // referenced (ADR-0214). One compile per process, like FN_IDS.
     static SPAWNED: std::cell::RefCell<Vec<SpawnedThread>> = const { std::cell::RefCell::new(Vec::new()) };
+    // The borrow captures of each closure, indexed by closure id: the spawn
+    // site packages their read-only forms into the thread's context.
+    static BORROW_CAPTURES: std::cell::RefCell<Vec<Vec<(usize, Type)>>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 // One spawn surface: a closure's generated function with its capture types in
 // order, or a zero-parameter function value keyed by its interned signature.
 #[derive(Clone, PartialEq, Debug)]
 pub(super) enum SpawnedThread {
-    Closure { fn_id: usize, captures: Vec<Type>, ret: Type },
+    // The context's leading fields, in order: the value captures (moved) and
+    // the borrow captures (read-only views/refs the join keeps alive).
+    Closure { fn_id: usize, captures: Vec<Type>, borrows: Vec<(usize, Type)>, ret: Type },
     FnValue { sig: usize, ret: Type },
 }
 
@@ -55,6 +60,10 @@ pub(super) fn record_spawned(entry: SpawnedThread) {
 pub(super) fn take_spawned() -> Vec<SpawnedThread> {
     let taken = SPAWNED.with(|spawned| std::mem::take(&mut *spawned.borrow_mut()));
     taken
+}
+
+pub(super) fn closure_borrow_captures(cid: usize) -> Vec<(usize, Type)> {
+    BORROW_CAPTURES.with(|all| all.borrow()[cid].clone())
 }
 
 pub(super) fn intern_fn_sig(params: Vec<Type>, ret: Type) -> usize {
@@ -172,6 +181,7 @@ impl Parser<'_> {
             }
         }
         let cid = self.generics.closures.len();
+        BORROW_CAPTURES.with(|all| all.borrow_mut().push(borrow_captures.clone()));
         self.generics.closures.push(ClosureDef { fn_id: id2, params: visible, ret, value_captures, borrow_captures });
         FN_IDS.with(|ids| ids.borrow_mut().push(id2));
         Ok((Expr::ClosureLit(cid), Type::Closure(cid)))
@@ -189,7 +199,7 @@ impl Parser<'_> {
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
             id_order: Vec::new(), in_main: false, return_type: Type::Int, moved: std::collections::HashSet::new(),
-            borrows: Vec::new(), deferred_write_conflicts: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(),
+            borrows: Vec::new(), deferred_write_conflicts: Vec::new(), deferred_borrow_spawns: Vec::new(), call_borrows: Vec::new(), mut_borrows: Vec::new(), plus_operand_depth: 0, scopes: Vec::new(),
             subst: HashMap::new(), trait_bounds: HashMap::new(), receiver: None, impl_self: None,
             // Shadowing stays allowed in both passes: a body-local may reuse
             // an outer name, and the AST walk (not the name map) decides what

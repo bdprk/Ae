@@ -723,13 +723,19 @@ impl Parser<'_> {
                             if !def.params.is_empty() {
                                 return Err(self.fail("the spawned closure must take no parameters; move the data it needs through its captures"));
                             }
+                            // ADR-0215: borrow captures are accepted when the
+                            // handle is provably joined before the borrowed
+                            // region ends — the escape proof defers to the
+                            // function's CFG. Until the proof lands, the
+                            // borrowed variables freeze like views (no write,
+                            // no move), which is sound on its own.
                             if !def.borrow_captures.is_empty() {
-                                let wanted = def.borrow_captures[0].0;
-                                let name = self.names.iter()
-                                    .find(|(_, entry)| entry.0 == wanted)
-                                    .map(|(name, _)| name.clone())
-                                    .unwrap_or_else(|| "a variable".to_owned());
-                                return Err(self.error_at(at, &format!("spawn moves its captures into the thread; '{name}' is captured by reference and cannot cross")));
+                                let borrowed: Vec<usize> = def.borrow_captures.iter().map(|(outer_id, _)| *outer_id).collect();
+                                let depth = self.scopes.len();
+                                for outer_id in &borrowed {
+                                    self.borrows.push((*outer_id, depth, BorrowKind::View));
+                                }
+                                self.deferred_borrow_spawns.push((*cid, borrowed, at));
                             }
                             for (outer_id, ty) in &def.value_captures {
                                 // Arrays and cursors read the caller's storage
@@ -753,6 +759,7 @@ impl Parser<'_> {
                             record_spawned(SpawnedThread::Closure {
                                 fn_id: closure_fn_id(*cid),
                                 captures: def.value_captures.iter().map(|(_, ty)| *ty).collect(),
+                                borrows: def.borrow_captures.clone(),
                                 ret: def.ret,
                             });
                             tid

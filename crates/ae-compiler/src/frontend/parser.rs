@@ -236,9 +236,24 @@ impl<'a> Parser<'a> {
         let mut_sigs = borrowscope::mut_borrow_positions(self.functions, self.generics);
         let outcome = borrowscope::adjudicate_deferred(function, &self.deferred_write_conflicts, &mut_sigs);
         match outcome {
-            Ok(()) => { self.deferred_write_conflicts.clear(); Ok(()) }
+            Ok(()) => { self.deferred_write_conflicts.clear(); }
             Err(message) => {
                 let (_, offset, _, _, _) = self.deferred_write_conflicts[0];
+                return Err(self.error_at(offset, &message));
+            }
+        }
+        // ADR-0215: the deferred spawn-escape proofs run on the same graph.
+        self.adjudicate_borrow_spawns(function)?;
+        Ok(())
+    }
+    // ADR-0215: the deferred spawn-escape proofs (closure id, the borrowed
+    // variable ids, the spawn's byte offset).
+    pub(super) fn adjudicate_borrow_spawns(&mut self, function: &Function) -> Result<(), ae_span::Diagnostic> {
+        let outcome = borrowscope::adjudicate_borrow_spawns(function, &self.deferred_borrow_spawns);
+        match outcome {
+            Ok(()) => { self.deferred_borrow_spawns.clear(); Ok(()) }
+            Err(message) => {
+                let (_, _, offset) = self.deferred_borrow_spawns[0];
                 Err(self.error_at(offset, &message))
             }
         }

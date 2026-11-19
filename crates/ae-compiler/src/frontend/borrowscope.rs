@@ -45,6 +45,140 @@ use super::movewalk::{expr_reads, statement_move_effects, statement_reads, walk_
 // Every write to the base in the CFG is a deferred one (the parser defers
 // all of them when only view borrows are active), so one covered write
 // anywhere is reported at the first recorded conflict's site.
+/// ADR-0215 (M4.1.02): a spawn with borrow captures is accepted only when
+/// every path from the spawn reaches a `wait` of its handle before any exit.
+/// The wait's happens-before edge is what keeps the borrowed storage safe; a
+/// path that exits without joining would run the thread past the frame.
+/// Blocks containing the join end every path through them, so the walk
+/// explores only unjoined paths and rejects on the first exit it reaches.
+pub(super) fn adjudicate_borrow_spawns(function: &Function, spawns: &[(usize, Vec<usize>, usize)]) -> Result<(), String> {
+    if spawns.is_empty() { return Ok(()); }
+    let graph = build_cfg(function);
+    for (cid, _borrowed, _offset) in spawns {
+        // The joins: blocks containing a `wait` of this spawn's handle; the
+        // spawn site: the `Declare` binding a handle from THIS closure's
+        // spawn expression. A borrow-capture spawn that never binds a handle
+        // cannot be waited and is rejected outright.
+        let mut join_blocks: Vec<usize> = Vec::new();
+        let mut spawn_site: Option<(usize, usize, usize)> = None;
+        for block in &graph.blocks {
+            for (index, statement) in block.statements.iter().enumerate() {
+                if let Statement::Declare(id, expr) = statement {
+                    if let Expr::Spawn(_, callable, ..) = expr {
+                        let spawned_here = match &**callable {
+                            Expr::ClosureLit(lit) => lit == cid,
+                            Expr::Variable(_, Type::Closure(lit), ..) => lit == cid,
+                            _ => false,
+                        };
+                        if spawned_here {
+                            spawn_site = Some((block.id, index + 1, *id));
+                        }
+                    }
+                }
+            }
+        }
+        let Some((spawn_block, spawn_index, handle)) = spawn_site else {
+            return Err("a spawn with borrowed captures must bind its handle to a name and wait it; an unnamed handle could never be joined".to_owned());
+        };
+        for block in &graph.blocks {
+            for statement in &block.statements {
+                if wait_targets(statement).contains(&handle) {
+                    join_blocks.push(block.id);
+                }
+            }
+        }
+        // Forward walk over unjoined paths.
+        let mut visited: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let mut stack: Vec<(usize, usize)> = vec![(spawn_block, spawn_index)];
+        let mut escaped = false;
+        while let Some((block_id, from_index)) = stack.pop() {
+            let _ = from_index;
+            if !visited.insert(block_id) { continue; }
+            if join_blocks.contains(&block_id) { continue; }
+            let Some(block) = graph.blocks.iter().find(|b| b.id == block_id) else { continue };
+            let start = if block_id == spawn_block { spawn_index } else { 0 };
+            if block.statements[start..].iter().any(|statement| wait_targets(statement).contains(&handle)) {
+                // Joined on this path: nothing after the wait can escape.
+                continue;
+            }
+            match &block.terminator {
+                CfgTerminator::Return(_) | CfgTerminator::Exit(_) => { escaped = true; break; }
+                CfgTerminator::Goto(target) => stack.push((*target, 0)),
+                CfgTerminator::Branch(_, yes, no) => { stack.push((*yes, 0)); stack.push((*no, 0)); }
+                CfgTerminator::Switch(_, _, targets) => {
+                    for target in targets { stack.push((*target, 0)); }
+                }
+                // main's tail is an implicit exit; other functions' tails
+                // fail loudly at runtime, which aborts the process — both
+                // escape the frame.
+                CfgTerminator::Unreachable => { escaped = true; break; }
+            }
+        }
+        if escaped {
+            return Err("spawn borrows from the caller but the handle is not joined before this function exits on every path; add a wait of the handle on the escaping path".to_owned());
+        }
+    }
+    Ok(())
+}
+
+// The handle variables a statement's `wait` reads: `let v = wait(t);` and a
+// wait inside a larger expression both count (ADR-0215).
+fn wait_targets(statement: &Statement) -> Vec<usize> {
+    let mut out = Vec::new();
+    collect_waits_stmt(statement, &mut out);
+    out
+}
+
+fn collect_waits_stmt(statement: &Statement, out: &mut Vec<usize>) {
+    match statement {
+        Statement::Return(expr, _) | Statement::Declare(_, expr) | Statement::Assign(_, expr, _) =>
+            collect_waits_expr(expr, out),
+        Statement::Print(Printed::Expr(expr)) => collect_waits_expr(expr, out),
+        Statement::If(cond, yes, no) => {
+            collect_waits_expr(cond, out);
+            for s in yes { collect_waits_stmt(s, out); }
+            for s in no { collect_waits_stmt(s, out); }
+        }
+        Statement::While(cond, body) => {
+            collect_waits_expr(cond, out);
+            for s in body { collect_waits_stmt(s, out); }
+        }
+        Statement::Match(_, _, arms) => {
+            for arm in arms { for s in &arm.body { collect_waits_stmt(s, out); } }
+        }
+        Statement::AtomicStore(handle, value) => {
+            collect_waits_expr(handle, out);
+            collect_waits_expr(value, out);
+        }
+        _ => {}
+    }
+}
+
+fn collect_waits_expr(expr: &Expr, out: &mut Vec<usize>) {
+    if let Expr::Wait(handle, ..) = expr {
+        if let Expr::Variable(id, Type::Thread(_), ..) = &**handle {
+            out.push(*id);
+        }
+    }
+    match expr {
+        Expr::Spawn(slots, callable, ..) => {
+            for slot in slots { collect_waits_expr(slot, out); }
+            collect_waits_expr(callable, out);
+        }
+        Expr::Wait(handle, ..) => collect_waits_expr(handle, out),
+        Expr::Binary(a, _, b, ..) => { collect_waits_expr(a, out); collect_waits_expr(b, out); }
+        Expr::Call(_, args, _) | Expr::FnCall(_, args, _, _) => {
+            for arg in args {
+                match arg {
+                    Argument::Value(e) | Argument::View(e) => collect_waits_expr(e, out),
+                    Argument::Borrow(..) | Argument::FnPtr(_) => {}
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 pub(super) fn adjudicate_deferred(function: &Function, conflicts: &[(usize, usize, String, &'static str, Option<String>)], mut_sigs: &MutSigs) -> Result<(), String> {
     if conflicts.is_empty() { return Ok(()); }
     let graph = build_cfg(function);
