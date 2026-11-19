@@ -24,12 +24,15 @@ fn main() {
     let describe = || -> string { return task.title + "/" + to_string(task.weight); };
     print(describe());
     print(task.weight);
-    // A body that needs ownership makes the capture a value: the first call
-    // moves the outer variable, so a second call would be a use-after-move
-    // and is rejected. Order this before any further use of `note`.
+    // Concatenation copies borrowed operands, so this capture stays a
+    // borrow: the call can happen any number of times and `note` stays
+    // usable afterwards. A capture becomes a value only when the body
+    // genuinely consumes it (a map builtin, a by-value parameter).
     let note = "memo";
     let shout = || -> string { return note + "!"; };
     print(shout());
+    print(shout());
+    print(note);
     // Nested closures capture like any other body.
     let step = 2;
     let twice = | x: i64 | -> i64 { let bump = | y: i64 | -> i64 { return y + step; }; return bump(x) * 2; };

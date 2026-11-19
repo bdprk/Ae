@@ -45,7 +45,8 @@ fn main() {
     print(heavier.weight);
 
     // A body that consumes a string capture turns it into a value capture:
-    // the call below moves `note`, and a second call would be rejected.
+    // concatenation copies borrowed operands, so the capture stays a
+    // borrow and the call below can happen any number of times.
     let note = "memo";
     let shout = || -> string {
         return note + "!";
