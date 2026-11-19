@@ -19,6 +19,7 @@ pub enum ExpressionKind {
     Call { callee: Box<Expression>, arguments: Vec<Expression> },
     Index { base: Box<Expression>, index: Box<Expression> },
     Field { base: Box<Expression>, name: String },
+    Qualified { base: Box<Expression>, name: String },
     Prefix { operator: Kind, operand: Box<Expression> },
     Binary { left: Box<Expression>, operator: Kind, right: Box<Expression> },
 }
@@ -110,7 +111,7 @@ impl Parser<'_> {
             })
     }
     fn postfix(&mut self, mut base: Expression) -> Result<Expression, Diagnostic> {
-        while matches!(self.current().kind, Kind::LParen | Kind::LBracket | Kind::Dot) {
+        while matches!(self.current().kind, Kind::LParen | Kind::LBracket | Kind::Dot | Kind::ColonColon) {
             self.count_node()?;
             let start = base.range.start;
             let opener = &self.tokens[self.cursor].kind;
@@ -141,13 +142,22 @@ impl Parser<'_> {
                     self.cursor += 1;
                     ExpressionKind::Index { base: Box::new(base), index: Box::new(index) }
                 }
-                Kind::Dot => {
+                Kind::Dot | Kind::ColonColon => {
                     let Kind::Ident(name) = &self.current().kind else {
-                        return Err(self.error("expected a field or method name"));
+                        let message = if *opener == Kind::Dot {
+                            "expected a field or method name"
+                        } else {
+                            "expected an associated name after '::'"
+                        };
+                        return Err(self.error(message));
                     };
                     let name = name.clone();
                     self.cursor += 1;
-                    ExpressionKind::Field { base: Box::new(base), name }
+                    if *opener == Kind::Dot {
+                        ExpressionKind::Field { base: Box::new(base), name }
+                    } else {
+                        ExpressionKind::Qualified { base: Box::new(base), name }
+                    }
                 }
                 _ => unreachable!("postfix opener"),
             };
@@ -174,6 +184,28 @@ mod tests {
         let span = error.primary.unwrap().span;
         assert_eq!(span.file.as_deref(), Some("literal.ae"));
         assert_eq!(span.range, 1..2);
+    }
+
+    #[test]
+    fn qualified_names_remain_distinct_from_field_access() {
+        let source = "Result::Ok(value).field";
+        let expression = parse_operator_expression("case.ae", source).unwrap();
+        let ExpressionKind::Field { base, name } = expression.kind else {
+            panic!("expected field access");
+        };
+        assert_eq!(name, "field");
+        let ExpressionKind::Call { callee, arguments } = base.kind else {
+            panic!("expected constructor call");
+        };
+        assert_eq!(arguments.len(), 1);
+        let ExpressionKind::Qualified { base, name } = callee.kind else {
+            panic!("expected qualified name");
+        };
+        assert_eq!(name, "Ok");
+        assert_eq!(&source[base.range], "Result");
+
+        let error = parse_operator_expression("case.ae", "Result::(value)").unwrap_err();
+        assert_eq!(error.primary.unwrap().span.range, 8..9);
     }
 
     #[test]
