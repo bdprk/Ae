@@ -16,6 +16,8 @@ pub struct Expression {
 pub enum ExpressionKind {
     Atom(Kind),
     Group(Box<Expression>),
+    Array(Vec<Expression>),
+    Vector(Vec<Expression>),
     Call { callee: Box<Expression>, arguments: Vec<Expression> },
     Index { base: Box<Expression>, index: Box<Expression> },
     Field { base: Box<Expression>, name: String },
@@ -26,7 +28,8 @@ pub enum ExpressionKind {
 }
 
 /// Parse operator expressions with calls, indexing, and field access.
-/// Name resolution and type-dependent restrictions are checked separately.
+/// Collection initializers retain their element syntax. The compiler checks
+/// name resolution, array placement, and element types.
 pub fn parse_operator_expression(file: &str, source: &str) -> Result<Expression, Diagnostic> {
     let tokens = crate::lex_diagnostic(source).map_err(|mut diagnostic| {
         if let Some(label) = &mut diagnostic.primary {
@@ -89,6 +92,19 @@ impl Parser<'_> {
                     self.cursor += 1;
                     ExpressionKind::Group(Box::new(inner))
                 }
+                Kind::LBracket => {
+                    let elements = self.collection(false)?;
+                    range.end = self.tokens[self.cursor - 1].end;
+                    ExpressionKind::Array(elements)
+                }
+                Kind::Ident(name) if name == "vec"
+                    && self.tokens.get(self.cursor + 1).is_some_and(|token| token.kind == Kind::LBracket) =>
+                {
+                    self.cursor += 1;
+                    let elements = self.collection(true)?;
+                    range.end = self.tokens[self.cursor - 1].end;
+                    ExpressionKind::Vector(elements)
+                }
                 Kind::Ident(_) => {
                     self.cursor += 1;
                     ExpressionKind::Atom(token.kind.clone())
@@ -111,6 +127,29 @@ impl Parser<'_> {
                 })
             })
     }
+    fn collection(&mut self, allow_empty: bool) -> Result<Vec<Expression>, Diagnostic> {
+        self.cursor += 1;
+        let mut elements = Vec::new();
+        if self.current().kind == Kind::RBracket {
+            if !allow_empty {
+                return Err(self.error("array must contain at least one element"));
+            }
+        } else {
+            loop {
+                elements.push(self.expression(0)?);
+                if self.current().kind != Kind::Comma {
+                    break;
+                }
+                self.cursor += 1;
+            }
+        }
+        if self.current().kind != Kind::RBracket {
+            return Err(self.error("expected closing bracket after collection elements"));
+        }
+        self.cursor += 1;
+        Ok(elements)
+    }
+
     fn index(&mut self, base: Expression) -> Result<ExpressionKind, Diagnostic> {
         let index = self.expression(0)?;
         if self.current().kind != Kind::RBracket {
@@ -200,6 +239,26 @@ mod tests {
         let span = error.primary.unwrap().span;
         assert_eq!(span.file.as_deref(), Some("literal.ae"));
         assert_eq!(span.range, 1..2);
+    }
+
+    #[test]
+    fn arrays_and_vectors_keep_element_order_and_ranges() {
+        let source = "[1 + 2, item]";
+        let array = parse_operator_expression("case.ae", source).unwrap();
+        let ExpressionKind::Array(elements) = array.kind else {
+            panic!("expected array");
+        };
+        assert_eq!(&source[elements[0].range.clone()], "1 + 2");
+        assert_eq!(&source[elements[1].range.clone()], "item");
+
+        let source = "vec[1.5, -2.5]";
+        let vector = parse_operator_expression("case.ae", source).unwrap();
+        assert_eq!(vector.range, 0..source.len());
+        assert!(matches!(vector.kind, ExpressionKind::Vector(elements) if elements.len() == 2));
+        assert!(matches!(parse_operator_expression("case.ae", "vec[]").unwrap().kind,
+            ExpressionKind::Vector(elements) if elements.is_empty()));
+        let error = parse_operator_expression("case.ae", "[]").unwrap_err();
+        assert_eq!(error.primary.unwrap().span.range, 1..2);
     }
 
     #[test]
