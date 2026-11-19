@@ -13,11 +13,19 @@ pub struct Expression {
 }
 
 #[derive(Debug, PartialEq)]
+pub struct FieldInitializer {
+    pub name: String,
+    pub name_range: Range<usize>,
+    pub value: Expression,
+}
+
+#[derive(Debug, PartialEq)]
 pub enum ExpressionKind {
     Atom(Kind),
     Group(Box<Expression>),
     Array(Vec<Expression>),
     Vector(Vec<Expression>),
+    Struct { target: Box<Expression>, fields: Vec<FieldInitializer> },
     Call { callee: Box<Expression>, arguments: Vec<Expression> },
     Index { base: Box<Expression>, index: Box<Expression> },
     Field { base: Box<Expression>, name: String },
@@ -159,8 +167,35 @@ impl Parser<'_> {
         Ok(ExpressionKind::Index { base: Box::new(base), index: Box::new(index) })
     }
 
+    fn struct_fields(&mut self) -> Result<Vec<FieldInitializer>, Diagnostic> {
+        let mut fields = Vec::new();
+        while self.current().kind != Kind::RBrace {
+            let token = self.current();
+            let Kind::Ident(name) = &token.kind else {
+                return Err(self.error("expected a struct field name"));
+            };
+            let name = name.clone();
+            let name_range = token.offset..token.end;
+            self.cursor += 1;
+            if self.current().kind != Kind::Colon {
+                return Err(self.error("expected ':' after struct field name"));
+            }
+            self.cursor += 1;
+            let value = self.expression(0)?;
+            fields.push(FieldInitializer { name, name_range, value });
+            if self.current().kind == Kind::Comma {
+                self.cursor += 1;
+            }
+        }
+        self.cursor += 1;
+        Ok(fields)
+    }
+
     fn postfix(&mut self, mut base: Expression) -> Result<Expression, Diagnostic> {
-        while matches!(self.current().kind, Kind::LParen | Kind::LBracket | Kind::Dot | Kind::ColonColon) {
+        while matches!(self.current().kind, Kind::LParen | Kind::LBracket | Kind::Dot | Kind::ColonColon)
+            || (self.current().kind == Kind::LBrace
+                && matches!(base.kind, ExpressionKind::Atom(Kind::Ident(_)) | ExpressionKind::Specialization { .. }))
+        {
             self.count_node()?;
             let start = base.range.start;
             let opener = &self.tokens[self.cursor].kind;
@@ -186,7 +221,7 @@ impl Parser<'_> {
                 Kind::LBracket if matches!(&base.kind, ExpressionKind::Atom(Kind::Ident(_))) => {
                     let start = self.cursor - 1;
                     let end = crate::declaration::skip_type_parameter_list(self.tokens, start);
-                    if self.tokens.get(end).is_some_and(|token| token.kind == Kind::ColonColon) {
+                    if self.tokens.get(end).is_some_and(|token| matches!(token.kind, Kind::ColonColon | Kind::LBrace)) {
                         let arguments = crate::declaration::expression_type_arguments(
                             self.file, self.source, self.tokens, start,
                         )?;
@@ -197,6 +232,10 @@ impl Parser<'_> {
                     }
                 }
                 Kind::LBracket => self.index(base)?,
+                Kind::LBrace => {
+                    let fields = self.struct_fields()?;
+                    ExpressionKind::Struct { target: Box::new(base), fields }
+                }
                 Kind::Dot | Kind::ColonColon => {
                     let Kind::Ident(name) = &self.current().kind else {
                         let message = if *opener == Kind::Dot {
@@ -259,6 +298,24 @@ mod tests {
             ExpressionKind::Vector(elements) if elements.is_empty()));
         let error = parse_operator_expression("case.ae", "[]").unwrap_err();
         assert_eq!(error.primary.unwrap().span.range, 1..2);
+    }
+
+    #[test]
+    fn struct_initializers_preserve_field_order_and_nested_ranges() {
+        let source = "Pair[i64, i64] { right: Point { x: 2 }, left: 1 + 3, }";
+        let expression = parse_operator_expression("case.ae", source).unwrap();
+        assert_eq!(expression.range, 0..source.len());
+        let ExpressionKind::Struct { target, fields } = expression.kind else {
+            panic!("expected struct literal");
+        };
+        assert!(matches!(target.kind, ExpressionKind::Specialization { .. }));
+        assert_eq!(&source[fields[0].name_range.clone()], "right");
+        assert_eq!(&source[fields[0].value.range.clone()], "Point { x: 2 }");
+        assert_eq!(fields[1].name, "left");
+        assert_eq!(&source[fields[1].value.range.clone()], "1 + 3");
+
+        let error = parse_operator_expression("case.ae", "Point { x 2 }").unwrap_err();
+        assert_eq!(error.primary.unwrap().span.range, 10..11);
     }
 
     #[test]
