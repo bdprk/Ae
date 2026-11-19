@@ -1,0 +1,9 @@
+// M4.1.01 (ADR-0214): a borrow capture reads the spawning frame's storage —
+// the thread may outlive it, so a view-captured variable cannot cross. The
+// value-capture path moves instead; this fixture pins the positioned
+// rejection that keeps the boundary owned-only.
+fn main() {
+    var s = "hello";
+    let t = spawn(|| -> i64 { return len(s); });
+    print(1);
+}

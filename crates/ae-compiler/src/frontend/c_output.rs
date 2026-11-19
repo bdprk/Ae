@@ -28,6 +28,9 @@ pub(super) fn c_type_field(ty: Type) -> String {
         Type::Closure(_) => "void".to_owned(),
         // Unreachable: no syntax for a function-typed field.
         Type::Fn(_) => "void".to_owned(),
+        // Unreachable: thread handles bind as locals only (spec/concurrency.md
+        // §2, like pointers); the pointer shape keeps a future slip valid C.
+        Type::Thread(_) => "void *".to_owned(),
         // Unreachable: no syntax for a pointer-typed field (M2.12 pointers
         // bind as locals only); the value keeps the pointer shape so a future
         // slip prints valid C.
@@ -63,6 +66,9 @@ pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Tokens => "ae_tokens".to_owned(),
         // Never declared: a closure has no storage.
         Type::Closure(_) => "void".to_owned(),
+        // The handle is one heap slot: spawn allocates it, join consumes it.
+        Type::Thread(_) if declaration => format!("void *v{id}"),
+        Type::Thread(_) => "void *".to_owned(),
         // A function pointer parameter declares its name inside the pointer
         // parens, the way C requires.
         Type::Fn(sig) => {
@@ -631,6 +637,56 @@ pub(super) fn emit_program(program: Program) -> Result<GeneratedC, String> {
         // Defensive backstop: even a future control-flow analysis bug must not
         // produce a C function that falls through without returning a value.
         out.push_str("    ae_fail(\"function exited without return\", 0, 0);\n}\n");
+    }
+    // Thread support (ADR-0214): the context layouts and trampolines the
+    // program's spawn sites reference, then the one slot type. They sit after
+    // the functions they call and before the bodies that call them. The
+    // return value is the context's first member, so wait reads it without
+    // knowing the capture layout.
+    let spawned: Vec<crate::frontend::closures::SpawnedThread> = crate::frontend::closures::take_spawned();
+    if !spawned.is_empty() {
+        out.push_str("
+typedef struct { void *native; void *ctx; } ae_thread_slot;
+");
+    }
+    for entry in &spawned {
+        match entry {
+            crate::frontend::closures::SpawnedThread::Closure { fn_id, captures, ret } => {
+                let fields = captures.iter().enumerate()
+                    .map(|(index, ty)| format!("    {} f{index};
+", c_type_field(*ty)))
+                    .collect::<Vec<_>>().join("");
+                out.push_str(&format!("
+typedef struct {{
+    {} ret;
+{fields}}} ae_thread_ctx_{fn_id};
+", c_type_field(*ret)));
+                let arguments = if captures.is_empty() {
+                    String::new()
+                } else {
+                    (0..captures.len()).map(|index| format!("c->f{index}")).collect::<Vec<_>>().join(", ")
+                };
+                out.push_str(&format!("static void ae_thread_entry_{fn_id}(void *raw) {{
+    ae_thread_ctx_{fn_id} *c = raw;
+    c->ret = ae_fn_{fn_id}({arguments});
+}}
+"));
+            }
+            crate::frontend::closures::SpawnedThread::FnValue { sig, ret } => {
+                let ret_c = c_type_field(*ret);
+                out.push_str(&format!("
+typedef struct {{
+    {ret_c} ret;
+    {ret_c} (*fn)(void);
+}} ae_thread_fncall_{sig};
+"));
+                out.push_str(&format!("static void ae_thread_entry_f{sig}(void *raw) {{
+    ae_thread_fncall_{sig} *c = raw;
+    c->ret = c->fn();
+}}
+"));
+            }
+        }
     }
     let main = all.iter().find(|f| f.is_main).expect("load_program checks exactly one main");
     out.push_str("\nint main(int argc, char **argv) {\n    ae_args_init(argc, argv);\n    ae_argc_g = (int64_t)argc;\n    ae_argv_g = argv;\n");

@@ -8029,3 +8029,75 @@ fn unsafe_fn_without_a_doc_comment_is_rejected_with_e0704() {
     fs::remove_dir_all(dir).unwrap();
 }
 
+
+#[test]
+fn threads_spawn_wait_and_move_captures() {
+    // ADR-0214 / spec/concurrency.md T1/T7/T8: owned captures move into the
+    // thread, wait hands back the spawned callable's return, handles of
+    // different return types stay distinct, and a loop can spawn-and-join.
+    let source = r#"fn main() {
+    let base = 10;
+    let offset = spawn(|| -> i64 { return base + 32; });
+    print(wait(offset));
+    let greet = spawn(|| -> string { return "hi " + "there"; });
+    print(wait(greet));
+    let total = spawn(|| -> i64 { return 5; });
+    let name = spawn(|| -> string { return "done"; });
+    print(wait(total) + 1);
+    print(wait(name));
+    var i = 0;
+    var sum = 0;
+    while i < 4 {
+        let add = spawn(|| -> i64 { return i * 2; });
+        sum = sum + wait(add);
+        i = i + 1;
+    }
+    print(sum);
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "42\nhi there\n6\ndone\n12\n"
+    );
+
+    // The interpreter runs the same program with the same observable result
+    // (the spawned callable completes at the spawn site).
+    let path = std::env::temp_dir().join(format!("ae-spawn-interp-{}.ae", std::process::id()));
+    fs::write(&path, source).unwrap();
+    let interp = Command::new(env!("CARGO_BIN_EXE_ae")).args(["run", path.to_str().unwrap(), "--interp"]).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(interp.status.success(), "{}", String::from_utf8_lossy(&interp.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout).replace("\r\n", "\n"),
+        "42\nhi there\n6\ndone\n12\n"
+    );
+}
+
+#[test]
+fn thread_boundaries_reject_nontransferable_shapes() {
+    // spec/concurrency.md T2/T3/T5/T6: a borrow capture cannot cross, the
+    // callable takes no visible parameters, a value capture moves (use after
+    // spawn is E0102), and the handle is consumed by wait.
+    let cases = [
+        // T2: the borrow probe classifies `s` as a string view — rejected.
+        ("fn main() { var s = \"hello\"; let t = spawn(|| -> i64 { return len(s); }); print(1); }",
+         "spawn moves its captures into the thread; 's' is captured by reference and cannot cross"),
+        // T3: a spawned callable takes no visible parameters.
+        ("fn main() { let t = spawn(|x: i64| -> i64 { return x; }); print(1); }",
+         "the spawned closure must take no parameters"),
+        // T4: spawn needs a closure value.
+        ("fn main() { let t = spawn(42); print(1); }",
+         "spawn needs a closure value"),
+        // T5: the value capture moved at the spawn site.
+        ("fn main() { var s = \"hello\"; let t = spawn(|| -> string { return s; }); print(s); }",
+         "because it was moved"),
+        // T6: wait consumes the handle.
+        ("fn main() { let t = spawn(|| -> i64 { return 1; }); let a = wait(t); let b = wait(t); print(a + b); }",
+         "because it was moved"),
+    ];
+    for (source, expected) in cases {
+        let message = check_rejects(source);
+        assert!(message.contains(expected), "{source}\n  expected '{expected}', got '{message}'");
+    }
+}

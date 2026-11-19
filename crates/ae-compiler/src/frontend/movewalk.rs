@@ -401,6 +401,16 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
     match expr {
         // Taking an address reads the slot and never moves it; dereferencing
         // reads the pointer variable (M2.12 slice 2).
+        // A spawn moves its capture slots into the thread and reads its
+        // callable (ADR-0214); wait consumes the handle.
+        Expr::Spawn(slots, callable, ..) => {
+            if let Some(violation) = walk_expr(callable, moved) { return Some(violation); }
+            for slot in slots {
+                if let Some(violation) = walk_moving_expr(slot, moved) { return Some(violation); }
+            }
+            None
+        }
+        Expr::Wait(handle, ..) => walk_moving_expr(handle, moved),
         Expr::BorrowAs(e, ..) | Expr::DerefPtr(e, ..) => walk_expr(e, moved),
         // The pointer itself is only read; the count can contain calls and
         // therefore reads or moves of its own, after evaluating the base.
