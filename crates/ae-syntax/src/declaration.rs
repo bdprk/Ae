@@ -249,6 +249,7 @@ impl DeclarationParser<'_> {
                     closing.pop();
                 }
                 Kind::Fn if matches!(self.tokens.get(self.pos + 1).map(|token| &token.kind), Some(Kind::LParen)) => {}
+                Kind::Semi if closing.last() == Some(&Kind::RBracket) => {}
                 Kind::Ident(_) | Kind::Number(_) | Kind::Amp | Kind::Star
                 | Kind::Const | Kind::Mut | Kind::Arrow | Kind::Comma => {}
                 _ => return Err(self.error("unexpected token in type spelling")),

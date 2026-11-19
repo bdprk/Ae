@@ -3568,6 +3568,28 @@ fn main() {{
 }
 
 #[test]
+fn standalone_declarations_cover_example_and_run_corpus() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut failures = Vec::new();
+    for directory in ["examples", "examples/modules", "tests/run"] {
+        for entry in fs::read_dir(root.join(directory)).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("ae") {
+                continue;
+            }
+            let source = fs::read_to_string(&path).unwrap();
+            if let Err(error) = ae_syntax::declaration::parse_declarations(
+                &path.display().to_string(), &source,
+            ) {
+                failures.push(error.to_string());
+            }
+        }
+    }
+    failures.sort();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
 fn syntax_body_boundaries_preserve_following_compiler_declarations() {
     use ae_syntax::{declaration::{brace_body_end, parse_declarations, DeclarationKind}, lex_diagnostic, Kind};
 
