@@ -89,6 +89,8 @@ impl Parser<'_> {
         result
     }
     pub(super) fn expression_inner(&mut self, min: u8, moving: bool) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        use ae_syntax::operator::{infix_binding_power, PREFIX_BINDING_POWER};
+
         self.expression_nodes += 1;
         if self.expression_nodes > 128 { return Err(self.fail("expression complexity limit exceeded (128)")); }
         let mut lhs = match self.current().clone() {
@@ -115,13 +117,13 @@ impl Parser<'_> {
                 let (line, column) = self.position();
                 self.pos += 1;
                 // Operands bind tighter than any binary operator: -a * b is (-a) * b.
-                let (operand, ty) = self.expression(10, false)?;
+                let (operand, ty) = self.expression(PREFIX_BINDING_POWER, false)?;
                 if !matches!(ty, Type::Int | Type::F64) { return Err(self.fail("unary '-' requires an i64 or f64 operand").with_code("E0203")); }
                 (Expr::Neg(Box::new(operand), line, column), ty)
             }
             Kind::Bang => {
                 self.pos += 1;
-                let (operand, ty) = self.expression(10, false)?;
+                let (operand, ty) = self.expression(PREFIX_BINDING_POWER, false)?;
                 if ty != Type::Bool { return Err(self.fail("'!' requires a boolean operand")); }
                 (Expr::Not(Box::new(operand)), Type::Bool)
             }
@@ -1443,19 +1445,9 @@ impl Parser<'_> {
                 None => {}
             }
         }
-        loop {
-            let (prec, op) = match self.current() {
-                Kind::Or => (1u8, Kind::Or), Kind::And => (2, Kind::And),
-                Kind::Pipe => (3, Kind::Pipe), Kind::Caret => (4, Kind::Caret), Kind::Amp => (5, Kind::Amp),
-                Kind::EqEq => (6, Kind::EqEq), Kind::NotEq => (6, Kind::NotEq),
-                Kind::Less => (6, Kind::Less), Kind::LessEq => (6, Kind::LessEq),
-                Kind::Greater => (6, Kind::Greater), Kind::GreaterEq => (6, Kind::GreaterEq),
-                Kind::Shl => (7, Kind::Shl), Kind::Shr => (7, Kind::Shr),
-                Kind::Plus => (8, Kind::Plus), Kind::Minus => (8, Kind::Minus),
-                Kind::Star => (9, Kind::Star), Kind::Slash => (9, Kind::Slash), Kind::Percent => (9, Kind::Percent),
-                _ => break,
-            };
-            if prec < min { break; }
+        while let Some((left_power, right_power)) = infix_binding_power(self.current()) {
+            if left_power < min { break; }
+            let op = self.current().clone();
             let (line, column) = self.position();
             self.pos += 1;
             // `+` always consumes its string operands, even in borrow contexts.
@@ -1464,7 +1456,7 @@ impl Parser<'_> {
             // plus-operand flag raised: variables are still move-checked,
             // but borrow-shaped operands are copied by the emitter.
             self.plus_operand_depth += 1;
-            let parsed = self.expression(prec + 1, op == Kind::Plus);
+            let parsed = self.expression(right_power, op == Kind::Plus);
             self.plus_operand_depth -= 1;
             let (rhs, rhs_ty) = parsed?;
             let (lhs_expr, lhs_ty) = lhs;
