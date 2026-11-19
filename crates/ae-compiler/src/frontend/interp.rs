@@ -1951,11 +1951,28 @@ fn eval_expr(
         // slots evaluate as by-value arguments, so the interpreter's move
         // markers match the compiled move), and wait reads the stashed value.
         Expr::Spawn(slots, callable, ..) => {
-            let args = slots.iter().map(|slot| Argument::Value(slot.clone())).collect::<Vec<_>>();
+            let mut args = slots.iter().map(|slot| Argument::Value(slot.clone())).collect::<Vec<_>>();
             let value = match &**callable {
-                Expr::ClosureLit(cid) => invoke_call(env, closures::closure_fn_id(*cid), &args, locals, caller_locals)?,
-                Expr::Variable(_, Type::Closure(cid), ..) =>
-                    invoke_call(env, closures::closure_fn_id(*cid), &args, locals, caller_locals)?,
+                Expr::ClosureLit(cid) => {
+                    // The borrow captures read the caller's frame through the
+                    // same read-only forms the compiled context packages.
+                    for (outer_id, hidden) in closures::closure_borrow_captures(*cid) {
+                        match hidden {
+                            Type::StrView => args.push(Argument::View(Expr::Variable(outer_id, Type::String, 0, 0))),
+                            _ => args.push(Argument::Borrow(outer_id, matches!(hidden, Type::VecRef | Type::StrVecRef | Type::VecFRef))),
+                        }
+                    }
+                    invoke_call(env, closures::closure_fn_id(*cid), &args, locals, caller_locals)?
+                }
+                Expr::Variable(_, Type::Closure(cid), ..) => {
+                    for (outer_id, hidden) in closures::closure_borrow_captures(*cid) {
+                        match hidden {
+                            Type::StrView => args.push(Argument::View(Expr::Variable(outer_id, Type::String, 0, 0))),
+                            _ => args.push(Argument::Borrow(outer_id, matches!(hidden, Type::VecRef | Type::StrVecRef | Type::VecFRef))),
+                        }
+                    }
+                    invoke_call(env, closures::closure_fn_id(*cid), &args, locals, caller_locals)?
+                }
                 Expr::Variable(id, Type::Fn(_), ..) => {
                     let target = match read_var(locals, caller_locals, *id, 0, 0)? {
                         Val::FnPtr(fid) => fid,

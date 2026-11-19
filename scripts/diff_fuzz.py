@@ -113,7 +113,7 @@ class Gen:
         """
         if depth >= 3:
             return [f"print({self.int_expr(vars)});"]
-        kind = self.rnd() % 23
+        kind = self.rnd() % 24
         # With pointers in scope, a third of the draws land on the pointer
         # kinds (19/20): the fresh surface needs the pressure, and the shapes
         # are cheap to generate.
@@ -125,6 +125,21 @@ class Gen:
             kind = 3
         if kind in (19, 20) and (not vars or not pointers):
             kind = 3
+        if kind == 23:
+            # ADR-0215 (M4.1.02): a spawned closure whose borrow capture is
+            # provably joined — the wait lands on every path before the
+            # borrowed variable's region ends. The joined read sees exactly
+            # the storage the caller froze; both backends agree.
+            name = self.fresh("sj")
+            sname = self.fresh("s")
+            a = '"j' + str(self.rnd() % 1000) + '"'
+            return [
+                f"var {sname} = {a};",
+                f"let {name} = spawn(|| -> i64 {{ return len({sname}) * 2; }});",
+                f"print(wait({name}));",
+                f"print(len({sname}));",
+                *self.statement(vars, depth + 1, docs, pointers),
+            ]
         if kind == 22:
             # spec/concurrency.md §8 A1/A2: one shared cell, two threads each
             # adding 10 five times. Each thread sums its own atomic_add old
@@ -609,6 +624,8 @@ def run_seed_once(seed: int, workdir: Path, cache_dir: Path, compile_timeout: in
     result["seconds"] = time.perf_counter() - started
     return result
 
+
+NL = chr(10)
 
 def main() -> int:
     parser = argparse.ArgumentParser()
