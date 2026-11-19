@@ -19,6 +19,15 @@ pub struct FieldInitializer {
     pub value: Expression,
 }
 
+/// One `name: Type` in a closure's parameter list. The type stays a byte
+/// range: the shared parser records the spelling, the compiler resolves it.
+#[derive(Debug, PartialEq)]
+pub struct ClosureParam {
+    pub name: String,
+    pub name_range: Range<usize>,
+    pub ty: Range<usize>,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum ExpressionKind {
     Atom(Kind),
@@ -38,6 +47,10 @@ pub enum ExpressionKind {
     // indexing. The resolver can use these ranges once the name is known.
     BracketedCallTarget { base: Box<Expression>, arguments: Vec<Range<usize>> },
     Qualified { base: Box<Expression>, name: String },
+    /// `|name: Type, ...| -> Ret { ... }` / `|| -> Ret { ... }`. The body is
+    /// an opaque brace-balanced range: statement parsing stays with the
+    /// caller, capture inference with the compiler.
+    Closure { params: Vec<ClosureParam>, return_type: Range<usize>, body: Range<usize> },
     Prefix { operator: Kind, operand: Box<Expression> },
     Binary { left: Box<Expression>, operator: Kind, right: Box<Expression> },
 }
@@ -130,6 +143,11 @@ impl Parser<'_> {
         diagnostic_range(self.file, self.source, token.offset..token.end, message)
     }
 
+    fn error_at(&self, index: usize, message: &str) -> Diagnostic {
+        let token = &self.tokens[index];
+        diagnostic_range(self.file, self.source, token.offset..token.end, message)
+    }
+
     fn count_node(&mut self) -> Result<(), Diagnostic> {
         if self.nodes == 128 {
             return Err(self.error("expression complexity limit exceeded (128)"));
@@ -181,6 +199,18 @@ impl Parser<'_> {
                     range.end = self.tokens[self.cursor - 1].end;
                     ExpressionKind::Array(elements)
                 }
+                Kind::Pipe => {
+                    self.cursor += 1;
+                    let kind = self.closure(false)?;
+                    range.end = self.tokens[self.cursor - 1].end;
+                    kind
+                }
+                Kind::Or if self.tokens.get(self.cursor + 1).is_some_and(|token| token.kind == Kind::Arrow) => {
+                    self.cursor += 1;
+                    let kind = self.closure(true)?;
+                    range.end = self.tokens[self.cursor - 1].end;
+                    kind
+                }
                 Kind::Ident(name) if name == "vec"
                     && self.tokens.get(self.cursor + 1).is_some_and(|token| token.kind == Kind::LBracket) =>
                 {
@@ -211,6 +241,50 @@ impl Parser<'_> {
                 })
             })
     }
+    // The caller consumed the opener (a `|` with parameters, or the `||`
+    // shorthand). Parameter types and the return type stay byte ranges —
+    // the compiler resolves spellings and capture modes against its scopes.
+    fn closure(&mut self, empty_params: bool) -> Result<ExpressionKind, Diagnostic> {
+        let mut params = Vec::new();
+        if !empty_params {
+            loop {
+                if params.len() == 16 {
+                    return Err(self.error("closure parameter limit exceeded (16)"));
+                }
+                let token = self.current();
+                let name_range = token.offset..token.end;
+                let name = crate::parse_identifier(self.file, self.source, token)?.to_owned();
+                self.cursor += 1;
+                crate::expect_token(self.file, self.source, self.current(), Kind::Colon)?;
+                self.cursor += 1;
+                let (ty, end) = crate::declaration::type_spelling(
+                    self.file, self.source, self.tokens, self.cursor, &[Kind::Comma, Kind::Pipe],
+                )?;
+                self.cursor = end;
+                params.push(ClosureParam { name, name_range, ty });
+                if self.current().kind != Kind::Comma {
+                    break;
+                }
+                self.cursor += 1;
+            }
+            crate::expect_token(self.file, self.source, self.current(), Kind::Pipe)?;
+            self.cursor += 1;
+        }
+        crate::expect_token(self.file, self.source, self.current(), Kind::Arrow)?;
+        self.cursor += 1;
+        let (return_type, end) = crate::declaration::type_spelling(
+            self.file, self.source, self.tokens, self.cursor, &[Kind::LBrace],
+        )?;
+        self.cursor = end;
+        crate::expect_token(self.file, self.source, self.current(), Kind::LBrace)?;
+        let body_start = self.cursor;
+        let body_end = crate::declaration::brace_body_end(self.tokens, body_start + 1)
+            .map_err(|at| self.error_at(at, "expected '}' to close the closure body"))?;
+        let body = self.tokens[body_start].offset..self.tokens[body_end - 1].end;
+        self.cursor = body_end;
+        Ok(ExpressionKind::Closure { params, return_type, body })
+    }
+
     fn collection(&mut self, allow_empty: bool) -> Result<Vec<Expression>, Diagnostic> {
         self.cursor += 1;
         let elements = if self.current().kind == Kind::RBracket {
@@ -611,6 +685,94 @@ mod tests {
 
         let error = parse_operator_expression("main.ae", "combine(values[0)").unwrap_err();
         assert_eq!(error.primary.unwrap().span.range, 16..17);
+    }
+
+    #[test]
+    #[test]
+    fn closure_literals_preserve_params_return_and_body_ranges() {
+        let source = "|x: i64, y: string| -> i64 { return len(x); }";
+        let expression = parse_operator_expression("case.ae", source).unwrap();
+        assert_eq!(expression.range, 0..source.len());
+        let ExpressionKind::Closure { params, return_type, body } = expression.kind else {
+            panic!("expected a closure");
+        };
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[0].name, "x");
+        assert_eq!(&source[params[0].name_range.clone()], "x");
+        assert_eq!(&source[params[0].ty.clone()], "i64");
+        assert_eq!(params[1].name, "y");
+        assert_eq!(&source[params[1].ty.clone()], "string");
+        assert_eq!(&source[return_type.clone()], "i64");
+        assert_eq!(&source[body.clone()], "{ return len(x); }");
+
+        // The empty-parameter shorthand, spaced as the run fixtures spell it.
+        let source = "|| -> string { return \"hi\"; }";
+        let expression = parse_operator_expression("case.ae", source).unwrap();
+        assert_eq!(expression.range, 0..source.len());
+        let ExpressionKind::Closure { params, return_type, body } = expression.kind else {
+            panic!("expected a closure");
+        };
+        assert!(params.is_empty());
+        assert_eq!(&source[return_type.clone()], "string");
+        assert_eq!(&source[body.clone()], r#"{ return "hi"; }"#);
+
+        // Function-type and borrowed parameter spellings ride the same
+        // type-spelling capture as declarations.
+        let source = "|f: fn(i64) -> i64, v: &vec[string]| -> i64 { return f(len(v)); }";
+        let ExpressionKind::Closure { params, .. } =
+            parse_operator_expression("case.ae", source).unwrap().kind
+        else {
+            panic!("expected a closure");
+        };
+        assert_eq!(&source[params[0].ty.clone()], "fn(i64) -> i64");
+        assert_eq!(&source[params[1].ty.clone()], "&vec[string]");
+    }
+
+    #[test]
+    fn closure_headers_mis_spell_like_the_compiler_rejects_them() {
+        // Missing arrow: both parsers take(Kind::Arrow) at the brace.
+        let error = parse_operator_expression("case.ae", "|x: i64| { return x; }").unwrap_err();
+        assert_eq!(error.message, "expected Arrow, found LBrace");
+        assert_eq!(error.code.as_deref(), Some("E0010"));
+        // A trailing comma demands another binding, at the closing pipe.
+        let error = parse_operator_expression("case.ae", "|x: i64,| -> i64 { return 1; }").unwrap_err();
+        assert_eq!(error.message, "expected identifier");
+        // A parameter without its type: the colon is required.
+        let error = parse_operator_expression("case.ae", "|x| -> i64 { return 1; }").unwrap_err();
+        assert_eq!(error.message, "expected Colon, found Pipe");
+        // The 17th parameter trips the shared limit text.
+        let params = (0..17).map(|i| format!("p{i}: i64")).collect::<Vec<_>>().join(", ");
+        let error = parse_operator_expression("case.ae",
+            &format!("|{params}| -> i64 {{ return 1; }}")).unwrap_err();
+        assert!(error.message.contains("closure parameter limit exceeded (16)"));
+        // An unterminated body points at the end of the stream.
+        let error = parse_operator_expression("case.ae", "|| -> i64 { return 1;").unwrap_err();
+        assert!(error.message.contains("expected '}' to close the closure body"));
+    }
+
+    #[test]
+    fn self_forms_parse_as_plain_atoms() {
+        // `Self` lexes as an identifier, so the impl forms ride the struct
+        // literal and qualified-name paths without their own grammar.
+        let source = "Self { x: 2 }";
+        let expression = parse_operator_expression("case.ae", source).unwrap();
+        assert_eq!(expression.range, 0..source.len());
+        let ExpressionKind::Struct { target, fields } = expression.kind else {
+            panic!("expected a struct literal");
+        };
+        assert_eq!(target.kind, ExpressionKind::Atom(Kind::Ident("Self".into())));
+        assert_eq!(fields[0].name, "x");
+
+        let source = "Self::Value(3)";
+        let expression = parse_operator_expression("case.ae", source).unwrap();
+        let ExpressionKind::Call { callee, .. } = expression.kind else {
+            panic!("expected a constructor call");
+        };
+        let ExpressionKind::Qualified { base, name } = callee.kind else {
+            panic!("expected a qualified name");
+        };
+        assert_eq!(name, "Value");
+        assert_eq!(base.kind, ExpressionKind::Atom(Kind::Ident("Self".into())));
     }
 
     #[test]
