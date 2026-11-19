@@ -34,6 +34,9 @@ pub enum ExpressionKind {
     Index { base: Box<Expression>, index: Box<Expression> },
     Field { base: Box<Expression>, name: String },
     Specialization { base: Box<Expression>, arguments: Vec<Range<usize>> },
+    // A name followed by brackets and a call can denote specialization or
+    // indexing. The resolver can use these ranges once the name is known.
+    BracketedCallTarget { base: Box<Expression>, arguments: Vec<Range<usize>> },
     Qualified { base: Box<Expression>, name: String },
     Prefix { operator: Kind, operand: Box<Expression> },
     Binary { left: Box<Expression>, operator: Kind, right: Box<Expression> },
@@ -327,6 +330,16 @@ impl Parser<'_> {
                         )?;
                         self.cursor = end;
                         ExpressionKind::Specialization { base: Box::new(base), arguments }
+                    } else if self.tokens.get(end).is_some_and(|token| token.kind == Kind::LParen) {
+                        match crate::declaration::expression_type_arguments(
+                            self.file, self.source, self.tokens, start,
+                        ) {
+                            Ok((arguments, end)) if matches!(self.tokens[start + 1].kind, Kind::Ident(_)) => {
+                                self.cursor = end;
+                                ExpressionKind::BracketedCallTarget { base: Box::new(base), arguments }
+                            }
+                            _ => self.index(base)?,
+                        }
                     } else {
                         self.index(base)?
                     }
@@ -436,6 +449,30 @@ mod tests {
 
         let error = parse_operator_expression("case.ae", "Point { x 2 }").unwrap_err();
         assert_eq!(error.primary.unwrap().span.range, 10..11);
+    }
+
+    #[test]
+    fn bracketed_call_targets_preserve_type_arguments_and_index_expressions() {
+        let source = "make[Pair[i64, string], bool](7)";
+        let parsed = parse_operator_expression("case.ae", source).unwrap();
+        let ExpressionKind::Call { callee, .. } = parsed.kind else {
+            panic!("expected a call");
+        };
+        let ExpressionKind::BracketedCallTarget { base, arguments } = callee.kind else {
+            panic!("expected bracketed callee");
+        };
+        assert_eq!(&source[base.range], "make");
+        assert_eq!(arguments.into_iter().map(|range| &source[range]).collect::<Vec<_>>(),
+            ["Pair[i64, string]", "bool"]);
+
+        for source in ["items[0](7)", "items[i + 1](7)"] {
+            let parsed = parse_operator_expression("case.ae", source).unwrap();
+            assert!(matches!(parsed.kind, ExpressionKind::Call { callee, .. }
+                if matches!(callee.kind, ExpressionKind::Index { .. })));
+        }
+        let parsed = parse_operator_expression("case.ae", "items[i](7)").unwrap();
+        assert!(matches!(parsed.kind, ExpressionKind::Call { callee, .. }
+            if matches!(callee.kind, ExpressionKind::BracketedCallTarget { .. })));
     }
 
     #[test]
