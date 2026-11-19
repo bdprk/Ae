@@ -65,6 +65,16 @@ pub struct TypedName {
     pub ty: Range<usize>,
 }
 
+/// Read the qualifier after the star in a raw pointer type.
+pub fn pointer_mutability(file: &str, source: &str, token: &Token) -> Result<bool, Diagnostic> {
+    match token.kind {
+        Kind::Mut => Ok(true),
+        Kind::Const => Ok(false),
+        _ => Err(crate::diagnostic_range(file, source, token.offset..token.end,
+            "expected 'const' or 'mut' after '*' in a pointer type")),
+    }
+}
+
 pub const MAX_FUNCTION_PARAMETERS: usize = 64;
 pub const MAX_TYPE_PARAMETERS: usize = 8;
 
@@ -382,7 +392,11 @@ impl DeclarationParser<'_> {
                 }
                 Kind::Fn if matches!(self.tokens.get(self.pos + 1).map(|token| &token.kind), Some(Kind::LParen)) => {}
                 Kind::Semi if closing.last() == Some(&Kind::RBracket) => {}
-                Kind::Ident(_) | Kind::Number(_) | Kind::Amp | Kind::Star
+                Kind::Star => {
+                    self.pos += 1;
+                    pointer_mutability(self.file, self.source, self.current())?;
+                }
+                Kind::Ident(_) | Kind::Number(_) | Kind::Amp
                 | Kind::Const | Kind::Mut | Kind::Arrow | Kind::Comma => {}
                 _ => return Err(self.error("unexpected token in type spelling")),
             }

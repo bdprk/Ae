@@ -568,11 +568,10 @@ impl Parser<'_> {
     // test — the pointee's ownership is the deref-side's problem (U11).
     pub(super) fn pointer_type(&mut self) -> Result<Type, ae_span::Diagnostic> {
         self.take(Kind::Star)?;
-        let mutable = match self.current() {
-            Kind::Mut => { self.pos += 1; true }
-            Kind::Const => { self.pos += 1; false }
-            _ => return Err(self.fail("expected 'const' or 'mut' after '*' in a pointer type")),
-        };
+        let mutable = ae_syntax::declaration::pointer_mutability(
+            &self.file, self.source, &self.tokens[self.pos],
+        )?;
+        self.pos += 1;
         let pointee = self.named_type()?;
         let id = super::intern_pointee(pointee);
         Ok(if mutable { Type::PtrMut(id) } else { Type::Ptr(id) })
