@@ -63,6 +63,7 @@ pub struct TypedName {
     pub ty: Range<usize>,
 }
 
+pub const MAX_FUNCTION_PARAMETERS: usize = 64;
 pub const MAX_TYPE_PARAMETERS: usize = 8;
 
 /// Validate the spelling and uniqueness of a generic parameter name.
@@ -352,6 +353,9 @@ impl DeclarationParser<'_> {
         let mut names = Vec::new();
         while self.current().kind != close {
             if !fields {
+                if names.len() >= MAX_FUNCTION_PARAMETERS {
+                    return Err(self.error(&format!("function parameter limit exceeded ({MAX_FUNCTION_PARAMETERS})")));
+                }
                 self.consume(Kind::Var);
             }
             let name = self.name()?;
@@ -648,6 +652,19 @@ mod tests {
         let recovered = recover_declarations("case.ae", &broken);
         assert_eq!(recovered.diagnostics.len(), 1);
         assert_eq!(recovered.declarations[0].attribute, Some(DeclarationAttribute::ReprC));
+    }
+
+    #[test]
+    fn function_parameter_limit_points_to_the_first_extra_parameter() {
+        let parameters: Vec<_> = (0..=MAX_FUNCTION_PARAMETERS)
+            .map(|index| format!("arg{index}: i64")).collect();
+        let limit = MAX_FUNCTION_PARAMETERS;
+        let valid = format!("fn f({}) -> i64 {{ return 0; }}", parameters[..limit].join(", "));
+        assert!(parse_declarations("case.ae", &valid).is_ok());
+        let invalid = format!("fn f({}) -> i64 {{ return 0; }}", parameters.join(", "));
+        let error = parse_declarations("case.ae", &invalid).unwrap_err();
+        assert_eq!(error.message, format!("function parameter limit exceeded ({limit})"));
+        assert_eq!(&invalid[error.primary.unwrap().span.range], format!("arg{limit}"));
     }
 
     #[test]

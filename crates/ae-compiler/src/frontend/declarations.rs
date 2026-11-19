@@ -1,6 +1,6 @@
 //! Function and trait declaration collection and instantiation.
 use super::*;
-use ae_syntax::declaration::{parse_declaration_attribute, parse_extern_function_prefix, Declaration, DeclarationAttribute, DeclarationKind};
+use ae_syntax::declaration::{parse_declaration_attribute, parse_extern_function_prefix, Declaration, DeclarationAttribute, DeclarationKind, MAX_FUNCTION_PARAMETERS};
 use super::parser::moved_value_hint;
 
 impl Parser<'_> {
@@ -173,7 +173,7 @@ impl Parser<'_> {
                 let mut types = Vec::new();
                 if *self.current() != Kind::RParen {
                     loop {
-                        if types.len() >= 64 { return Err(self.fail("function parameter limit exceeded (64)")); }
+                        if types.len() >= MAX_FUNCTION_PARAMETERS { return Err(self.fail(&format!("function parameter limit exceeded ({MAX_FUNCTION_PARAMETERS})"))); }
                         if *self.current() == Kind::Var { self.pos += 1; }
                         let _parameter = self.identifier()?;
                         self.take(Kind::Colon)?;
@@ -279,7 +279,7 @@ impl Parser<'_> {
             let mut types = Vec::new();
             if *self.current() != Kind::RParen {
                 loop {
-                    if types.len() >= 64 { return Err(self.fail("function parameter limit exceeded (64)")); }
+                    if types.len() >= MAX_FUNCTION_PARAMETERS { return Err(self.fail(&format!("function parameter limit exceeded ({MAX_FUNCTION_PARAMETERS})"))); }
                     if *self.current() == Kind::Var { self.pos += 1; }
                     let parameter = self.identifier()?;
                     if RESERVED.contains(&parameter.as_str()) { return Err(self.fail(&format!("'{parameter}' is a built-in name and cannot be a parameter"))); }
@@ -947,7 +947,7 @@ impl Parser<'_> {
         let mut params = Vec::new();
         if *self.current() != Kind::RParen {
             loop {
-                if params.len() >= 64 { return Err(self.fail("function parameter limit exceeded (64)")); }
+                if params.len() >= MAX_FUNCTION_PARAMETERS { return Err(self.fail(&format!("function parameter limit exceeded ({MAX_FUNCTION_PARAMETERS})"))); }
                 // A borrowed receiver is spelled `&self` in the source. The
                 // signature pass already recorded the borrow in the receiver
                 // type, so the `&` here is only spelling and is skipped before
