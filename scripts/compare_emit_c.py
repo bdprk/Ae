@@ -24,15 +24,60 @@ def emit(executable: Path, source: Path) -> subprocess.CompletedProcess:
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 
 
+def compare_cli_corpus(binaries: list[Path]) -> tuple[int, int]:
+    suites = (
+        ("ui", ("check",), ()),
+        ("ui-json", ("check", "--json"), ()),
+        ("run", ("run",), ()),
+        ("run", ("run",), ("--release",)),
+    )
+    compared = failures = 0
+    for suite, command, flags in suites:
+        sources = sorted((ROOT / "tests" / suite).glob("*.ae"))
+        if not sources:
+            print(f"ERROR missing CLI fixtures in tests/{suite}", file=sys.stderr)
+            failures += 1
+        for source in sources:
+            compared += 1
+            name = source.relative_to(ROOT).as_posix()
+            arguments = (*command, str(source), *flags)
+            label = " ".join((*command, name, *flags))
+            results = []
+            for role, binary in zip(("baseline", "candidate"), binaries):
+                try:
+                    result = subprocess.run([str(binary), *arguments], cwd=ROOT,
+                                            stdin=subprocess.DEVNULL, capture_output=True,
+                                            check=False, timeout=60)
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    print(f"ERROR {label} ({role}): {error}", file=sys.stderr)
+                    break
+                results.append(result)
+            if len(results) != 2:
+                failures += 1
+                continue
+            before, after = results
+            differences = [stream for stream in ("returncode", "stdout", "stderr")
+                           if getattr(before, stream) != getattr(after, stream)]
+            if differences:
+                failures += 1
+                print(f"DIFF {label}: {', '.join(differences)} "
+                      f"(exit {before.returncode} vs {after.returncode})", file=sys.stderr)
+    return compared, failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, required=True, help="compiler built before the change")
     parser.add_argument("--candidate", type=Path, required=True, help="compiler built after the change")
+    parser.add_argument("--cli-corpus", action="store_true",
+                        help="also compare diagnostic and debug/release execution fixtures")
     args = parser.parse_args()
     binaries = [args.baseline.resolve(), args.candidate.resolve()]
     for binary in binaries:
         if not binary.is_file():
             parser.error(f"compiler executable does not exist: {binary}")
+    if args.cli_corpus and binaries[0].samefile(binaries[1]):
+        parser.error("--cli-corpus requires two separately built executables")
     examples = sorted((ROOT / "examples").glob("*.ae"))
     module_main = ROOT / "examples" / "modules" / "main.ae"
     if not examples or not module_main.is_file():
@@ -61,6 +106,10 @@ def main() -> int:
         else:
             print(f"OK {name} sha256={digest(before.stdout)}")
     print(f"Compared {len(examples)} example entry points; {failures} failed.")
+    if args.cli_corpus:
+        compared, cli_failures = compare_cli_corpus(binaries)
+        print(f"Compared {compared} CLI fixture invocations; {cli_failures} failed.")
+        failures += cli_failures
     return 1 if failures else 0
 
 
