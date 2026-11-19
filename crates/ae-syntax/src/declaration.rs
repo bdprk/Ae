@@ -534,15 +534,21 @@ impl DeclarationParser<'_> {
                 return Err(self.error("expected ')' after parameters"));
             }
             let foreign = abi.is_some();
+            let exposes_body = attribute == Some(DeclarationAttribute::NoMangle);
             let stops = if foreign { &[Kind::LBrace, Kind::Semi][..] } else { &[Kind::LBrace][..] };
             let returns = if self.consume(Kind::Arrow) {
                 Some(self.ty(stops, false)?)
+            } else if foreign {
+                return Err(self.error("expected '->' before extern return type"));
             } else {
                 None
             };
+            if foreign && !exposes_body && self.current().kind != Kind::Semi {
+                return Err(self.error("expected ';' after extern function declaration"));
+            }
             let function = DeclarationKind::Function { parameters, returns, unsafe_fn, abi };
             if foreign && self.current().kind == Kind::Semi {
-                if attribute == Some(DeclarationAttribute::NoMangle) {
+                if exposes_body {
                     return Err(self.error("'#[no_mangle]' requires a function body"));
                 }
                 self.pos += 1;
@@ -627,6 +633,19 @@ mod tests {
         let recovered = recover_declarations("case.ae", &broken);
         assert_eq!(recovered.diagnostics.len(), 1);
         assert_eq!(recovered.declarations[0].attribute, Some(DeclarationAttribute::ReprC));
+    }
+
+    #[test]
+    fn extern_declarations_require_a_return_type_and_semicolon() {
+        for (source, expected) in [
+            (r#"extern "C" fn foreign();"#, "expected '->' before extern return type"),
+            (r#"extern "C" fn foreign() -> i64 {}"#, "expected ';' after extern function declaration"),
+        ] {
+            let error = parse_declarations("case.ae", source).unwrap_err();
+            assert_eq!(error.message, expected);
+            let range = error.primary.unwrap().span.range;
+            assert!(matches!(&source[range], ";" | "{"));
+        }
     }
 
     #[test]
