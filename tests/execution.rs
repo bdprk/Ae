@@ -3578,10 +3578,21 @@ fn standalone_declarations_cover_example_and_run_corpus() {
                 continue;
             }
             let source = fs::read_to_string(&path).unwrap();
-            if let Err(error) = ae_syntax::declaration::parse_declarations(
-                &path.display().to_string(), &source,
-            ) {
-                failures.push(error.to_string());
+            let file = path.display().to_string();
+            let parsed = (|| {
+                let tokens = ae_syntax::lex_diagnostic(&source)?;
+                let headers = ae_syntax::module::parse_use_headers(&file, &source, &tokens)?;
+                ae_syntax::declaration::parse_declaration_tokens(
+                    &file, &source, &tokens, headers.body_start,
+                )
+            })();
+            match parsed {
+                Ok(declarations) => assert_eq!(
+                    declarations,
+                    ae_syntax::declaration::parse_declarations(&file, &source).unwrap(),
+                    "{file}"
+                ),
+                Err(error) => failures.push(format!("{file}: {error}")),
             }
         }
     }
