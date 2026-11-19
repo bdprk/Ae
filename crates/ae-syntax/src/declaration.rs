@@ -139,7 +139,7 @@ pub struct Declaration {
 pub fn parse_declarations(file: &str, source: &str) -> Result<Vec<Declaration>, Diagnostic> {
     let tokens = declaration_tokens(file, source)?;
     let imports = crate::module::parse_use_headers(file, source, &tokens)?;
-    let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: imports.len() * 3 };
+    let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: imports.body_start };
     let mut declarations = Vec::new();
     while parser.current().kind != Kind::Eof {
         declarations.push(parser.declaration()?);
@@ -172,7 +172,7 @@ pub fn recover_declarations(file: &str, source: &str) -> RecoveredDeclarations {
             return result;
         }
     };
-    let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: imports.len() * 3 };
+    let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: imports.body_start };
     while parser.current().kind != Kind::Eof {
         let start = parser.pos;
         match parser.declaration() {

@@ -2,8 +2,13 @@ use ae_span::Diagnostic;
 
 use crate::{diagnostic_range, Kind, Token};
 
+pub struct UseHeaders {
+    pub paths: Vec<String>,
+    pub body_start: usize,
+}
+
 /// Parse consecutive leading `use "path";` declarations before the module body.
-pub fn parse_use_headers(file: &str, source: &str, tokens: &[Token]) -> Result<Vec<String>, Diagnostic> {
+pub fn parse_use_headers(file: &str, source: &str, tokens: &[Token]) -> Result<UseHeaders, Diagnostic> {
     let mut paths = Vec::new();
     let mut pos = 0;
     let error = |index: usize, message| {
@@ -20,5 +25,5 @@ pub fn parse_use_headers(file: &str, source: &str, tokens: &[Token]) -> Result<V
         paths.push(path.clone());
         pos += 3;
     }
-    Ok(paths)
+    Ok(UseHeaders { paths, body_start: pos })
 }

@@ -44,11 +44,11 @@ fn resolve_import(file: &Path, canonical: &Path, import: &str) -> Result<PathBuf
 pub(super) fn parse_source(file: &str, source: &str, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, generics: &mut Generics, next_id: &mut usize) -> Result<Vec<Function>, String> {
     let tokens = Rc::new(lex(source)?);
     let uses = parse_use_headers(file, source, tokens.as_ref()).map_err(|error| error.to_string())?;
-    if !uses.is_empty() {
+    if !uses.paths.is_empty() {
         return Err(error(file, source, 0, "'use' is only supported when compiling a source file"));
     }
     let mut p = make_parser(file, source, tokens, shared, structs, struct_names, enums, enum_names, generics);
-    p.collect_functions(next_id).map_err(|e| e.to_string())?;
+    p.collect_functions(next_id, uses.body_start).map_err(|e| e.to_string())?;
     let functions = p.program().map_err(|e| e.to_string())?;
     if functions.iter().filter(|f| f.is_main).count() != 1 {
         return Err(error(file, source, 0, "missing main function"));
@@ -192,6 +192,7 @@ struct LoadingFile {
     tokens: Rc<Vec<Token>>,
     uses: Vec<String>,
     next_import: usize,
+    body_start: usize,
 }
 
 fn begin_file(path: &Path, visited: &mut HashMap<std::path::PathBuf, ModuleState>, entry: bool, stack: &[LoadingFile]) -> Result<Option<LoadingFile>, FrontendError> {
@@ -232,13 +233,13 @@ fn begin_file(path: &Path, visited: &mut HashMap<std::path::PathBuf, ModuleState
     let tokens = Rc::new(owned_tokens);
     let uses = parse_use_headers(&file, &source, tokens.as_ref()).map_err(FrontendError::Diagnostic)?;
     if let ae_syntax::LexOutcome::Recovered(_, diagnostics) = outcome {
-        if entry && uses.is_empty() {
+        if entry && uses.paths.is_empty() {
             lex_diagnostics = spell(diagnostics);
         } else {
             return Err(FrontendError::LexDiagnostics(spell(diagnostics)));
         }
     }
-    Ok(Some(LoadingFile { canonical, path: path.to_owned(), source, file, lex_diagnostics, tokens, uses, next_import: 0 }))
+    Ok(Some(LoadingFile { canonical, path: path.to_owned(), source, file, lex_diagnostics, tokens, uses: uses.paths, next_import: 0, body_start: uses.body_start }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -255,8 +256,7 @@ fn load_file(path: &Path, root: &Path, visited: &mut HashMap<std::path::PathBuf,
         }
         let frame = stack.pop().expect("stack is nonempty");
         let mut parser = make_parser(&frame.file, &frame.source, Rc::clone(&frame.tokens), shared, structs, struct_names, enums, enum_names, generics);
-        parser.skip_uses();
-        parser.collect_functions(next_id).map_err(FrontendError::Diagnostic)?;
+        parser.collect_functions(next_id, frame.body_start).map_err(FrontendError::Diagnostic)?;
         let snapshot = recover.then(|| RecoveryState::capture(&parser));
         let functions = match parser.program() {
             Ok(functions) => functions,
@@ -386,8 +386,8 @@ fn verified_import_prefix(path: &Path, errors: &[ae_span::Diagnostic]) -> Option
     };
     let tokens = Rc::new(tokens);
     let uses = parse_use_headers(&file, prefix, tokens.as_ref()).ok()?;
-    if uses.is_empty() { return None; }
-    Some(LoadingFile { canonical: std::fs::canonicalize(path).ok()?, path: path.to_owned(), source, file, lex_diagnostics: Vec::new(), tokens, uses, next_import: 0 })
+    if uses.paths.is_empty() { return None; }
+    Some(LoadingFile { canonical: std::fs::canonicalize(path).ok()?, path: path.to_owned(), source, file, lex_diagnostics: Vec::new(), tokens, uses: uses.paths, next_import: 0, body_start: uses.body_start })
 }
 
 // Read-only supplemental traversal after an initial lexical error. A failed

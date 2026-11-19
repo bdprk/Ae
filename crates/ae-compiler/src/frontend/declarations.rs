@@ -4,9 +4,6 @@ use ae_syntax::declaration::{parse_declaration_attribute, parse_extern_function_
 use super::parser::moved_value_hint;
 
 impl Parser<'_> {
-    pub(super) fn skip_uses(&mut self) {
-        while *self.current() == Kind::Use { self.pos += 3; }
-    }
     // `pub` marks an item as importable from other files. It is consumed by the
     // declaration passes, never by expression parsing.
     // The C-ABI shape of a type crossing an `extern "C"` boundary (M2.12
@@ -101,15 +98,14 @@ impl Parser<'_> {
         self.pos = boundary.unwrap_or_else(|end| end);
     }
 
-    pub(super) fn collect_functions(&mut self, next_id: &mut usize) -> Result<(), ae_span::Diagnostic> {
+    pub(super) fn collect_functions(&mut self, next_id: &mut usize, body_start: usize) -> Result<(), ae_span::Diagnostic> {
         // Traits are registered before anything else so a bound in the same
         // file can name a trait declared later; cross-file traits already
         // exist because imports load first. The scan walks tokens directly:
         // a `{` inside a string literal is part of its Text token, so brace
         // depth over tokens is exact.
-        self.pos = 0;
         let mut depth = 0usize;
-        let mut i = 0;
+        let mut i = body_start;
         while i < self.tokens.len() - 1 {
             match self.tokens[i].kind {
                 Kind::LBrace => depth += 1,
@@ -127,8 +123,7 @@ impl Parser<'_> {
             }
             i += 1;
         }
-        self.pos = 0;
-        self.skip_uses();
+        self.pos = body_start;
         let mut seen = std::collections::HashSet::new();
         while *self.current() != Kind::Eof {
             let public = self.take_pub();
@@ -299,8 +294,7 @@ impl Parser<'_> {
             self.skip_balanced_braces()?;
         }
         // main presence is checked once per program, not per file.
-        self.pos = 0;
-        self.skip_uses();
+        self.pos = body_start;
         Ok(())
     }
     // ---- traits and impls (ADR-47) ------------------------------------------
