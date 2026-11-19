@@ -414,3 +414,11 @@ Host: Windows 11 x86-64 (`rustc 1.99.1`, `cargo 1.99.1`, gcc 16.2.0 MinGW-W64 UC
 | Suite | `cargo test --workspace --locked`: 10 bin + 281 execution + 3 run + 43 compiler + 2 span + 23 syntax, 0 failures. |
 
 Design rationale and rejected alternatives: `docs/adr/0211-add-remove-dependency-commands.md`.
+
+## Fuzz campaign incident — 2026-11-19 (M2.13)
+
+| Event | Evidence |
+|---|---|
+| ai recorded `seed 40115917: FAILURE (0 lines)` (`fuzz.log:111417`) | The seed passes on every re-run — locally at `f06093a` (`ok (4 lines)`) and on the host itself (1.3 s, `ok (4 lines)`); `(0 lines)` matches the driver's exception path, so the verdict was a compile timeout under the fleet's shared benchmark load, not a language divergence. |
+| Driver hardening (`b15db5c`) | `scripts/diff_fuzz.py`: environmental timeouts and OS errors retry once, are reported as `ENV` with a separate summary count and do not affect the exit code; a compiler rejection of a generated program (`RuntimeError`) stays a real differential FAILURE. `--save-corpus` no longer crashes on an undefined name and saves the sources that actually ran. Verified locally: forced persistent timeouts produce `2 seeds, 0 failures, 2 environmental`; forced timeouts under a 1 s budget recover to `ok` via the retry. |
+| Fleet state 07:59 (+08:00) | eva 82,914 seeds / 0; evaluate-1 10,114,162 / 0; evaluate-2 20,090,567 / 0; ai 40,118,240 / 0 differential (one environmental timeout, pre-fix); evaluate-3 asleep (sandbox cool-down, retry after 08:10 +08:00). Fixed driver (`md5 e9e0f426…`) deployed to every reachable host; ai's supervisor relaunched under a fresh 24 h budget resuming at seed 40,117,992. Full narrative: `bench/reports/2026-11-18-fuzz-campaign.md`, `agent-failure-log/2026-11-19.md`. |
