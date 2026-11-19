@@ -84,7 +84,17 @@ _Noreturn static void ae_exit(int64_t code) {
 // returns an Err the program prints itself, through the console sink), so stderr
 // keeps plain fprintf and a program that never prints carries none of it.
 _Noreturn static void ae_fail(const char *message, size_t line, size_t column) { fprintf(stderr, "ae:%zu:%zu: %s\n", line, column, message); exit(1); }
+// unit: ae_allocator_impl
 // ---- Allocation interface (ADR-16) ------------------------------------------
+// Every buffer the runtime owns is obtained through one of these three
+// pointers, so a host (future embed API, a test harness, a tracing allocator)
+// can substitute its own backend without touching generated code. Failure is
+// fatal and carries the location of the operation that needed the memory:
+// there is no meaningful way to continue with a half-built value, and no
+// unwinding machinery to run destructors through. The whole interface is one
+// prune unit: a program whose kept functions never allocate carries none of
+// it (charter rule 8, M3.1.01), so a substituting host necessarily runs a
+// program that allocates and keeps this unit.
 // Every buffer the runtime owns is obtained through one of these three
 // pointers, so a host (future embed API, a test harness, a tracing allocator)
 // can substitute its own backend without touching generated code. Failure is
@@ -106,6 +116,7 @@ static ae_allocator ae_allocator_impl = { ae_os_alloc, ae_os_resize, ae_os_relea
 static uint64_t ae_alloc_budget = UINT64_MAX;
 static uint64_t ae_alloc_total = 0;
 static bool ae_alloc_ready = false;
+// unit: -
 static void ae_alloc_env(void) {
     ae_alloc_ready = true;
     const char *limit = getenv("AE_ALLOC_LIMIT");
@@ -922,7 +933,19 @@ static char *ae_utf8_from_acp(const char *text) { /* win32-header */
 // the arguments are re-derived from it once, in UTF-8, and the process uses
 // those instead — the intent of ADR-54 without the ACP round trip. The
 // replacement entries live for the program's whole run, like argv itself.
-static void ae_args_init(int argc, char **argv) { /* win32-declared */
+// Command-line arguments are converted only when the program actually reads
+// them, by the string-vector accessor further below, so a program that never
+// allocates carries none of the conversion's allocator (M3.1.01). The
+// generated main still calls this and stores argc/argv in the globals below.
+// Comments here deliberately avoid naming runtime symbols: the pruner walks
+// identifiers in unit bodies, comments included, and this function is kept
+// for every program.
+static void ae_args_init(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+}
+static ae_strvec ae_args(size_t line, size_t column) { /* win32-declared */
+    ae_strvec out = ae_strvec_new(line, column);
 #ifdef _WIN32
     // Each declaration matches <windows.h> exactly, so a program that keeps
     // the header for something else (a file API) still compiles.
@@ -932,27 +955,34 @@ static void ae_args_init(int argc, char **argv) { /* win32-declared */
     extern int lstrlenW(const wchar_t *text);
     // CP_UTF8 is 65001; the literal avoids pulling <windows.h> for the macro.
     extern int WideCharToMultiByte(unsigned page, unsigned long flags, const wchar_t *wide, int units, char *narrow, int bytes, const char *default_char, int *used_default);
-    int count = 0;
-    wchar_t **tokens = CommandLineToArgvW(GetCommandLineW(), &count);
-    if (!tokens || count != argc) { if (tokens) LocalFree(tokens); return; }
-    for (int i = 0; i < count; i++) {
-        const int units = lstrlenW(tokens[i]);
-        const int bytes = WideCharToMultiByte(65001, 0, tokens[i], units, NULL, 0, NULL, NULL);
-        if (bytes <= 0) continue;
-        char *utf8 = ae_alloc_try((size_t)bytes + 1);
-        if (!utf8) continue;
-        WideCharToMultiByte(65001, 0, tokens[i], units, utf8, bytes, NULL, NULL);
-        utf8[bytes] = 0;
-        argv[i] = utf8;
+    // The UTF-16 command line is converted here, on first read: a program
+    // that never reads arguments allocates nothing for them (M3.1.01).
+    // Until this runs, ae_argv_g holds the narrow argv main received,
+    // which stays the fallback when conversion is impossible.
+    static int converted = 0;
+    if (!converted) {
+        converted = 1;
+        int count = 0;
+        wchar_t **tokens = CommandLineToArgvW(GetCommandLineW(), &count);
+        if (tokens && count == (int)ae_argc_g) {
+            char **utf8 = ae_alloc((size_t)count * sizeof(char *), line, column);
+            for (int i = 0; i < count; i++) {
+                const int units = lstrlenW(tokens[i]);
+                const int bytes = WideCharToMultiByte(65001, 0, tokens[i], units, NULL, 0, NULL, NULL);
+                if (bytes <= 0) { utf8[i] = ae_argv_g[i]; continue; }
+                char *text = ae_alloc((size_t)bytes + 1, line, column);
+                WideCharToMultiByte(65001, 0, tokens[i], units, text, bytes, NULL, NULL);
+                text[bytes] = 0;
+                utf8[i] = text;
+            }
+            ae_argv_g = utf8;
+        }
+        if (tokens) LocalFree(tokens);
     }
-    LocalFree(tokens);
 #endif
-}
-static ae_strvec ae_args(size_t line, size_t column) {
-    ae_strvec out = ae_strvec_new(line, column);
-    // argv is UTF-8 on every platform: main re-derives it from the UTF-16
-    // command line before this runs (ae_args_init), so no conversion
-    // happens here.
+    // argv is UTF-8 on every platform by the time this runs: POSIX main
+    // receives UTF-8 directly and the Windows branch above converts the
+    // UTF-16 command line once, on first read.
     for (int64_t i = 0; i < ae_argc_g; i++) {
         ae_strvec_push(&out, ae_str_from(ae_argv_g[i], line, column), line, column);
     }

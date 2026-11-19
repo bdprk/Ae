@@ -435,6 +435,38 @@ fn emitted_c_passes_strict_return_type_check() {
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
 }
 #[test]
+fn scalar_programs_link_without_the_allocator_and_string_programs_keep_it() {
+    // M3.1.01 (charter rule 8): a program that never allocates carries none
+    // of the allocator — the argv conversion included, which now happens on
+    // first read. A program that allocates (strings, vectors) keeps the
+    // interface, and the Windows command line converts once at that point.
+    let dir = unique_temp_dir("pay_as_you_go_allocator");
+    let cli = env!("CARGO_BIN_EXE_ae");
+    let scalar = dir.join("scalar.ae");
+    fs::write(&scalar, "fn main() { print(6 * 7); print(2 - 9); }\n").unwrap();
+    let emitted = Command::new(cli).arg("emit-c").arg(&scalar).output().unwrap();
+    assert!(emitted.status.success(), "{}", String::from_utf8_lossy(&emitted.stderr));
+    let text = String::from_utf8_lossy(&emitted.stdout);
+    for symbol in ["ae_os_alloc", "ae_allocator_impl", "ae_alloc", "ae_free", "ae_set_allocator", "malloc"] {
+        assert!(!text.contains(symbol), "scalar program carries {symbol}");
+    }
+    let run = Command::new(cli).arg("run").arg(&scalar).output().unwrap();
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "42\n-7\n");
+
+    let stringy = dir.join("stringy.ae");
+    fs::write(&stringy, "fn main() { print(\"hi\" + to_string(6 * 7)); }\n").unwrap();
+    let emitted = Command::new(cli).arg("emit-c").arg(&stringy).output().unwrap();
+    assert!(emitted.status.success(), "{}", String::from_utf8_lossy(&emitted.stderr));
+    let text = String::from_utf8_lossy(&emitted.stdout);
+    assert!(text.contains("ae_allocator_impl") && text.contains("ae_alloc"), "{text}");
+    let run = Command::new(cli).arg("run").arg(&stringy).output().unwrap();
+    assert!(run.status.success(), "{}", String::from_utf8_lossy(&run.stderr));
+    assert_eq!(String::from_utf8_lossy(&run.stdout).replace("\r\n", "\n"), "hi42\n");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn windows_header_is_included_only_when_the_program_needs_it() {
     // A pure-computation program must not pay for parsing <windows.h>; a
     // program that reaches the file layer must still have every declaration.

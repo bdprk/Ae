@@ -171,6 +171,14 @@ pub(super) fn runtime_function_start(line: &str) -> Option<(&str, &str, &str, &s
 pub(super) fn runtime_units(prefix: &str) -> Vec<(Option<String>, String)> {
     let mut units: Vec<(Option<String>, String)> = Vec::new();
     let mut pending = String::new();
+    // A `// unit: <name>` line names the non-function region that follows
+    // (typedefs, globals): the region becomes one prune unit kept only when
+    // something reachable names it, instead of riding along with the
+    // always-emitted header text. The name spans the region's functions too
+    // (every pending chunk inside carries it), because globals are often
+    // interrupted by the functions that serve them. `// unit: -` ends the
+    // named region. The marker lines themselves are not emitted.
+    let mut pending_name: Option<String> = None;
     // `//` comments and blank lines directly above a function belong to it: a
     // pruned function must not leave its explanation behind in the generated C
     // (ADR-50). A comment above code that is not a function is flushed back into
@@ -183,9 +191,21 @@ pub(super) fn runtime_units(prefix: &str) -> Vec<(Option<String>, String)> {
     for line in prefix.split_inclusive('\n') {
         let raw = line.strip_suffix('\n').unwrap_or(line);
         if !in_function {
-            if let Some((head, signature, name, tail)) = runtime_function_start(raw) {
+            if let Some(name) = raw.trim_start().strip_prefix("// unit: ") {
                 if !pending.is_empty() {
-                    units.push((None, std::mem::take(&mut pending)));
+                    units.push((pending_name.take(), std::mem::take(&mut pending)));
+                }
+                let name = name.trim();
+                pending_name = (name != "-").then(|| name.to_owned());
+                continue;
+            }
+            if let Some((head, signature, name, tail)) = runtime_function_start(raw) {
+                // A marker names a region that may span several physical
+                // units (globals interrupted by functions): every pending
+                // chunk inside the region carries the same name, so keeping
+                // the name keeps the whole region.
+                if !pending.is_empty() {
+                    units.push((pending_name.clone(), std::mem::take(&mut pending)));
                 }
                 let mut text = std::mem::take(&mut lead);
                 text.push_str(head); text.push_str(signature); text.push('{'); text.push_str(tail); text.push('\n');
@@ -211,7 +231,7 @@ pub(super) fn runtime_units(prefix: &str) -> Vec<(Option<String>, String)> {
         if depth <= 0 { depth = 0; in_function = false; state = CScan::Code; }
     }
     if !lead.is_empty() { pending.push_str(&lead); }
-    if !pending.is_empty() { units.push((None, pending)); }
+    if !pending.is_empty() { units.push((pending_name, pending)); }
     units
 }
 
@@ -322,26 +342,38 @@ pub(super) fn prune_runtime(core: &str, ex: &str, prelude: &[(String, String, St
         let _ = index;
     }
     // Hosts embedding the generated C may substitute the allocator without
-    // the generated code naming it; keep that documented entry point.
-    queue.push("ae_set_allocator".to_owned());
-    while let Some(symbol) = queue.pop() {
-        if !keep.insert(symbol.clone()) { continue; }
-        if let Some(indices) = definitions.get(&symbol) {
-            for &index in indices {
-                // A kept function that uses a prelude result macro needs that
-                // enum's typedef, even though the body only names the macro.
-                let body = &units[index].1;
-                for (macro_prefix, eid) in PRELUDE_MACRO_PREFIXES {
-                    if body.contains(macro_prefix) {
-                        let typedef = format!("ae_e{eid}");
-                        if !keep.contains(&typedef) { queue.push(typedef); }
+    // the generated code naming it — but only programs that allocate can
+    // meaningfully substitute, so the documented entry point joins the walk
+    // only once an allocation user has survived it (charter rule 8, M3.1.01:
+    // a program that never allocates carries none of the allocator).
+    let drain = |queue: &mut Vec<String>, keep: &mut HashSet<String>| {
+        while let Some(symbol) = queue.pop() {
+            if !keep.insert(symbol.clone()) { continue; }
+            if let Some(indices) = definitions.get(&symbol) {
+                for &index in indices {
+                    // A kept function that uses a prelude result macro needs that
+                    // enum's typedef, even though the body only names the macro.
+                    let body = &units[index].1;
+                    for (macro_prefix, eid) in PRELUDE_MACRO_PREFIXES {
+                        if body.contains(macro_prefix) {
+                            let typedef = format!("ae_e{eid}");
+                            if !keep.contains(&typedef) { queue.push(typedef); }
+                        }
                     }
-                }
-                for next in ae_symbols(body) {
-                    if !keep.contains(&next) { queue.push(next); }
+                    for next in ae_symbols(body) {
+                        if !keep.contains(&next) { queue.push(next); }
+                    }
                 }
             }
         }
+    };
+    drain(&mut queue, &mut keep);
+    const ALLOCATOR_USERS: [&str; 5] = [
+        "ae_alloc", "ae_alloc_resize", "ae_alloc_try", "ae_free", "ae_args",
+    ];
+    if ALLOCATOR_USERS.iter().any(|symbol| keep.contains(*symbol)) {
+        queue.push("ae_set_allocator".to_owned());
+        drain(&mut queue, &mut keep);
     }
     let mut out = String::new();
     for (name, body) in &core_units {

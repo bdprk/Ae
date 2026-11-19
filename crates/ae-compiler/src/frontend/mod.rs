@@ -780,6 +780,31 @@ mod tests {
         assert!(!function.1.contains("banner"), "{}", function.1);
     }
 
+    #[test] fn runtime_units_name_marker_regions_across_their_functions() {
+        // `// unit: <name>` turns the following non-function text into a prune
+        // unit with that name; the name spans the region's functions, because
+        // globals are often interrupted by the functions serving them, and
+        // `// unit: -` ends the region.
+        let units = runtime_units(concat!(
+            "static int ae_one(void) { return 1; }\n",
+            "// unit: ae_state\n",
+            "// Region doc.\n",
+            "static int ae_state_g = 0;\n",
+            "static int ae_get(void) { return ae_state_g; }\n",
+            "// unit: -\n",
+            "static int ae_loose = 5;\n",
+            "static int ae_last(void) { return ae_loose; }\n",
+        ));
+        let named: Vec<&str> = units.iter().filter_map(|(name, _)| name.as_deref()).collect();
+        assert_eq!(named, ["ae_one", "ae_state", "ae_get", "ae_last"], "{named:?}");
+        let region = units.iter().find(|(name, _)| name.as_deref() == Some("ae_state")).unwrap();
+        assert!(region.1.contains("// Region doc.") && region.1.contains("ae_state_g = 0"), "{}", region.1);
+        let loose = units.iter().find(|(name, body)| name.is_none() && body.contains("ae_loose")).unwrap();
+        assert!(loose.1.contains("ae_loose = 5"), "{}", loose.1);
+        // The marker lines themselves never reach the output.
+        assert!(!units.iter().any(|(_, body)| body.contains("// unit:")), "{named:?}");
+    }
+
     #[test] fn prune_runtime_drops_unneeded_windows_header() {
         let prefix = concat!(
             "#ifdef _WIN32\n",
