@@ -82,3 +82,14 @@ logs, not for the run to continue.
 
 Pending — the M2.13 gate needs 24 hours of wall clock with zero failures. Any `FAILURE` line names the seed; the
 seed's program can be regenerated with `python3 scripts/diff_fuzz.py --seeds 1 --start <seed> --save-corpus DIR`.
+
+## Fleet state 2026-11-20 01:45 (+08:00)
+
+| Host | Seeds | Differential failures | Note |
+|---|---|---|---|
+| evaluate-1 | 10,252,844 | 0 | certificate renewed to read the log; run unpaused |
+| evaluate-3 | 30,218,760 | 0 | fixed driver, 0 failures |
+| ai | 40,292,224 | 1 | the single event is the documented pre-fix environmental timeout (seed 40115917); post-relaunch segment clean |
+| evaluate-2 | — | — | sandbox cool-down (paused mid-run; resumes with the sandbox) |
+
+Total across reachable hosts: ~80.7M seeds, 0 real differential failures. Driver md5 `e9e0f426…` unchanged.
