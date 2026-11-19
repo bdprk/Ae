@@ -1,0 +1,492 @@
+   Compiling ae-span v0.1.1 (/data/home/ae-verify-8771dfc/repo/crates/ae-span)
+   Compiling serde_core v1.0.229
+   Compiling winnow v1.0.5
+   Compiling ae-syntax v0.1.1 (/data/home/ae-verify-8771dfc/repo/crates/ae-syntax)
+   Compiling toml_parser v1.1.5+spec-1.1.0
+   Compiling ae-compiler v0.1.1 (/data/home/ae-verify-8771dfc/repo/crates/ae-compiler)
+   Compiling serde_spanned v1.1.3
+   Compiling toml_datetime v1.1.3+spec-1.1.0
+   Compiling toml v1.2.1+spec-1.1.0
+   Compiling ae v0.1.1 (/data/home/ae-verify-8771dfc/repo)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 20s
+     Running unittests src/main.rs (target/debug/deps/ae-eab8372a36b979ba)
+
+running 14 tests
+test frontend_cache::tests::changed_unit_invalidates ... ok
+test frontend_cache::tests::damaged_c_invalidates ... ok
+test frontend_cache::tests::different_compiler_identity_invalidates ... ok
+test frontend_cache::tests::entry_for_another_root_is_not_served ... ok
+test frontend_cache::tests::key_ignores_unit_order ... ok
+test frontend_cache::tests::missing_unit_invalidates ... ok
+test render::tests::snippets_underline_the_span_after_a_tab_and_wide_characters ... ok
+test render::tests::crlf_lines_render_without_the_carriage_return ... ok
+test render::tests::multiline_spans_clip_to_the_first_line_and_missing_lines_return_none ... ok
+test tests::diagnostics_split_into_structured_parts ... ok
+test tests::non_location_messages_survive_whole ... ok
+test tests::windows_paths_and_quotes_are_escaped ... ok
+test frontend_cache::tests::round_trip_serves_the_same_c ... ok
+test render::tests::tabs_advance_to_the_next_stop_and_wide_characters_take_two_cells ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running tests/execution.rs (target/debug/deps/execution-297c070010e880aa)
+
+running 307 tests
+test append_adds_to_a_file_that_write_truncates ... ok
+test array_type_and_mutability_errors_are_rejected ... ok
+test allocation_failure_reports_the_operation_location ... ok
+test add_and_remove_manage_manifest_dependencies_and_the_lockfile ... ok
+test arithmetic_failures_are_reported ... ok
+test block_variables_do_not_escape ... ok
+test bool_functions_and_params_round_trip ... ok
+test assert_passes_and_fails_at_the_right_location ... ok
+test bitwise_operators_and_precedence ... ok
+test booleans_and_short_circuit_evaluation_are_correct ... ok
+test break_and_continue_outside_loops_are_rejected ... ok
+test arrays_support_checked_read_write_and_expression_order ... ok
+test borrowed_string_vectors_can_be_iterated_and_read ... ok
+test break_and_continue_control_loop_flow ... ok
+test build_accepts_non_ascii_absolute_output_paths ... ok
+test build_creates_executable_and_refuses_to_overwrite ... ok
+test bytes_builtin_converts_strings_for_indexing ... ok
+test cache_and_version_commands_work ... ok
+test build_cache_serves_identical_executables_and_rebuilds_on_corruption ... ok
+test build_is_optimized_by_default_and_debug_builds_behave_the_same ... ok
+test capability_audit_applies_to_imported_generic_functions ... ok
+test check_does_not_require_c_compiler ... ok
+test check_error_identifies_file_and_location ... ok
+test c_alignment_matches_the_native_c_compiler ... ok
+test check_json_assigns_stable_codes_to_common_semantic_errors ... ok
+test check_json_preserves_diagnostic_location_in_imported_file ... ok
+test check_json_recovers_impl_methods_and_functions_in_source_order ... ok
+test check_json_recovers_independent_function_body_errors ... ok
+test check_json_collects_lexical_errors_across_sibling_imports ... ok
+test check_json_recovers_independent_unknown_conditions ... ok
+test changing_the_working_directory_moves_relative_paths ... ok
+test check_json_reports_eof_range_and_unknown_ranges_as_null ... ok
+test check_json_reports_multiple_lexical_errors_without_accepting_program ... ok
+test check_json_reports_only_applicable_suggestions ... ok
+test check_json_recovers_independent_unknown_prints_in_one_body ... ok
+test check_render_underlines_tokens_after_tabs_and_wide_characters ... ok
+test check_json_reports_structured_diagnostics_or_an_empty_array ... ok
+test cache_prunes_entries_beyond_the_configured_limit ... ok
+test clock_reports_a_plausible_epoch ... ok
+test cli_exit_codes_distinguish_usage_compile_and_program_failures ... ok
+test closure_can_query_captured_map ... ok
+test closure_captures_function_value_and_its_argument ... ok
+test closure_captures_pointer_offset_count ... ok
+test cli_grep_reads_pattern_and_file_from_args ... ok
+test concat_reads_fields_and_equality_does_not_consume ... ok
+test closure_captures_vector_and_index_expression ... ok
+test closure_captures_token_separator ... ok
+test concatenation_keeps_a_capture_borrowed_and_returning_it_moves ... ok
+test concatenation_copies_borrowed_strings ... ok
+test compound_assignment_operators ... ok
+test concurrent_cache_writers_leave_one_usable_entry ... ok
+test control_flow_and_scopes_execute ... ok
+test constant_array_indices_in_range_skip_the_bounds_check ... ok
+test deps_reports_the_import_graph_in_load_order ... ok
+test deep_import_chain_loads_without_recursive_host_stack ... ok
+test directory_removal_requires_an_empty_directory ... ok
+test contains_and_slice_cover_text_processing ... ok
+test diamond_and_repeated_imports_load_one_module_and_cycles_still_fail ... ok
+test duplicate_binding_errors_label_the_earlier_declaration ... ok
+test doc_command_renders_comments_and_runs_fenced_examples ... ok
+test directory_traversal_is_sorted_and_reports_errors ... ok
+test emit_cfg_shapes_loops_branches_and_switches ... ok
+test emit_mir_decomposes_statements_into_bindings ... ok
+test emit_mir_keeps_short_circuit_rhs_inside_the_lazy_operand ... ok
+test else_if_chains_evaluate_in_order ... ok
+test emit_mir_lowers_closures_and_aggregates ... ok
+test emit_mir_preserves_vector_index_types ... ok
+test emit_mir_shows_which_releases_survive_drop_elaboration ... ok
+test emit_tree_dumps_the_lowered_statement_tree ... ok
+test emit_tree_preserves_negation_and_multiplication_grouping ... ok
+test count_lines_with_matches_reference_semantics ... ok
+test emitted_c_passes_strict_return_type_check ... ok
+test enum_values_move_and_assign_deterministically ... ok
+test enums_match_payloads_execute ... ok
+test environment_lookup_separates_missing_from_empty ... ok
+test emit_cfg_runs_clean_on_the_run_suite ... ok
+test excessive_nesting_returns_diagnostic_instead_of_crashing ... ok
+test emit_tree_runs_clean_on_the_run_suite ... ok
+test exit_rejects_non_integer_status_codes ... ok
+test error_propagation_returns_the_first_failure ... ok
+test explain_names_stable_codes_and_rejects_unknown_ones ... ok
+test exit_can_end_a_function_that_never_returns_a_value ... ok
+test emit_mir_runs_clean_on_the_run_suite ... ok
+test fallible_file_io_reports_errors_as_values ... ok
+test field_granularity_borrows_freeze_their_own_field_only ... ok
+test file_builtins_are_reserved ... ok
+test exit_sets_the_status_and_flushes_what_was_printed ... ok
+test field_views_borrow_the_whole_struct_variable ... ok
+test file_io_round_trips_unicode_paths_and_content ... ok
+test file_metadata_reports_size_and_missing_paths ... ok
+test file_operations_create_copy_rename_and_remove ... ok
+test find_reports_a_byte_offset_or_an_error_value ... ok
+test file_io_failures_are_runtime_diagnostics ... ok
+test field_assignment_evaluates_rhs_before_releasing_old_value ... ok
+test float_maps_reject_wrong_value_types_and_move_like_int_maps ... ok
+test float_exponents_and_fields_resolve_without_mixing ... ok
+test float_arithmetic_prints_a_canonical_form ... ok
+test float_maps_live_in_structs_and_release_exactly_once ... ok
+test float_rejections_keep_conversions_explicit ... ok
+test float_maps_store_get_and_report_keys_like_int_maps ... ok
+test float_vector_misuse_is_rejected ... ok
+test float_vectors_live_in_structs_and_enums_and_release_exactly_once ... ok
+test fmt_adds_the_final_newline_and_reports_no_change_when_clean ... ok
+test fmt_formats_a_module_file_without_a_main ... ok
+test float_vectors_store_index_and_iterate ... ok
+test fmt_formats_files_that_fail_full_check ... ok
+test float_vectors_move_release_and_borrow_like_other_owned_types ... ok
+test float_runtime_guards_report_instead_of_rounding ... ok
+test fmt_refuses_unlexable_files_and_leaves_them_untouched ... ok
+test for_and_len_misuse_is_rejected ... ok
+test fmt_normalizes_keeps_semantics_and_is_idempotent ... ok
+test fmt_preserves_comment_and_string_bytes_end_to_end ... ok
+test for_in_iterates_vector_elements_by_value ... ok
+test for_in_iterates_string_vector_elements_as_views ... ok
+test for_loops_iterate_ranges_with_break_and_continue ... ok
+test forward_declarations_still_enforce_arity_and_unique_names ... ok
+test forwarded_method_receivers_cannot_alias_borrowed_arguments ... ok
+test for_range_bounds_evaluate_once_in_order ... ok
+test forwarded_mutable_borrows_cannot_alias_call_arguments ... ok
+test for_loop_counter_overflow_fails_safely ... ok
+test forward_calls_and_mutual_recursion_work_in_both_build_modes ... ok
+test function_calls_evaluate_arguments_left_to_right_even_with_side_effects ... ok
+test function_values_borrow_all_vector_shapes ... ok
+test function_values_borrow_and_release_temporary_string_arguments ... ok
+test frontend_cache_reuses_generated_c_until_an_imported_file_changes ... ok
+test function_values_borrow_structs_and_fixed_arrays ... ok
+test function_values_forward_mutable_struct_borrows_and_check_live_views ... ok
+test functions_execute_recursion_and_ordered_arguments ... ok
+test generic_body_capabilities_are_checked_at_the_declaration ... ok
+test generic_borrow_parameters_resolve_at_each_call_site ... ok
+test generic_constraints_reject_arguments_at_the_call_site ... ok
+test generic_enums_respect_file_visibility ... ok
+test generic_enums_instantiate_per_argument ... ok
+test generic_enums_reuse_one_layout_per_argument_list ... ok
+test generic_functions_can_instantiate_a_struct_with_the_same_internal_id ... ok
+test fused_split_and_lines_keep_their_edge_cases ... ok
+test generic_instantiation_budget_is_enforced ... ok
+test generic_functions_are_templates_for_one_argument_list ... ok
+test generic_struct_destructor_runs_on_scope_exit ... ok
+test identical_concrete_arguments_share_one_instance ... ok
+test immutable_binding_diagnostics_include_only_known_declarations ... ok
+test generated_integer_program_matches_independent_reference_in_both_modes ... ok
+test interface_summaries_ignore_function_bodies_but_track_public_signatures ... ok
+test hosted_files_preserve_bytes_and_processes_recover_status ... ok
+test generic_structs_instantiate_one_layout_per_argument_list ... ok
+test invalid_borrows_are_rejected ... ok
+test invalid_escapes_in_closed_strings_allow_json_lexical_recovery ... ok
+test invalid_error_propagation_is_rejected ... ok
+test invalid_enum_programs_are_rejected ... ok
+test init_scaffolds_into_an_existing_directory_without_overwriting_sources ... ok
+test invalid_filesystem_and_borrow_usage_is_rejected ... ok
+test invalid_functions_are_rejected ... ok
+test json_check_does_not_merge_different_declaration_errors_at_the_same_span ... ok
+test json_check_recovers_independent_declaration_errors ... ok
+test invalid_generic_enums_are_rejected ... ok
+test json_lexical_recovery_follows_verified_import_prefixes ... ok
+test invalid_prelude_usage_is_rejected ... ok
+test json_spans_pin_utf8_byte_offsets_and_char_columns_after_multibyte_text ... ok
+test invalid_path_helpers_are_rejected ... ok
+test keys_after_removal_skips_tombstones_and_sees_reused_slots ... ok
+test json_paths_select_members_elements_and_escapes ... ok
+test len_reports_array_lengths_and_string_sizes ... ok
+test len_works_in_binary_and_condition_contexts ... ok
+test json_errors_separate_missing_from_wrong_type ... ok
+test local_noncapturing_closures_and_function_parameters_can_be_forwarded ... ok
+test lines_splits_on_newlines_like_common_stdlibs ... ok
+test loop_conditions_are_rechecked_and_short_branches_are_not_executed ... ok
+test lockfile_is_independent_of_dependency_order_and_working_directory ... ok
+test malformed_variant_binding_has_the_same_span_in_both_parsers ... ok
+test malformed_dependency_declarations_are_reported_at_the_manifest_location ... ok
+test library_layers_handle_growth_utf8_boundaries_and_map_resize ... ok
+test map_grows_reuses_removed_slots_and_keeps_every_survivor ... ok
+test map_inc_rejects_bad_shapes_and_moved_maps ... ok
+test many_generic_declarations_in_one_file_keep_their_own_bodies ... ok
+test maps_reject_wrong_keys_values_and_use_after_move ... ok
+test map_inc_works_on_struct_fields_like_the_other_map_builtins ... ok
+test map_inc_counts_and_returns_the_new_value ... ok
+test maps_store_count_replace_and_report_keys_in_order ... ok
+test local_library_packages_compile_through_declared_aliases ... ok
+test math_builtins_reject_wrong_types_arities_and_redefinition ... ok
+test match_arms_do_not_capture_loop_control_flow ... ok
+test maps_survive_storage_in_struct_fields ... ok
+test math_transcendental_values_land_within_a_tolerance ... ok
+test min_max_reject_wrong_types_and_redefinition ... ok
+test math_builtins_compute_report_domain_errors ... ok
+test mir_constant_propagation_folds_checked_arithmetic_and_branches ... ok
+test min_max_ignore_nan_and_tie_zeros_deterministically ... ok
+test mir_branch_observes_writes_through_raw_pointers ... ok
+test mir_backend_matches_tree_backend_on_matches_and_counted_loops ... ok
+test mir_drop_elision_keeps_live_and_unproven_releases ... ok
+test mir_drop_elision_removes_releases_of_moved_slots ... ok
+test mir_interpreter_agrees_on_maps_with_the_compiled_backends ... ok
+test mir_interpreter_agrees_on_file_builtins_with_the_compiled_backends ... ok
+test mir_linear_block_merging_fuses_single_predecessor_successors ... ok
+test mir_interpreter_agrees_on_result_enums_with_the_compiled_backends ... ok
+test mir_unreachable_block_elimination_prunes_abandoned_continuations ... ok
+test missing_field_name_has_the_same_diagnostic_in_both_parsers ... ok
+test mir_interpreter_executes_programs_and_tests_with_ub_detection ... ok
+test mir_preserves_trapping_conditions_with_identical_successors ... ok
+test mir_interpreter_agrees_on_token_cursors_with_the_compiled_backends ... ok
+test modules_import_transitively_and_reject_cycles_or_conflicts ... ok
+test move_errors_name_the_rule_without_claiming_a_move_site ... ok
+test missing_map_key_text_survives_every_owned_string_path ... ok
+test modulo_and_negation_boundaries_fail_safely ... ok
+test modulo_and_negation_follow_documented_semantics ... ok
+test moved_strings_are_rejected_at_compile_time ... ok
+test named_functions_can_be_passed_with_a_matching_safe_signature ... ok
+test nested_generic_layouts_report_the_full_budget_trace ... ok
+test moving_an_outer_value_inside_a_loop_is_rejected ... ok
+test native_backends_evaluate_scope_exit_operands_before_running_destructors ... ok
+test new_scaffolds_a_runnable_package_without_overwriting ... ok
+test no_mangle_attribute_misuse_is_rejected ... ok
+test nested_return_paths_and_early_return_behave_consistently ... ok
+test numeric_lexical_errors_recover_in_json_without_accepting_program ... ok
+test one_program_cannot_link_two_versions_of_the_same_package ... ok
+test no_mangle_exposure_runs_bidirectionally_and_stays_c_visible ... ok
+test nested_repr_c_struct_crosses_a_separate_c_translation_unit ... ok
+test opt_in_timings_preserve_program_stdout ... ok
+test package_deps_visits_local_diamond_once_and_rejects_cycles ... ok
+test owned_strings_move_concatenate_and_release ... ok
+test package_target_tables_load_only_the_active_local_dependency ... ok
+test parser_diagnostic_retains_current_token_range ... ok
+test ownership_join_field_move_and_overwrite_release_are_enforced ... ok
+test package_manifest_selects_entry_and_validates_metadata ... ok
+test path_dependency_versions_must_satisfy_caret_requirements ... ok
+test pattern_parser_diagnostics_align_with_check_json ... ok
+test pattern_payload_shape_is_checked_against_the_declaration ... ok
+test path_algebra_joins_names_and_parents ... ok
+test prelude_results_report_recoverable_errors ... ok
+test pointer_write_arguments_execute_left_to_right ... ok
+test pointer_offset_count_can_consume_owned_argument ... ok
+test print_handles_strings_with_escapes_and_unicode ... ok
+test move_walk_agrees_with_the_parser_on_the_run_suite ... ok
+test ptr_drop_in_place_drops_struct_in_place_and_requires_unsafe ... ok
+test print_keeps_every_shape_in_order_with_non_ascii_text ... ok
+test public_functions_reject_private_types_in_callback_signatures ... ok
+test private_items_stay_inside_their_file ... ok
+test program_arguments_arrive_as_utf8_on_every_platform ... ok
+test raw_pointer_access_goes_through_the_reviewed_macros ... ok
+test question_mark_propagates_none_as_well_as_err ... ok
+test read_only_string_parameters_do_not_consume_their_arguments ... ok
+test repr_c_attribute_guards_and_extern_struct_rejections ... ok
+test release_array_bounds_checks_remain_enabled ... ok
+test repr_c_layout_queries_and_extern_prototypes ... ok
+test read_only_array_borrows_support_forwarding_and_bounds_checks ... ok
+test release_mode_preserves_checked_arithmetic_and_output ... ok
+test returning_a_live_owned_local_keeps_the_buffer_valid ... ok
+test repr_c_nested_layout_matches_the_native_c_compiler ... ok
+test run_command_reports_status_and_output ... ok
+test run_forwards_program_args_with_the_release_flag_before_the_separator ... ok
+test run_forwards_program_arguments_after_double_dash ... ok
+test runtime_error_reports_the_operator_location ... ok
+test scalar_programs_link_without_the_allocator_and_string_programs_keep_it ... ok
+test self_hosted_vec_with_destructor_and_ptr_drop_in_place ... ok
+test self_associated_call_on_plain_enum_resolves_through_the_impl_block ... ok
+test scalar_size_queries_in_generic_and_concrete_contexts ... ok
+test short_circuit_conditions_preserve_loop_and_branch_edges ... ok
+test short_circuit_returns_compute_the_value_before_scope_cleanup ... ok
+test sibling_blocks_reuse_names_without_affecting_outer_scope ... ok
+test sort_and_reverse_order_vectors_in_place ... ok
+test sort_requires_a_mutable_vector_and_keeps_borrows_out ... ok
+test slice_views_are_zero_copy_and_borrow_tracked ... ok
+test split_accepts_borrowed_separators ... ok
+test standalone_and_compiler_agree_on_string_literal_rejections ... ok
+test standalone_declarations_cover_example_and_run_corpus ... ok
+test slicing_inside_a_character_is_rejected ... ok
+test signed_arithmetic_boundaries_match_checked_integer_semantics ... ok
+test standard_input_arrives_as_bytes_without_newline_translation ... ok
+test standalone_postfix_expression_matches_compiler_execution ... ok
+test split_and_args_produce_string_vectors ... ok
+test string_equality_compares_content ... ok
+test string_vector_assignment_reads_old_element_before_replacement ... ok
+test strings_pass_to_functions_and_free_on_all_exit_paths ... ok
+test struct_fields_release_on_all_exit_paths ... ok
+test string_vectors_start_empty_and_copy_borrowed_elements ... ok
+test syntax_body_boundaries_preserve_following_compiler_declarations ... ok
+test test_runner_refuses_malformed_suites_and_cleans_up ... ok
+test structs_construct_access_and_move ... ok
+test strvec_elements_are_borrow_only_and_push_pop_work ... ok
+test test_runner_works_with_modules_and_finds_failures_there ... ok
+test the_pipe_stats_example_counts_a_piped_stream ... ok
+test standalone_literals_agree_with_the_compiler_on_values_and_spans ... ok
+test token_cursor_nested_under_a_range_restarts_on_each_iteration ... ok
+test tokens_stream_the_same_boundaries_as_split_without_materialising ... ok
+test test_runner_reports_pass_fail_and_panic_with_exit_codes ... ok
+test trait_impl_lives_with_its_trait_or_type_and_third_files_are_refused ... ok
+test trait_rules_are_enforced ... ok
+test trait_dispatch_resolves_per_type_and_matches_the_hand_written_call ... ok
+test trim_and_prefix_checks_reject_wrong_argument_types ... ok
+test tokens_reject_a_base_that_moves_is_written_or_is_a_temporary ... ok
+test unnecessary_unsafe_block_warns_without_failing_the_compile ... ok
+test trim_and_prefix_checks_work_on_bytes ... ok
+test unsafe_fn_without_a_doc_comment_is_rejected_with_e0704 ... ok
+test user_defined_drop_rejects_direct_call_and_pub ... ok
+test unsafe_fn_doc_comment_is_enforced_and_a_documented_one_runs ... ok
+test utf8_length_and_prefix_count_characters_not_bytes ... ok
+test values_and_precedence_execute ... ok
+test user_defined_drop_runs_on_scope_exit_and_respects_move ... ok
+test vec_borrows_are_read_only_and_forwardable ... ok
+test vector_growth_during_iteration_is_rejected ... ok
+test vector_misuse_is_rejected_at_compile_time ... ok
+test vectors_grow_push_pop_and_bounds_check ... ok
+test three_way_differential_agreement_between_debug_release_and_interp ... ok
+test vectors_move_through_functions_and_release ... ok
+test windows_header_is_included_only_when_the_program_needs_it ... ok
+test working_directory_is_a_usable_path ... ok
+test vector_bounds_failures_report_locations ... ok
+
+test result: ok. 307 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 61.30s
+
+     Running tests/snapshots.rs (target/debug/deps/snapshots-a6f249870196ca61)
+
+running 3 tests
+test json_ui_snapshots ... ok
+test ui_snapshots ... ok
+test run_snapshots has been running for over 60 seconds
+test run_snapshots ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 82.71s
+
+     Running unittests src/lib.rs (target/debug/deps/ae_compiler-bacdbc0ff2109f38)
+
+running 44 tests
+test frontend::borrowscope::tests::a_loop_container_stays_borrowed_across_its_scope ... ok
+test frontend::borrowscope::tests::a_mut_call_inside_a_view_lifetime_is_a_conflict ... ok
+test frontend::borrowscope::tests::a_view_read_after_a_mut_call_in_one_statement_is_a_conflict ... ok
+test frontend::borrowscope::tests::a_view_read_before_a_mut_call_in_one_statement_is_allowed ... ok
+test frontend::borrowscope::tests::a_write_after_the_last_view_use_is_outside_the_region ... ok
+test frontend::borrowscope::tests::a_write_inside_a_view_lifetime_is_a_conflict ... ok
+test frontend::drops::tests::incomplete_analysis_does_not_rewrite_releases ... ok
+test frontend::drops::tests::join_treats_missing_slots_as_uninitialized_on_either_side ... ok
+test frontend::drops::tests::later_predecessor_is_joined_and_unreachable_block_is_preserved ... ok
+test frontend::drops::tests::unvisited_backedge_does_not_poison_live_loop_state ... ok
+test frontend::borrowscope::tests::a_borrow_at_a_read_only_position_releases_nothing ... ok
+test frontend::mir::validation_tests::rejects_a_call_result_with_the_wrong_destination_type ... ok
+test frontend::mir::validation_tests::rejects_a_temporary_used_before_its_definition ... ok
+test frontend::mir::validation_tests::rejects_terminators_with_wrong_operand_types ... ok
+test frontend::movewalk::tests::compound_expressions_read_all_source_slots ... ok
+test frontend::explain_tests::every_assigned_code_has_an_explanation ... ok
+test frontend::movewalk::tests::map_expressions_read_map_slot_and_arguments ... ok
+test frontend::movewalk::tests::owned_field_assignment_consumes_its_value ... ok
+test frontend::movewalk::tests::pointer_offset_walks_base_and_count_in_order ... ok
+test frontend::movewalk::tests::indexed_access_reads_container_and_index ... ok
+test frontend::borrowscope::tests::a_mut_call_after_the_last_view_use_is_outside_the_region ... ok
+test frontend::borrowscope::tests::a_mut_call_in_a_branch_condition_releasing_to_a_reading_arm_is_a_conflict ... ok
+test frontend::tests::arithmetic_and_variables_compile ... ok
+test frontend::tests::capability_audit_agrees_with_per_instantiation_checks ... ok
+test frontend::tests::diagnostics_include_unicode_aware_position ... ok
+test frontend::tests::every_win32_dependent_runtime_function_is_marked ... ok
+test frontend::tests::generic_declarations_share_one_token_buffer_per_file ... ok
+test frontend::tests::capability_tables_match_the_real_operator_rules ... ok
+test frontend::tests::prune_runtime_drops_unneeded_windows_header ... ok
+test frontend::tests::accepts_typed_programs ... ok
+test frontend::tests::capability_audit_rejects_weak_constraints_without_false_positives ... ok
+test frontend::tests::rejects_invalid_string_literals ... ok
+test frontend::tests::runtime_units_attach_leading_comments_to_the_function ... ok
+test frontend::tests::rejects_type_errors ... ok
+test frontend::tests::token_positions_handle_unicode_and_newlines ... ok
+test harness::tests::discovers_tests_in_declaration_order ... ok
+test harness::tests::filter_selects_substrings_and_refuses_empty_matches ... ok
+test frontend::tests::runtime_units_name_marker_regions_across_their_functions ... ok
+test harness::tests::refuses_files_with_main_or_without_tests ... ok
+test harness::tests::rejects_test_functions_that_break_the_convention ... ok
+test frontend::tests::rejects_invalid_semantics ... ok
+test sha256::tests::matches_known_vectors ... ok
+test harness::tests::synthesized_main_runs_tests_in_order_and_propagates_failures ... ok
+test frontend::tests::malformed_inputs_do_not_panic ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.42s
+
+     Running unittests src/lib.rs (target/debug/deps/ae_span-e483f8936b20e5df)
+
+running 2 tests
+test tests::empty_and_end_of_file_locations_work ... ok
+test tests::positions_are_unicode_aware_and_ranges_are_checked ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/ae_syntax-6504004a401b0a30)
+
+running 55 tests
+test declaration::tests::declaration_recovery_combines_lexical_and_syntax_errors ... ok
+test declaration::tests::function_return_annotations_follow_the_entry_point_rule ... ok
+test declaration::tests::extern_declarations_require_a_return_type_and_semicolon ... ok
+test declaration::tests::malformed_import_header_preserves_following_declarations ... ok
+test declaration::tests::missing_parameter_delimiter_recovers_at_the_following_declaration ... ok
+test declaration::tests::reads_declarations_after_headers_in_the_module_example ... ok
+test declaration::tests::reads_foreign_prototypes_and_unsafe_definitions ... ok
+test declaration::tests::recovery_caps_repeated_declaration_errors ... ok
+test declaration::tests::signature_retains_mutability_and_callable_and_borrowed_types ... ok
+test declaration::tests::trait_and_impl_ranges_follow_the_repository_examples ... ok
+test diagnostic_tests::lexical_error_codes_identify_distinct_failure_categories ... ok
+test diagnostic_tests::lexical_error_spans_cover_unicode_character_and_unterminated_quote ... ok
+test diagnostic_tests::lexical_errors_keep_byte_offset_and_unicode_column ... ok
+test diagnostic_tests::recovery_continues_after_complete_invalid_numeric_literals ... ok
+test diagnostic_tests::recovery_handles_closed_strings_with_bad_escapes ... ok
+test diagnostic_tests::recovery_keeps_original_positions_and_stops_at_ambiguous_errors ... ok
+test diagnostic_tests::strict_and_recovering_lexers_agree_on_string_literal_boundaries ... ok
+test diagnostic_tests::token_ranges_cover_original_utf8_bytes_and_empty_eof ... ok
+test doc_tests::blocks_stop_at_the_first_non_doc_line ... ok
+test doc_tests::collects_doc_blocks_with_their_declaration ... ok
+test doc_tests::unclosed_or_stray_fences_are_reported_with_their_line ... ok
+test expression::tests::address_casts_and_borrow_arguments_are_distinct ... ok
+test expression::tests::arrays_and_vectors_keep_element_order_and_ranges ... ok
+test expression::tests::bracketed_call_targets_preserve_type_arguments_and_index_expressions ... ok
+test declaration::tests::enum_payload_spellings_and_variant_boundaries_are_preserved ... ok
+test expression::tests::call_borrows_are_distinct_from_bitwise_and ... ok
+test expression::tests::malformed_and_deep_expressions_stop_at_a_source_boundary ... ok
+test expression::tests::pointer_cast_groups_before_method_call ... ok
+test expression::tests::postfix_binds_inside_prefix_and_before_multiplication ... ok
+test expression::tests::propagation_wraps_the_whole_statement_operand ... ok
+test expression::tests::qualified_names_remain_distinct_from_field_access ... ok
+test expression::tests::qualified_specializations_preserve_nested_type_arguments ... ok
+test expression::tests::struct_initializers_preserve_field_order_and_nested_ranges ... ok
+test expression::tests::token_entry_leaves_statement_boundaries_to_the_caller ... ok
+test fmt::tests::blank_lines_are_preserved_and_file_ends_with_one_newline ... ok
+test fmt::tests::comments_strings_and_literal_spellings_survive ... ok
+test fmt::tests::crlf_input_stays_crlf ... ok
+test expression::tests::escaped_atoms_and_invalid_literals_preserve_source_ranges ... ok
+test declaration::tests::reads_attributes_on_structs_and_foreign_definitions ... ok
+test declaration::tests::function_parameter_limit_points_to_the_first_extra_parameter ... ok
+test fmt::tests::glued_comment_gets_one_space ... ok
+test fmt::tests::indentation_follows_brace_depth ... ok
+test fmt::tests::normalizes_spacing_without_reordering_lines ... ok
+test fmt::tests::public_formatter_rejects_the_same_unlexable_input_as_the_compiler ... ok
+test fmt::tests::formatting_is_idempotent ... ok
+test fmt::tests::same_class_pairs_get_the_same_space_on_every_pass ... ok
+test fmt::tests::tokens_never_merge_across_a_removed_space ... ok
+test fmt::tests::unary_minus_and_bang_take_no_space_after ... ok
+test literal::tests::literals_preserve_values_and_token_boundaries ... ok
+test pattern::tests::empty_parentheses_parse_as_an_empty_payload ... ok
+test pattern::tests::missing_nested_binding_points_at_the_closing_parenthesis ... ok
+test pattern::tests::nested_variant_payloads_preserve_binding_order_and_ranges ... ok
+test pattern::tests::token_entry_stops_before_the_arm_arrow ... ok
+test fmt::tests::trailing_comment_alignment_is_preserved ... ok
+test fmt::tests::fmt_lexer_matches_compiler_lexer_on_all_sources ... ok
+
+test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+   Doc-tests ae_compiler
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests ae_span
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests ae_syntax
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+EXIT=0
