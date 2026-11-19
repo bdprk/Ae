@@ -244,16 +244,23 @@ pub struct RecoveredDeclarations {
 pub fn recover_declarations(file: &str, source: &str) -> RecoveredDeclarations {
     const MAX_DIAGNOSTICS: usize = 32;
     let mut result = RecoveredDeclarations { declarations: Vec::new(), diagnostics: Vec::new() };
-    let tokens = match declaration_tokens(file, source) {
-        Ok(tokens) => tokens,
-        Err(error) => {
-            result.diagnostics.push(error);
+    let tokens = match crate::lex_recovered(source) {
+        crate::LexOutcome::Clean(tokens) => tokens,
+        crate::LexOutcome::Recovered(tokens, errors) => {
+            result.diagnostics = errors.into_iter().take(MAX_DIAGNOSTICS)
+                .map(|error| diagnostic_in_file(file, error)).collect();
+            tokens
+        }
+        crate::LexOutcome::Fatal(errors) => {
+            result.diagnostics = errors.into_iter().take(MAX_DIAGNOSTICS)
+                .map(|error| diagnostic_in_file(file, error)).collect();
             return result;
         }
     };
     let mut parser = DeclarationParser { file, source, tokens: &tokens, pos: 0 };
     match crate::module::parse_use_headers(file, source, &tokens) {
         Ok(imports) => parser.pos = imports.body_start,
+        Err(_) if result.diagnostics.len() == MAX_DIAGNOSTICS => return result,
         Err(error) => {
             // Start recovery at the rejected header token so a missing
             // semicolon cannot hide the declaration that follows it.
@@ -264,7 +271,7 @@ pub fn recover_declarations(file: &str, source: &str) -> RecoveredDeclarations {
             parser.synchronize(0);
         }
     }
-    while parser.current().kind != Kind::Eof {
+    while result.diagnostics.len() < MAX_DIAGNOSTICS && parser.current().kind != Kind::Eof {
         let start = parser.pos;
         match parser.declaration() {
             Ok(declaration) => result.declarations.push(declaration),
@@ -281,12 +288,14 @@ pub fn recover_declarations(file: &str, source: &str) -> RecoveredDeclarations {
 }
 
 fn declaration_tokens(file: &str, source: &str) -> Result<Vec<Token>, Diagnostic> {
-    crate::lex_diagnostic(source).map_err(|mut error| {
-        if let Some(label) = &mut error.primary {
-            label.span.file = Some(file.to_owned());
-        }
-        error
-    })
+    crate::lex_diagnostic(source).map_err(|error| diagnostic_in_file(file, error))
+}
+
+fn diagnostic_in_file(file: &str, mut error: Diagnostic) -> Diagnostic {
+    if let Some(label) = &mut error.primary {
+        label.span.file = Some(file.to_owned());
+    }
+    error
 }
 
 struct DeclarationParser<'a> {
@@ -759,6 +768,20 @@ mod tests {
         assert_eq!(recovered.declarations[0].name, "Next");
         assert_eq!(recovered.declarations[0].range.start, source.find("pub struct").unwrap());
         assert_eq!(recovered.declarations[1].name, "main");
+    }
+
+    #[test]
+    fn declaration_recovery_combines_lexical_and_syntax_errors() {
+        let source = "@ fn broken(value: i64 { } fn main() {}";
+        let recovered = recover_declarations("case.ae", source);
+        assert_eq!(recovered.diagnostics.len(), 2);
+        assert_eq!(recovered.diagnostics[0], parse_declarations("case.ae", source).unwrap_err());
+        assert_eq!(recovered.diagnostics[0].code.as_deref(), Some("E0001"));
+        assert_eq!(recovered.declarations.len(), 1);
+        assert_eq!(recovered.declarations[0].name, "main");
+
+        let damaged = format!("{} fn broken( {{ }}", "@ ".repeat(32));
+        assert_eq!(recover_declarations("case.ae", &damaged).diagnostics.len(), 32);
     }
 
     #[test]
