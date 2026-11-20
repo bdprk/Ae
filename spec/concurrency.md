@@ -207,3 +207,19 @@ Cancellation has no dedicated primitive: a **cancellation channel** is an ordina
 | L2 | Cancel one timer before deadline, cancel another after deadline | Pre-deadline cancel returns `true` and keeps `timer_ready` `false`; post-deadline cancel returns `false` (`tests/run/timers_clock.ae`) |
 | L3 | Task executor drives a timeout loop using `clock_advance` and `task_yield` | Waiting task wakes cleanly when controller task advances the clock (`tests/run/timers_clock.ae`) |
 | L4 | `clock_advance` on non-`clock` or `timer_ready` on non-`timer` | Compile-time error (`tests/ui/timer_non_handle.ae`) |
+
+## 15. Network I/O Adapters and Streams (`adapter`, `stream`, M4.4.01–M4.4.07, ADR-0222)
+
+1. **`adapter` is a copy-semantics handle to a unified readiness/completion engine.** `adapter_new()` allocates an adapter; requests are submitted with `adapter_submit_read` / `adapter_submit_write`.
+2. **Readiness and completion states**: `adapter_step` yields `0` (Pending/WouldBlock), `1` (Completed), `2` (Cancelled), or `3` (Disconnected/EOF). `adapter_rearm` rearms interest after would-block.
+3. **Buffer preservation through cancellation**: cancelling an in-flight request via `adapter_cancel` marks it cancelled but preserves submitted buffer memory until late completion completes safely.
+4. **`stream` provides bounded bidirectional buffered transmission**: `stream_new(cap)` enforces a bounded byte window; `stream_send` returns bytes accepted (0 if full, applying backpressure); `stream_buffered` exposes pending byte count; `stream_close` signals EOF.
+
+| Case | Scenario | Expected |
+|---|---|---|
+| N1 | Pending, completion, and late-completion cancellation with buffer preservation | Operations transition cleanly through states; cancelled buffer retained until late completion (`tests/run/network_adapter.ae`) |
+| N2 | Partial I/O: 10-byte frame written in 4-byte fragments and read in 3-byte chunks | Exact frame reassembled across fragments and chunks (`tests/run/network_adapter.ae`) |
+| N3 | Deadline racing: read racing with deadline timer | Exact winner published, losing side cancelled (`tests/run/network_adapter.ae`) |
+| N4 | Backpressure: sending into bounded stream (cap = 8) throttles sender until receiver drains | Sender pauses on buffer full, receiver drains, sender recovers (`tests/run/network_adapter.ae`) |
+| N5 | Disconnect during read | Receiver detects EOF/disconnect cleanly with zero leak (`tests/run/network_adapter.ae`) |
+

@@ -485,7 +485,8 @@ pub(super) fn expr_type(expr: &Expr) -> Type {
         Expr::MutexLock(..) => Type::Guard,
         Expr::ChanNew(..) => Type::Chan,
         Expr::ChanSend(..) | Expr::ChanTrySend(..) => Type::Bool,
-        Expr::ChanRecv(..) | Expr::ChanSelect(..) | Expr::ExecRun(..) | Expr::ClockNow(..) | Expr::ClockAdvance(..) | Expr::PoolJoin(..) => Type::Int,
+        Expr::ChanRecv(..) | Expr::ChanSelect(..) | Expr::ExecRun(..) | Expr::ClockNow(..) | Expr::ClockAdvance(..) | Expr::PoolJoin(..)
+        | Expr::AdapterSubmitRead(..) | Expr::AdapterSubmitWrite(..) | Expr::AdapterStep(..) | Expr::StreamSend(..) | Expr::StreamBuffered(..) => Type::Int,
         Expr::ExecNew => Type::Exec,
         Expr::ClockNew => Type::Clock,
         Expr::TimerNew(..) => Type::Timer,
@@ -493,8 +494,11 @@ pub(super) fn expr_type(expr: &Expr) -> Type {
         Expr::CancelNew => Type::Cancel,
         Expr::PoolNew(..) => Type::Pool,
         Expr::ReaderNew(..) => Type::Reader,
-        Expr::ReaderRead(..) | Expr::ReaderReadLine(..) => Type::String,
-        Expr::TimerReady(..) | Expr::TimerCancel(..) | Expr::CancelTrigger(..) | Expr::CancelComplete(..) | Expr::CancelIsSet(..) | Expr::ReaderEof(..) => Type::Bool,
+        Expr::AdapterNew => Type::Adapter,
+        Expr::StreamNew(..) => Type::Stream,
+        Expr::ReaderRead(..) | Expr::ReaderReadLine(..) | Expr::AdapterResult(..) | Expr::StreamRecv(..) => Type::String,
+        Expr::TimerReady(..) | Expr::TimerCancel(..) | Expr::CancelTrigger(..) | Expr::CancelComplete(..) | Expr::CancelIsSet(..) | Expr::ReaderEof(..)
+        | Expr::AdapterCancel(..) | Expr::AdapterRearm(..) | Expr::StreamClose(..) | Expr::StreamIsClosed(..) => Type::Bool,
         Expr::Number(..) | Expr::Index(..) | Expr::Len(..) => Type::Int,
         Expr::VecIndex(_, _, _, _, _, ty) => *ty,
         Expr::StrVecIndex(..) => Type::String,

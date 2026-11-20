@@ -1,0 +1,3 @@
+fn main() {
+    adapter_step(1, 0);
+}

@@ -61,6 +61,8 @@ enum Val {
     Cancel(usize),
     Pool(usize),
     Reader(usize),
+    Adapter(usize),
+    Stream(usize),
     Moved,
 }
 
@@ -110,6 +112,28 @@ struct Env<'a> {
     cancels: Vec<u8>,
     // Scripted buffered byte readers: (src, src_pos, chunk_size, buf, buf_pos, buf_cap).
     readers: Vec<(Vec<u8>, usize, usize, Vec<u8>, usize, usize)>,
+    // Network readiness/completion adapters (M4.4 / ADR-0222).
+    adapters: Vec<Vec<IoReq>>,
+    // Bounded streams (M4.4 / ADR-0222).
+    streams: Vec<StreamState>,
+}
+
+#[derive(Debug, Clone)]
+struct IoReq {
+    #[allow(dead_code)]
+    is_write: bool,
+    buf: Vec<u8>,
+    chunk_size: usize,
+    pos: usize,
+    state: i64,
+    rearmed: bool,
+}
+
+#[derive(Debug, Clone)]
+struct StreamState {
+    cap: usize,
+    buf: std::collections::VecDeque<u8>,
+    closed: bool,
 }
 
 const MAX_STEPS: usize = 5_000_000;
@@ -127,7 +151,7 @@ pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
         }
     }
     let main_fn = main_fn.ok_or_else(|| (String::new(), "program must define a main function".to_owned()))?;
-    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new(), chans: Vec::new(), execs: Vec::new(), clocks: Vec::new(), timers: Vec::new(), cancels: Vec::new(), readers: Vec::new() };
+    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new(), chans: Vec::new(), execs: Vec::new(), clocks: Vec::new(), timers: Vec::new(), cancels: Vec::new(), readers: Vec::new(), adapters: Vec::new(), streams: Vec::new() };
     let mut locals: HashMap<usize, Val> = HashMap::new();
     match eval_stmts(&mut env, &main_fn.body, &mut locals, &mut None) {
         Flow::Next | Flow::Return(_) => Ok((env.out, 0)),
@@ -2317,6 +2341,213 @@ fn eval_expr(
             };
             let (src, src_pos, _chunk, buf, buf_pos, _bcap) = &env.readers[rid];
             Ok(Val::Bool(*buf_pos >= buf.len() && *src_pos >= src.len()))
+        }
+        Expr::AdapterNew => {
+            env.adapters.push(Vec::new());
+            Ok(Val::Adapter(env.adapters.len() - 1))
+        }
+        Expr::AdapterSubmitRead(a, s, c) => {
+            let aid = match eval_expr(env, a, locals, caller_locals, false)? {
+                Val::Adapter(id) => id,
+                _ => return Err(Flow::Trap("internal: adapter_submit_read on non-adapter".to_owned())),
+            };
+            let src = match eval_expr(env, s, locals, caller_locals, false)? {
+                Val::Str(str_val) => str_val.into_bytes(),
+                _ => return Err(Flow::Trap("internal: adapter_submit_read src".to_owned())),
+            };
+            let chunk = match eval_expr(env, c, locals, caller_locals, false)? {
+                Val::Int(k) => k,
+                _ => return Err(Flow::Trap("internal: adapter_submit_read chunk".to_owned())),
+            };
+            let reqs = &mut env.adapters[aid];
+            let req_id = reqs.len();
+            let state = if chunk <= 0 { 3 } else { 0 };
+            reqs.push(IoReq {
+                is_write: false,
+                buf: src,
+                chunk_size: if chunk > 0 { chunk as usize } else { 0 },
+                pos: 0,
+                state,
+                rearmed: true,
+            });
+            Ok(Val::Int(req_id as i64))
+        }
+        Expr::AdapterSubmitWrite(a, s, c) => {
+            let aid = match eval_expr(env, a, locals, caller_locals, false)? {
+                Val::Adapter(id) => id,
+                _ => return Err(Flow::Trap("internal: adapter_submit_write on non-adapter".to_owned())),
+            };
+            let data = match eval_expr(env, s, locals, caller_locals, false)? {
+                Val::Str(str_val) => str_val.into_bytes(),
+                _ => return Err(Flow::Trap("internal: adapter_submit_write data".to_owned())),
+            };
+            let frag = match eval_expr(env, c, locals, caller_locals, false)? {
+                Val::Int(k) => (k.max(1)) as usize,
+                _ => return Err(Flow::Trap("internal: adapter_submit_write frag".to_owned())),
+            };
+            let reqs = &mut env.adapters[aid];
+            let req_id = reqs.len();
+            reqs.push(IoReq {
+                is_write: true,
+                buf: data,
+                chunk_size: frag,
+                pos: 0,
+                state: 0,
+                rearmed: true,
+            });
+            Ok(Val::Int(req_id as i64))
+        }
+        Expr::AdapterStep(a, req) => {
+            let aid = match eval_expr(env, a, locals, caller_locals, false)? {
+                Val::Adapter(id) => id,
+                _ => return Err(Flow::Trap("internal: adapter_step on non-adapter".to_owned())),
+            };
+            let req_id = match eval_expr(env, req, locals, caller_locals, false)? {
+                Val::Int(id) if id >= 0 => id as usize,
+                _ => return Err(Flow::Trap("internal: adapter_step req_id".to_owned())),
+            };
+            let req_obj = match env.adapters[aid].get_mut(req_id) {
+                Some(r) => r,
+                None => return Ok(Val::Int(-1)),
+            };
+            if req_obj.state == 0 {
+                if !req_obj.rearmed {
+                    return Ok(Val::Int(0));
+                }
+                req_obj.pos += req_obj.chunk_size;
+                if req_obj.pos >= req_obj.buf.len() {
+                    req_obj.pos = req_obj.buf.len();
+                    req_obj.state = 1;
+                    Ok(Val::Int(1))
+                } else {
+                    req_obj.rearmed = false;
+                    Ok(Val::Int(0))
+                }
+            } else {
+                Ok(Val::Int(req_obj.state))
+            }
+        }
+        Expr::AdapterCancel(a, req) => {
+            let aid = match eval_expr(env, a, locals, caller_locals, false)? {
+                Val::Adapter(id) => id,
+                _ => return Err(Flow::Trap("internal: adapter_cancel on non-adapter".to_owned())),
+            };
+            let req_id = match eval_expr(env, req, locals, caller_locals, false)? {
+                Val::Int(id) if id >= 0 => id as usize,
+                _ => return Err(Flow::Trap("internal: adapter_cancel req_id".to_owned())),
+            };
+            let req_obj = match env.adapters[aid].get_mut(req_id) {
+                Some(r) => r,
+                None => return Ok(Val::Bool(false)),
+            };
+            if req_obj.state == 0 {
+                req_obj.state = 2; // Cancelled
+                Ok(Val::Bool(true))
+            } else {
+                Ok(Val::Bool(false))
+            }
+        }
+        Expr::AdapterRearm(a, req) => {
+            let aid = match eval_expr(env, a, locals, caller_locals, false)? {
+                Val::Adapter(id) => id,
+                _ => return Err(Flow::Trap("internal: adapter_rearm on non-adapter".to_owned())),
+            };
+            let req_id = match eval_expr(env, req, locals, caller_locals, false)? {
+                Val::Int(id) if id >= 0 => id as usize,
+                _ => return Err(Flow::Trap("internal: adapter_rearm req_id".to_owned())),
+            };
+            let req_obj = match env.adapters[aid].get_mut(req_id) {
+                Some(r) => r,
+                None => return Ok(Val::Bool(false)),
+            };
+            if req_obj.state == 0 {
+                req_obj.rearmed = true;
+                Ok(Val::Bool(true))
+            } else {
+                Ok(Val::Bool(false))
+            }
+        }
+        Expr::AdapterResult(a, req) => {
+            let aid = match eval_expr(env, a, locals, caller_locals, false)? {
+                Val::Adapter(id) => id,
+                _ => return Err(Flow::Trap("internal: adapter_result on non-adapter".to_owned())),
+            };
+            let req_id = match eval_expr(env, req, locals, caller_locals, false)? {
+                Val::Int(id) if id >= 0 => id as usize,
+                _ => return Err(Flow::Trap("internal: adapter_result req_id".to_owned())),
+            };
+            let req_obj = match env.adapters[aid].get(req_id) {
+                Some(r) => r,
+                None => return Ok(Val::Str(String::new())),
+            };
+            let s = String::from_utf8_lossy(&req_obj.buf[..req_obj.pos]).into_owned();
+            Ok(Val::Str(s))
+        }
+        Expr::StreamNew(c) => {
+            let cap = match eval_expr(env, c, locals, caller_locals, false)? {
+                Val::Int(k) => (k.max(1)) as usize,
+                _ => return Err(Flow::Trap("internal: stream_new cap".to_owned())),
+            };
+            env.streams.push(StreamState { cap, buf: std::collections::VecDeque::new(), closed: false });
+            Ok(Val::Stream(env.streams.len() - 1))
+        }
+        Expr::StreamSend(s, d) => {
+            let sid = match eval_expr(env, s, locals, caller_locals, false)? {
+                Val::Stream(id) => id,
+                _ => return Err(Flow::Trap("internal: stream_send on non-stream".to_owned())),
+            };
+            let data = match eval_expr(env, d, locals, caller_locals, false)? {
+                Val::Str(str_val) => str_val.into_bytes(),
+                _ => return Err(Flow::Trap("internal: stream_send data".to_owned())),
+            };
+            let st = &mut env.streams[sid];
+            if st.closed { return Ok(Val::Int(-1)); }
+            let avail = st.cap.saturating_sub(st.buf.len());
+            let to_write = avail.min(data.len());
+            for b in &data[..to_write] {
+                st.buf.push_back(*b);
+            }
+            Ok(Val::Int(to_write as i64))
+        }
+        Expr::StreamRecv(s, n) => {
+            let sid = match eval_expr(env, s, locals, caller_locals, false)? {
+                Val::Stream(id) => id,
+                _ => return Err(Flow::Trap("internal: stream_recv on non-stream".to_owned())),
+            };
+            let max_b = match eval_expr(env, n, locals, caller_locals, false)? {
+                Val::Int(k) => k,
+                _ => return Err(Flow::Trap("internal: stream_recv max_bytes".to_owned())),
+            };
+            let st = &mut env.streams[sid];
+            let to_read = (max_b.max(0) as usize).min(st.buf.len());
+            let mut out_bytes = Vec::with_capacity(to_read);
+            for _ in 0..to_read {
+                out_bytes.push(st.buf.pop_front().unwrap());
+            }
+            Ok(Val::Str(String::from_utf8_lossy(&out_bytes).into_owned()))
+        }
+        Expr::StreamClose(s) => {
+            let sid = match eval_expr(env, s, locals, caller_locals, false)? {
+                Val::Stream(id) => id,
+                _ => return Err(Flow::Trap("internal: stream_close on non-stream".to_owned())),
+            };
+            env.streams[sid].closed = true;
+            Ok(Val::Int(0))
+        }
+        Expr::StreamIsClosed(s) => {
+            let sid = match eval_expr(env, s, locals, caller_locals, false)? {
+                Val::Stream(id) => id,
+                _ => return Err(Flow::Trap("internal: stream_is_closed on non-stream".to_owned())),
+            };
+            let st = &env.streams[sid];
+            Ok(Val::Bool(st.closed && st.buf.is_empty()))
+        }
+        Expr::StreamBuffered(s) => {
+            let sid = match eval_expr(env, s, locals, caller_locals, false)? {
+                Val::Stream(id) => id,
+                _ => return Err(Flow::Trap("internal: stream_buffered on non-stream".to_owned())),
+            };
+            Ok(Val::Int(env.streams[sid].buf.len() as i64))
         }
         Expr::ClockNew => {
             env.clocks.push(0);

@@ -349,11 +349,114 @@ impl Parser<'_> {
                 self.take(Kind::RParen)?;
                 Ok((Expr::ReaderReadLine(Box::new(r)), Type::String))
             }
-            _ => {
+            "reader_eof" => {
                 let (r, rty) = self.expression(0, false)?;
                 if rty != Type::Reader { return Err(self.fail("reader_eof expects a reader handle")); }
                 self.take(Kind::RParen)?;
                 Ok((Expr::ReaderEof(Box::new(r)), Type::Bool))
+            }
+            "adapter_new" => { self.take(Kind::RParen)?; Ok((Expr::AdapterNew, Type::Adapter)) }
+            "adapter_submit_read" => {
+                let (a, aty) = self.expression(0, false)?;
+                if aty != Type::Adapter { return Err(self.fail("adapter_submit_read expects an adapter handle")); }
+                self.take(Kind::Comma)?;
+                let (s, sty) = self.expression(0, false)?;
+                if !matches!(sty, Type::String | Type::StrView) { return Err(self.fail("adapter_submit_read expects a string source")); }
+                self.take(Kind::Comma)?;
+                let (c, cty) = self.expression(0, false)?;
+                if cty != Type::Int { return Err(self.fail("adapter_submit_read expects an i64 chunk_size")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::AdapterSubmitRead(Box::new(a), Box::new(s), Box::new(c)), Type::Int))
+            }
+            "adapter_submit_write" => {
+                let (a, aty) = self.expression(0, false)?;
+                if aty != Type::Adapter { return Err(self.fail("adapter_submit_write expects an adapter handle")); }
+                self.take(Kind::Comma)?;
+                let (s, sty) = self.expression(0, false)?;
+                if !matches!(sty, Type::String | Type::StrView) { return Err(self.fail("adapter_submit_write expects a string data")); }
+                self.take(Kind::Comma)?;
+                let (c, cty) = self.expression(0, false)?;
+                if cty != Type::Int { return Err(self.fail("adapter_submit_write expects an i64 frag_size")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::AdapterSubmitWrite(Box::new(a), Box::new(s), Box::new(c)), Type::Int))
+            }
+            "adapter_step" => {
+                let (a, aty) = self.expression(0, false)?;
+                if aty != Type::Adapter { return Err(self.fail("adapter_step expects an adapter handle")); }
+                self.take(Kind::Comma)?;
+                let (req, rty) = self.expression(0, false)?;
+                if rty != Type::Int { return Err(self.fail("adapter_step expects an i64 req_id")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::AdapterStep(Box::new(a), Box::new(req)), Type::Int))
+            }
+            "adapter_cancel" => {
+                let (a, aty) = self.expression(0, false)?;
+                if aty != Type::Adapter { return Err(self.fail("adapter_cancel expects an adapter handle")); }
+                self.take(Kind::Comma)?;
+                let (req, rty) = self.expression(0, false)?;
+                if rty != Type::Int { return Err(self.fail("adapter_cancel expects an i64 req_id")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::AdapterCancel(Box::new(a), Box::new(req)), Type::Bool))
+            }
+            "adapter_rearm" => {
+                let (a, aty) = self.expression(0, false)?;
+                if aty != Type::Adapter { return Err(self.fail("adapter_rearm expects an adapter handle")); }
+                self.take(Kind::Comma)?;
+                let (req, rty) = self.expression(0, false)?;
+                if rty != Type::Int { return Err(self.fail("adapter_rearm expects an i64 req_id")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::AdapterRearm(Box::new(a), Box::new(req)), Type::Bool))
+            }
+            "adapter_result" => {
+                let (a, aty) = self.expression(0, false)?;
+                if aty != Type::Adapter { return Err(self.fail("adapter_result expects an adapter handle")); }
+                self.take(Kind::Comma)?;
+                let (req, rty) = self.expression(0, false)?;
+                if rty != Type::Int { return Err(self.fail("adapter_result expects an i64 req_id")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::AdapterResult(Box::new(a), Box::new(req)), Type::String))
+            }
+            "stream_new" => {
+                let (c, cty) = self.expression(0, false)?;
+                if cty != Type::Int { return Err(self.fail("stream_new expects an i64 capacity")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::StreamNew(Box::new(c)), Type::Stream))
+            }
+            "stream_send" => {
+                let (s, sty) = self.expression(0, false)?;
+                if sty != Type::Stream { return Err(self.fail("stream_send expects a stream handle")); }
+                self.take(Kind::Comma)?;
+                let (d, dty) = self.expression(0, false)?;
+                if !matches!(dty, Type::String | Type::StrView) { return Err(self.fail("stream_send expects a string data")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::StreamSend(Box::new(s), Box::new(d)), Type::Int))
+            }
+            "stream_recv" => {
+                let (s, sty) = self.expression(0, false)?;
+                if sty != Type::Stream { return Err(self.fail("stream_recv expects a stream handle")); }
+                self.take(Kind::Comma)?;
+                let (n, nty) = self.expression(0, false)?;
+                if nty != Type::Int { return Err(self.fail("stream_recv expects an i64 max_bytes")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::StreamRecv(Box::new(s), Box::new(n)), Type::String))
+            }
+            "stream_close" => {
+                let (s, sty) = self.expression(0, false)?;
+                if sty != Type::Stream { return Err(self.fail("stream_close expects a stream handle")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::StreamClose(Box::new(s)), Type::Int))
+            }
+            "stream_is_closed" => {
+                let (s, sty) = self.expression(0, false)?;
+                if sty != Type::Stream { return Err(self.fail("stream_is_closed expects a stream handle")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::StreamIsClosed(Box::new(s)), Type::Bool))
+            }
+            _ => {
+                let (s, sty) = self.expression(0, false)?;
+                if sty != Type::Stream { return Err(self.fail("stream_buffered expects a stream handle")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::StreamBuffered(Box::new(s)), Type::Int))
             }
         }
     }
@@ -373,7 +476,9 @@ impl Parser<'_> {
             "clock_new" | "clock_now" | "clock_advance" | "timer_new" | "timer_ready" | "timer_cancel"
             | "scope_new" | "cancel_new" | "cancel_trigger" | "cancel_complete" | "cancel_is_set"
             | "pool_new" | "pool_join"
-            | "reader_new" | "reader_read" | "reader_read_line" | "reader_eof" => self.clock_timer_expr(name),
+            | "reader_new" | "reader_read" | "reader_read_line" | "reader_eof"
+            | "adapter_new" | "adapter_submit_read" | "adapter_submit_write" | "adapter_step" | "adapter_cancel" | "adapter_rearm" | "adapter_result"
+            | "stream_new" | "stream_send" | "stream_recv" | "stream_close" | "stream_is_closed" | "stream_buffered" => self.clock_timer_expr(name),
             _ => self.chan_recv_expr(line, col),
         }
     }
@@ -958,7 +1063,7 @@ impl Parser<'_> {
                     return self.cell_add_expr(vline, vcol);
                 } else if name == "cell_cas" && *self.current() == Kind::LParen {
                     return self.cell_cas_expr(vline, vcol);
-                } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_try_send" | "chan_recv" | "chan_select" | "exec_new" | "exec_run" | "clock_new" | "clock_now" | "clock_advance" | "timer_new" | "timer_ready" | "timer_cancel" | "scope_new" | "cancel_new" | "cancel_trigger" | "cancel_complete" | "cancel_is_set" | "pool_new" | "pool_join" | "reader_new" | "reader_read" | "reader_read_line" | "reader_eof") && *self.current() == Kind::LParen {
+                } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_try_send" | "chan_recv" | "chan_select" | "exec_new" | "exec_run" | "clock_new" | "clock_now" | "clock_advance" | "timer_new" | "timer_ready" | "timer_cancel" | "scope_new" | "cancel_new" | "cancel_trigger" | "cancel_complete" | "cancel_is_set" | "pool_new" | "pool_join" | "reader_new" | "reader_read" | "reader_read_line" | "reader_eof" | "adapter_new" | "adapter_submit_read" | "adapter_submit_write" | "adapter_step" | "adapter_cancel" | "adapter_rearm" | "adapter_result" | "stream_new" | "stream_send" | "stream_recv" | "stream_close" | "stream_is_closed" | "stream_buffered") && *self.current() == Kind::LParen {
                     self.concurrency_builtin_expr(&name, vline, vcol)?
                 } else if name == "spawn" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
