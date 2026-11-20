@@ -161,6 +161,37 @@ impl<'a> Parser<'a> {
             None => unreachable!("prelude enum {name} is registered for every program"),
         }
     }
+    #[inline(never)]
+    fn concurrency_stmt(&mut self, name: &str) -> Result<Statement, ae_span::Diagnostic> {
+        self.pos += 2;
+        if name == "chan_close" {
+            let (handle, handle_ty) = self.expression(0, false)?;
+            if handle_ty != Type::Chan {
+                return Err(self.fail("chan_close expects a chan handle"));
+            }
+            self.take(Kind::RParen)?;
+            self.take(Kind::Semi)?;
+            return Ok(Statement::ChanClose(Box::new(handle)));
+        }
+        let (handle, handle_ty) = self.expression(0, false)?;
+        let sid = match handle_ty {
+            Type::Shared(sid) => sid,
+            _ => return Err(self.fail("shared_set expects a shared handle")),
+        };
+        self.take(Kind::Comma)?;
+        let (value, value_ty) = self.expression(0, false)?;
+        let expected_ty = shared_types_get(sid);
+        if value_ty != expected_ty {
+            return Err(self.fail(&format!("shared_set expects {}, found {}", expected_ty.name(), value_ty.name())));
+        }
+        self.take(Kind::RParen)?;
+        self.take(Kind::Semi)?;
+        if !self.live_owned().iter().any(|(_, ty)| *ty == Type::Guard) {
+            return Err(self.fail("shared_set requires a live mutex guard in scope; call mutex_lock(...) first"));
+        }
+        Ok(Statement::SharedSet(Box::new(handle), Box::new(value), sid))
+    }
+
     pub(super) fn block(&mut self) -> Result<Vec<Statement>, ae_span::Diagnostic> {
         if self.block_depth >= 64 { return Err(self.fail("block nesting limit exceeded (64)")); }
         self.block_depth += 1;
@@ -435,24 +466,8 @@ impl<'a> Parser<'a> {
                         result.push(Statement::AtomicStore(Box::new(handle), Box::new(value)));
                         continue;
                     }
-                    if name == "shared_set" && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
-                        self.pos += 2;
-                        let (handle, handle_ty) = self.expression(0, false)?;
-                        let sid = match handle_ty {
-                            Type::Shared(sid) => sid,
-                            _ => return Err(self.fail("shared_set expects a shared handle")),
-                        };
-                        self.take(Kind::Comma)?;
-                        let (value, value_ty) = self.expression(0, false)?;
-                        let expected_ty = shared_types_get(sid);
-                        if value_ty != expected_ty {
-                            return Err(self.fail(&format!("shared_set expects {}, found {}", expected_ty.name(), value_ty.name())));
-                        }
-                        self.take(Kind::RParen)?; self.take(Kind::Semi)?;
-                        if !self.live_owned().iter().any(|(_, ty)| *ty == Type::Guard) {
-                            return Err(self.fail("shared_set requires a live mutex guard in scope; call mutex_lock(...) first"));
-                        }
-                        result.push(Statement::SharedSet(Box::new(handle), Box::new(value), sid));
+                    if matches!(name.as_str(), "shared_set" | "chan_close") && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
+                        result.push(self.concurrency_stmt(&name)?);
                         continue;
                     }
                     if matches!(name.as_str(), "push" | "pop" | "sort" | "reverse") && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {

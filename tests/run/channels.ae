@@ -1,0 +1,30 @@
+// M4.3.01–M4.3.03, spec/concurrency.md §10: rendezvous (cap 0), bounded
+// buffer (cap 1), and draining buffered values after chan_close.
+fn main() {
+    // M4.3.01: rendezvous (cap 0)
+    let rch = chan_new(0);
+    let rt = spawn(|| -> bool { return chan_send(rch, 42); });
+    print(chan_recv(rch));
+    print(wait(rt));
+
+    // M4.3.02: bounded buffer (cap 1)
+    let bch = chan_new(1);
+    let ok1 = chan_send(bch, 10);
+    let bt = spawn(|| -> bool { return chan_send(bch, 20); });
+    print(ok1);
+    print(chan_recv(bch));
+    print(chan_recv(bch));
+    print(wait(bt));
+
+    // M4.3.03: close with buffered values, then drain + reject send
+    let cch = chan_new(2);
+    let c1 = chan_send(cch, 100);
+    let c2 = chan_send(cch, 200);
+    chan_close(cch);
+    print(c1);
+    print(c2);
+    print(chan_recv(cch));
+    print(chan_recv(cch));
+    print(chan_recv(cch));
+    print(chan_send(cch, 300));
+}

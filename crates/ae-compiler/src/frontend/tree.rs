@@ -101,6 +101,10 @@ impl<'a> TreePrinter<'a> {
                 let v = self.expression_text(value);
                 self.line(&format!("shared_set({}, {})", h, v));
             }
+            Statement::ChanClose(handle) => {
+                let h = self.expression_text(handle);
+                self.line(&format!("chan_close({})", h));
+            }
             Statement::Return(expr, frees) => {
                 let value = self.expression_text(expr);
                 let drops = self.frees_text(frees);
@@ -354,6 +358,9 @@ impl<'a> TreePrinter<'a> {
             Expr::SharedGet(handle, _) => out.push_str(&format!("shared_get({})", self.expression_text(handle))),
             Expr::MutexNew => out.push_str("mutex_new()"),
             Expr::MutexLock(handle) => out.push_str(&format!("mutex_lock({})", self.expression_text(handle))),
+            Expr::ChanNew(cap) => out.push_str(&format!("chan_new({})", self.expression_text(cap))),
+            Expr::ChanSend(ch, val) => out.push_str(&format!("chan_send({}, {})", self.expression_text(ch), self.expression_text(val))),
+            Expr::ChanRecv(ch) => out.push_str(&format!("chan_recv({})", self.expression_text(ch))),
             Expr::AtomicAdd(handle, value) => out.push_str(&format!("cell_add({}, {})", self.expression_text(handle), self.expression_text(value))),
             Expr::AtomicCas(handle, expect, new) => out.push_str(&format!("cell_cas({}, {}, {})", self.expression_text(handle), self.expression_text(expect), self.expression_text(new))),
             // The handle and the capture slots print like any expression; the

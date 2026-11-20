@@ -49,6 +49,8 @@ enum Val {
     // Mutex and lock guard (ADR-0216, single-threaded interpreter).
     Mutex,
     Guard,
+    // Channel handle (M4.3, single-threaded interpreter).
+    Chan(usize),
     Moved,
 }
 
@@ -75,6 +77,8 @@ struct Env<'a> {
     atomics: Vec<i64>,
     // Shared boxes (ADR-0216, spec/concurrency.md §9), indexed by handle.
     shared: Vec<Val>,
+    // Channels (M4.3, spec/concurrency.md §10): (buffer, capacity, closed).
+    chans: Vec<(std::collections::VecDeque<i64>, i64, bool)>,
 }
 
 const MAX_STEPS: usize = 5_000_000;
@@ -92,7 +96,7 @@ pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
         }
     }
     let main_fn = main_fn.ok_or_else(|| (String::new(), "program must define a main function".to_owned()))?;
-    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new() };
+    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new(), chans: Vec::new() };
     let mut locals: HashMap<usize, Val> = HashMap::new();
     match eval_stmts(&mut env, &main_fn.body, &mut locals, &mut None) {
         Flow::Next | Flow::Return(_) => Ok((env.out, 0)),
@@ -908,6 +912,14 @@ fn eval_stmts(
                     Err(flow) => return flow,
                 };
                 env.shared[id] = stored;
+            }
+            Statement::ChanClose(handle) => {
+                let id = match eval_expr(env, handle, locals, caller_locals, false) {
+                    Ok(Val::Chan(id)) => id,
+                    Ok(_) => return Flow::Trap("internal: chan_close on a non-handle".to_owned()),
+                    Err(flow) => return flow,
+                };
+                env.chans[id].2 = true;
             }
             Statement::PtrStore(id, value, ..) => {
                 let pointer = match eval_expr(env, &Expr::Variable(*id, Type::Int, 0, 0), locals, caller_locals, false) {
@@ -2072,6 +2084,40 @@ fn eval_expr(
             Val::Mutex => Ok(Val::Guard),
             _ => Err(Flow::Trap("internal: mutex_lock on a non-handle".to_owned())),
         },
+        Expr::ChanNew(cap) => {
+            let c = match eval_expr(env, cap, locals, caller_locals, false)? {
+                Val::Int(n) if n >= 0 => n,
+                Val::Int(_) => return Err(Flow::Trap("chan_new capacity must be non-negative".to_owned())),
+                _ => return Err(Flow::Trap("internal: chan_new capacity".to_owned())),
+            };
+            env.chans.push((std::collections::VecDeque::new(), c, false));
+            Ok(Val::Chan(env.chans.len() - 1))
+        }
+        Expr::ChanSend(ch, val) => {
+            let id = match eval_expr(env, ch, locals, caller_locals, false)? {
+                Val::Chan(id) => id,
+                _ => return Err(Flow::Trap("internal: chan_send on a non-handle".to_owned())),
+            };
+            let v = match eval_expr(env, val, locals, caller_locals, false)? {
+                Val::Int(n) => n,
+                _ => return Err(Flow::Trap("internal: chan_send value".to_owned())),
+            };
+            let (buf, _cap, closed) = &mut env.chans[id];
+            if *closed {
+                Ok(Val::Bool(false))
+            } else {
+                buf.push_back(v);
+                Ok(Val::Bool(true))
+            }
+        }
+        Expr::ChanRecv(ch) => {
+            let id = match eval_expr(env, ch, locals, caller_locals, false)? {
+                Val::Chan(id) => id,
+                _ => return Err(Flow::Trap("internal: chan_recv on a non-handle".to_owned())),
+            };
+            let (buf, _cap, _closed) = &mut env.chans[id];
+            Ok(Val::Int(buf.pop_front().unwrap_or(0)))
+        }
         other => Err(Flow::Trap(format!("unsupported expression in MIR interpreter: {}", format!("{other:?}").chars().take(60).collect::<String>()))),
     }
 }

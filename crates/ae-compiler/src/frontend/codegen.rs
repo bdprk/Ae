@@ -87,6 +87,25 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             out.push_str(&format!("    ae_guard t{t} = ae_mutex_lock({});\n", m.text));
             Emitted { text: format!("t{t}"), ty: Type::Guard, owned: true, moves: Vec::new(), materialized: true }
         }
+        Expr::ChanNew(cap) => {
+            let c = emit_expr(cap, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_chan t{t} = ae_chan_new({});\n", c.text));
+            Emitted { text: format!("t{t}"), ty: Type::Chan, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::ChanSend(ch, val) => {
+            let c = emit_expr(ch, out, next, false);
+            let v = emit_expr(val, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    bool t{t} = ae_chan_send({}, {});\n", c.text, v.text));
+            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::ChanRecv(ch) => {
+            let c = emit_expr(ch, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{t} = ae_chan_recv({});\n", c.text));
+            Emitted { text: format!("t{t}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
         // M2.12 slice 2: the address of addressable storage. The operand is a
         // variable or a field of one, so the C is an address-of; the pointer
         // itself is a plain value that neither moves nor releases.
@@ -1064,7 +1083,7 @@ pub(super) fn release_var(out: &mut String, id: usize, ty: Type) {
         Type::Thread(_) => out.push_str(&format!("    ae_free(v{id});\n")),
         // The cell/box/mutex is process-lifetime (spec/concurrency.md §8–§9):
         // nothing releases it, and copies share it.
-        Type::Atomic | Type::Shared(_) | Type::Mutex => {}
+        Type::Atomic | Type::Shared(_) | Type::Mutex | Type::Chan => {}
         // ADR-0216: scope exit unlocks the mutex guard (idempotent if moved).
         Type::Guard => out.push_str(&format!("    ae_mutex_unlock(&v{id});\n")),
         _ => out.push_str(&format!("    ae_str_release(&v{id});\n")),
@@ -1471,6 +1490,10 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                 let v = emit_expr(value, out, next, false);
                 let elem_c = c_type_field(shared_types_get(*sid));
                 out.push_str(&format!("    *({elem_c} *)({}.box) = {};\n", h.text, v.text));
+            }
+            Statement::ChanClose(handle) => {
+                let c = emit_expr(handle, out, next, false);
+                out.push_str(&format!("    ae_chan_close({});\n", c.text));
             }
         }
     }

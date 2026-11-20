@@ -37,6 +37,8 @@ impl Parser<'_> {
             // The copy-semantics mutex handle and owned lock guard (ADR-0216).
             "mutex" => Ok(Type::Mutex),
             "guard" => Ok(Type::Guard),
+            // Copy-semantics i64 channel handle (M4.3, spec/concurrency.md §10).
+            "chan" => Ok(Type::Chan),
             // The copy-semantics shared box handle (ADR-0216, spec/concurrency.md §9):
             // copying the handle shares the process-lifetime box; no handle towers.
             "shared" => {

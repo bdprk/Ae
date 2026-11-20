@@ -1,0 +1,1 @@
+ae: $DIR/chan_close_non_chan.ae:3:17: chan_close expects a chan handle
