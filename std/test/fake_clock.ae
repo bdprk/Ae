@@ -1,7 +1,7 @@
 // std/test/fake_clock.ae
 // Deterministic manually-advanced monotonic clock used by tests (ADR-0224 R2.2).
 // This replaces the former `clock_new` / `clock_now` / `clock_advance` compiler
-// builtins: the clock is an AE module over the existing `cell_*` primitive
+// builtins: the clock is an ae module over the existing `cell_*` primitive
 // family (copy-semantics handle to one shared i64 cell, ADR-0216 style), so a
 // copied clock value shares the same timeline across tasks and threads.
 //

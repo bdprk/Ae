@@ -282,12 +282,15 @@ pub(super) fn runtime_units(prefix: &str) -> Vec<(Option<String>, String)> {
 /// for the transitive dependency walk; a symbol that names no function is
 /// harmless (it is a type, macro or a name in a comment).
 pub(super) fn ae_symbols(text: &str) -> Vec<String> {
+    // `ae_` is three bytes: the prefix length and the slice width must agree
+    // (the 2026-11-20 rename from `ae_` shortened both together).
+    const PREFIX: &str = "ae_";
     let bytes = text.as_bytes();
     let mut found = Vec::new();
     let mut i = 0usize;
-    while i + 7 <= bytes.len() {
-        if &bytes[i..i + 7] == b"ae_" && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_')) {
-            let mut end = i + 7;
+    while i + PREFIX.len() <= bytes.len() {
+        if &bytes[i..i + PREFIX.len()] == PREFIX.as_bytes() && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_')) {
+            let mut end = i + PREFIX.len();
             while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') { end += 1; }
             found.push(text[i..end].to_owned());
             i = end;

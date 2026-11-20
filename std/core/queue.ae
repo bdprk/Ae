@@ -1,5 +1,5 @@
 // std/core/queue.ae
-// Fixed-capacity Queue state primitives for AE core.
+// Fixed-capacity Queue state primitives for ae core.
 
 pub struct QueueState8 {
     head: i64,

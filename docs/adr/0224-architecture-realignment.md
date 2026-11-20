@@ -15,7 +15,7 @@ An architecture audit at `994463d` compared the code against the charter (Hard R
 ## Decision
 
 - **R1 Freeze.** `docs/architecture/intrinsic-allowlist.txt` plus `tests/intrinsic_freeze.rs`. The runtime-object builtin set may only shrink. Every entry is tagged `keep` (an irreducible primitive: mutex, channel, scope), `migrate` (move behind a std module over a primitive), or `demote` (fake/scaffolding that leaves the compiler).
-- **R2 Demote fakes.** Move `adapter_*`, `stream_*` and `clock_*` (fake clock) into AE source under `std/test/` (pure structs + Vec/String), then delete their Type/Expr/runtime/interp code. M4.4 stays open until there are real epoll/IOCP sockets behind `std/net`.
+- **R2 Demote fakes.** Move `adapter_*`, `stream_*` and `clock_*` (fake clock) into ae source under `std/test/` (pure structs + Vec/String), then delete their Type/Expr/runtime/interp code. M4.4 stays open until there are real epoll/IOCP sockets behind `std/net`.
 - **R3 Pipeline split.** Order: (a) M0.2.08, so the CLI uses `ae-syntax` AST only; (b) a resolver pass producing DefIds over that AST (an HIR-lite); (c) a type checker over the resolved tree producing the existing typed `Expr`, so MIR and codegen keep working. Each step must be a slice with a differential corpus. LSP features are re-based on (b)/(c) and stay unchecked until then.
 - **R4 Layering.** Split into `std/core` (no alloc, no OS), `std/alloc` and `std/std`. Self-hosting IR records move to `std/compiler/`. Add a layering test that rejects core files importing alloc or hosted modules.
 - **R5 Status discipline.** Item IDs in a commit title must match the ledger items flipped in that commit. The master checklist is generated from the ledger, not edited by hand.

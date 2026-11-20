@@ -1,5 +1,5 @@
 // std/core/counter.ae
-// Saturating non-negative event counter primitive for AE core.
+// Saturating non-negative event counter primitive for ae core.
 
 pub struct EventCounter {
     total: i64,

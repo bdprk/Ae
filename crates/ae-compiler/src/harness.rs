@@ -185,7 +185,7 @@ fn test_join() -> i64 { return 0; }
         assert!(text.contains("let _ae_test_0 = test_a();"), "{text}");
         assert!(text.contains("if _ae_test_0 != 0 { print(\"FAIL test_a\"); exit(_ae_test_0); }"), "{text}");
         assert!(text.contains("print(\"ok: 2 passed\");"), "{text}");
-        // The synthesized code is ordinary AE: fmt must leave it
+        // The synthesized code is ordinary ae: fmt must leave it
         // unchanged apart from the documented leading-blank-line rule (the
         // leading newline only separates the driver from the user's source).
         assert_eq!(crate::fmt::format_source(&text).unwrap(), text.trim_start_matches('\n'));

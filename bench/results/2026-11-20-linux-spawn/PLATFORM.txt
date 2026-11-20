@@ -1,4 +1,4 @@
-AE spawn/wait thread surface — Linux (direct, CI billing-blocked)
+ae spawn/wait thread surface — Linux (direct, CI billing-blocked)
 
 Host: InstaBox evaluate-3 sandbox (Debian 13 x86-64, rustc 1.99.0, cargo 1.99.0, gcc 14.2.0)
 Revision: a96d1be (git archive of HEAD; the first archive 02908da exposed the

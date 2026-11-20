@@ -1,5 +1,5 @@
 // std/core/ir_reg_alloc.ae
-// Linear scan register allocation state tracker for AE backend.
+// Linear scan register allocation state tracker for ae backend.
 
 pub struct RegAllocation {
     vreg_id: i64,

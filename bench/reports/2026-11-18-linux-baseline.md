@@ -49,5 +49,5 @@ ssh instabox-node3 'cd ~/ae && cargo test --workspace --locked'
 ## Verdict
 
 Dual-platform parity for the baseline slice: the same revision passes the same suites on Windows 11 x86_64 and
-Debian 13 x86_64, including ASan/UBSan. This satisfies baseline items B01–B05/B09 for the Linux side; AE's own
+Debian 13 x86_64, including ASan/UBSan. This satisfies baseline items B01–B05/B09 for the Linux side; ae's own
 `unsafe` audit (M2.4 gate) and the 24-hour fuzzing gate (M2.13) remain open.

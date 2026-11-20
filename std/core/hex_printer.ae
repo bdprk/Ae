@@ -1,5 +1,5 @@
 // std/core/hex_printer.ae
-// 2-digit byte to hexadecimal ASCII code writer primitive for AE core.
+// 2-digit byte to hexadecimal ASCII code writer primitive for ae core.
 
 use "ascii_table.ae";
 

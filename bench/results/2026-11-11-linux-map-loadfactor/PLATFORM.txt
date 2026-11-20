@@ -9,7 +9,7 @@ instabox-node 沙箱：Debian 13，x86-64，4 vCPU；gcc 14.2.0-19；rustc 1.99.
 四个探针把 map 负载的每轮成本拆开（`key.ae` = 只有 LCG + 键构造、`hit.ae` = 再加 1M 次
 命中查找、`put.ae` = 再加 1M 次覆盖写、`arith.ae` = 只有 LCG）：
 
-| 探针 | AE | Rust |
+| 探针 | ae | Rust |
 |---|---|---|
 | arith（纯算术） | 3.76 ms | 3.57 ms |
 | key（+ 1M 次短字符串） | 32.55 | 30.82 |

@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-AE Design Charter §2.4 specifies operator overloading via Traits (`Add`, `Sub`, `Mul`, `Div`) without implicit conversions. All arithmetic boundaries adhere strictly to checked integer and IEEE 754 float semantics across platforms.
+ae Design Charter §2.4 specifies operator overloading via Traits (`Add`, `Sub`, `Mul`, `Div`) without implicit conversions. All arithmetic boundaries adhere strictly to checked integer and IEEE 754 float semantics across platforms.
 
 ## Decision
 1. Introduce operator traits in `std/core/ops.ae`.

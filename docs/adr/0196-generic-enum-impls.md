@@ -28,4 +28,4 @@ Re-runnable:
 ## Consequences
 
 - Generic enums and generic structs now have symmetric inherent `impl` capabilities (`self`, `Self`, `Type[Args]::assoc(...)`, `value.method(...)`).
-- Standard-library `Option[T]` and `Result[T, E]` shapes can be written directly in AE with ergonomic methods (`is_some`, `unwrap_or`, constructors).
+- Standard-library `Option[T]` and `Result[T, E]` shapes can be written directly in ae with ergonomic methods (`is_some`, `unwrap_or`, constructors).

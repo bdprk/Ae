@@ -1,5 +1,5 @@
 // std/core/rc_header.ae
-// Reference count control block header primitive for AE allocators.
+// Reference count control block header primitive for ae allocators.
 
 pub struct RcHeader {
     strong_count: i64,

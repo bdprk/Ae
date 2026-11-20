@@ -4,7 +4,7 @@ Status: Accepted (2026-11-20)
 
 ## Context
 
-AE requires first-class editor integration to support daily development across VS Code, Cursor, Zed, and Neovim without third-party plugins or ad-hoc daemon processes.
+ae requires first-class editor integration to support daily development across VS Code, Cursor, Zed, and Neovim without third-party plugins or ad-hoc daemon processes.
 
 The requirements from Milestone M6.2 are:
 - **M6.2.01**: Synchronize sequential in-memory unsaved edits (including multi-byte UTF-8 characters) against compiler ASTs.

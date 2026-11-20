@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-AE previously relied on free-standing built-in functions (`vec_push`, `map_get`, `strvec_len`, etc.) or simulated method syntax routed through specialized internal compiler desugaring. Under the M1 roadmap of the Language Charter (§2.1, §2.2), methods must be first-class constructs defined via `impl` blocks on structs and enums.
+ae previously relied on free-standing built-in functions (`vec_push`, `map_get`, `strvec_len`, etc.) or simulated method syntax routed through specialized internal compiler desugaring. Under the M1 roadmap of the Language Charter (§2.1, §2.2), methods must be first-class constructs defined via `impl` blocks on structs and enums.
 
 ## Decision
 1. Standardize syntax for inherent methods and associated functions:

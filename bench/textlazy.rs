@@ -1,6 +1,6 @@
 // The same statistics as text.rs — Rust's `split(' ')` is already lazy, so the
 // `textlazy` workload uses it unchanged. Having both `text` and `textlazy`
-// entries makes the two API shapes explicit on the AE and Go sides, where
+// entries makes the two API shapes explicit on the ae and Go sides, where
 // the eager form differs (ADR-53).
 
 use std::fs;

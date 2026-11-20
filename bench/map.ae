@@ -1,4 +1,4 @@
-// Histogram counting, the AE twin of map.go: a fixed-seed LCG feeds a
+// Histogram counting, the ae twin of map.go: a fixed-seed LCG feeds a
 // million draws into a map[string, i64] with 10000 keys, then a
 // count-weighted checksum reads every bucket. Output must match the other
 // implementations exactly, so the Err arms never print: a missing key in the

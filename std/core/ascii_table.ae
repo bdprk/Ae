@@ -1,5 +1,5 @@
 // std/core/ascii_table.ae
-// ASCII character classification lookup table state primitives for AE core.
+// ASCII character classification lookup table state primitives for ae core.
 
 pub fn ascii_to_uppercase(c: i64) -> i64 {
     if c >= 97 && c <= 122 {

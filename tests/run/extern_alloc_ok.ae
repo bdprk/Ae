@@ -1,4 +1,4 @@
-// ADR-0208 slice 1: the runtime allocator is reachable from AE source
+// ADR-0208 slice 1: the runtime allocator is reachable from ae source
 // through extern "C" declarations against the ae_std_* bridge wrappers
 // (runtime_ex.c) — the exact shapes the self-hosted containers are built on.
 // The wrappers carry int64_t signatures so the emitted prototypes match the

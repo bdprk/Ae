@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run or explicitly update AE's diagnostic and execution snapshots."""
+"""Run or explicitly update ae's diagnostic and execution snapshots."""
 import argparse
 import os
 from pathlib import Path

@@ -9,8 +9,8 @@
 
 - OS: Windows 11 (build 26300), x86-64
 - CPU/memory/power policy: not recorded (single desktop machine, default power plan)
-- Compiler: gcc via the AE driver; AE binary `target/debug/ae.exe` built with `cargo build -p ae` (dev profile, the same binary the tests use)
-- Cache state: AE content-addressed cache warm; builds go through `build --debug` (-O0 object code), timings measure the produced binaries' execution only
+- Compiler: gcc via the ae driver; ae binary `target/debug/ae.exe` built with `cargo build -p ae` (dev profile, the same binary the tests use)
+- Cache state: ae content-addressed cache warm; builds go through `build --debug` (-O0 object code), timings measure the produced binaries' execution only
 
 ## Reproduction
 

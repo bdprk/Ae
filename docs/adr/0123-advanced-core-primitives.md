@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-Per Language Charter §2.1 and §4.1, expanding AE standard library coverage into production scenarios (network proxies, state machines, circular buffers, protocol encoders) requires zero-dependency, allocation-free data types and state transition logic.
+Per Language Charter §2.1 and §4.1, expanding ae standard library coverage into production scenarios (network proxies, state machines, circular buffers, protocol encoders) requires zero-dependency, allocation-free data types and state transition logic.
 
 ## Decision
 1. Introduce advanced core modules in `std/core/`:

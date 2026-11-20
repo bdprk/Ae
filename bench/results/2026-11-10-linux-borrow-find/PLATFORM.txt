@@ -1,4 +1,4 @@
-AE Linux native verification, 2026-11-10 (W1 backfill)
+ae Linux native verification, 2026-11-10 (W1 backfill)
 Scope: ADR-35 (generic &T borrow, read-only borrow forwarding) and ADR-36 (find -> IntResult)
 Source: the Windows repository at commit 349a13f, synced as source files only
         (src/, tests/, scripts/, examples/, docs/, Cargo.toml, Cargo.lock, bench/run.py).

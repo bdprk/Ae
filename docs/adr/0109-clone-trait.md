@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-AE follows strict single-owner semantics (§2.5). Types that do not implement `Copy` are moved. Explicit duplication must proceed through a standardized `Clone` trait rather than implicit deep copying or ad-hoc duplication functions.
+ae follows strict single-owner semantics (§2.5). Types that do not implement `Copy` are moved. Explicit duplication must proceed through a standardized `Clone` trait rather than implicit deep copying or ad-hoc duplication functions.
 
 ## Decision
 1. Introduce the `Clone` trait in `std/core/clone.ae`.

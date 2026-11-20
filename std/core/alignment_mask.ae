@@ -1,5 +1,5 @@
 // std/core/alignment_mask.ae
-// Power-of-two alignment check and padding primitives for AE core.
+// Power-of-two alignment check and padding primitives for ae core.
 
 pub fn is_power_of_two(val: i64) -> bool {
     if val <= 0 {

@@ -1,4 +1,4 @@
-AE scoped borrow captures (M4.1.02) — Linux (direct, CI billing-blocked)
+ae scoped borrow captures (M4.1.02) — Linux (direct, CI billing-blocked)
 
 Host: InstaBox evaluate-3 (Debian 13 x86-64, rustc 1.99.0, gcc 14.2.0)
 Revision: 696c2af (git archive of HEAD)

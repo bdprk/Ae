@@ -2432,7 +2432,7 @@ fn invoke_call(
 ) -> Result<Val, Flow> {
     let callee = *env.fns.get(&fn_id).ok_or_else(|| {
         match crate::frontend::extern_name(fn_id) {
-            // A declared extern has no AE body to interpret (M2.12
+            // A declared extern has no ae body to interpret (M2.12
             // slice 4): the compiled backends link the C symbol; the
             // interpreter cannot.
             Some(name) => Flow::Trap(format!("extern '{name}' cannot run in the interpreter; run the compiled program")),

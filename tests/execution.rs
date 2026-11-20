@@ -1713,7 +1713,7 @@ fn copy_twice[T: Copy](x: T) -> T { let y = x; return y; }
 fn both[T: Add + Eq](a: T, b: T) -> bool { return (a + b) == a; }
 fn main() {
     print(add[i64](2, 3));
-    print(add[string]("ae", "ther"));
+    print(add[string]("be", "ta"));
     print(larger[i64](4, 9));
     print(same[bool](true, true));
     print(same[string]("x", "x"));
@@ -1725,7 +1725,7 @@ fn main() {
 }"#;
     let output = execute(source);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "5\nae\n9\ntrue\ntrue\n7\nfalse\ntrue\ntrue\nfalse\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "5\nbeta\n9\ntrue\ntrue\n7\nfalse\ntrue\ntrue\nfalse\n");
     for source in [
         "fn add[T: Add](a: T, b: T) -> T { return a + b; } fn main() { print(add[bool](true, false)); }",
         "fn larger[T: Ord](a: T, b: T) -> T { if a > b { return a; } return b; } fn main() { print(larger[string](\"a\", \"b\")); }",
@@ -4959,7 +4959,7 @@ fn no_mangle_exposure_runs_bidirectionally_and_stays_c_visible() {
     // the symbol C-visible with external linkage. The runtime's
     // trampoline calls it exactly as a real C caller would — through a
     // foreign declaration of a symbol defined later in the same unit —
-    // and main calls it directly as AE code.
+    // and main calls it directly as ae code.
     let dir = unique_temp_dir("no_mangle");
     let source = dir.join("exposure.ae");
     fs::write(&source, "#[no_mangle]\nextern \"C\" fn test_add(a: i64, b: i64) -> i64 { return a + b; }\nextern \"C\" fn ae_exposure_trampoline(a: i64, b: i64) -> i64;\nfn main() {\n    unsafe { print(ae_exposure_trampoline(20, 22)); }\n    print(test_add(1, 2));\n}").unwrap();
@@ -5299,7 +5299,7 @@ fn forward(values: &vec) -> i64 { return total(&values); }
 fn count(parts: &vec[string]) -> i64 { return len(parts); }
 fn forward_parts(parts: &vec[string]) -> i64 { return count(&parts); }
 fn main() {
-    let text = "AE";
+    let text = "ae";
     let numbers = vec[10, 20, 30];
     let words = split("alpha,beta,gamma", ",");
     print(size_of[string](text));
@@ -5313,7 +5313,7 @@ fn main() {
 }"#;
     let output = execute(source);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "6\n3\n3\n60\n3\nAE\n10\nbeta\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "2\n3\n3\n60\n3\nae\n10\nbeta\n");
 
     for (source, expected) in [
         ("fn f[T](x: &T) -> i64 { return len(x); } fn main() { print(f[i64](1)); }", "has no read-only borrow"),
@@ -5341,7 +5341,7 @@ fn main() {
 #[test]
 fn find_reports_a_byte_offset_or_an_error_value() {
     let source = r#"fn main() {
-    let line = "name=AE; mode=fast";
+    let line = "name=ae; mode=fast";
     let eq = find(line, "=");
     match eq { IntResult::Ok(at) => { print(at); } IntResult::Err(reason) => { print(reason); } }
     let mode = find(line, "mode=");
@@ -5355,7 +5355,7 @@ fn find_reports_a_byte_offset_or_an_error_value() {
 }"#;
     let output = execute(source);
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "4\n13\nsubstring not found\n0\n7\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "4\n9\nsubstring not found\n0\n7\n");
 
     for (source, expected) in [
         ("fn main() { let x = find(1, \"a\"); print(1); }", "expects a string to search in"),
@@ -7434,7 +7434,7 @@ fn package_manifest_selects_entry_and_validates_metadata() {
     for (source, message) in [
         (valid.replace("sample-tool", "UpperCase"), "package.name"),
         (valid.replace("0.1.0", "0.1"), "package.version"),
-        (valid.replace("'0.1'", "'99.0'"), "requires AE 99.0"),
+        (valid.replace("'0.1'", "'99.0'"), "requires ae 99.0"),
         (format!("{valid}\n[dependencies]\nutil = '1.0'\n"), "dependency resolution"),
         ("[package\n".to_owned(), "TOML"),
     ] {
@@ -7456,7 +7456,7 @@ fn new_scaffolds_a_runnable_package_without_overwriting() {
     let manifest = fs::read(project.join("ae.toml")).unwrap();
     let output = Command::new(cli).current_dir(&project).arg("run").output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "Hello, AE!\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "Hello, ae!\n");
 
     let source = project.join("src/main.ae");
     fs::write(&source, "fn main() {}").unwrap();
@@ -7483,7 +7483,7 @@ fn init_scaffolds_into_an_existing_directory_without_overwriting_sources() {
     assert!(created.status.success(), "{}", String::from_utf8_lossy(&created.stderr));
     let output = Command::new(cli).current_dir(&plain).arg("run").output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "Hello, AE!\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"), "Hello, ae!\n");
 
     let manifest = fs::read(plain.join("ae.toml")).unwrap();
     let again = init(&plain, None);

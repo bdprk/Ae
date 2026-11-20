@@ -1,5 +1,5 @@
 // std/core/stack.ae
-// Fixed-capacity Stack primitive for AE core.
+// Fixed-capacity Stack primitive for ae core.
 
 pub struct FixedStack8 {
     len: i64,

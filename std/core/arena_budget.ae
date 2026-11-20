@@ -1,5 +1,5 @@
 // std/core/arena_budget.ae
-// Memory allocation quota and budget accounting primitive for AE core.
+// Memory allocation quota and budget accounting primitive for ae core.
 
 pub struct MemoryBudget {
     limit_bytes: i64,

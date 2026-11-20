@@ -1,4 +1,4 @@
-# AE implementation ledger
+# ae implementation ledger
 
 Use this file with the architecture workbook. All boxes describe planned verification, including features already present in the prototype. Check a box only against an identified revision and evidence. Existing implementations can satisfy a step through the production entry point. Proposed semantics that conflict with an accepted ADR require an explicit decision before implementation.
 
@@ -168,7 +168,7 @@ Entry dependency: M3.1.
 
 - [x] M3.2.01. **Define byte streams.** Use a scripted reader that returns short chunks and then EOF. (implemented per [ADR-0221](adr/0221-byte-streams-and-buffered-readers.md): `reader_new(data, chunk_size, buf_cap)` / `reader_read(r, max_bytes)` / `reader_eof(r)` behind the pruned `ae_reader` unit; `tests/run/byte_streams.ae` reads `"abcdefg"` in 3-byte short chunks `"abc"`, `"def"`, `"g"`, then `""` + `reader_eof == true`; compiled + `--interp` parity pinned by `byte_streams_and_buffered_readers_agree_across_backends`; single-platform verified on Windows x86-64)
 - [x] M3.2.02. **buffered readers.** Read a line spanning two buffers and preserve the following byte. (implemented per [ADR-0221](adr/0221-byte-streams-and-buffered-readers.md): `reader_read_line(r)` refills an internal `buf_cap`-byte buffer across multiple refills and preserves bytes after `\n`; `tests/run/byte_streams.ae` reads a 10-byte line across 4-byte buffers and preserves `'Z'` for the next `reader_read(r, 1)`; compiled + `--interp` parity pinned; single-platform verified on Windows x86-64)
-- [x] M3.2.03. **files.** Copy a file containing NUL bytes and handle partial writes. (`hosted_files_preserve_bytes_and_processes_recover_status`: a file of `a\0b\0c` is read, written back and compared byte for byte; the write returns the byte count. Partial writes are handled inside `try_write_file`'s loop, which the whole-file API cannot force from AE)
+- [x] M3.2.03. **files.** Copy a file containing NUL bytes and handle partial writes. (`hosted_files_preserve_bytes_and_processes_recover_status`: a file of `a\0b\0c` is read, written back and compared byte for byte; the write returns the byte count. Partial writes are handled inside `try_write_file`'s loop, which the whole-file API cannot force from ae)
 - [x] M3.2.04. **path encoding.** Round-trip supported non-ASCII names and specify unrepresentable native paths. (same test: a file named `中文 名.txt` — non-ASCII plus a space — is opened by name and its 6 bytes are returned; unrepresentable native paths surface as the `Err` arm of the typed results rather than a panic)
 - [x] M3.2.05. **clocks.** Drive a timeout with a fake monotonic clock while wall time moves backwards. (implemented per [ADR-0219](adr/0219-controlled-monotonic-clock-and-timers.md): `clock_new()`, `clock_now(clk)`, `clock_advance(clk, delta)` behind the pruned `ae_clock` unit; strictly monotonic with negative-delta trap; L3 in `tests/run/timers_clock.ae` drives a task timeout via controlled clock; compiled + `--interp` parity pinned by `controlled_clock_and_timers_agree_across_backends`; single-platform verified on Windows x86-64)
 - [x] M3.2.06. **processes.** Pass an argument containing spaces and recover child exit status. (`run_command_reports_status_and_output` covers a failing spawn and a zero exit; `hosted_files_preserve_bytes_and_processes_recover_status` adds a two-word argument that reaches the child intact and a child that exits 7, whose status the parent reads back)
@@ -331,13 +331,13 @@ Integration gate: C and Python call and release the same library under leak chec
 
 Entry dependency: M6.1.
 
-- [ ] M7.2.01. **Port lexer.** Compare token streams from Rust and AE lexers on the baseline corpus.
+- [ ] M7.2.01. **Port lexer.** Compare token streams from Rust and ae lexers on the baseline corpus.
 - [ ] M7.2.02. **parser.** Compare normalized parse trees and error recovery spans.
 - [ ] M7.2.03. **resolver.** Compare binding graphs on imports and nested scopes.
 - [ ] M7.2.04. **checker.** Compare accepted and rejected programs including diagnostic locations.
 - [ ] M7.2.05. **MIR.** Compare normalized control flow, loans and drop decisions.
 - [ ] M7.2.06. **codegen driver.** Build and run the same sample using both compiler drivers.
-- [ ] M7.2.07. **compile stage 1.** Build the AE compiler with the pinned Rust seed and record its hash.
+- [ ] M7.2.07. **compile stage 1.** Build the ae compiler with the pinned Rust seed and record its hash.
 - [ ] M7.2.08. **stage 2.** Use stage 1 to build stage 2 in a clean directory and run conformance.
 - [ ] M7.2.09. **stage 3.** Use stage 2 to build stage 3, compare normalized artifacts and investigate differences.
 

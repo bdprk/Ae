@@ -1,4 +1,4 @@
-AE thread primitives + atomic allocator accounting — Linux (direct, CI billing-blocked)
+ae thread primitives + atomic allocator accounting — Linux (direct, CI billing-blocked)
 
 Host: InstaBox evaluate-3 sandbox (Debian 13 x86-64, rustc 1.99.0, cargo 1.99.0, gcc 14.2.0)
 Revision: 2fa7b15 (git archive of HEAD)

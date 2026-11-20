@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-AE's Design Charter §2.1 and Roadmap M1.8 require zero-cost iterators as the primary abstraction for sequence traversal and transformations, replacing specialized while-index loops and hard-coded container traversal built-ins.
+ae's Design Charter §2.1 and Roadmap M1.8 require zero-cost iterators as the primary abstraction for sequence traversal and transformations, replacing specialized while-index loops and hard-coded container traversal built-ins.
 
 ## Decision
 1. Introduce the `Iterator` trait in `std/core/iter.ae`.

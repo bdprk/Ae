@@ -61,7 +61,7 @@ fn extern_declarations() -> Vec<(String, Vec<Type>, Type)> {
 }
 // The `#[no_mangle]` exposures (M2.12 U7): an `extern "C" fn` WITH a body,
 // emitted under its own name with external linkage so a C symbol can call
-// it. The registry maps the AE function id to the C symbol; the call
+// it. The registry maps the ae function id to the C symbol; the call
 // sites and the emitter both read it.
 thread_local! {
     static EXPOSURE_NAMES: std::cell::RefCell<HashMap<usize, String>> = std::cell::RefCell::new(HashMap::new());
@@ -247,7 +247,7 @@ fn shared_types_get(id: usize) -> Type {
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
 const RESERVED: &[&str] = &["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "f64map_new", "map_put", "map_get", "map_has", "map_remove", "map_inc", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "find", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "f64vec_new", "run_command", "set_cwd", "to_f64", "to_i64", "c_size_of", "c_align_of", "c_offset_of", "tokenize", "sqrt", "abs", "floor", "ceil", "round", "exp", "log", "sin", "cos", "pow", "atan2", "min", "max", "spawn", "wait", "cell_new", "cell_load", "cell_store", "cell_add", "cell_cas", "shared_new", "shared_get", "shared_set", "mutex_new", "mutex_lock", "chan_new", "chan_send", "chan_try_send", "chan_recv", "chan_select", "chan_close", "exec_new", "task_spawn", "task_yield", "exec_run", "timer_new", "timer_ready", "timer_cancel", "scope_new", "scope_spawn", "cancel_new", "cancel_trigger", "cancel_complete", "cancel_is_set", "pool_new", "pool_spawn", "pool_join", "reader_new", "reader_read", "reader_read_line", "reader_eof"];
-// The math builtins (ADR-60): AE name, C symbol, arity. Every argument and
+// The math builtins (ADR-60): ae name, C symbol, arity. Every argument and
 // the result is f64, and each call maps 1:1 onto C libm, so domain errors are
 // IEEE NaN/-inf instead of language-level failures — unlike the checked `/`
 // operator, whose contract is part of the language itself. `abs` maps to

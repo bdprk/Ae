@@ -8,8 +8,8 @@ Python：3.10.11
 重跑：python bench/run.py [--release] [--cold] [--workload sum|text|all]
 
 文件说明：
-- bench-dev.json      开发模式（AE -O0 / Rust opt-level=0），缓存默认（含命中路径）
-- bench-rel.json      优化模式（AE -O2 / Rust opt-level=2）
+- bench-dev.json      开发模式（ae -O0 / Rust opt-level=0），缓存默认（含命中路径）
+- bench-rel.json      优化模式（ae -O2 / Rust opt-level=2）
 - bench-cold.json     冷缓存模式（--cold，每轮全新 AE_CACHE，测量真实编译）
 
 两个工作负载：
@@ -32,10 +32,10 @@ text
 - 冷缓存：ae 构建 1211.0 / go 1335.7 / rust 270.2
 
 观察（仅此机器、此输入）：
-1. 热缓存下的 AE 构建时间主要由缓存命中决定（约 75ms），不能当作编译速度证据。
+1. 热缓存下的 ae 构建时间主要由缓存命中决定（约 75ms），不能当作编译速度证据。
 2. 冷构建约 1.2s 中绝大部分是 GCC 编译约 1MB 生成 C 的时间，已接近 Go 的整个构建；
    这是阶段 D 要用「更小生成 C / 增量 / 自有后端」解决的第一个可量化目标。
-3. text 负载下 AE 运行峰值 23.9MB 明显高于 Rust 的 10.8MB：split 为每个令牌分配
+3. text 负载下 ae 运行峰值 23.9MB 明显高于 Rust 的 10.8MB：split 为每个令牌分配
    一个独立字符串（40 万个），每次分配都带 malloc 头部与 16 字节对齐的代价。这是
    「数据结构空间成本公开」的第一个真实数据点，也是后续引入零拷贝切片/区域分配的依据。
 4. 编译产物 67KB 对 152KB/2.6MB，符合「低磁盘占用」目标；Python 脚本 629 字节但依赖解释器。

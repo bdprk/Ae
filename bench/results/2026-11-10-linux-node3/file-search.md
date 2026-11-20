@@ -3,13 +3,13 @@
 Date: 2026-11-10 ｜ Input: `bench-input.txt` (20,000 lines, ~1.4 MB, generated with a fixed seed)
 Semantics: Count total lines and lines containing the substring `ae`. All four implementations output identically: `20,000` / `12,140`.
 
-Version pinning: AE commit `a0dbee1`+ (working tree at the time of archiving this directory); Gojo `b460b17` ("Report where a segfault happened", `git clone --depth 1`); Go 1.27.1; rustc 1.99.0; GCC 14.2.0. Machine: 4 vCPU / 7.8 GiB / Debian 13.
+Version pinning: ae commit `a0dbee1`+ (working tree at the time of archiving this directory); Gojo `b460b17` ("Report where a segfault happened", `git clone --depth 1`); Go 1.27.1; rustc 1.99.0; GCC 14.2.0. Machine: 4 vCPU / 7.8 GiB / Debian 13.
 
 ## Results (Median of 7 runs / 3 builds)
 
 | Language | Pure Execution | Cold Build | Hot Build | Artifact Size |
 |---|---|---|---|---|
-| AE (-O2) | 5.81 ms | 43 ms | 2.5 ms (cache hit) | **16,888 B** |
+| ae (-O2) | 5.81 ms | 43 ms | 2.5 ms (cache hit) | **16,888 B** |
 | Gojo (default optimization) | 3.74 ms | **28 ms** | 28 ms | 230,904 B |
 | Go | 2.84 ms | 116 ms | ~116 ms | 2,490,891 B |
 | Rust (-O) | **2.35 ms** | — | — | 4,546,568 B |
@@ -18,10 +18,10 @@ Version pinning: AE commit `a0dbee1`+ (working tree at the time of archiving thi
 
 ## Fairness Disclosures (Proposal §17)
 
-- **Execution gap stems from the standard library and slice allocations**: Gojo's `str.contains` is an optimized native implementation; the AE version uses a naive byte-by-byte scan in the language (`bytes()` + nested loops, zero allocations). The string representation has been changed to carry its length (ADR-8 evolution, `len`/`slice` in $O(1)$ time); switching to `contains(slice(...))` for line-by-line matching measured 7.58 ms—20,000 small slice allocations remain a cost, whereas Gojo's slices are zero-allocation borrowing views. Borrowing views (such as `&str`) are targeted for the next evolution.
+- **Execution gap stems from the standard library and slice allocations**: Gojo's `str.contains` is an optimized native implementation; the ae version uses a naive byte-by-byte scan in the language (`bytes()` + nested loops, zero allocations). The string representation has been changed to carry its length (ADR-8 evolution, `len`/`slice` in $O(1)$ time); switching to `contains(slice(...))` for line-by-line matching measured 7.58 ms—20,000 small slice allocations remain a cost, whereas Gojo's slices are zero-allocation borrowing views. Borrowing views (such as `&str`) are targeted for the next evolution.
 - Go and Rust use `strings.Contains` and `str::lines + contains` from their respective standard libraries; semantics are identical (splitting lines by `\n`, substring matching).
-- AE's hot build goes through a content-addressed cache; cold build is a pristine, empty cache. Gojo and Go have no caching tier; their "hot" builds are simply repeated builds (the toolchain's internal cache state is uncontrolled).
-- Single-machine, single-workload, small input; this does not constitute a "comprehensive superiority" conclusion. Per Proposal §7.3, this is the first public Linux file search data: AE leads in artifact size (13.7× smaller than Gojo) and hot build speed, while lagging behind Gojo in cold build and execution speed.
+- ae's hot build goes through a content-addressed cache; cold build is a pristine, empty cache. Gojo and Go have no caching tier; their "hot" builds are simply repeated builds (the toolchain's internal cache state is uncontrolled).
+- Single-machine, single-workload, small input; this does not constitute a "comprehensive superiority" conclusion. Per Proposal §7.3, this is the first public Linux file search data: ae leads in artifact size (13.7× smaller than Gojo) and hot build speed, while lagging behind Gojo in cold build and execution speed.
 
 ## Reproduction
 
@@ -30,7 +30,7 @@ Commands: `ae run examples/grep.ae`, `gojo run grep.gojo`, `go run grep.go`, `ru
 
 ## Re-test Notes (Second round on the same day, after string representation change)
 
-Re-tested after changing strings to length-carrying representations (ADR-8 evolution): AE 7.62 ms / Gojo 5.87 ms (median of 7 runs each). Both are about 30% higher than the first round due to the host bearing other workloads concurrently, causing absolute values to drift; the relative ratio remains stable ($\approx 1.3:1$). The naive byte-scan variant remains AE's fastest variant; the impact of slice allocations and borrowing views is detailed in ADR-8.
+Re-tested after changing strings to length-carrying representations (ADR-8 evolution): ae 7.62 ms / Gojo 5.87 ms (median of 7 runs each). Both are about 30% higher than the first round due to the host bearing other workloads concurrently, causing absolute values to drift; the relative ratio remains stable ($\approx 1.3:1$). The naive byte-scan variant remains ae's fastest variant; the impact of slice allocations and borrowing views is detailed in ADR-8.
 
 ## Third Round of Re-testing (After borrowing views landed)
 

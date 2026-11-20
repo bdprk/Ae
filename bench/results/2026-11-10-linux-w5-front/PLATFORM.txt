@@ -1,4 +1,4 @@
-AE Linux native verification, 2026-11-10 (ADR-41)
+ae Linux native verification, 2026-11-10 (ADR-41)
 Scope: share lexer output per source file, remove O(N^2) token cloning
 
 Platform

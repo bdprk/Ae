@@ -1,5 +1,5 @@
 // std/core/varint_zigzag.ae
-// Signed integer ZigZag encoding and decoding primitives for AE core.
+// Signed integer ZigZag encoding and decoding primitives for ae core.
 
 pub fn zigzag_encode_i64(n: i64) -> i64 {
     // (n << 1) ^ (n >> 63)

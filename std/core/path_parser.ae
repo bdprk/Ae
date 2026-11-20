@@ -1,5 +1,5 @@
 // std/core/path_parser.ae
-// Path separator and extension offset split primitives for AE core.
+// Path separator and extension offset split primitives for ae core.
 
 pub fn path_is_separator(c: i64) -> bool {
     // '/' is 47, '\\' is 92

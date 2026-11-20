@@ -1,4 +1,4 @@
-AE Windows local verification, 2026-11-10 (ADR-40)
+ae Windows local verification, 2026-11-10 (ADR-40)
 Scope: declaration-site capability coverage check for constrained generics
 
 Platform

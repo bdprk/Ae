@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Differential fuzzing for the AE compiler (plan M2.10, C-backend slice).
+"""Differential fuzzing for the ae compiler (plan M2.10, C-backend slice).
 
 Generates random *well-typed* programs from a grammar of arithmetic,
 comparisons, control flow, strings (including one a branch moves into a

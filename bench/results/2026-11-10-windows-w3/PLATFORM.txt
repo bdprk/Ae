@@ -1,4 +1,4 @@
-AE Windows local verification, 2026-11-10 (W3 stage 1)
+ae Windows local verification, 2026-11-10 (W3 stage 1)
 Scope: ADR-38 (reachable-runtime pruning, WIN32_LEAN_AND_MEAN, ae deps)
 
 Platform

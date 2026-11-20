@@ -1,7 +1,7 @@
 ﻿# Type System Specification (M1.1)
 
 ## 1. Overview and Design Rules
-AE's type system provides zero-cost abstractions, static memory safety, and explicit capability boundaries without runtime overhead or hidden allocations.
+ae's type system provides zero-cost abstractions, static memory safety, and explicit capability boundaries without runtime overhead or hidden allocations.
 
 ### Hard Rules:
 1. **No Implicit Numeric Conversions**: Numeric conversions between distinct scalar types must be explicit via constructors or casts.

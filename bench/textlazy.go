@@ -1,6 +1,6 @@
 // The same statistics as text.go, in the lazy shape: scan the bytes once and
 // count tokens and their lengths without building a slice of tokens. This is
-// the Go analogue of AE's `tokenize` cursor and of Rust's `split(' ')`
+// the Go analogue of ae's `tokenize` cursor and of Rust's `split(' ')`
 // iterator, so the `textlazy` workload compares the same algorithm in all
 // three languages (the `text` workload keeps the eager `split`/`strings.Split`
 // shape instead).

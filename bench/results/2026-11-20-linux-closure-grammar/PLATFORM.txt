@@ -1,4 +1,4 @@
-AE M0.2.03 closure grammar verification — Linux (direct, CI billing-blocked)
+ae M0.2.03 closure grammar verification — Linux (direct, CI billing-blocked)
 
 Host: InstaBox evaluate-3 sandbox (Debian 13 x86-64, rustc 1.99.0, cargo 1.99.0, gcc 14.2.0)
 Revision: 36cfefa (git archive of HEAD)

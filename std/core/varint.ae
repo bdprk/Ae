@@ -1,5 +1,5 @@
 // std/core/varint.ae
-// LEB128 variable-length integer encoding primitives for AE core.
+// LEB128 variable-length integer encoding primitives for ae core.
 
 pub fn varint_encoded_len_u64(val: i64) -> i64 {
     if val < 0 {

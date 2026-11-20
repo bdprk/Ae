@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-AE provides deterministic single-owner memory management (§2.5). In addition to contiguous stack and array storage, explicit unique pointer semantics are required for recursive data structures and heap allocations.
+ae provides deterministic single-owner memory management (§2.5). In addition to contiguous stack and array storage, explicit unique pointer semantics are required for recursive data structures and heap allocations.
 
 ## Decision
 1. Introduce `Box[T]` in `std/core/box.ae` as the fundamental unique pointer wrapper.

@@ -24,7 +24,7 @@ fn forward_parts(parts: &vec[string]) -> i64 {
 }
 
 fn main() {
-    let text = "AE";
+    let text = "ae";
     let numbers = vec[10, 20, 30];
     let words = split("alpha,beta,gamma", ",");
 
