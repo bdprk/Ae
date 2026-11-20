@@ -1,0 +1,63 @@
+// ADR-0224 R2.1: the in-memory readiness/completion model is ordinary AE
+// code in std/test, not a compiler builtin. Output is pinned against the
+// former builtin implementation (network_adapter.stdout).
+use "../../std/test/fake_io.ae";
+
+fn main() {
+    // readiness, would-block, and edge-triggered rearm
+    var r1 = io_submit_read("HelloWorld", 4);
+    print(io_step(&mut r1));
+    print(io_step(&mut r1));
+    print(io_rearm(&mut r1));
+    print(io_step(&mut r1));
+    print(io_rearm(&mut r1));
+    print(io_step(&mut r1));
+    print(io_transferred(&mut r1));
+
+    // cancellation keeps the buffer owned by the request
+    var r2 = io_submit_read("CancelMeBufferRetention", 5);
+    print(io_cancel(&mut r2));
+    print(io_step(&mut r2));
+    print(len(io_transferred(&mut r2)));
+
+    // fragmented writes
+    var w1 = io_submit_write("PartialWriteData", 6);
+    print(io_step(&mut w1));
+    print(io_transferred(&mut w1));
+    print(io_rearm(&mut w1));
+    print(io_step(&mut w1));
+    print(io_transferred(&mut w1));
+    print(io_rearm(&mut w1));
+    print(io_step(&mut w1));
+    print(io_transferred(&mut w1));
+
+    // completion racing a cancel token: one terminal outcome
+    let c_token = cancel_new();
+    var r3 = io_submit_read("FastData", 100);
+    let res = io_step(&mut r3);
+    var won = false;
+    if res == 1 {
+        won = cancel_complete(c_token);
+    } else {
+        won = cancel_trigger(c_token);
+    }
+    print(won);
+    print(cancel_is_set(c_token));
+
+    // bounded pipe with backpressure
+    var st = pipe_new(5);
+    print(pipe_send(&mut st, "1234567"));
+    print(pipe_buffered(&mut st));
+    print(pipe_send(&mut st, "X"));
+    print(pipe_recv(&mut st, 3));
+    print(pipe_buffered(&mut st));
+    print(pipe_send(&mut st, "ABC"));
+    print(pipe_buffered(&mut st));
+    print(pipe_close(&mut st));
+    print(pipe_recv(&mut st, 10));
+    print(pipe_is_drained(&mut st));
+
+    // disconnect during read
+    var r4 = io_submit_read("ClosedConn", 0);
+    print(io_step(&mut r4));
+}
