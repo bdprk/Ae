@@ -146,6 +146,10 @@ pub(super) fn c_return(ty: Type) -> String {
         Type::MapF => "ae_mapf".to_owned(),
         Type::Struct(k) => format!("ae_t{k}"),
         Type::Enum(_, k) => format!("ae_e{k}"),
+        // A fake-clock value (std/test/fake_clock.ae) is a copy-semantics
+        // atomic handle; returning one must keep the handle type, not fall
+        // into the scalar int64_t default (ADR-0224 R2.2).
+        Type::Atomic => "ae_atomic".to_owned(),
         // A raw pointer return keeps its star: the extern-prototype contract
         // must match the runtime definition exactly (ADR-0208's allocator
         // bridge returns int64_t* from a void* wrapper).
