@@ -6,6 +6,7 @@ pub mod literal;
 pub mod module;
 pub mod operator;
 pub mod pattern;
+pub mod statement;
 use ae_span::{Diagnostic, SourceFile};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kind {
