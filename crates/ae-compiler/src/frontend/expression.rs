@@ -876,13 +876,17 @@ impl Parser<'_> {
                     self.take(Kind::RParen)?;
                     (Expr::Join(vid, Box::new(sep), line, col), Type::String)
                 } else if name == "cell_new" && *self.current() == Kind::LParen {
-                    return self.cell_new_expr(vline, vcol);
+                    // Value arms: the result must flow into the infix tail so a
+                    // call can participate in a larger expression
+                    // (`cell_load(c) == 1` — the early `return` here used to
+                    // end the expression at the call, ADR-0224 R2.4 found it).
+                    self.cell_new_expr(vline, vcol)?
                 } else if name == "cell_load" && *self.current() == Kind::LParen {
-                    return self.cell_load_expr(vline, vcol);
+                    self.cell_load_expr(vline, vcol)?
                 } else if name == "cell_add" && *self.current() == Kind::LParen {
-                    return self.cell_add_expr(vline, vcol);
+                    self.cell_add_expr(vline, vcol)?
                 } else if name == "cell_cas" && *self.current() == Kind::LParen {
-                    return self.cell_cas_expr(vline, vcol);
+                    self.cell_cas_expr(vline, vcol)?
                 } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_try_send" | "chan_recv" | "chan_select" | "exec_new" | "exec_run" | "scope_new" | "pool_new" | "pool_join") && *self.current() == Kind::LParen {
                     self.concurrency_builtin_expr(&name, vline, vcol)?
                 } else if name == "spawn" && *self.current() == Kind::LParen {
