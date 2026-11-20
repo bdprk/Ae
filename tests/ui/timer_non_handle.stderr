@@ -1,1 +1,1 @@
-ae: $DIR/timer_non_handle.ae:2:13: unknown function 'timer_ready'
+ae: $DIR/timer_non_handle.ae:4:36: argument 2 to 'timer_cancel' must be i64

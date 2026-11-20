@@ -1,0 +1,10 @@
+fn f(x: i64) -> i64 {
+    return x == 1;
+}
+fn main() {
+    let a = f(1);
+    if a != 0 {
+        println(a);
+    }
+}
+

@@ -1,3 +1,5 @@
+use "../../std/task/timer.ae";
 fn main() {
-    let _ = timer_ready(123);
+    let t = timer_new(0, 10);
+    let _ = timer_cancel(&t, "soon");
 }

@@ -1,0 +1,11 @@
+struct T { d: i64, c: atomic }
+fn mk(n: i64) -> T { return T { d: n, c: cell_new(0) }; }
+fn ready(t: &T, now: i64) -> bool { return now >= t.d; }
+fn main() {
+    let t = mk(5);
+    let h = spawn(|| -> i64 {
+        if ready(&t, 9) { return 1; }
+        return 0;
+    });
+    print(wait(h));
+}

@@ -558,6 +558,20 @@ M5.1 and M6.2 pauses until R2 and R3a land.
 - [x] R2.3. `reader_*` migrated to `std/io/reader.ae` over string primitives;
   `Type::Reader` deleted; byte-for-byte pinned on both backends and all emit
   modes. Evidence: commit `5f6fc76` (453 passing on Windows).
+- [x] R2.4a. `cancel_*` and `timer_*` migrated to `std/sync/cancel.ae` and
+  `std/task/timer.ae` over `cell_*`; all seven builtins (`cancel_new`,
+  `cancel_trigger`, `cancel_complete`, `cancel_is_set`, `timer_new`,
+  `timer_ready`, `timer_cancel`) left the compiler surface (allowlist, RESERVED,
+  parse arms, codegen, MIR, interp, `runtime.c`, LSP). A timer is now an
+  ordinary struct `{ deadline, cancelled }`, so `&Timer` and `atomic` are the
+  only shapes involved. Two real defects surfaced and were fixed: `cell_*`
+  calls ended the expression at the call (`c33d865`, `cell_load(c) == 1` was
+  misreported as `expected Semi`), and the demoted fixture needed the
+  `task_spawn` capture rule respected (`fake_clock.ae` copies the timer into a
+  local because task captures move). `tests/ui/timer_non_handle.ae` now pins
+  the type error rather than "unknown function". Evidence: `cargo test
+  --workspace` 453 passing on Windows (14 bin + 319 execution + 3 snapshot +
+  11 LSP + 44 compiler + 2 span + 58 syntax), UI snapshots green.
 - [ ] R2.4. Migrate `cancel_*`, `pool_*`, `exec_*`, `timer_*` and `shared_*`
   to `std/task` / `std/sync` over the `keep` primitives.
 - [ ] R3a. M0.2.08: route the CLI through the `ae-syntax` AST; differential
