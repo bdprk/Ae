@@ -34,8 +34,11 @@ fn main() {
     let ex = exec_new();
     let deadline = timer_new(fake_clock_now(clk), 30);
     task_spawn(ex, || -> i64 {
+        // The capture moves in (spawn forbids borrow captures); take a local
+        // so the poll can pass a reference without borrowing the capture.
+        let dl_timer = deadline;
         var polls = 0;
-        while !timer_ready(&deadline, fake_clock_now(clk)) {
+        while !timer_ready(&dl_timer, fake_clock_now(clk)) {
             polls = polls + 1;
             task_yield();
         }
