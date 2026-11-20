@@ -11,3 +11,7 @@ __pycache__/
 
 # isolated build dir for verifying changes while a fuzz segment owns target/
 target-window/
+
+# local benchmark binaries; only sources + reports are tracked
+benchmarks_real/*.exe
+benchmarks_real/*.pdb

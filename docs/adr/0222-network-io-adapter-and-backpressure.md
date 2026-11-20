@@ -1,6 +1,6 @@
 # ADR-0222: Unified Readiness/Completion I/O Adapter, Streams, and Backpressure (M4.4.01–M4.4.07)
 
-Status: Accepted (2026-11-20)
+Status: Amended by ADR-0224 (2026-11-20). The adapter/stream builtins are an in-memory fake and will be demoted to std/test. M4.4 remains open. The "Consequences" claims below are retracted.
 
 ## Context
 
