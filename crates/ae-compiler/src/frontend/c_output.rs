@@ -41,9 +41,7 @@ pub(super) fn c_type_field(ty: Type) -> String {
         Type::Guard => "ae_guard".to_owned(),
         Type::Chan => "ae_chan".to_owned(),
         Type::Exec => "ae_exec".to_owned(),
-        Type::Timer => "ae_timer".to_owned(),
         Type::TaskScope => "ae_task_scope".to_owned(),
-        Type::Cancel => "ae_cancel".to_owned(),
         Type::Pool => "ae_pool".to_owned(),
         // Unreachable: no syntax for a pointer-typed field (M2.12 pointers
         // bind as locals only); the value keeps the pointer shape so a future
@@ -95,12 +93,8 @@ pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Chan => "ae_chan".to_owned(),
         Type::Exec if declaration => format!("ae_exec v{id}"),
         Type::Exec => "ae_exec".to_owned(),
-        Type::Timer if declaration => format!("ae_timer v{id}"),
-        Type::Timer => "ae_timer".to_owned(),
         Type::TaskScope if declaration => format!("ae_task_scope v{id}"),
         Type::TaskScope => "ae_task_scope".to_owned(),
-        Type::Cancel if declaration => format!("ae_cancel v{id}"),
-        Type::Cancel => "ae_cancel".to_owned(),
         Type::Pool if declaration => format!("ae_pool v{id}"),
         Type::Pool => "ae_pool".to_owned(),
         // A function pointer parameter declares its name inside the pointer
@@ -284,7 +278,7 @@ pub(super) fn runtime_units(prefix: &str) -> Vec<(Option<String>, String)> {
 /// harmless (it is a type, macro or a name in a comment).
 pub(super) fn ae_symbols(text: &str) -> Vec<String> {
     // `ae_` is three bytes: the prefix length and the slice width must agree
-    // (the 2026-11-20 rename from `ae_` shortened both together).
+    // (the 2026-11-20 rename shortened the prefix, so both were retuned).
     const PREFIX: &str = "ae_";
     let bytes = text.as_bytes();
     let mut found = Vec::new();

@@ -253,55 +253,9 @@ impl Parser<'_> {
     fn clock_timer_expr(&mut self, name: &str) -> Result<(Expr, Type), ae_span::Diagnostic> {
         self.take(Kind::LParen)?;
         match name {
-            // ADR-0224 R2.2: the fake clock left the compiler (std/test/fake_clock.ae).
-            // Timers take the current time as a plain value, not a clock handle.
-            "timer_new" => {
-                let (n, nty) = self.expression(0, false)?;
-                if nty != Type::Int { return Err(self.fail("timer_new expects an i64 now")); }
-                self.take(Kind::Comma)?;
-                let (d, dty) = self.expression(0, false)?;
-                if dty != Type::Int { return Err(self.fail("timer_new expects an i64 delay")); }
-                self.take(Kind::RParen)?;
-                Ok((Expr::TimerNew(Box::new(n), Box::new(d)), Type::Timer))
-            }
-            "timer_ready" => {
-                let (t, ty) = self.expression(0, false)?;
-                if ty != Type::Timer { return Err(self.fail("timer_ready expects a timer handle")); }
-                self.take(Kind::Comma)?;
-                let (n, nty) = self.expression(0, false)?;
-                if nty != Type::Int { return Err(self.fail("timer_ready expects an i64 now")); }
-                self.take(Kind::RParen)?;
-                Ok((Expr::TimerReady(Box::new(t), Box::new(n)), Type::Bool))
-            }
-            "timer_cancel" => {
-                let (t, ty) = self.expression(0, false)?;
-                if ty != Type::Timer { return Err(self.fail("timer_cancel expects a timer handle")); }
-                self.take(Kind::Comma)?;
-                let (n, nty) = self.expression(0, false)?;
-                if nty != Type::Int { return Err(self.fail("timer_cancel expects an i64 now")); }
-                self.take(Kind::RParen)?;
-                Ok((Expr::TimerCancel(Box::new(t), Box::new(n)), Type::Bool))
-            }
+            // ADR-0224 R2.2/R2.4: the fake clock, timers, and cancel tokens
+            // are ae source (std/test, std/task, std/sync) over cell_*.
             "scope_new" => { self.take(Kind::RParen)?; Ok((Expr::ScopeNew, Type::TaskScope)) }
-            "cancel_new" => { self.take(Kind::RParen)?; Ok((Expr::CancelNew, Type::Cancel)) }
-            "cancel_trigger" => {
-                let (t, ty) = self.expression(0, false)?;
-                if ty != Type::Cancel { return Err(self.fail("cancel_trigger expects a cancel token")); }
-                self.take(Kind::RParen)?;
-                Ok((Expr::CancelTrigger(Box::new(t)), Type::Bool))
-            }
-            "cancel_complete" => {
-                let (t, ty) = self.expression(0, false)?;
-                if ty != Type::Cancel { return Err(self.fail("cancel_complete expects a cancel token")); }
-                self.take(Kind::RParen)?;
-                Ok((Expr::CancelComplete(Box::new(t)), Type::Bool))
-            }
-            "cancel_is_set" => {
-                let (t, ty) = self.expression(0, false)?;
-                if ty != Type::Cancel { return Err(self.fail("cancel_is_set expects a cancel token")); }
-                self.take(Kind::RParen)?;
-                Ok((Expr::CancelIsSet(Box::new(t)), Type::Bool))
-            }
             "pool_new" => {
                 let (n, ty) = self.expression(0, false)?;
                 if ty != Type::Int { return Err(self.fail("pool_new expects an i64 worker count")); }
@@ -330,10 +284,7 @@ impl Parser<'_> {
             "chan_select" => self.chan_select_expr(line, col),
             "exec_new" => self.exec_new_expr(line, col),
             "exec_run" => self.exec_run_expr(line, col),
-            "timer_new" | "timer_ready" | "timer_cancel"
-            | "scope_new" | "cancel_new" | "cancel_trigger" | "cancel_complete" | "cancel_is_set"
-            | "pool_new" | "pool_join"
-            => self.clock_timer_expr(name),
+            "scope_new" | "pool_new" | "pool_join" => self.clock_timer_expr(name),
             _ => self.chan_recv_expr(line, col),
         }
     }
@@ -932,7 +883,7 @@ impl Parser<'_> {
                     return self.cell_add_expr(vline, vcol);
                 } else if name == "cell_cas" && *self.current() == Kind::LParen {
                     return self.cell_cas_expr(vline, vcol);
-                } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_try_send" | "chan_recv" | "chan_select" | "exec_new" | "exec_run" | "timer_new" | "timer_ready" | "timer_cancel" | "scope_new" | "cancel_new" | "cancel_trigger" | "cancel_complete" | "cancel_is_set" | "pool_new" | "pool_join") && *self.current() == Kind::LParen {
+                } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_try_send" | "chan_recv" | "chan_select" | "exec_new" | "exec_run" | "scope_new" | "pool_new" | "pool_join") && *self.current() == Kind::LParen {
                     self.concurrency_builtin_expr(&name, vline, vcol)?
                 } else if name == "spawn" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
@@ -970,7 +921,7 @@ impl Parser<'_> {
                                 // closure/pointer values have no byte layout to
                                 // package; owned scalars, strings, vectors,
                                 // maps, structs, and enums move.
-                                if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic | Type::Shared(_) | Type::Mutex | Type::Chan | Type::Exec | Type::Timer | Type::Cancel | Type::Pool) {
+                                if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic | Type::Shared(_) | Type::Mutex | Type::Chan | Type::Exec | Type::Pool) {
                                     return Err(self.fail("spawn moves its captures into the thread; this capture's storage cannot cross"));
                                 }
                                 if self.moved.contains(outer_id) {

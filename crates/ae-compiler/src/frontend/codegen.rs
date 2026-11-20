@@ -131,54 +131,10 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             out.push_str(&format!("    int64_t t{t} = ae_exec_run({});\n", e.text));
             Emitted { text: format!("t{t}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
         }
-        Expr::TimerNew(n, d) => {
-            let n = emit_expr(n, out, next, false);
-            let d = emit_expr(d, out, next, false);
-            let t = *next; *next += 1;
-            out.push_str(&format!("    ae_timer t{t} = ae_timer_new({}, {});\n", n.text, d.text));
-            Emitted { text: format!("t{t}"), ty: Type::Timer, owned: false, moves: Vec::new(), materialized: true }
-        }
-        Expr::TimerReady(tm, n) => {
-            let tm = emit_expr(tm, out, next, false);
-            let n = emit_expr(n, out, next, false);
-            let t = *next; *next += 1;
-            out.push_str(&format!("    bool t{t} = ae_timer_ready({}, {});\n", tm.text, n.text));
-            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
-        }
-        Expr::TimerCancel(tm, n) => {
-            let tm = emit_expr(tm, out, next, false);
-            let n = emit_expr(n, out, next, false);
-            let t = *next; *next += 1;
-            out.push_str(&format!("    bool t{t} = ae_timer_cancel(&{}, {});\n", tm.text, n.text));
-            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
-        }
         Expr::ScopeNew => {
             let t = *next; *next += 1;
             out.push_str(&format!("    ae_task_scope t{t} = ae_scope_new();\n"));
             Emitted { text: format!("t{t}"), ty: Type::TaskScope, owned: true, moves: Vec::new(), materialized: true }
-        }
-        Expr::CancelNew => {
-            let t = *next; *next += 1;
-            out.push_str(&format!("    ae_cancel t{t} = ae_cancel_new();\n"));
-            Emitted { text: format!("t{t}"), ty: Type::Cancel, owned: false, moves: Vec::new(), materialized: true }
-        }
-        Expr::CancelTrigger(tok) => {
-            let tok = emit_expr(tok, out, next, false);
-            let t = *next; *next += 1;
-            out.push_str(&format!("    bool t{t} = ae_cancel_trigger({});\n", tok.text));
-            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
-        }
-        Expr::CancelComplete(tok) => {
-            let tok = emit_expr(tok, out, next, false);
-            let t = *next; *next += 1;
-            out.push_str(&format!("    bool t{t} = ae_cancel_complete({});\n", tok.text));
-            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
-        }
-        Expr::CancelIsSet(tok) => {
-            let tok = emit_expr(tok, out, next, false);
-            let t = *next; *next += 1;
-            out.push_str(&format!("    bool t{t} = ae_cancel_is_set({});\n", tok.text));
-            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
         }
         Expr::PoolNew(n) => {
             let n = emit_expr(n, out, next, false);

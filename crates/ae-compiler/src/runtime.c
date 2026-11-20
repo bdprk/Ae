@@ -1936,27 +1936,6 @@ static int64_t ae_exec_run(ae_exec ex) { /* win32-declared */
 }
 // unit: -
 
-// unit: ae_timer
-// ---- Timers over caller-supplied clock values (M4.2.06, ADR-0219; ADR-0224 R2.2) ----
-// The fake clock is ordinary ae source (std/test/fake_clock.ae); a timer is
-// a plain value holding a deadline fixed at creation, so no allocation, no
-// clock handle, and no cleanup are involved.
-typedef struct { int64_t deadline; int cancelled; } ae_timer;
-static ae_timer ae_timer_new(int64_t now, int64_t delay) {
-    if (delay < 0) ae_fail("timer_new delay must be non-negative", 0, 0);
-    return (ae_timer){ now + delay, 0 };
-}
-static bool ae_timer_ready(ae_timer t, int64_t now) {
-    if (t.cancelled) return false;
-    return now >= t.deadline;
-}
-static bool ae_timer_cancel(ae_timer *t, int64_t now) {
-    if (t->cancelled || now >= t->deadline) return false;
-    t->cancelled = 1;
-    return true;
-}
-// unit: -
-
 // unit: ae_task_scope
 // ---- Structured Task Scope (M4.2.04, ADR-0220) ------------------------------
 typedef struct { void *state; } ae_task_scope;
@@ -1974,28 +1953,6 @@ static void ae_scope_release(ae_task_scope *sc) {
     (void)ae_exec_run(ex);
     free(sc->state);
     sc->state = NULL;
-}
-// unit: -
-
-// unit: ae_cancel
-// ---- Cancellation Token (M4.2.05, ADR-0220) ---------------------------------
-typedef struct { _Atomic int *state; } ae_cancel;
-static ae_cancel ae_cancel_new(void) {
-    _Atomic int *p = (_Atomic int *)calloc(1, sizeof(_Atomic int));
-    if (!p) ae_fail("out of memory", 0, 0);
-    atomic_init(p, 0);
-    return (ae_cancel){ p };
-}
-static bool ae_cancel_trigger(ae_cancel c) {
-    int expected = 0;
-    return atomic_compare_exchange_strong(c.state, &expected, 1);
-}
-static bool ae_cancel_complete(ae_cancel c) {
-    int expected = 0;
-    return atomic_compare_exchange_strong(c.state, &expected, 2);
-}
-static bool ae_cancel_is_set(ae_cancel c) {
-    return atomic_load(c.state) == 1;
 }
 // unit: -
 
