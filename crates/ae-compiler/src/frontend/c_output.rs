@@ -623,9 +623,22 @@ pub(super) fn emit_program(program: Program) -> Result<GeneratedC, String> {
                     forfeit.push_str(&format!("    ae_e{k}_forfeit(&v->{});\n", n));
                 }
                 other => {
-                    let zero = match other { Type::Bool => "false", _ => "0" };
-                    release.push_str(&format!("    v->{} = {};\n", n, zero));
-                    forfeit.push_str(&format!("    v->{} = {};\n", n, zero));
+                    // Owned fields got a release/forfeit call above. Scalars
+                    // zero so a released slot reads as visibly empty; copy
+                    // handles (cell/channel/exec/pool/scope) and views own
+                    // nothing, so releasing them is a no-op — and their C
+                    // types are struct values no literal zero can assign.
+                    match other {
+                        Type::Bool => {
+                            release.push_str(&format!("    v->{} = false;\n", n));
+                            forfeit.push_str(&format!("    v->{} = false;\n", n));
+                        }
+                        Type::Int | Type::F64 => {
+                            release.push_str(&format!("    v->{} = 0;\n", n));
+                            forfeit.push_str(&format!("    v->{} = 0;\n", n));
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
