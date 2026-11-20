@@ -25,3 +25,26 @@ Previously ae only had `now_ms()` / `now_s()` reading the system wall clock, whi
 
 - Closes M3.2.05 and M4.2.06 with zero wall-clock flakiness and zero platform-specific syscalls.
 - Programs that do not use `clock` or `timer` emit zero clock/timer runtime symbols.
+
+## Amendment 2026-11-20 — ADR-0224 R2.2 (project rename + clock demotion)
+
+The project is now named **ae**. Under the ADR-0224 realignment the fake clock
+left the compiler: `clock_new` / `clock_now` / `clock_advance` and the `clock`
+handle type were removed (commit `29d2e2e`), and the deterministic clock lives
+in `std/test/fake_clock.ae` as an ae module over the `cell_*` primitive family
+(one shared i64 cell behind a copy-semantics handle — the same sharing
+semantics the builtin handle provided).
+
+Timer signatures changed accordingly — timers take the current time as a
+plain value instead of a clock handle:
+
+- `timer_new(now: i64, delay: i64) -> timer` — deadline fixed at creation
+  (`now + delay`; `delay < 0` still traps).
+- `timer_ready(t: timer, now: i64) -> bool`
+- `timer_cancel(t: timer, now: i64) -> bool`
+
+The C runtime timer is now a plain value struct `{ deadline, cancelled }`
+(cancel takes a pointer; no allocation, no clock pointer). The negative
+delta trap of the old `clock_advance` became a documented no-op in
+`std/test/fake_clock.ae` (the language has no panic yet). Migration of
+`timer_*` themselves to `std/task` remains open (ADR-0224 R2.4).

@@ -20,3 +20,16 @@ M3.2.03–M3.2.07 are complete; only M3.2.01 (byte streams with short reads and 
 
 - Completes all seven items of M3.2 Hosted Library (M3.2.01–M3.2.07).
 - Zero runtime cost for programs that do not use `reader`.
+
+## Amendment 2026-11-20 — ADR-0224 R2.3 (reader migration to std/io)
+
+The scripted reader left the compiler: `reader_new` / `reader_read` /
+`reader_read_line` / `reader_eof` and the `reader` handle type were removed
+(commit `5f6fc76`). The same semantics — chunked delivery capped at one chunk
+per read, read_line refill windows bounded by `buf_cap`, one trailing CR
+dropped, EOF yielding the empty string — now live in `std/io/reader.ae` as an
+ordinary value (`ByteReader`) over the existing string primitives
+(`slice` / `find` / `ends_with` / `join` / `strvec`). The state advances
+through explicit `&mut` calls. `tests/run/byte_streams.ae` pins the former
+builtin implementation's output byte-for-byte on both backends and all emit
+modes.

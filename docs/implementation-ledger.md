@@ -536,3 +536,39 @@ Hosts: Windows 11 x86-64 (`cargo test --workspace --locked` 14 bin + 308 executi
 | Execution differential | `standalone_closure_headers_match_compiler_execution`: the standalone tree matches the source ranges, and the compiler executes the same literals — a capture-inferred borrow closure called twice and a `||` closure called twice — printing `13\n14\n7\n7`. |
 | Self forms ride existing paths | `self_forms_parse_as_plain_atoms`: `Self { x: 2 }` parses as a struct literal over an `Atom(Ident("Self"))` target and `Self::Value(3)` as a qualified constructor call — no dedicated grammar needed, matching the compiler's dispatch. |
 | Behavior-preserving scope | The compiler's closure path is untouched (double-probe capture inference keeps its own parse); all pre-existing run/ui/ui-json snapshots and closure fixtures pass unchanged on both platforms. |
+
+## Architecture realignment track (ADR-0224)
+
+Entry dependency: baseline `994463d` (451 passing). Breadth work on M4.4,
+M5.1 and M6.2 pauses until R2 and R3a land.
+
+- [x] R0.1. Full Windows baseline at `994463d` (451 passing) committed with
+  compiler-sourced LSP diagnostics.
+- [x] R0.2. Checklist/ledger synced; M4.4.*/M6.2.* reopened; ADR-0222 amended.
+- [x] R1.1. Intrinsic surface frozen: `docs/architecture/intrinsic-allowlist.txt`
+  + `tests/intrinsic_freeze.rs`; the set may only shrink.
+- [x] R2.1. `adapter_*` / `stream_*` demoted to `std/test/fake_io.ae`; ported
+  fixture; compiler surface deleted. Evidence: commit `e944876` (2026-11-20,
+  453 passing on Windows).
+- [x] R2.2. Fake `clock_*` demoted to `std/test/fake_clock.ae` over `cell_*`;
+  timers take the current time as a plain value; `Type::Clock` deleted; two
+  latent backend bugs fixed (MIR typed `AtomicNew` as Int; `c_return` had no
+  atomic arm). Evidence: commit `29d2e2e` (453 passing on Windows; 453 on
+  Linux x86-64 WSL2 Ubuntu 22.04, gcc, cargo 1.100).
+- [x] R2.3. `reader_*` migrated to `std/io/reader.ae` over string primitives;
+  `Type::Reader` deleted; byte-for-byte pinned on both backends and all emit
+  modes. Evidence: commit `5f6fc76` (453 passing on Windows).
+- [ ] R2.4. Migrate `cancel_*`, `pool_*`, `exec_*`, `timer_*` and `shared_*`
+  to `std/task` / `std/sync` over the `keep` primitives.
+- [ ] R3a. M0.2.08: route the CLI through the `ae-syntax` AST; differential
+  corpus on both routes; delete the legacy parser.
+- [ ] R3b. Resolver pass: DefId per item/local over the AST (HIR-lite),
+  resolution dumps as UI snapshots.
+- [ ] R3c. Type checker over the resolved tree emitting the existing typed
+  Expr; MIR/codegen untouched; stable type dumps.
+- [ ] R3d. Rebase LSP hover/definition/rename/completion on R3b/R3c; re-verify
+  M6.2.*.
+- [ ] R4.1. Split `std/core` into `std/core` (no alloc/OS), `std/alloc`,
+  `std/std`, `std/compiler`; layering test rejects upward imports.
+- [ ] R5.1. Generate the master checklist from this ledger; CI checks that a
+  commit title's item IDs are flipped in that commit.
