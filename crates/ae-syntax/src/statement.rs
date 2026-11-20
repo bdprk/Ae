@@ -88,6 +88,20 @@ pub fn parse_statements_until_close(file: &str, source: &str, tokens: &[Token], 
     Ok((body, parser.pos))
 }
 
+/// Parse exactly one statement at `start`, returning it and the first
+/// unconsumed token. The compiler uses this as a boundary oracle while its own
+/// statement parser is still the one building the typed tree (ADR-0224 R3a).
+pub fn parse_statement_tokens(
+    file: &str,
+    source: &str,
+    tokens: &[Token],
+    start: usize,
+) -> Result<(Statement, usize), Diagnostic> {
+    let mut parser = Parser { file, source, tokens, pos: start };
+    let statement = parser.statement()?;
+    Ok((statement, parser.pos))
+}
+
 struct Parser<'a> {
     file: &'a str,
     source: &'a str,
@@ -344,6 +358,28 @@ pub fn visit_expressions(statement: &Statement, visit: &mut impl FnMut(&Expressi
 /// expression parser cannot disagree about where an expression stops.
 pub fn continues_expression(kind: &Kind) -> bool {
     infix_binding_power(kind).is_some()
+}
+
+/// Builtin calls the compiler accepts in statement position without a `?`.
+/// These are the effectful library/builtin statements (`push(v, x);`,
+/// `chan_send(ch, v);`, `exit(1);`, …); every other bare call must propagate
+/// its result. The resolver still owns the argument and effect checks.
+pub const STATEMENT_BUILTINS: &[&str] = &[
+    "exit", "cell_store", "shared_set", "chan_close", "task_spawn", "task_yield",
+    "scope_spawn", "pool_spawn", "push", "pop", "sort", "reverse",
+];
+
+impl StatementKind {
+    /// True for a call the compiler accepts as a statement on its own.
+    pub fn is_effect_statement(&self) -> bool {
+        let StatementKind::Expr { value, propagates } = self else { return false };
+        if *propagates {
+            return true;
+        }
+        let crate::expression::ExpressionKind::Call { callee, .. } = &value.kind else { return false };
+        let crate::expression::ExpressionKind::Atom(Kind::Ident(name)) = &callee.kind else { return false };
+        STATEMENT_BUILTINS.contains(&name.as_str())
+    }
 }
 
 #[cfg(test)]

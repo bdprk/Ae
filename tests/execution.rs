@@ -95,6 +95,81 @@ fn shared_statement_grammar_accepts_every_compiler_program() {
     assert!(bodies > 150, "expected a large body corpus, parsed {bodies}");
 }
 
+/// R3a differential gate: the shared statement grammar must split every
+/// statement of an accepted program exactly where the compiler does. The
+/// compiler still builds the typed tree; this checks that switching the
+/// boundary finder would not change any verdict.
+#[test]
+fn shared_statement_grammar_splits_accepted_statements_where_the_compiler_does() {
+    use ae_syntax::declaration::{parse_declarations, DeclarationKind};
+    use ae_syntax::statement::{parse_statement_tokens, StatementKind};
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut checked = 0usize;
+    let mut mismatches = Vec::new();
+    for dir in ["tests/run", "examples"] {
+        let mut stack = vec![root.join(dir)];
+        while let Some(path) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&path) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|ext| ext != "ae") {
+                    continue;
+                }
+                let label = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+                let source = fs::read_to_string(&path).unwrap_or_default();
+                // Only programs the compiler itself accepts belong in this gate.
+                let verdict = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+                if !verdict.status.success() {
+                    continue;
+                }
+                let Ok(declarations) = parse_declarations(&label, &source) else { continue };
+                let tokens = ae_syntax::lex_diagnostic(&source).unwrap();
+                for declaration in declarations {
+                    let DeclarationKind::Function { .. } = declaration.kind else { continue };
+                    let Some(body) = declaration.body else { continue };
+                    let Some(open) = source[body.clone()].find('{') else { continue };
+                    let Some(mut cursor) = tokens.iter().position(|token| token.offset == body.start + open) else { continue };
+                    cursor += 1;
+                    loop {
+                        if tokens[cursor].kind == ae_syntax::Kind::RBrace {
+                            break;
+                        }
+                        let start = cursor;
+                        let (statement, end) = match parse_statement_tokens(&label, &source, &tokens, cursor) {
+                            Ok(parsed) => parsed,
+                            Err(error) => {
+                                mismatches.push(format!("{label}: {}", error.message));
+                                break;
+                            }
+                        };
+                        // A statement must consume at least one token and end at
+                        // a token boundary inside the body.
+                        if end <= start {
+                            mismatches.push(format!("{label}: statement at token {start} consumed nothing"));
+                            break;
+                        }
+                        if matches!(statement.kind, StatementKind::Expr { .. }) && !statement.kind.is_effect_statement() {
+                            // The compiler rejects a bare effect call; an
+                            // accepted program cannot contain one, so reaching
+                            // here means the splitter drifted.
+                            mismatches.push(format!("{label}: accepted program has a non-propagating call"));
+                        }
+                        checked += 1;
+                        cursor = end;
+                    }
+                }
+            }
+        }
+    }
+    assert!(mismatches.is_empty(), "{} mismatches:\n{}", mismatches.len(), mismatches.join("\n"));
+    assert!(checked > 1000, "expected a large statement corpus, checked {checked}");
+}
+
 fn execute(source: &str) -> std::process::Output {
     let path = std::env::temp_dir().join(format!("ae-integration-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
     fs::write(&path, source).unwrap();
