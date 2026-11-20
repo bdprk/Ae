@@ -11,6 +11,7 @@ All notable, user-visible changes to the `ae` toolchain and the language it comp
 - **`extern "C"` declarations** — call C symbols at link time (`extern "C" fn abs(v: i64) -> i64;`). Calling a declaration requires `unsafe`. The compiler emits a real C prototype for every declaration, so a foreign symbol works regardless of definition order.
 - **`#[no_mangle]` exposures** — C calls AE: `#[no_mangle] extern "C" fn ae_add(a: i64, b: i64) -> i64 { ... }` is emitted as an external symbol; its body is safe AE code.
 - **`#[repr(C)]` structs** — fixes field order and C padding rules; required for any struct crossing the FFI boundary by value. Rejected on generic structs and structs with owned fields. Layout is pinned by the compile-time queries `c_size_of[T]()` and `c_offset_of[T]("field")`, evaluated to constants.
+- **Channel cancellation** (M4.3.05). `chan_select` ranks a closed arm above an arm that merely holds a value, so closing a dedicated channel cancels a waiting receiver without consuming anything: the pending value stays in the channel for the next receiver, whether it was buffered or parked in a rendezvous send (`spec/concurrency.md` §11).
 
 ### Added — diagnostics
 

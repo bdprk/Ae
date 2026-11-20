@@ -1,0 +1,29 @@
+// M4.3.05, spec/concurrency.md §11: cancellation is a channel that only ever
+// closes. A cancelled receiver must never consume, so the pending value
+// reaches the next receiver, and a closed arm wins the select even when it is
+// listed second.
+fn main() {
+    // C7: buffered value and closed cancel arm ready together, cancel second.
+    let stop = chan_new(1);
+    let c = chan_new(1);
+    print(chan_try_send(c, 41));
+    chan_close(stop);
+    print(chan_select(c, stop));
+    print(chan_recv(c));
+
+    // C8: rendezvous sender parked with its value while the cancel arm is closed.
+    let r = chan_new(0);
+    let sender = spawn(|| -> bool { return chan_send(r, 7); });
+    print(chan_select(r, stop));
+    print(chan_recv(r));
+    print(wait(sender));
+
+    // C9: a receiver parked in chan_select is cancelled by another thread.
+    let e = chan_new(1);
+    let stop2 = chan_new(1);
+    let closer = spawn(|| -> i64 { chan_close(stop2); return 0; });
+    print(chan_select(e, stop2));
+    print(chan_send(e, 9));
+    print(chan_recv(e));
+    print(wait(closer));
+}
