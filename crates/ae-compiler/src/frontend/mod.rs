@@ -155,7 +155,7 @@ impl Type {
             Type::Atomic => "atomic".to_owned(),
             // A copy-semantics handle to one process-lifetime box holding an
             // owned value (ADR-0216): copying shares, reads copy out.
-            Type::Shared(id) => format!("shared#{}", id),
+            Type::Shared(id) => format!("shared[{}]", shared_types_get(id).name()),
         }
     }
     fn c_temp(self) -> String {
@@ -212,7 +212,7 @@ thread_local! {
     static SHARED_TYPES: std::cell::RefCell<Vec<Type>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-pub(super) fn intern_shared(elem: Type) -> usize {
+fn intern_shared(elem: Type) -> usize {
     SHARED_TYPES.with(|all| {
         let mut all = all.borrow_mut();
         if let Some(index) = all.iter().position(|existing| *existing == elem) {
@@ -223,7 +223,7 @@ pub(super) fn intern_shared(elem: Type) -> usize {
     })
 }
 
-pub(super) fn shared_types_get(id: usize) -> Type {
+fn shared_types_get(id: usize) -> Type {
     SHARED_TYPES.with(|all| all.borrow()[id])
 }
 
@@ -321,6 +321,7 @@ enum Expr { Number(i64), FloatLit(f64), ToF64(Box<Expr>, usize, usize), ToI64(Bo
     // lifetime i64 cell. Every operation is C11 seq_cst; the store is a
     // statement, the rest are expressions. The handle never moves.
     AtomicNew(Box<Expr>), AtomicLoad(Box<Expr>), AtomicAdd(Box<Expr>, Box<Expr>), AtomicCas(Box<Expr>, Box<Expr>, Box<Expr>),
+    SharedNew(Box<Expr>, usize), SharedGet(Box<Expr>, usize),
     // A raw pointer (M2.12 slice 2/3): `&expr as *const T` and
     // `&mut expr as *mut T` take the address of a local; the bool records
     // mutability. `p.deref()` reads through it, inside `unsafe` only.
@@ -544,7 +545,7 @@ type Instance = (usize, Vec<Type>, Type);
 // arguments (ADR-21, ADR-30, ADR-31). `next_fn_id` is the one id space shared
 // by ordinary and instantiated functions, so C names never collide.
 #[derive(Default, Clone)]
-struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, struct_origin: HashMap<usize, (usize, Vec<Type>)>, enum_origin: HashMap<usize, (usize, Vec<Type>)>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef>, generic_impls: HashMap<String, GenericImplDef>, generic_impl_done: HashMap<String, Instance>, impl_in_progress: std::collections::HashSet<String>, closures: Vec<ClosureDef>, threads: Vec<Type>, shared_types: Vec<Type>, nested_shapes: Vec<NestedShape>, instantiation_trace: Vec<(&'static str, String, String)> }
+struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, struct_origin: HashMap<usize, (usize, Vec<Type>)>, enum_origin: HashMap<usize, (usize, Vec<Type>)>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef>, generic_impls: HashMap<String, GenericImplDef>, generic_impl_done: HashMap<String, Instance>, impl_in_progress: std::collections::HashSet<String>, closures: Vec<ClosureDef>, threads: Vec<Type>, nested_shapes: Vec<NestedShape>, instantiation_trace: Vec<(&'static str, String, String)> }
 #[derive(Debug, Clone)]
 struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 

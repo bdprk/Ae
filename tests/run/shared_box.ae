@@ -1,0 +1,28 @@
+// ADR-0216 / spec/concurrency.md §9: shared[T] is a copy-semantics handle to
+// one process-lifetime box. Copying the handle into multiple threads shares
+// the box; shared_get reads a copy of the element out.
+fn read_shared(box: shared[i64]) -> i64 {
+    return shared_get(box);
+}
+
+fn main() {
+    let val = shared_new(42);
+    let t1 = spawn(|| -> i64 { return read_shared(val); });
+    let t2 = spawn(|| -> i64 { return shared_get(val); });
+    print(wait(t1));
+    print(wait(t2));
+    print(shared_get(val));
+
+    let counter_box = shared_new(cell_new(10));
+    let w1 = spawn(|| -> i64 {
+        let c = shared_get(counter_box);
+        return cell_add(c, 5);
+    });
+    let w2 = spawn(|| -> i64 {
+        let c = shared_get(counter_box);
+        return cell_add(c, 7);
+    });
+    let r1 = wait(w1);
+    let r2 = wait(w2);
+    print(cell_load(shared_get(counter_box)));
+}

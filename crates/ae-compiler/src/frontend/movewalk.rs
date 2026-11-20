@@ -422,6 +422,8 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         // semantics make every operand a read (spec/concurrency.md §8).
         Expr::AtomicNew(value) => walk_expr(value, moved),
         Expr::AtomicLoad(handle) => walk_expr(handle, moved),
+        Expr::SharedNew(value, _) => walk_expr(value, moved),
+        Expr::SharedGet(handle, _) => walk_expr(handle, moved),
         Expr::AtomicAdd(handle, value) => { walk_expr(handle, moved); walk_expr(value, moved); None }
         Expr::AtomicCas(handle, expect, new) => {
             if let Some(violation) = walk_expr(handle, moved) { return Some(violation); }

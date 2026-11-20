@@ -1,0 +1,1 @@
+ae: $DIR/shared_tower.ae:4:33: shared_new cannot wrap another shared handle (no handle towers)

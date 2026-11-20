@@ -1,0 +1,4 @@
+// ADR-0216: shared_get expects a shared handle.
+fn main() {
+    print(shared_get(42));
+}

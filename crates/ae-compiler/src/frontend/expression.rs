@@ -126,6 +126,31 @@ impl Parser<'_> {
         self.take(Kind::RParen)?;
         Ok((Expr::AtomicCas(Box::new(handle), Box::new(expect), Box::new(new)), Type::Bool))
     }
+    #[inline(never)]
+    fn shared_new_expr(&mut self, _line: usize, _col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::LParen)?;
+        let (val, val_ty) = self.expression(0, false)?;
+        if matches!(val_ty, Type::Shared(_)) {
+            return Err(self.fail("shared_new cannot wrap another shared handle (no handle towers)"));
+        }
+        if !matches!(val_ty, Type::Int | Type::Bool | Type::F64 | Type::Atomic) {
+            return Err(self.fail("shared_new in v1 expects a copy-semantics value (i64, bool, f64, or atomic)"));
+        }
+        self.take(Kind::RParen)?;
+        let sid = intern_shared(val_ty);
+        Ok((Expr::SharedNew(Box::new(val), sid), Type::Shared(sid)))
+    }
+    #[inline(never)]
+    fn shared_get_expr(&mut self, _line: usize, _col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::LParen)?;
+        let (handle, handle_ty) = self.expression(0, false)?;
+        let sid = match handle_ty {
+            Type::Shared(sid) => sid,
+            _ => return Err(self.fail("shared_get expects a shared handle")),
+        };
+        self.take(Kind::RParen)?;
+        Ok((Expr::SharedGet(Box::new(handle), sid), shared_types_get(sid)))
+    }
 
     // One interned shape per distinct return type: wait's result type comes
     // from the handle (spec/concurrency.md §2).
@@ -707,6 +732,10 @@ impl Parser<'_> {
                     return self.cell_add_expr(vline, vcol);
                 } else if name == "cell_cas" && *self.current() == Kind::LParen {
                     return self.cell_cas_expr(vline, vcol);
+                } else if name == "shared_new" && *self.current() == Kind::LParen {
+                    return self.shared_new_expr(vline, vcol);
+                } else if name == "shared_get" && *self.current() == Kind::LParen {
+                    return self.shared_get_expr(vline, vcol);
                 } else if name == "spawn" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     let at = self.tokens[self.pos - 1].offset;
@@ -743,7 +772,7 @@ impl Parser<'_> {
                                 // closure/pointer values have no byte layout to
                                 // package; owned scalars, strings, vectors,
                                 // maps, structs, and enums move.
-                                if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic) {
+                                if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic | Type::Shared(_)) {
                                     return Err(self.fail("spawn moves its captures into the thread; this capture's storage cannot cross"));
                                 }
                                 if self.moved.contains(outer_id) {

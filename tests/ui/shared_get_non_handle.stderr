@@ -1,0 +1,1 @@
+ae: $DIR/shared_get_non_handle.ae:3:24: shared_get expects a shared handle

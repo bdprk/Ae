@@ -1,0 +1,1 @@
+ae: $DIR/shared_non_copy.ae:3:31: shared_new in v1 expects a copy-semantics value (i64, bool, f64, or atomic)

@@ -34,6 +34,23 @@ impl Parser<'_> {
             // The copy-semantics cell handle (spec/concurrency.md §8): a
             // parameter typed `atomic` shares the caller's cell.
             "atomic" => Ok(Type::Atomic),
+            // The copy-semantics shared box handle (ADR-0216, spec/concurrency.md §9):
+            // copying the handle shares the process-lifetime box; no handle towers.
+            "shared" => {
+                if *self.current() != Kind::LBracket {
+                    return Err(self.fail("'shared' requires a type argument, e.g. shared[i64]"));
+                }
+                self.pos += 1;
+                let elem = self.named_type()?;
+                self.take(Kind::RBracket)?;
+                if matches!(elem, Type::Shared(_)) {
+                    return Err(self.fail("cannot nest a shared handle inside shared[...] (no handle towers)"));
+                }
+                if !matches!(elem, Type::Int | Type::Bool | Type::F64 | Type::Atomic) {
+                    return Err(self.fail("shared[T] in v1 requires a copy-semantics element type (i64, bool, f64, or atomic)"));
+                }
+                Ok(Type::Shared(intern_shared(elem)))
+            }
             "vec" => {
                 // `vec` alone is the i64 vector; `vec[string]` and `vec[f64]`
                 // (ADR-61) name the others, so a type annotation can say which

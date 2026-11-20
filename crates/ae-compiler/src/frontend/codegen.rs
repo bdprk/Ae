@@ -58,6 +58,24 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             out.push_str(&format!("    bool t{t} = ae_cell_cas({}, {}, {});\n", a.text, e.text, n.text));
             Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
         }
+        // ADR-0216, spec/concurrency.md §9: copy-semantics shared box handles.
+        Expr::SharedNew(value, sid) => {
+            let v = emit_expr(value, out, next, false);
+            let elem = shared_types_get(*sid);
+            let elem_c = c_type_field(elem);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_shared t{t} = ae_shared_alloc(sizeof({elem_c}));\n"));
+            out.push_str(&format!("    *({elem_c} *)t{t}.box = {};\n", v.text));
+            Emitted { text: format!("t{t}"), ty: Type::Shared(*sid), owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::SharedGet(handle, sid) => {
+            let h = emit_expr(handle, out, next, false);
+            let elem = shared_types_get(*sid);
+            let elem_c = c_type_field(elem);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    {elem_c} t{t} = *({elem_c} *)({}.box);\n", h.text));
+            Emitted { text: format!("t{t}"), ty: elem, owned: false, moves: Vec::new(), materialized: true }
+        }
         // M2.12 slice 2: the address of addressable storage. The operand is a
         // variable or a field of one, so the C is an address-of; the pointer
         // itself is a plain value that neither moves nor releases.
@@ -1033,9 +1051,9 @@ pub(super) fn release_var(out: &mut String, id: usize, ty: Type) {
         // §1 rule 3); the release is idempotent because wait nulls the
         // variable first.
         Type::Thread(_) => out.push_str(&format!("    ae_free(v{id});\n")),
-        // The cell is process-lifetime (spec/concurrency.md §8.1 rule 1):
+        // The cell/box is process-lifetime (spec/concurrency.md §8–§9):
         // nothing releases it, and copies share it.
-        Type::Atomic => {}
+        Type::Atomic | Type::Shared(_) => {}
         _ => out.push_str(&format!("    ae_str_release(&v{id});\n")),
     }
 }

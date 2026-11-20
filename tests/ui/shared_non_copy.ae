@@ -1,0 +1,5 @@
+// ADR-0216: shared_new in v1 expects a copy-semantics value.
+fn main() {
+    let s = shared_new("hello");
+    print(shared_get(s));
+}
