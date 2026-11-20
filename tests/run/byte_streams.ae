@@ -1,17 +1,22 @@
+// ADR-0224 R2.3: the scripted chunked reader is ordinary AE source in
+// std/io, not a compiler builtin. Output is pinned against the former builtin
+// implementation (byte_streams.stdout).
+use "../../std/io/reader.ae";
+
 fn main() {
     // M3.2.01: scripted reader returning short chunks (3 bytes) then EOF
-    let r1 = reader_new("abcdefg", 3, 8);
-    print(reader_read(r1, 10));
-    print(reader_read(r1, 10));
-    print(reader_read(r1, 10));
-    print(len(reader_read(r1, 10)));
-    print(reader_eof(r1));
+    var r1 = reader_new("abcdefg", 3, 8);
+    print(reader_read(&mut r1, 10));
+    print(reader_read(&mut r1, 10));
+    print(reader_read(&mut r1, 10));
+    print(len(reader_read(&mut r1, 10)));
+    print(reader_eof(&r1));
 
     // M3.2.02: buffered line reader spanning multiple buffers (buf_cap = 4)
     // and preserving the immediately following byte 'Z'
-    let r2 = reader_new("0123456789\nZtail", 4, 4);
-    print(reader_read_line(r2));
-    print(reader_read(r2, 1));
-    print(reader_read_line(r2));
-    print(reader_eof(r2));
+    var r2 = reader_new("0123456789\nZtail", 4, 4);
+    print(reader_read_line(&mut r2));
+    print(reader_read(&mut r2, 1));
+    print(reader_read_line(&mut r2));
+    print(reader_eof(&r2));
 }

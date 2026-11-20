@@ -594,10 +594,6 @@ impl LspServer {
         let ident = extract_ident_at(&doc.text, offset)?;
 
         match ident {
-            "reader_new" => Some("fn reader_new(src: string, chunk_size: i64, buf_cap: i64) -> reader".to_owned()),
-            "reader_read" => Some("fn reader_read(r: reader, max_bytes: i64) -> string".to_owned()),
-            "reader_read_line" => Some("fn reader_read_line(r: reader) -> string".to_owned()),
-            "reader_eof" => Some("fn reader_eof(r: reader) -> bool".to_owned()),
             "exec_new" => Some("fn exec_new() -> exec".to_owned()),
             "exec_run" => Some("fn exec_run(ex: exec) -> i64".to_owned()),
             "task_spawn" => Some("fn task_spawn(ex: exec, task: || -> i64)".to_owned()),
@@ -700,10 +696,6 @@ impl LspServer {
             ("len", 3, "fn len(val: any) -> i64"),
             ("push", 3, "fn push(v: &mut vec, val: any)"),
             ("pop", 3, "fn pop(v: &mut vec) -> any"),
-            ("reader_new", 3, "fn reader_new(src: string, chunk_size: i64, buf_cap: i64) -> reader"),
-            ("reader_read", 3, "fn reader_read(r: reader, max_bytes: i64) -> string"),
-            ("reader_read_line", 3, "fn reader_read_line(r: reader) -> string"),
-            ("reader_eof", 3, "fn reader_eof(r: reader) -> bool"),
             ("exec_new", 3, "fn exec_new() -> exec"),
             ("exec_run", 3, "fn exec_run(ex: exec) -> i64"),
             ("task_spawn", 3, "fn task_spawn(ex: exec, task: || -> i64)"),
