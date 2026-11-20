@@ -2221,3 +2221,197 @@ static bool ae_reader_eof(ae_reader r) {
     return s->buf_pos >= s->buf_len && s->src_pos >= s->src_len;
 }
 // unit: -
+
+// unit: ae_adapter
+typedef struct {
+    int64_t req_id;
+    int is_write;
+    char *buf;
+    int64_t total_len;
+    int64_t chunk_size;
+    int64_t pos;
+    int state;
+    bool rearmed;
+} ae_io_req;
+
+typedef struct {
+    ae_io_req reqs[64];
+    int64_t req_count;
+} ae_adapter_state;
+
+typedef struct { ae_adapter_state *state; } ae_adapter;
+
+static ae_string ae_adapter_make_str(const char *src, int64_t len) {
+    char *p = (char *)ae_alloc((size_t)(len + 1), 0, 0);
+    if (len > 0 && src) memcpy(p, src, (size_t)len);
+    p[len] = '\0';
+    return (ae_string){ p, len };
+}
+
+static ae_adapter ae_adapter_new(void) {
+    ae_adapter_state *s = (ae_adapter_state *)calloc(1, sizeof(ae_adapter_state));
+    return (ae_adapter){ s };
+}
+
+static int64_t ae_adapter_submit_read(ae_adapter ad, const char *ptr, int64_t len, int64_t chunk_size) {
+    ae_adapter_state *s = ad.state;
+    if (s->req_count >= 64) return -1;
+    int64_t id = s->req_count++;
+    ae_io_req *req = &s->reqs[id];
+    req->req_id = id;
+    req->is_write = 0;
+    req->buf = (char *)malloc((size_t)(len + 1));
+    if (len > 0 && ptr) memcpy(req->buf, ptr, (size_t)len);
+    req->buf[len] = '\0';
+    req->total_len = len;
+    req->chunk_size = chunk_size > 0 ? chunk_size : 0;
+    req->pos = 0;
+    req->state = chunk_size <= 0 ? 3 : 0;
+    req->rearmed = true;
+    return id;
+}
+
+static int64_t ae_adapter_submit_write(ae_adapter ad, const char *ptr, int64_t len, int64_t frag_size) {
+    ae_adapter_state *s = ad.state;
+    if (s->req_count >= 64) return -1;
+    int64_t id = s->req_count++;
+    ae_io_req *req = &s->reqs[id];
+    req->req_id = id;
+    req->is_write = 1;
+    req->buf = (char *)malloc((size_t)(len + 1));
+    if (len > 0 && ptr) memcpy(req->buf, ptr, (size_t)len);
+    req->buf[len] = '\0';
+    req->total_len = len;
+    req->chunk_size = frag_size > 0 ? frag_size : 1;
+    req->pos = 0;
+    req->state = 0;
+    req->rearmed = true;
+    return id;
+}
+
+static int64_t ae_adapter_step(ae_adapter ad, int64_t req_id) {
+    ae_adapter_state *s = ad.state;
+    if (req_id < 0 || req_id >= s->req_count) return -1;
+    ae_io_req *req = &s->reqs[req_id];
+    if (req->state == 0) {
+        if (!req->rearmed) return 0;
+        req->pos += req->chunk_size;
+        if (req->pos >= req->total_len) {
+            req->pos = req->total_len;
+            req->state = 1;
+            return 1;
+        } else {
+            req->rearmed = false;
+            return 0;
+        }
+    }
+    return req->state;
+}
+
+static bool ae_adapter_cancel(ae_adapter ad, int64_t req_id) {
+    ae_adapter_state *s = ad.state;
+    if (req_id < 0 || req_id >= s->req_count) return false;
+    ae_io_req *req = &s->reqs[req_id];
+    if (req->state == 0) {
+        req->state = 2;
+        return true;
+    }
+    return false;
+}
+
+static bool ae_adapter_rearm(ae_adapter ad, int64_t req_id) {
+    ae_adapter_state *s = ad.state;
+    if (req_id < 0 || req_id >= s->req_count) return false;
+    ae_io_req *req = &s->reqs[req_id];
+    if (req->state == 0) {
+        req->rearmed = true;
+        return true;
+    }
+    return false;
+}
+
+static ae_string ae_adapter_result(ae_adapter ad, int64_t req_id) {
+    ae_adapter_state *s = ad.state;
+    if (req_id < 0 || req_id >= s->req_count) return ae_adapter_make_str("", 0);
+    ae_io_req *req = &s->reqs[req_id];
+    return ae_adapter_make_str(req->buf, req->pos);
+}
+// unit: -
+
+// unit: ae_stream
+typedef struct {
+    char *buf;
+    int64_t cap;
+    int64_t head;
+    int64_t tail;
+    int64_t count;
+    bool closed;
+} ae_stream_state;
+
+typedef struct { ae_stream_state *state; } ae_stream;
+
+static ae_string ae_stream_make_str(const char *src, int64_t len) {
+    char *p = (char *)ae_alloc((size_t)(len + 1), 0, 0);
+    if (len > 0 && src) memcpy(p, src, (size_t)len);
+    p[len] = '\0';
+    return (ae_string){ p, len };
+}
+
+static ae_stream ae_stream_new(int64_t cap) {
+    if (cap <= 0) cap = 64;
+    ae_stream_state *s = (ae_stream_state *)calloc(1, sizeof(ae_stream_state));
+    s->cap = cap;
+    s->buf = (char *)malloc((size_t)cap);
+    s->head = 0;
+    s->tail = 0;
+    s->count = 0;
+    s->closed = false;
+    return (ae_stream){ s };
+}
+
+static int64_t ae_stream_send(ae_stream str, const char *ptr, int64_t len) {
+    ae_stream_state *s = str.state;
+    if (s->closed) return -1;
+    int64_t avail = s->cap - s->count;
+    int64_t to_write = len < avail ? len : avail;
+    if (to_write <= 0) return 0;
+    for (int64_t i = 0; i < to_write; i++) {
+        s->buf[s->tail] = ptr[i];
+        s->tail = (s->tail + 1) % s->cap;
+    }
+    s->count += to_write;
+    return to_write;
+}
+
+static ae_string ae_stream_recv(ae_stream str, int64_t max_bytes) {
+    ae_stream_state *s = str.state;
+    if (max_bytes <= 0 || s->count == 0) return ae_stream_make_str("", 0);
+    int64_t to_read = max_bytes < s->count ? max_bytes : s->count;
+    char *out_buf = (char *)malloc((size_t)(to_read + 1));
+    for (int64_t i = 0; i < to_read; i++) {
+        out_buf[i] = s->buf[s->head];
+        s->head = (s->head + 1) % s->cap;
+    }
+    out_buf[to_read] = '\0';
+    s->count -= to_read;
+    ae_string res = ae_stream_make_str(out_buf, to_read);
+    free(out_buf);
+    return res;
+}
+
+static int64_t ae_stream_close(ae_stream str) {
+    ae_stream_state *s = str.state;
+    s->closed = true;
+    return 0;
+}
+
+static bool ae_stream_is_closed(ae_stream str) {
+    ae_stream_state *s = str.state;
+    return s->closed && s->count == 0;
+}
+
+static int64_t ae_stream_buffered(ae_stream str) {
+    ae_stream_state *s = str.state;
+    return s->count;
+}
+// unit: -

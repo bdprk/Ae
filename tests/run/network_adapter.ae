@@ -1,0 +1,60 @@
+fn main() {
+    let ad = adapter_new();
+
+    // M4.4.01 & M4.4.02: readiness, would-block, and epoll rearm
+    let r1 = adapter_submit_read(ad, "HelloWorld", 4);
+    print(adapter_step(ad, r1));
+    print(adapter_step(ad, r1));
+    print(adapter_rearm(ad, r1));
+    print(adapter_step(ad, r1));
+    print(adapter_rearm(ad, r1));
+    print(adapter_step(ad, r1));
+    print(adapter_result(ad, r1));
+
+    // M4.4.03: Windows IOCP buffer retention & cancellation
+    let r2 = adapter_submit_read(ad, "CancelMeBufferRetention", 5);
+    print(adapter_cancel(ad, r2));
+    print(adapter_step(ad, r2));
+    print(len(adapter_result(ad, r2)));
+
+    // M4.4.04: Partial I/O with fragmented writes
+    let w1 = adapter_submit_write(ad, "PartialWriteData", 6);
+    print(adapter_step(ad, w1));
+    print(adapter_result(ad, w1));
+    print(adapter_rearm(ad, w1));
+    print(adapter_step(ad, w1));
+    print(adapter_result(ad, w1));
+    print(adapter_rearm(ad, w1));
+    print(adapter_step(ad, w1));
+    print(adapter_result(ad, w1));
+
+    // M4.4.05: Racing completion with deadline/cancellation
+    let c_token = cancel_new();
+    let r3 = adapter_submit_read(ad, "FastData", 100);
+    let res = adapter_step(ad, r3);
+    var won = false;
+    if res == 1 {
+        won = cancel_complete(c_token);
+    } else {
+        won = cancel_trigger(c_token);
+    }
+    print(won);
+    print(cancel_is_set(c_token));
+
+    // M4.4.07: Bounded stream capacity and backpressure
+    let st = stream_new(5);
+    print(stream_send(st, "1234567"));
+    print(stream_buffered(st));
+    print(stream_send(st, "X"));
+    print(stream_recv(st, 3));
+    print(stream_buffered(st));
+    print(stream_send(st, "ABC"));
+    print(stream_buffered(st));
+    print(stream_close(st));
+    print(stream_recv(st, 10));
+    print(stream_is_closed(st));
+
+    // Integration Gate: Disconnect during read
+    let r4 = adapter_submit_read(ad, "ClosedConn", 0);
+    print(adapter_step(ad, r4));
+}

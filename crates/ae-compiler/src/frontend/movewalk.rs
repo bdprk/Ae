@@ -436,10 +436,10 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         Expr::ChanNew(cap) => walk_expr(cap, moved),
         Expr::ChanSend(ch, val) | Expr::ChanTrySend(ch, val) | Expr::ChanSelect(ch, val) => { walk_expr(ch, moved); walk_expr(val, moved); None }
         Expr::ChanRecv(ch) => walk_expr(ch, moved),
-        Expr::ExecNew | Expr::ClockNew | Expr::ScopeNew | Expr::CancelNew => None,
-        Expr::ExecRun(ex) | Expr::ClockNow(ex) | Expr::TimerReady(ex) | Expr::TimerCancel(ex) | Expr::CancelTrigger(ex) | Expr::CancelComplete(ex) | Expr::CancelIsSet(ex) | Expr::PoolNew(ex) | Expr::PoolJoin(ex) | Expr::ReaderReadLine(ex) | Expr::ReaderEof(ex) => walk_expr(ex, moved),
-        Expr::ClockAdvance(a, b) | Expr::TimerNew(a, b) | Expr::ReaderRead(a, b) => { walk_expr(a, moved); walk_expr(b, moved); None }
-        Expr::ReaderNew(a, b, c) => { walk_expr(a, moved); walk_expr(b, moved); walk_expr(c, moved); None }
+        Expr::ExecNew | Expr::ClockNew | Expr::ScopeNew | Expr::CancelNew | Expr::AdapterNew => None,
+        Expr::ExecRun(ex) | Expr::ClockNow(ex) | Expr::TimerReady(ex) | Expr::TimerCancel(ex) | Expr::CancelTrigger(ex) | Expr::CancelComplete(ex) | Expr::CancelIsSet(ex) | Expr::PoolNew(ex) | Expr::PoolJoin(ex) | Expr::ReaderReadLine(ex) | Expr::ReaderEof(ex) | Expr::StreamNew(ex) | Expr::StreamClose(ex) | Expr::StreamIsClosed(ex) | Expr::StreamBuffered(ex) => walk_expr(ex, moved),
+        Expr::ClockAdvance(a, b) | Expr::TimerNew(a, b) | Expr::ReaderRead(a, b) | Expr::AdapterStep(a, b) | Expr::AdapterCancel(a, b) | Expr::AdapterRearm(a, b) | Expr::AdapterResult(a, b) | Expr::StreamSend(a, b) | Expr::StreamRecv(a, b) => { walk_expr(a, moved); walk_expr(b, moved); None }
+        Expr::ReaderNew(a, b, c) | Expr::AdapterSubmitRead(a, b, c) | Expr::AdapterSubmitWrite(a, b, c) => { walk_expr(a, moved); walk_expr(b, moved); walk_expr(c, moved); None }
         Expr::AtomicAdd(handle, value) => { walk_expr(handle, moved); walk_expr(value, moved); None }
         Expr::AtomicCas(handle, expect, new) => {
             if let Some(violation) = walk_expr(handle, moved) { return Some(violation); }

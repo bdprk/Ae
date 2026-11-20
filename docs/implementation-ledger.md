@@ -234,13 +234,13 @@ Integration gate: No lost wakeup, duplicate delivery or waiter retained after ca
 
 Entry dependency: M4.2.
 
-- [ ] M4.4.01. **Define readiness/completion adapter.** Model pending, completion, cancellation and late completion with a fake I/O backend.
-- [ ] M4.4.02. **Linux epoll.** Drain nonblocking reads through would-block and rearm interest correctly.
-- [ ] M4.4.03. **Windows IOCP.** Keep submitted buffers alive until final completion even after cancellation.
-- [ ] M4.4.04. **partial I/O.** Split a frame across reads and force writes to complete in fragments.
-- [ ] M4.4.05. **deadlines.** Race a deadline against completion and publish one outcome.
-- [ ] M4.4.06. **blocking-call pool.** Saturate the pool and show a timer task can still run.
-- [ ] M4.4.07. **backpressure.** Throttle a slow peer and verify bounded queued bytes and eventual recovery.
+- [x] M4.4.01. **Define readiness/completion adapter.** Model pending, completion, cancellation and late completion with a fake I/O backend.
+- [x] M4.4.02. **Linux epoll.** Drain nonblocking reads through would-block and rearm interest correctly.
+- [x] M4.4.03. **Windows IOCP.** Keep submitted buffers alive until final completion even after cancellation.
+- [x] M4.4.04. **partial I/O.** Split a frame across reads and force writes to complete in fragments.
+- [x] M4.4.05. **deadlines.** Race a deadline against completion and publish one outcome.
+- [x] M4.4.06. **blocking-call pool.** Saturate the pool and show a timer task can still run.
+- [x] M4.4.07. **backpressure.** Throttle a slow peer and verify bounded queued bytes and eventual recovery.
 
 Integration gate: Disconnect during read and cancel during write release all handles.
 
