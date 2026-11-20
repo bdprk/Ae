@@ -1,0 +1,6 @@
+// ADR-0216: no handle towers — shared_new cannot wrap another shared handle.
+fn main() {
+    let inner = shared_new(1);
+    let outer = shared_new(inner);
+    print(shared_get(outer));
+}

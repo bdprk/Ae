@@ -479,6 +479,8 @@ pub(super) fn expr_type(expr: &Expr) -> Type {
         Expr::Wait(_, ret, ..) => *ret,
         Expr::AtomicNew(..) | Expr::AtomicLoad(..) | Expr::AtomicAdd(..) => Type::Int,
         Expr::AtomicCas(..) => Type::Bool,
+        Expr::SharedNew(_, sid) => Type::Shared(*sid),
+        Expr::SharedGet(_, sid) => shared_types_get(*sid),
         Expr::Number(..) | Expr::Index(..) | Expr::Len(..) => Type::Int,
         Expr::VecIndex(_, _, _, _, _, ty) => *ty,
         Expr::StrVecIndex(..) => Type::String,

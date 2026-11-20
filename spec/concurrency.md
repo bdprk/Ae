@@ -87,3 +87,18 @@ Status: target for the atomics slice — this section governs the implementation
 | A3 | Store in a thread, load in `main` after `wait` | The store is visible (the handoff) |
 | A4 | Copying the handle to a second name | Both names reach one cell |
 | A5 | Cell count in a leak check | Retained cells reported as the documented baseline |
+
+## 9. Shared Boxes (`shared[T]`, ADR-0216)
+
+1. **`shared[T]` is a copy-semantics handle to one process-lifetime box.** `shared_new(v)` allocates a heap box holding `v` and returns a `shared[T]` handle. Copying the handle — including capturing it in `spawn` closures or passing it to functions — shares the same box without moving the caller's binding.
+2. **No handle towers.** `T` cannot be another `shared[...]` handle (`shared_new(shared_new(x))` and `shared[shared[T]]` are rejected at compile time). `shared[atomic]` is permitted.
+3. **Reads copy out (v1).** `shared_get(s) -> T` returns a copy of the stored value and is admitted in v1 for copy-semantics `T` (`i64`, `bool`, `f64`, `atomic`).
+4. **Leak baseline.** Because shared boxes have process lifetime (no reference counting), a leak check reports one retained allocation per `shared_new` call as the documented baseline.
+
+| Case | Scenario | Expected |
+|---|---|---|
+| S1 | Two threads read one `shared[i64]` box | Both threads and main observe identical values; compiled and `--interp` agree (`tests/run/shared_box.ae`) |
+| S2 | Two threads share `shared[atomic]` and increment via `cell_add` | Final `cell_load` equals initial value plus both deltas (`tests/run/shared_box.ae`) |
+| S3 | Handle tower `shared_new(shared_new(1))` | Compile-time error (`tests/ui/shared_tower.ae`) |
+| S4 | Non-copy `T` in v1 (`shared_new("hello")`) | Compile-time error (`tests/ui/shared_non_copy.ae`) |
+| S5 | `shared_get` on non-shared value | Compile-time error (`tests/ui/shared_get_non_handle.ae`) |

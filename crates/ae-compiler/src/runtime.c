@@ -1354,3 +1354,15 @@ static bool ae_cell_cas(ae_atomic a, int64_t expected, int64_t replacement) {
     return atomic_compare_exchange_strong_explicit(a.cell, &observed, replacement, memory_order_seq_cst, memory_order_seq_cst);
 }
 // unit: -
+
+// unit: ae_shared
+// ---- Shared boxes (ADR-0216, spec/concurrency.md §9) -------------------------
+// One process-lifetime box behind a copy-semantics handle: copying the
+// struct shares the box, nothing frees it. The box holds one value of the
+// element type T; shared_new copies the initial value in, and shared_get
+// reads a copy out.
+typedef struct { void *box; } ae_shared;
+static ae_shared ae_shared_alloc(size_t size) {
+    return (ae_shared){ ae_alloc(size, 0, 0) };
+}
+// unit: -

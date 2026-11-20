@@ -44,6 +44,8 @@ enum Val {
     // the shared cell. Cloning the value shares the cell, matching the C
     // struct copy the compiled backends perform.
     Atomic(usize),
+    // Shared boxes (ADR-0216, spec/concurrency.md §9), indexed by handle.
+    Shared(usize),
     Moved,
 }
 
@@ -68,6 +70,8 @@ struct Env<'a> {
     // single-threaded interpreter orders operations naturally, so the cell
     // is a plain i64 and the handle shares it by copy.
     atomics: Vec<i64>,
+    // Shared boxes (ADR-0216, spec/concurrency.md §9), indexed by handle.
+    shared: Vec<Val>,
 }
 
 const MAX_STEPS: usize = 5_000_000;
@@ -85,7 +89,7 @@ pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
         }
     }
     let main_fn = main_fn.ok_or_else(|| (String::new(), "program must define a main function".to_owned()))?;
-    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new() };
+    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new() };
     let mut locals: HashMap<usize, Val> = HashMap::new();
     match eval_stmts(&mut env, &main_fn.body, &mut locals, &mut None) {
         Flow::Next | Flow::Return(_) => Ok((env.out, 0)),
@@ -2039,6 +2043,15 @@ fn eval_expr(
                 Ok(Val::Bool(false))
             }
         }
+        Expr::SharedNew(value, _) => {
+            let v = eval_expr(env, value, locals, caller_locals, false)?;
+            env.shared.push(v);
+            Ok(Val::Shared(env.shared.len() - 1))
+        }
+        Expr::SharedGet(handle, _) => match eval_expr(env, handle, locals, caller_locals, false)? {
+            Val::Shared(id) => Ok(env.shared[id].clone()),
+            _ => Err(Flow::Trap("internal: shared_get on a non-handle".to_owned())),
+        },
         other => Err(Flow::Trap(format!("unsupported expression in MIR interpreter: {}", format!("{other:?}").chars().take(60).collect::<String>()))),
     }
 }

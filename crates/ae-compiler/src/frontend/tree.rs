@@ -345,6 +345,8 @@ impl<'a> TreePrinter<'a> {
             Expr::ClosureLit(cid) => out.push_str(&format!("closure#{}", cid)),
             Expr::AtomicNew(value) => out.push_str(&format!("cell_new({})", self.expression_text(value))),
             Expr::AtomicLoad(handle) => out.push_str(&format!("cell_load({})", self.expression_text(handle))),
+            Expr::SharedNew(value, _) => out.push_str(&format!("shared_new({})", self.expression_text(value))),
+            Expr::SharedGet(handle, _) => out.push_str(&format!("shared_get({})", self.expression_text(handle))),
             Expr::AtomicAdd(handle, value) => out.push_str(&format!("cell_add({}, {})", self.expression_text(handle), self.expression_text(value))),
             Expr::AtomicCas(handle, expect, new) => out.push_str(&format!("cell_cas({}, {}, {})", self.expression_text(handle), self.expression_text(expect), self.expression_text(new))),
             // The handle and the capture slots print like any expression; the
