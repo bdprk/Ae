@@ -316,11 +316,44 @@ impl Parser<'_> {
                 self.take(Kind::RParen)?;
                 Ok((Expr::PoolNew(Box::new(n)), Type::Pool))
             }
-            _ => {
+            "pool_join" => {
                 let (p, ty) = self.expression(0, false)?;
                 if ty != Type::Pool { return Err(self.fail("pool_join expects a pool handle")); }
                 self.take(Kind::RParen)?;
                 Ok((Expr::PoolJoin(Box::new(p)), Type::Int))
+            }
+            "reader_new" => {
+                let (s, sty) = self.expression(0, false)?;
+                if !matches!(sty, Type::String | Type::StrView) { return Err(self.fail("reader_new expects a string as its first argument")); }
+                self.take(Kind::Comma)?;
+                let (c, cty) = self.expression(0, false)?;
+                if cty != Type::Int { return Err(self.fail("reader_new expects an i64 chunk_size")); }
+                self.take(Kind::Comma)?;
+                let (b, bty) = self.expression(0, false)?;
+                if bty != Type::Int { return Err(self.fail("reader_new expects an i64 buf_cap")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::ReaderNew(Box::new(s), Box::new(c), Box::new(b)), Type::Reader))
+            }
+            "reader_read" => {
+                let (r, rty) = self.expression(0, false)?;
+                if rty != Type::Reader { return Err(self.fail("reader_read expects a reader handle")); }
+                self.take(Kind::Comma)?;
+                let (n, nty) = self.expression(0, false)?;
+                if nty != Type::Int { return Err(self.fail("reader_read expects an i64 max_bytes")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::ReaderRead(Box::new(r), Box::new(n)), Type::String))
+            }
+            "reader_read_line" => {
+                let (r, rty) = self.expression(0, false)?;
+                if rty != Type::Reader { return Err(self.fail("reader_read_line expects a reader handle")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::ReaderReadLine(Box::new(r)), Type::String))
+            }
+            _ => {
+                let (r, rty) = self.expression(0, false)?;
+                if rty != Type::Reader { return Err(self.fail("reader_eof expects a reader handle")); }
+                self.take(Kind::RParen)?;
+                Ok((Expr::ReaderEof(Box::new(r)), Type::Bool))
             }
         }
     }
@@ -339,7 +372,8 @@ impl Parser<'_> {
             "exec_run" => self.exec_run_expr(line, col),
             "clock_new" | "clock_now" | "clock_advance" | "timer_new" | "timer_ready" | "timer_cancel"
             | "scope_new" | "cancel_new" | "cancel_trigger" | "cancel_complete" | "cancel_is_set"
-            | "pool_new" | "pool_join" => self.clock_timer_expr(name),
+            | "pool_new" | "pool_join"
+            | "reader_new" | "reader_read" | "reader_read_line" | "reader_eof" => self.clock_timer_expr(name),
             _ => self.chan_recv_expr(line, col),
         }
     }
@@ -924,7 +958,7 @@ impl Parser<'_> {
                     return self.cell_add_expr(vline, vcol);
                 } else if name == "cell_cas" && *self.current() == Kind::LParen {
                     return self.cell_cas_expr(vline, vcol);
-                } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_try_send" | "chan_recv" | "chan_select" | "exec_new" | "exec_run" | "clock_new" | "clock_now" | "clock_advance" | "timer_new" | "timer_ready" | "timer_cancel" | "scope_new" | "cancel_new" | "cancel_trigger" | "cancel_complete" | "cancel_is_set" | "pool_new" | "pool_join") && *self.current() == Kind::LParen {
+                } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_try_send" | "chan_recv" | "chan_select" | "exec_new" | "exec_run" | "clock_new" | "clock_now" | "clock_advance" | "timer_new" | "timer_ready" | "timer_cancel" | "scope_new" | "cancel_new" | "cancel_trigger" | "cancel_complete" | "cancel_is_set" | "pool_new" | "pool_join" | "reader_new" | "reader_read" | "reader_read_line" | "reader_eof") && *self.current() == Kind::LParen {
                     self.concurrency_builtin_expr(&name, vline, vcol)?
                 } else if name == "spawn" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);

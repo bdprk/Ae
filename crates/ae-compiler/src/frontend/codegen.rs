@@ -208,6 +208,34 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             out.push_str(&format!("    int64_t t{t} = ae_pool_join({});\n", p.text));
             Emitted { text: format!("t{t}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
         }
+        Expr::ReaderNew(s, c, b) => {
+            let s = emit_expr(s, out, next, false);
+            let c = emit_expr(c, out, next, false);
+            let b = emit_expr(b, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_reader t{t} = ae_reader_new({}.ptr, {}.len, {}, {});\n", s.text, s.text, c.text, b.text));
+            if s.owned { out.push_str(&format!("    ae_str_release(&{});\n", s.text)); }
+            Emitted { text: format!("t{t}"), ty: Type::Reader, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::ReaderRead(r, n) => {
+            let r = emit_expr(r, out, next, false);
+            let n = emit_expr(n, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{t} = ae_reader_read({}, {});\n", r.text, n.text));
+            Emitted { text: format!("t{t}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::ReaderReadLine(r) => {
+            let r = emit_expr(r, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_string t{t} = ae_reader_read_line({});\n", r.text));
+            Emitted { text: format!("t{t}"), ty: Type::String, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::ReaderEof(r) => {
+            let r = emit_expr(r, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    bool t{t} = ae_reader_eof({});\n", r.text));
+            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
         // M2.12 slice 2: the address of addressable storage. The operand is a
         // variable or a field of one, so the C is an address-of; the pointer
         // itself is a plain value that neither moves nor releases.

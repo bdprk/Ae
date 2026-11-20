@@ -60,6 +60,7 @@ enum Val {
     TaskScope(usize),
     Cancel(usize),
     Pool(usize),
+    Reader(usize),
     Moved,
 }
 
@@ -107,6 +108,8 @@ struct Env<'a> {
     timers: Vec<(usize, i64, bool)>,
     // Cancel tokens: 0 = active, 1 = cancelled, 2 = completed.
     cancels: Vec<u8>,
+    // Scripted buffered byte readers: (src, src_pos, chunk_size, buf, buf_pos, buf_cap).
+    readers: Vec<(Vec<u8>, usize, usize, Vec<u8>, usize, usize)>,
 }
 
 const MAX_STEPS: usize = 5_000_000;
@@ -124,7 +127,7 @@ pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
         }
     }
     let main_fn = main_fn.ok_or_else(|| (String::new(), "program must define a main function".to_owned()))?;
-    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new(), chans: Vec::new(), execs: Vec::new(), clocks: Vec::new(), timers: Vec::new(), cancels: Vec::new() };
+    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new(), chans: Vec::new(), execs: Vec::new(), clocks: Vec::new(), timers: Vec::new(), cancels: Vec::new(), readers: Vec::new() };
     let mut locals: HashMap<usize, Val> = HashMap::new();
     match eval_stmts(&mut env, &main_fn.body, &mut locals, &mut None) {
         Flow::Next | Flow::Return(_) => Ok((env.out, 0)),
@@ -2237,6 +2240,83 @@ fn eval_expr(
             };
             let completed = drain_exec_queue(env, pid)?;
             Ok(Val::Int(completed))
+        }
+        Expr::ReaderNew(s, c, b) => {
+            let src = match eval_expr(env, s, locals, caller_locals, false)? {
+                Val::Str(s) => s.into_bytes(),
+                _ => return Err(Flow::Trap("internal: reader_new src".to_owned())),
+            };
+            let chunk = match eval_expr(env, c, locals, caller_locals, false)? {
+                Val::Int(n) => (n.max(1)) as usize,
+                _ => return Err(Flow::Trap("internal: reader_new chunk".to_owned())),
+            };
+            let bcap = match eval_expr(env, b, locals, caller_locals, false)? {
+                Val::Int(n) => (n.max(1)) as usize,
+                _ => return Err(Flow::Trap("internal: reader_new buf_cap".to_owned())),
+            };
+            env.readers.push((src, 0, chunk, Vec::new(), 0, bcap));
+            Ok(Val::Reader(env.readers.len() - 1))
+        }
+        Expr::ReaderRead(r, n) => {
+            let rid = match eval_expr(env, r, locals, caller_locals, false)? {
+                Val::Reader(id) => id,
+                _ => return Err(Flow::Trap("internal: reader_read on non-reader".to_owned())),
+            };
+            let max_b = match eval_expr(env, n, locals, caller_locals, false)? {
+                Val::Int(k) => k,
+                _ => return Err(Flow::Trap("internal: reader_read max_bytes".to_owned())),
+            };
+            if max_b <= 0 { return Ok(Val::Str(String::new())); }
+            let (src, src_pos, chunk, buf, buf_pos, _bcap) = &mut env.readers[rid];
+            if *buf_pos < buf.len() {
+                let take = (buf.len() - *buf_pos).min(max_b as usize).min(*chunk);
+                let out = String::from_utf8_lossy(&buf[*buf_pos..*buf_pos + take]).into_owned();
+                *buf_pos += take;
+                return Ok(Val::Str(out));
+            }
+            let rem = src.len().saturating_sub(*src_pos);
+            if rem == 0 { return Ok(Val::Str(String::new())); }
+            let take = rem.min(max_b as usize).min(*chunk);
+            let out = String::from_utf8_lossy(&src[*src_pos..*src_pos + take]).into_owned();
+            *src_pos += take;
+            Ok(Val::Str(out))
+        }
+        Expr::ReaderReadLine(r) => {
+            let rid = match eval_expr(env, r, locals, caller_locals, false)? {
+                Val::Reader(id) => id,
+                _ => return Err(Flow::Trap("internal: reader_read_line on non-reader".to_owned())),
+            };
+            let (src, src_pos, chunk, buf, buf_pos, bcap) = &mut env.readers[rid];
+            let mut acc = Vec::new();
+            loop {
+                if *buf_pos >= buf.len() {
+                    buf.clear();
+                    *buf_pos = 0;
+                    let rem = src.len().saturating_sub(*src_pos);
+                    if rem == 0 { break; }
+                    let n = rem.min(*chunk).min(*bcap);
+                    buf.extend_from_slice(&src[*src_pos..*src_pos + n]);
+                    *src_pos += n;
+                }
+                let mut found = false;
+                while *buf_pos < buf.len() {
+                    let ch = buf[*buf_pos];
+                    *buf_pos += 1;
+                    if ch == b'\n' { found = true; break; }
+                    acc.push(ch);
+                }
+                if found { break; }
+            }
+            if acc.last() == Some(&b'\r') { acc.pop(); }
+            Ok(Val::Str(String::from_utf8_lossy(&acc).into_owned()))
+        }
+        Expr::ReaderEof(r) => {
+            let rid = match eval_expr(env, r, locals, caller_locals, false)? {
+                Val::Reader(id) => id,
+                _ => return Err(Flow::Trap("internal: reader_eof on non-reader".to_owned())),
+            };
+            let (src, src_pos, _chunk, buf, buf_pos, _bcap) = &env.readers[rid];
+            Ok(Val::Bool(*buf_pos >= buf.len() && *src_pos >= src.len()))
         }
         Expr::ClockNew => {
             env.clocks.push(0);

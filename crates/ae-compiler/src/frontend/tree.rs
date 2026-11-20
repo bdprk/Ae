@@ -403,6 +403,10 @@ impl<'a> TreePrinter<'a> {
             Expr::CancelIsSet(t) => out.push_str(&format!("cancel_is_set({})", self.expression_text(t))),
             Expr::PoolNew(n) => out.push_str(&format!("pool_new({})", self.expression_text(n))),
             Expr::PoolJoin(p) => out.push_str(&format!("pool_join({})", self.expression_text(p))),
+            Expr::ReaderNew(s, c, b) => out.push_str(&format!("reader_new({}, {}, {})", self.expression_text(s), self.expression_text(c), self.expression_text(b))),
+            Expr::ReaderRead(r, n) => out.push_str(&format!("reader_read({}, {})", self.expression_text(r), self.expression_text(n))),
+            Expr::ReaderReadLine(r) => out.push_str(&format!("reader_read_line({})", self.expression_text(r))),
+            Expr::ReaderEof(r) => out.push_str(&format!("reader_eof({})", self.expression_text(r))),
             Expr::AtomicAdd(handle, value) => out.push_str(&format!("cell_add({}, {})", self.expression_text(handle), self.expression_text(value))),
             Expr::AtomicCas(handle, expect, new) => out.push_str(&format!("cell_cas({}, {}, {})", self.expression_text(handle), self.expression_text(expect), self.expression_text(new))),
             // The handle and the capture slots print like any expression; the
