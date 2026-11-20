@@ -82,7 +82,33 @@ pub fn parse_expression_tokens(
     start: usize,
     allow_propagation: bool,
 ) -> Result<(Expression, usize), Diagnostic> {
-    let mut parser = Parser { file, source, tokens, cursor: start, nodes: 0 };
+    parse_expression_with(file, source, tokens, start, allow_propagation, false)
+}
+
+/// Like [`parse_expression_tokens`], but a trailing `{` never opens a struct
+/// literal. Statement callers use this for a condition or an iterable: the
+/// brace there belongs to the block that follows (`if flag { ... }`), and the
+/// compiler resolves the same way. Rust calls this the "no struct literal in a
+/// condition" restriction; without it `if a { .. }` parses as `a { .. }`.
+pub fn parse_expression_tokens_no_struct(
+    file: &str,
+    source: &str,
+    tokens: &[Token],
+    start: usize,
+    allow_propagation: bool,
+) -> Result<(Expression, usize), Diagnostic> {
+    parse_expression_with(file, source, tokens, start, allow_propagation, true)
+}
+
+fn parse_expression_with(
+    file: &str,
+    source: &str,
+    tokens: &[Token],
+    start: usize,
+    allow_propagation: bool,
+    no_struct: bool,
+) -> Result<(Expression, usize), Diagnostic> {
+    let mut parser = Parser { file, source, tokens, cursor: start, nodes: 0, no_struct };
     let mut expression = parser.expression(0)?;
     if allow_propagation && parser.current().kind == Kind::Question {
         let range = expression.range.start..parser.current().end;
@@ -131,6 +157,9 @@ struct Parser<'a> {
     tokens: &'a [Token],
     cursor: usize,
     nodes: usize,
+    /// True inside a statement's condition or iterable position: a `{` there
+    /// opens the statement body, never a struct literal.
+    no_struct: bool,
 }
 
 impl Parser<'_> {
@@ -158,10 +187,19 @@ impl Parser<'_> {
 
     fn expression(&mut self, minimum: u8) -> Result<Expression, Diagnostic> {
         self.count_node()?;
+        // The restriction is positional: it applies to the top-level operand
+        // of a condition, and is lifted inside any bracketed subexpression
+        // (`if (Pair { a: 1 }).a == 1`). A binary condition keeps it, because
+        // the trailing `{` belongs to the body (`if x > best { .. }`).
+        let no_struct = self.no_struct;
+        self.no_struct = false;
         let token = &self.tokens[self.cursor];
         let mut range = token.offset..token.end;
         let kind = if let Some(power) = prefix_binding_power(&token.kind) {
             self.cursor += 1;
+            // A prefix operator does not end the condition: `!flag {` and
+            // `-x < limit {` still have the body's `{` next.
+            self.no_struct = no_struct;
             let operand = self.expression(power)?;
             range.end = operand.range.end;
             ExpressionKind::Prefix { operator: token.kind.clone(), operand: Box::new(operand) }
@@ -230,8 +268,11 @@ impl Parser<'_> {
                 _ => return Err(self.error("expected an expression")),
             }
         };
-        let left = self.postfix(Expression { kind, range })?;
-        parse_infix_tail(self, left, minimum, |parser| &parser.current().kind,
+        let left = self.postfix(Expression { kind, range }, no_struct)?;
+        // Restore the flag for the binary continuation only: its right operand
+        // is still the same condition, so `x > best {` must stop at `{`.
+        self.no_struct = no_struct;
+        let combined = parse_infix_tail(self, left, minimum, |parser| &parser.current().kind,
             |parser, left, operator, right_power| {
                 parser.cursor += 1;
                 let right = parser.expression(right_power)?;
@@ -239,7 +280,9 @@ impl Parser<'_> {
                     range: left.range.start..right.range.end,
                     kind: ExpressionKind::Binary { left: Box::new(left), operator, right: Box::new(right) },
                 })
-            })
+            });
+        self.no_struct = false;
+        combined
     }
     // The caller consumed the opener (a `|` with parameters, or the `||`
     // shorthand). Parameter types and the return type stay byte ranges —
@@ -371,9 +414,9 @@ impl Parser<'_> {
         Ok((mutable, start..self.tokens[self.cursor - 1].end))
     }
 
-    fn postfix(&mut self, mut base: Expression) -> Result<Expression, Diagnostic> {
+    fn postfix(&mut self, mut base: Expression, no_struct: bool) -> Result<Expression, Diagnostic> {
         while matches!(self.current().kind, Kind::LParen | Kind::LBracket | Kind::Dot | Kind::ColonColon | Kind::As)
-            || (self.current().kind == Kind::LBrace
+            || (!no_struct && self.current().kind == Kind::LBrace
                 && matches!(base.kind, ExpressionKind::Atom(Kind::Ident(_)) | ExpressionKind::Specialization { .. }))
         {
             self.count_node()?;

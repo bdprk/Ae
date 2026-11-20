@@ -1,5 +1,100 @@
 use std::{fs, process::Command, sync::atomic::{AtomicUsize, Ordering}};
 static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+/// ADR-0224 R3a: the shared statement grammar must accept every function body
+/// the compiler accepts. The corpus is the same run/example tree the other
+/// suites use, so a new statement shape cannot land without the shared parser
+/// learning it (or this test failing loudly).
+#[test]
+fn shared_statement_grammar_accepts_every_compiler_program() {
+    use ae_syntax::declaration::{parse_declarations, DeclarationKind};
+    use ae_syntax::statement::parse_block;
+
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut sources: Vec<std::path::PathBuf> = Vec::new();
+    for dir in ["tests/run", "examples"] {
+        let base = root.join(dir);
+        let mut stack = vec![base];
+        while let Some(path) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&path) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                } else if path.extension().is_some_and(|ext| ext == "ae") {
+                    sources.push(path);
+                }
+            }
+        }
+    }
+    sources.sort();
+    assert!(sources.len() > 100, "the corpus must be the real one, found {}", sources.len());
+
+    let mut failures = Vec::new();
+    let mut bodies = 0usize;
+    for path in &sources {
+        let source = fs::read_to_string(path).unwrap_or_default();
+        let label = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+        let declarations = match parse_declarations(&label, &source) {
+            Ok(declarations) => declarations,
+            // A few corpus files are deliberate rejections; the compiler owns
+            // those verdicts and the shared grammar does not have to match them
+            // yet. The run corpus is the acceptance set.
+            Err(error) => {
+                if label.starts_with("tests/run/") {
+                    failures.push(format!("{label}: declaration parse failed: {}", error.message));
+                }
+                continue;
+            }
+        };
+        for declaration in declarations {
+            let DeclarationKind::Function { .. } = declaration.kind else { continue };
+            let Some(body) = declaration.body else { continue };
+            // `body` covers the braces; find the opening one inside it.
+            let Some(open) = source[body.clone()].find('{') else {
+                failures.push(format!("{label}: function body has no opening brace"));
+                continue;
+            };
+            let absolute = body.start + open;
+            let tokens = match ae_syntax::lex_diagnostic(&source) {
+                Ok(tokens) => tokens,
+                Err(error) => {
+                    failures.push(format!("{label}: lex failed: {}", error.message));
+                    continue;
+                }
+            };
+            let start = tokens.iter().position(|token| token.offset == absolute);
+            let Some(start) = start else {
+                failures.push(format!("{label}: body brace is not a token boundary"));
+                continue;
+            };
+            match parse_block(&label, &source, &tokens, start) {
+                Ok((_, end)) => {
+                    bodies += 1;
+                    if tokens[end].offset < body.end - 1 {
+                        failures.push(format!(
+                            "{label}: statements stopped at byte {} but the body ends at {}",
+                            tokens[end].offset,
+                            body.end - 1
+                        ));
+                    }
+                }
+                Err(error) => {
+                    let where_ = error.primary.as_ref().map(|primary| {
+                        let start = primary.span.range.start;
+                        let line = source[..start.min(source.len())].matches('\n').count() + 1;
+                        let line_text = source.lines().nth(line - 1).unwrap_or("").trim();
+                        format!("{label}:{}: {} | {}", line, error.message, line_text)
+                    });
+                    failures.push(where_.unwrap_or_else(|| format!("{label}: {}", error.message)));
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{} of {} bodies failed:\n{}", failures.len(), bodies, failures.join("\n"));
+    assert!(bodies > 150, "expected a large body corpus, parsed {bodies}");
+}
+
 fn execute(source: &str) -> std::process::Output {
     let path = std::env::temp_dir().join(format!("ae-integration-{}-{}.ae", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
     fs::write(&path, source).unwrap();
