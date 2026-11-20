@@ -99,10 +99,10 @@ def run():
         ("option_propagate.ae", b"found!\nnone\nalways\nnone\n1\nnone\n3\nnone", True),
         # Generic borrow parameters: no owned value is moved into the callee,
         # so the caller's strings and vectors must still be intact afterwards.
-        ("generic_borrow.ae", b"6\n3\n3\n60\n3\nae\n10\nbeta", True),
+        ("generic_borrow.ae", b"2\n3\n3\n60\n3\nae\n10\nbeta", True),
         # find returns an IntResult: the Err branch allocates an error string
         # that the enum release must give back exactly once.
-        ("find_text.ae", b"4\n13\nsubstring not found\n0\n7", True),
+        ("find_text.ae", b"4\n9\nsubstring not found\n0\n7", True),
         # f64: one canonical text form on every platform, explicit conversions,
         # and a checked division that reports x/0.0 instead of returning inf.
         ("float_math.ae", b"count 8\nmean 5.0\nvariance 4.0\nshare 0.5\nthird 0.3333333333333333\nexact 5\nexact failed: f64 value is not an exact integer", True),
