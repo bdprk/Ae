@@ -155,3 +155,19 @@ fn lsp_publishes_current_diagnostics_and_clears_them_on_close() {
     assert_eq!(params.get("uri").and_then(JsonValue::as_str), Some("file:///test.ae"));
     assert!(params.get("diagnostics").unwrap().as_array().unwrap().is_empty());
 }
+
+
+#[test]
+fn lsp_preserves_compiler_code_and_full_span_after_a_surrogate_pair() {
+    let text = "fn main() { print(\"😀\"); print(missing); }";
+    let start = text.find("missing").unwrap();
+    let diagnostics = LspServer::new().check_text(text);
+    assert_eq!(diagnostics.len(), 1);
+    let diagnostic = &diagnostics[0];
+    assert_eq!(diagnostic.code.as_deref(), Some("E0101"));
+    assert_eq!(diagnostic.range.start, Position {
+        line: 0,
+        character: text[..start].encode_utf16().count() as u32,
+    });
+    assert_eq!(diagnostic.range.end.character, diagnostic.range.start.character + 7);
+}

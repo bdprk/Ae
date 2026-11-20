@@ -23,7 +23,6 @@ mod codegen;
 mod codegen_mir;
 mod c_output;
 pub(crate) use ae_syntax::{Kind, Token, lex};
-use ae_syntax::error;
 #[allow(unused_imports)]
 use codegen::*;
 use c_output::*;
@@ -692,6 +691,10 @@ fn make_parser<'a>(file: &str, source: &'a str, tokens: Rc<Vec<Token>>, function
 
 #[allow(dead_code)] // exercised by in-memory unit tests
 pub fn check(source: &str) -> Result<(), String> {
+    check_source_diagnostic(source).map_err(|diagnostic| diagnostic.to_string())
+}
+
+pub(crate) fn check_source_diagnostic(source: &str) -> Result<(), FrontendDiagnostic> {
     let mut shared: SharedFunctions = HashMap::new();
     let mut structs: Vec<StructDef> = Vec::new();
     let mut struct_names: HashMap<String, usize> = HashMap::new();
@@ -710,7 +713,7 @@ pub fn compile(source: &str) -> Result<String, String> {
     let (mut enums, mut enum_names) = prelude_enums();
     let mut generics = prelude_generics();
     let mut next_id = 0usize;
-    let functions = parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut generics, &mut next_id)?;
+    let functions = parse_source("", source, &mut shared, &mut structs, &mut struct_names, &mut enums, &mut enum_names, &mut generics, &mut next_id).map_err(|diagnostic| diagnostic.to_string())?;
     emit_program(Program { files: vec![functions], structs, enums }).map(|g| g.full)
 }
 /// One-paragraph explanation for each stable diagnostic code, shared by
