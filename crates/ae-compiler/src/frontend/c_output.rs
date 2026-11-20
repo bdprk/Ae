@@ -34,6 +34,9 @@ pub(super) fn c_type_field(ty: Type) -> String {
         // Unreachable: an atomic-typed field has no syntax yet; the struct
         // shape keeps a future slip valid C.
         Type::Atomic => "ae_atomic".to_owned(),
+        // Unreachable: an atomic-typed field has no syntax yet; the struct
+        // shape keeps a future slip valid C.
+        Type::Shared(id) => format!("ae_shared_{}", shared_types_get(id).name()),
         // Unreachable: no syntax for a pointer-typed field (M2.12 pointers
         // bind as locals only); the value keeps the pointer shape so a future
         // slip prints valid C.
@@ -74,6 +77,8 @@ pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Thread(_) => "void *".to_owned(),
         Type::Atomic if declaration => format!("ae_atomic v{id}"),
         Type::Atomic => "ae_atomic".to_owned(),
+        Type::Shared(id) if declaration => format!("ae_shared_{} v{id}", shared_types_get(id).name()),
+        Type::Shared(id) => format!("ae_shared_{}", shared_types_get(id).name()),
         // A function pointer parameter declares its name inside the pointer
         // parens, the way C requires.
         Type::Fn(sig) => {

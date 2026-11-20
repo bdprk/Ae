@@ -31,7 +31,7 @@ use c_output::*;
 
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), StructRef(usize), StructMut(usize), Enum(&'static str, usize), Tokens, Closure(usize), Fn(usize), Ptr(usize), PtrMut(usize), Thread(usize), Atomic }
+enum Type { Int, Bool, F64, String, StrView, Vec, StrVec, VecF, VecRef, StrVecRef, VecFRef, Map, MapF, Array(usize), Struct(usize), StructRef(usize), StructMut(usize), Enum(&'static str, usize), Tokens, Closure(usize), Fn(usize), Ptr(usize), PtrMut(usize), Thread(usize), Atomic, Shared(usize) }
 // The pointee registry for `Type::Ptr` (M2.12): Type is Copy, so the
 // pointee rides an id exactly like the closure/fn signature registries do.
 thread_local! {
@@ -153,6 +153,9 @@ impl Type {
             // A copy-semantics handle to one process-lifetime cell
             // (spec/concurrency.md §8): copying shares, nothing moves.
             Type::Atomic => "atomic".to_owned(),
+            // A copy-semantics handle to one process-lifetime box holding an
+            // owned value (ADR-0216): copying shares, reads copy out.
+            Type::Shared(id) => format!("shared#{}", id),
         }
     }
     fn c_temp(self) -> String {
@@ -182,6 +185,7 @@ impl Type {
             Type::PtrMut(id) => format!("{}* ", ptr_pointee(id).c_temp().trim_end()),
             Type::Thread(_) => "void *".to_owned(),
             Type::Atomic => "ae_atomic ".to_owned(),
+            Type::Shared(_) => "ae_shared ".to_owned(),
             _ => "int64_t ".to_owned(),
         }
     }
@@ -202,9 +206,30 @@ const PRELUDE: &str = "<prelude>";
 // instantiation count is a real code-size hazard (ADR-21).
 const MAX_ENUM_TYPES: usize = 256;
 const MAX_STRUCT_TYPES: usize = 256;
+// The interned element types of `shared[T]` handles, indexed by Type::Shared
+// (ADR-0216). A thread_local like FN_IDS: one compile per process.
+thread_local! {
+    static SHARED_TYPES: std::cell::RefCell<Vec<Type>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+pub(super) fn intern_shared(elem: Type) -> usize {
+    SHARED_TYPES.with(|all| {
+        let mut all = all.borrow_mut();
+        if let Some(index) = all.iter().position(|existing| *existing == elem) {
+            return index;
+        }
+        all.push(elem);
+        all.len() - 1
+    })
+}
+
+pub(super) fn shared_types_get(id: usize) -> Type {
+    SHARED_TYPES.with(|all| all.borrow()[id])
+}
+
 // Built-in names are reserved so their semantics stay unambiguous.
 // `pub` is reserved too: it is only meaningful before a top-level item.
-const RESERVED: &[&str] = &["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "f64map_new", "map_put", "map_get", "map_has", "map_remove", "map_inc", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "find", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "f64vec_new", "run_command", "set_cwd", "to_f64", "to_i64", "c_size_of", "c_align_of", "c_offset_of", "tokenize", "sqrt", "abs", "floor", "ceil", "round", "exp", "log", "sin", "cos", "pow", "atan2", "min", "max", "spawn", "wait", "cell_new", "cell_load", "cell_store", "cell_add", "cell_cas"];
+const RESERVED: &[&str] = &["len", "push", "pop", "vec", "read_file", "write_file", "bytes", "contains", "slice", "split", "args", "join", "slice_view", "lines", "count_lines_with", "try_read_file", "try_write_file", "parse_int", "to_string", "try_list_dir", "path_exists", "path_is_dir", "path_join", "path_name", "path_parent", "try_file_info", "try_copy_file", "try_rename_path", "try_remove_file", "try_create_dir", "try_remove_dir", "map_new", "f64map_new", "map_put", "map_get", "map_has", "map_remove", "map_inc", "keys", "utf8_len", "utf8_prefix", "pub", "trim", "starts_with", "ends_with", "find", "sort", "reverse", "now_ms", "now_s", "env", "try_append_file", "exit", "read_stdin", "cwd", "json_get", "json_int", "json_bool", "json_len", "json_has", "strvec_new", "f64vec_new", "run_command", "set_cwd", "to_f64", "to_i64", "c_size_of", "c_align_of", "c_offset_of", "tokenize", "sqrt", "abs", "floor", "ceil", "round", "exp", "log", "sin", "cos", "pow", "atan2", "min", "max", "spawn", "wait", "cell_new", "cell_load", "cell_store", "cell_add", "cell_cas", "shared_new", "shared_get"];
 // The math builtins (ADR-60): AE name, C symbol, arity. Every argument and
 // the result is f64, and each call maps 1:1 onto C libm, so domain errors are
 // IEEE NaN/-inf instead of language-level failures — unlike the checked `/`
@@ -519,7 +544,7 @@ type Instance = (usize, Vec<Type>, Type);
 // arguments (ADR-21, ADR-30, ADR-31). `next_fn_id` is the one id space shared
 // by ordinary and instantiated functions, so C names never collide.
 #[derive(Default, Clone)]
-struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, struct_origin: HashMap<usize, (usize, Vec<Type>)>, enum_origin: HashMap<usize, (usize, Vec<Type>)>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef>, generic_impls: HashMap<String, GenericImplDef>, generic_impl_done: HashMap<String, Instance>, impl_in_progress: std::collections::HashSet<String>, closures: Vec<ClosureDef>, threads: Vec<Type>, nested_shapes: Vec<NestedShape>, instantiation_trace: Vec<(&'static str, String, String)> }
+struct Generics { defs: Vec<GenericEnum>, names: HashMap<String, usize>, done: HashMap<String, usize>, struct_defs: Vec<GenericStruct>, struct_names: HashMap<String, usize>, struct_done: HashMap<String, usize>, struct_origin: HashMap<usize, (usize, Vec<Type>)>, enum_origin: HashMap<usize, (usize, Vec<Type>)>, fn_defs: Vec<GenericFn>, fn_names: HashMap<String, usize>, fn_done: HashMap<String, Instance>, fn_in_progress: std::collections::HashSet<String>, next_fn_id: usize, traits: Vec<TraitDef>, trait_names: HashMap<String, usize>, impls: std::collections::HashSet<(usize, String)>, inherent: HashMap<String, MethodDef>, generic_impls: HashMap<String, GenericImplDef>, generic_impl_done: HashMap<String, Instance>, impl_in_progress: std::collections::HashSet<String>, closures: Vec<ClosureDef>, threads: Vec<Type>, shared_types: Vec<Type>, nested_shapes: Vec<NestedShape>, instantiation_trace: Vec<(&'static str, String, String)> }
 #[derive(Debug, Clone)]
 struct MatchArm { variant: usize, bindings: Vec<(usize, Type, usize)>, body: Vec<Statement> }
 
