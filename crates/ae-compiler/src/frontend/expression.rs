@@ -931,36 +931,50 @@ impl Parser<'_> {
                             Some(Type::Struct(sid)) => self.structs[*sid].name.clone(),
                             _ => type_name,
                         };
-                        let Some(&sid) = self.struct_names.get(&type_name) else {
-                            return Err(self.fail(&format!("'{}' is not a struct; the layout queries name concrete structs", type_name)));
-                        };
-                        if !self.structs[sid].repr_c {
-                            return Err(self.fail(&format!("'{}' has no '#[repr(C)]', so its layout is the compiler's choice; the queries pin promised layouts only", type_name)));
-                        }
-                        self.take(Kind::RBracket)?;
-                        self.take(Kind::LParen)?;
-                        let value = if name == "c_size_of" || name == "c_align_of" {
-                            if *self.current() != Kind::RParen { return Err(self.fail(&format!("{name} takes no arguments; write {name}[Struct]()"))); }
+                        if let Some(&eid) = self.enum_names.get(&type_name) {
+                            if name == "c_offset_of" {
+                                return Err(self.fail(&format!("'{}' is not a struct; c_offset_of names concrete structs", type_name)));
+                            }
+                            self.take(Kind::RBracket)?;
+                            self.take(Kind::LParen)?;
+                            if *self.current() != Kind::RParen {
+                                return Err(self.fail(&format!("{name} takes no arguments; write {name}[Enum]()")));
+                            }
                             self.pos += 1;
-                            let Some((size, align, _)) = self.structs[sid].c_layout(&self.structs) else {
-                                return Err(self.fail("internal: a repr(C) struct without a layout"));
-                            };
+                            let (size, align) = self.enums[eid].c_layout(&self.structs);
                             self.value_number(if name == "c_align_of" { align } else { size })
                         } else {
-                            let (field, field_ty) = self.expression(0, false)?;
-                            if !matches!(field_ty, Type::String) { return Err(self.fail("offset_of's field is written as a string literal")); }
-                            let Expr::StrLit(fname, _, _) = &field else {
-                                return Err(self.fail("offset_of's field is written as a string literal"));
+                            let Some(&sid) = self.struct_names.get(&type_name) else {
+                                return Err(self.fail(&format!("'{}' is not a struct; the layout queries name concrete structs", type_name)));
                             };
-                            self.take(Kind::RParen)?;
-                            let Some((_, _, offsets)) = self.structs[sid].c_layout(&self.structs) else {
-                                return Err(self.fail("internal: a repr(C) struct without a layout"));
+                            if !self.structs[sid].repr_c {
+                                return Err(self.fail(&format!("'{}' has no '#[repr(C)]', so its layout is the compiler's choice; the queries pin promised layouts only", type_name)));
+                            }
+                            self.take(Kind::RBracket)?;
+                            self.take(Kind::LParen)?;
+                            let value = if name == "c_size_of" || name == "c_align_of" {
+                                if *self.current() != Kind::RParen { return Err(self.fail(&format!("{name} takes no arguments; write {name}[Struct]()"))); }
+                                self.pos += 1;
+                                let Some((size, align, _)) = self.structs[sid].c_layout(&self.structs) else {
+                                    return Err(self.fail("internal: a repr(C) struct without a layout"));
+                                };
+                                self.value_number(if name == "c_align_of" { align } else { size })
+                            } else {
+                                let (field, field_ty) = self.expression(0, false)?;
+                                if !matches!(field_ty, Type::String) { return Err(self.fail("offset_of's field is written as a string literal")); }
+                                let Expr::StrLit(fname, _, _) = &field else {
+                                    return Err(self.fail("offset_of's field is written as a string literal"));
+                                };
+                                self.take(Kind::RParen)?;
+                                let Some((_, _, offsets)) = self.structs[sid].c_layout(&self.structs) else {
+                                    return Err(self.fail("internal: a repr(C) struct without a layout"));
+                                };
+                                let index = self.structs[sid].fields.iter().position(|(n, _)| n == fname)
+                                    .ok_or_else(|| self.fail(&format!("'{}' has no field '{}'", type_name, fname)))?;
+                                self.value_number(offsets[index])
                             };
-                            let index = self.structs[sid].fields.iter().position(|(n, _)| n == fname)
-                                .ok_or_else(|| self.fail(&format!("'{}' has no field '{}'", type_name, fname)))?;
-                            self.value_number(offsets[index])
-                        };
-                        value
+                            value
+                        }
                     }
                 } else if name == "slice_view" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);

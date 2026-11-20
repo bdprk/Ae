@@ -115,3 +115,43 @@ fn lsp_cancel_stale_request() {
     let err_code = val.get("error").and_then(|e| e.get("code")).and_then(|c| c.as_i64()).unwrap();
     assert_eq!(err_code, -32800);
 }
+
+
+#[test]
+fn lsp_positions_use_utf16_and_clamp_before_crlf() {
+    let text = "a😀b\r\nnext";
+    let index = LineIndex::new(text);
+    for (offset, character) in [(0, 0), (1, 1), (5, 3), (6, 4)] {
+        let position = Position { line: 0, character };
+        assert_eq!(index.offset_to_position(text, offset), position);
+        assert_eq!(index.position_to_offset(text, position), offset);
+    }
+    assert_eq!(index.position_to_offset(text, Position { line: 0, character: 2 }), 1);
+    assert_eq!(index.position_to_offset(text, Position { line: 0, character: 99 }), 6);
+    assert_eq!(index.offset_to_position(text, 7), Position { line: 0, character: 4 });
+}
+
+#[test]
+fn lsp_publishes_current_diagnostics_and_clears_them_on_close() {
+    let mut server = LspServer::new();
+    let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///test.ae","version":3,"text":"fn main() { print(missing); }"}}}"#;
+    let diagnostics = JsonValue::parse(&server.handle_message(open)[0]).unwrap();
+    let params = diagnostics.get("params").unwrap();
+    assert_eq!(params.get("version").and_then(JsonValue::as_i64), Some(3));
+    assert!(!params.get("diagnostics").unwrap().as_array().unwrap().is_empty());
+
+    let stale = r#"{"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"file:///test.ae","version":2},"contentChanges":[{"text":"fn main() {}"}]}}"#;
+    assert!(server.handle_message(stale).is_empty());
+
+    let change = stale.replace("\"version\":2", "\"version\":4");
+    let diagnostics = JsonValue::parse(&server.handle_message(&change)[0]).unwrap();
+    let params = diagnostics.get("params").unwrap();
+    assert_eq!(params.get("version").and_then(JsonValue::as_i64), Some(4));
+    assert!(params.get("diagnostics").unwrap().as_array().unwrap().is_empty());
+
+    let close = r#"{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":"file:///test.ae"}}}"#;
+    let diagnostics = JsonValue::parse(&server.handle_message(close)[0]).unwrap();
+    let params = diagnostics.get("params").unwrap();
+    assert_eq!(params.get("uri").and_then(JsonValue::as_str), Some("file:///test.ae"));
+    assert!(params.get("diagnostics").unwrap().as_array().unwrap().is_empty());
+}
