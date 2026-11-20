@@ -8290,3 +8290,25 @@ fn thread_boundaries_reject_nontransferable_shapes() {
         assert!(message.contains(expected), "{source}\n  expected '{expected}', got '{message}'");
     }
 }
+
+#[test]
+fn tasks_fifo_yield_and_reclaim_agree_across_backends() {
+    // M4.2.01–M4.2.03 (ADR-0218): compiled C (Win32 Fibers / POSIX C11) and
+    // --interp must produce byte-for-byte identical deterministic FIFO output
+    // across yields and 200 reclaimed tasks.
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run/tasks_fifo.ae");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", fixture.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let interp = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", fixture.to_str().unwrap(), "--interp"])
+        .output()
+        .unwrap();
+    assert!(interp.status.success(), "{}", String::from_utf8_lossy(&interp.stderr));
+    let c_out = String::from_utf8_lossy(&compiled.stdout).replace("\r\n", "\n");
+    let i_out = String::from_utf8_lossy(&interp.stdout).replace("\r\n", "\n");
+    assert_eq!(c_out, i_out);
+    assert_eq!(c_out, "k1:1\nk1:2\nk1:3\n3\n0\n10\n1\n11\n2\n12\n2\n200\n200\n");
+}

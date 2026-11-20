@@ -1,0 +1,1 @@
+ae: $DIR/exec_run_non_exec.ae:2:24: exec_run expects an exec handle

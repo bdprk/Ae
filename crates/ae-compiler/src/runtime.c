@@ -1762,3 +1762,176 @@ static int64_t ae_chan_select(ae_chan ch1, ae_chan ch2) { /* win32-declared */
     }
 }
 // unit: -
+
+// unit: ae_exec
+// ---- Tasks (M4.2, ADR-0218) -------------------------------------------------
+#ifdef _WIN32
+extern void *ConvertThreadToFiber(void *param); /* win32-declared */
+extern void *CreateFiber(size_t stack, void (*start)(void *), void *param); /* win32-declared */
+extern void SwitchToFiber(void *fiber); /* win32-declared */
+extern void DeleteFiber(void *fiber); /* win32-declared */
+extern int ConvertFiberToThread(void); /* win32-declared */
+#else
+#include <threads.h>
+#endif
+typedef void (*ae_task_entry_fn)(void *);
+typedef struct { void *state; } ae_exec;
+typedef struct ae_task_node {
+    ae_task_entry_fn entry;
+    void *ctx;
+#ifdef _WIN32
+    void *fiber;
+#else
+    thrd_t thrd;
+    mtx_t mu;
+    cnd_t cv;
+    int started;
+    int turn;
+#endif
+    int done;
+    struct ae_task_node *next;
+} ae_task_node;
+typedef struct {
+    ae_task_node *head;
+    ae_task_node *tail;
+} ae_exec_state;
+#ifdef _WIN32
+static _Thread_local void *ae_task_sched_fiber = NULL;
+static _Thread_local int ae_task_in_task = 0;
+#else
+static _Thread_local ae_task_node *ae_task_current = NULL;
+#endif
+static void ae_task_trampoline(void *param) { /* win32-declared */
+#ifdef _WIN32
+    ae_task_node *node = (ae_task_node *)param;
+    node->entry(node->ctx);
+    node->done = 1;
+    SwitchToFiber(ae_task_sched_fiber);
+#else
+    (void)param;
+#endif
+}
+static int ae_task_trampoline_posix(void *param) {
+#ifndef _WIN32
+    ae_task_node *node = (ae_task_node *)param;
+    ae_task_current = node;
+    mtx_lock(&node->mu);
+    while (!node->turn) cnd_wait(&node->cv, &node->mu);
+    mtx_unlock(&node->mu);
+    node->entry(node->ctx);
+    mtx_lock(&node->mu);
+    node->done = 1;
+    node->turn = 0;
+    cnd_signal(&node->cv);
+    mtx_unlock(&node->mu);
+    ae_task_current = NULL;
+#else
+    (void)param;
+#endif
+    return 0;
+}
+static void ae_task_yield(void) { /* win32-declared */
+#ifdef _WIN32
+    if (ae_task_in_task && ae_task_sched_fiber) {
+        SwitchToFiber(ae_task_sched_fiber);
+    }
+#else
+    ae_task_node *node = ae_task_current;
+    if (!node) return;
+    mtx_lock(&node->mu);
+    node->turn = 0;
+    cnd_signal(&node->cv);
+    while (!node->turn) cnd_wait(&node->cv, &node->mu);
+    mtx_unlock(&node->mu);
+#endif
+}
+static ae_exec ae_exec_new(void) {
+    ae_exec_state *s = (ae_exec_state *)calloc(1, sizeof(ae_exec_state));
+    if (!s) ae_fail("out of memory", 0, 0);
+    return (ae_exec){ s };
+}
+static void ae_task_spawn(ae_exec ex, ae_task_entry_fn entry, void *ctx) {
+    ae_exec_state *s = (ae_exec_state *)ex.state;
+    ae_task_node *node = (ae_task_node *)calloc(1, sizeof(ae_task_node));
+    if (!node) ae_fail("out of memory", 0, 0);
+    node->entry = entry;
+    node->ctx = ctx;
+#ifndef _WIN32
+    mtx_init(&node->mu, mtx_plain);
+    cnd_init(&node->cv);
+#endif
+    if (s->tail) { s->tail->next = node; s->tail = node; }
+    else { s->head = s->tail = node; }
+}
+static int64_t ae_exec_run(ae_exec ex) { /* win32-declared */
+    ae_exec_state *s = (ae_exec_state *)ex.state;
+#ifdef _WIN32
+    void *prev_sched = ae_task_sched_fiber;
+    int converted = 0;
+    if (!ae_task_sched_fiber) {
+        void *f = ConvertThreadToFiber(NULL);
+        if (f) { ae_task_sched_fiber = f; converted = 1; }
+    }
+    int64_t completed = 0;
+    while (s->head) {
+        ae_task_node *node = s->head;
+        s->head = node->next;
+        if (!s->head) s->tail = NULL;
+        node->next = NULL;
+        if (!node->fiber) {
+            node->fiber = CreateFiber(65536, ae_task_trampoline, node);
+            if (!node->fiber) ae_fail("out of memory", 0, 0);
+        }
+        ae_task_in_task = 1;
+        SwitchToFiber(node->fiber);
+        ae_task_in_task = 0;
+        if (node->done) {
+            DeleteFiber(node->fiber);
+            ae_free(node->ctx);
+            free(node);
+            completed += 1;
+        } else {
+            if (s->tail) { s->tail->next = node; s->tail = node; }
+            else { s->head = s->tail = node; }
+        }
+    }
+    if (converted) {
+        ConvertFiberToThread();
+        ae_task_sched_fiber = prev_sched;
+    }
+    return completed;
+#else
+    int64_t completed = 0;
+    while (s->head) {
+        ae_task_node *node = s->head;
+        s->head = node->next;
+        if (!s->head) s->tail = NULL;
+        node->next = NULL;
+        if (!node->started) {
+            node->started = 1;
+            if (thrd_create(&node->thrd, ae_task_trampoline_posix, node) != thrd_success) {
+                ae_fail("out of memory", 0, 0);
+            }
+        }
+        mtx_lock(&node->mu);
+        node->turn = 1;
+        cnd_signal(&node->cv);
+        while (node->turn && !node->done) cnd_wait(&node->cv, &node->mu);
+        int is_done = node->done;
+        mtx_unlock(&node->mu);
+        if (is_done) {
+            thrd_join(node->thrd, NULL);
+            cnd_destroy(&node->cv);
+            mtx_destroy(&node->mu);
+            ae_free(node->ctx);
+            free(node);
+            completed += 1;
+        } else {
+            if (s->tail) { s->tail->next = node; s->tail = node; }
+            else { s->head = s->tail = node; }
+        }
+    }
+    return completed;
+#endif
+}
+// unit: -

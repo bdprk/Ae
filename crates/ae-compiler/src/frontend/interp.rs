@@ -51,7 +51,19 @@ enum Val {
     Guard,
     // Channel handle (M4.3, single-threaded interpreter).
     Chan(usize),
+    // Task executor handle (M4.2, ADR-0218).
+    Exec(usize),
     Moved,
+}
+
+enum TaskFrame {
+    Block(Vec<Statement>, usize),
+    While(Expr, Vec<Statement>),
+}
+
+struct TaskState {
+    locals: HashMap<usize, Val>,
+    stack: Vec<TaskFrame>,
 }
 
 enum Flow {
@@ -81,6 +93,8 @@ struct Env<'a> {
     shared: Vec<Val>,
     // Channels (M4.3, spec/concurrency.md §10): (buffer, capacity, closed).
     chans: Vec<(std::collections::VecDeque<i64>, i64, bool)>,
+    // Task executors (M4.2, ADR-0218): FIFO queues of cooperative tasks.
+    execs: Vec<std::collections::VecDeque<TaskState>>,
 }
 
 const MAX_STEPS: usize = 5_000_000;
@@ -98,7 +112,7 @@ pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
         }
     }
     let main_fn = main_fn.ok_or_else(|| (String::new(), "program must define a main function".to_owned()))?;
-    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new(), chans: Vec::new() };
+    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new(), chans: Vec::new(), execs: Vec::new() };
     let mut locals: HashMap<usize, Val> = HashMap::new();
     match eval_stmts(&mut env, &main_fn.body, &mut locals, &mut None) {
         Flow::Next | Flow::Return(_) => Ok((env.out, 0)),
@@ -923,6 +937,34 @@ fn eval_stmts(
                 };
                 env.chans[id].2 = true;
             }
+            Statement::TaskSpawn(ex, slots, _callable, cid, ..) => {
+                let eid = match eval_expr(env, ex, locals, caller_locals, false) {
+                    Ok(Val::Exec(id)) => id,
+                    Ok(_) => return Flow::Trap("internal: task_spawn on a non-exec".to_owned()),
+                    Err(flow) => return flow,
+                };
+                let mut cap_vals = Vec::with_capacity(slots.len());
+                for slot in slots {
+                    match eval_expr(env, slot, locals, caller_locals, true) {
+                        Ok(v) => cap_vals.push(v),
+                        Err(flow) => return flow,
+                    }
+                }
+                let fn_id = crate::frontend::closures::closure_fn_id(*cid);
+                let Some(func) = env.fns.get(&fn_id).copied() else {
+                    return Flow::Trap(format!("internal: missing task closure fn #{fn_id}"));
+                };
+                let mut task_locals = HashMap::new();
+                for ((pid, _), val) in func.params.iter().zip(cap_vals) {
+                    task_locals.insert(*pid, val);
+                }
+                let state = TaskState {
+                    locals: task_locals,
+                    stack: vec![TaskFrame::Block(func.body.clone(), 0)],
+                };
+                env.execs[eid].push_back(state);
+            }
+            Statement::TaskYield => {}
             Statement::PtrStore(id, value, ..) => {
                 let pointer = match eval_expr(env, &Expr::Variable(*id, Type::Int, 0, 0), locals, caller_locals, false) {
                     Ok(val) => val,
@@ -2103,6 +2145,88 @@ fn eval_expr(
             };
             env.chans.push((std::collections::VecDeque::new(), c, false));
             Ok(Val::Chan(env.chans.len() - 1))
+        }
+        Expr::ExecNew => {
+            env.execs.push(std::collections::VecDeque::new());
+            Ok(Val::Exec(env.execs.len() - 1))
+        }
+        Expr::ExecRun(ex) => {
+            let eid = match eval_expr(env, ex, locals, caller_locals, false)? {
+                Val::Exec(id) => id,
+                _ => return Err(Flow::Trap("internal: exec_run on a non-exec".to_owned())),
+            };
+            let mut completed: i64 = 0;
+            while let Some(mut task) = env.execs[eid].pop_front() {
+                let mut yielded = false;
+                while let Some(frame) = task.stack.pop() {
+                    match frame {
+                        TaskFrame::Block(stmts, mut idx) => {
+                            while idx < stmts.len() {
+                                let stmt = &stmts[idx];
+                                idx += 1;
+                                match stmt {
+                                    Statement::TaskYield => {
+                                        task.stack.push(TaskFrame::Block(stmts, idx));
+                                        yielded = true;
+                                        break;
+                                    }
+                                    Statement::If(cond, then_b, else_b) => {
+                                        let b = match eval_expr(env, cond, &mut task.locals, &mut None, false) {
+                                            Ok(Val::Bool(b)) => b,
+                                            Ok(_) => return Err(Flow::Trap("internal: non-bool if condition".to_owned())),
+                                            Err(f) => return Err(f),
+                                        };
+                                        let branch = if b { then_b.clone() } else { else_b.clone() };
+                                        task.stack.push(TaskFrame::Block(stmts, idx));
+                                        task.stack.push(TaskFrame::Block(branch, 0));
+                                        break;
+                                    }
+                                    Statement::While(cond, body) => {
+                                        let cond_c = cond.clone();
+                                        let body_c = body.clone();
+                                        task.stack.push(TaskFrame::Block(stmts, idx));
+                                        task.stack.push(TaskFrame::While(cond_c, body_c));
+                                        break;
+                                    }
+                                    other => {
+                                        match eval_stmts(env, std::slice::from_ref(other), &mut task.locals, &mut None) {
+                                            Flow::Next => {}
+                                            Flow::Return(_) => { task.stack.clear(); break; }
+                                            Flow::Break => {
+                                                while let Some(f) = task.stack.pop() {
+                                                    if matches!(f, TaskFrame::While(..)) { break; }
+                                                }
+                                                break;
+                                            }
+                                            Flow::Continue(_) => { break; }
+                                            Flow::Exit(c) => return Err(Flow::Exit(c)),
+                                            Flow::Trap(m) => return Err(Flow::Trap(m)),
+                                        }
+                                    }
+                                }
+                            }
+                            if yielded { break; }
+                        }
+                        TaskFrame::While(cond, body) => {
+                            let b = match eval_expr(env, &cond, &mut task.locals, &mut None, false) {
+                                Ok(Val::Bool(b)) => b,
+                                Ok(_) => return Err(Flow::Trap("internal: non-bool while condition".to_owned())),
+                                Err(f) => return Err(f),
+                            };
+                            if b {
+                                task.stack.push(TaskFrame::While(cond, body.clone()));
+                                task.stack.push(TaskFrame::Block(body, 0));
+                            }
+                        }
+                    }
+                }
+                if yielded {
+                    env.execs[eid].push_back(task);
+                } else {
+                    completed += 1;
+                }
+            }
+            Ok(Val::Int(completed))
         }
         Expr::ChanSend(ch, val) => {
             let id = match eval_expr(env, ch, locals, caller_locals, false)? {
