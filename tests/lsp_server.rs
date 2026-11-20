@@ -44,7 +44,7 @@ fn lsp_line_index_multibyte_offset_conversion() {
 #[test]
 fn lsp_hover_and_builtins() {
     let mut server = LspServer::new();
-    let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///test.ae","version":1,"text":"fn main() {\n    let ad = adapter_new();\n}"}}}"#;
+    let open = r#"{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"file:///test.ae","version":1,"text":"fn main() {\n    let ad = chan_new();\n}"}}}"#;
     server.handle_message(open);
 
     let hover_req = r#"{"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"file:///test.ae"},"position":{"line":1,"character":15}}}"#;
@@ -52,7 +52,7 @@ fn lsp_hover_and_builtins() {
     assert_eq!(resps.len(), 1);
     let val = JsonValue::parse(&resps[0]).unwrap();
     let hover_val = val.get("result").and_then(|r| r.get("contents")).and_then(|c| c.get("value")).and_then(|v| v.as_str()).unwrap();
-    assert!(hover_val.contains("adapter_new"));
+    assert!(hover_val.contains("chan_new"));
 }
 
 #[test]

@@ -32,16 +32,3 @@ reader_new        io       migrate
 reader_read       io       migrate
 reader_read_line  io       migrate
 reader_eof        io       migrate
-adapter_new       net      demote
-adapter_submit_read  net   demote
-adapter_submit_write net   demote
-adapter_step      net      demote
-adapter_cancel    net      demote
-adapter_rearm     net      demote
-adapter_result    net      demote
-stream_new        net      demote
-stream_send       net      demote
-stream_recv       net      demote
-stream_close      net      demote
-stream_is_closed  net      demote
-stream_buffered   net      demote

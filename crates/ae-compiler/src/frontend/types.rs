@@ -50,9 +50,6 @@ impl Parser<'_> {
             "pool" => Ok(Type::Pool),
             // Copy-semantics buffered byte stream reader (M3.2.01 / M3.2.02, ADR-0221).
             "reader" => Ok(Type::Reader),
-            // Copy-semantics network I/O adapter and stream handles (M4.4, ADR-0222).
-            "adapter" => Ok(Type::Adapter),
-            "stream" => Ok(Type::Stream),
             // The copy-semantics shared box handle (ADR-0216, spec/concurrency.md §9):
             // copying the handle shares the process-lifetime box; no handle towers.
             "shared" => {

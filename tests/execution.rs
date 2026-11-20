@@ -8381,11 +8381,10 @@ fn byte_streams_and_buffered_readers_agree_across_backends() {
 }
 
 #[test]
-fn network_adapter_and_streams_agree_across_backends() {
-    // M4.4.01–M4.4.07 (ADR-0222): network I/O adapter, readiness/completion,
-    // epoll rearm, IOCP buffer retention, partial I/O, deadline racing, and bounded
-    // streams with backpressure must agree byte-for-byte across backends.
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run/network_adapter.ae");
+fn fake_io_std_module_agrees_across_backends() {
+    // ADR-0224 R2.1: the in-memory readiness/completion model lives in
+    // std/test/fake_io.ae and agrees byte-for-byte across backends.
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run/fake_io.ae");
     let compiled = Command::new(env!("CARGO_BIN_EXE_ae"))
         .args(["run", fixture.to_str().unwrap()])
         .output()
@@ -8399,6 +8398,6 @@ fn network_adapter_and_streams_agree_across_backends() {
     let c_out = String::from_utf8_lossy(&compiled.stdout).replace("\r\n", "\n");
     let i_out = String::from_utf8_lossy(&interp.stdout).replace("\r\n", "\n");
     assert_eq!(c_out, i_out);
-    let expected = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run/network_adapter.stdout")).unwrap().replace("\r\n", "\n");
+    let expected = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run/fake_io.stdout")).unwrap().replace("\r\n", "\n");
     assert_eq!(c_out, expected);
 }
