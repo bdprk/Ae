@@ -171,10 +171,16 @@ impl<'a> Parser<'a> {
             self.take(Kind::Semi)?;
             return Ok(Statement::TaskYield);
         }
-        if name == "task_spawn" {
+        if matches!(name, "task_spawn" | "scope_spawn" | "pool_spawn") {
             let (ex, ex_ty) = self.expression(0, false)?;
-            if ex_ty != Type::Exec {
-                return Err(self.fail("task_spawn expects an exec handle as its first argument"));
+            let expected_ty = match name {
+                "task_spawn" => Type::Exec,
+                "scope_spawn" => Type::TaskScope,
+                _ => Type::Pool,
+            };
+            if ex_ty != expected_ty {
+                let art = if name == "task_spawn" { "an" } else { "a" };
+                return Err(self.fail(&format!("{name} expects {art} {} handle as its first argument", expected_ty.name())));
             }
             self.take(Kind::Comma)?;
             let (callable, callable_ty) = self.expression(0, false)?;
@@ -194,7 +200,7 @@ impl<'a> Parser<'a> {
                         return Err(self.fail("task_spawn moves its captures into the task; borrow captures are not allowed"));
                     }
                     for (outer_id, ty) in &def.value_captures {
-                        if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic | Type::Shared(_) | Type::Mutex | Type::Chan | Type::Exec | Type::Clock | Type::Timer) {
+                        if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic | Type::Shared(_) | Type::Mutex | Type::Chan | Type::Exec | Type::Clock | Type::Timer | Type::Cancel | Type::Pool) {
                             return Err(self.fail("task_spawn moves its captures into the task; this capture's storage cannot cross"));
                         }
                         if self.moved.contains(outer_id) {
@@ -216,7 +222,11 @@ impl<'a> Parser<'a> {
                 }
                 _ => return Err(self.fail("task_spawn expects a zero-parameter closure returning i64")),
             };
-            return Ok(Statement::TaskSpawn(Box::new(ex), slots, Box::new(callable), cid, line, col));
+            return Ok(match name {
+                "task_spawn" => Statement::TaskSpawn(Box::new(ex), slots, Box::new(callable), cid, line, col),
+                "scope_spawn" => Statement::ScopeSpawn(Box::new(ex), slots, Box::new(callable), cid, line, col),
+                _ => Statement::PoolSpawn(Box::new(ex), slots, Box::new(callable), cid, line, col),
+            });
         }
         if name == "chan_close" {
             let (handle, handle_ty) = self.expression(0, false)?;
@@ -520,7 +530,7 @@ impl<'a> Parser<'a> {
                         result.push(Statement::AtomicStore(Box::new(handle), Box::new(value)));
                         continue;
                     }
-                    if matches!(name.as_str(), "shared_set" | "chan_close" | "task_spawn" | "task_yield") && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
+                    if matches!(name.as_str(), "shared_set" | "chan_close" | "task_spawn" | "task_yield" | "scope_spawn" | "pool_spawn") && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
                         result.push(self.concurrency_stmt(&name)?);
                         continue;
                     }

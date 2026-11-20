@@ -180,6 +180,21 @@ Cancellation has no dedicated primitive: a **cancellation channel** is an ordina
 | K4 | `task_spawn` with non-`exec` first argument | Compile-time error (`tests/ui/task_spawn_non_exec.ae`) |
 | K5 | `exec_run` with non-`exec` argument | Compile-time error (`tests/ui/exec_run_non_exec.ae`) |
 
+### 13.1 Structured Task Scope (`task_scope`, M4.2.04, ADR-0220)
+
+1. **`task_scope` is an owned handle** created by `scope_new()`. `scope_spawn(sc, || -> i64 { ... })` enqueues child tasks onto `sc` without consuming `sc`.
+2. **Automatic join on scope exit**: leaving the scope — whether by normal fallthrough or early `return` — drains all unfinished child tasks to completion before continuing.
+
+### 13.2 Cancellation Points (`cancel`, M4.2.05, ADR-0220)
+
+1. **`cancel` is a copy-semantics atomic cancellation token** created by `cancel_new()`.
+2. **`cancel_trigger(tok) -> bool`** and **`cancel_complete(tok) -> bool`** race atomically for one terminal outcome (`cancelled` vs `completed`); at most one succeeds. `cancel_is_set(tok) -> bool` observes whether cancellation won.
+
+### 13.3 Multiworker Work-Stealing Pool (`pool`, M4.2.07, ADR-0220)
+
+1. **`pool_new(workers) -> pool`** creates a multi-worker stealing pool (`1 <= workers <= 16`). `pool_spawn(p, || -> i64 { ... })` enqueues tasks across worker queues; `pool_join(p) -> i64` runs workers with cross-queue stealing until all tasks finish and returns the exact count of completed tasks.
+2. **Exactly-once execution**: under multi-worker stealing contention, every spawned task runs exactly once (`tests/run/tasks_advanced.ae`).
+
 ## 14. Controlled Clocks and Timers (`clock`, `timer`, M3.2.05 / M4.2.06, ADR-0219)
 
 1. **`clock` is a copy-semantics handle to a controlled monotonic clock starting at `0`.** `clock_advance(clk, delta)` advances time monotonically (`delta >= 0`) and returns the new timestamp; `clock_now(clk)` reads it.

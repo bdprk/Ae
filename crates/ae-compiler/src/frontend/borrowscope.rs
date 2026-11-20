@@ -153,7 +153,7 @@ fn collect_waits_stmt(statement: &Statement, out: &mut Vec<usize>) {
         Statement::ChanClose(handle) => {
             collect_waits_expr(handle, out);
         }
-        Statement::TaskSpawn(ex, slots, callable, ..) => {
+        Statement::TaskSpawn(ex, slots, callable, ..) | Statement::ScopeSpawn(ex, slots, callable, ..) | Statement::PoolSpawn(ex, slots, callable, ..) => {
             collect_waits_expr(ex, out);
             for slot in slots { collect_waits_expr(slot, out); }
             collect_waits_expr(callable, out);

@@ -1977,3 +1977,146 @@ static bool ae_timer_cancel(ae_timer t) {
     return true;
 }
 // unit: -
+
+// unit: ae_task_scope
+// ---- Structured Task Scope (M4.2.04, ADR-0220) ------------------------------
+typedef struct { void *state; } ae_task_scope;
+static ae_task_scope ae_scope_new(void) {
+    ae_exec ex = ae_exec_new();
+    return (ae_task_scope){ ex.state };
+}
+static void ae_scope_spawn(ae_task_scope sc, ae_task_entry_fn entry, void *ctx) {
+    ae_exec ex = { sc.state };
+    ae_task_spawn(ex, entry, ctx);
+}
+static void ae_scope_release(ae_task_scope *sc) {
+    if (!sc || !sc->state) return;
+    ae_exec ex = { sc->state };
+    (void)ae_exec_run(ex);
+    free(sc->state);
+    sc->state = NULL;
+}
+// unit: -
+
+// unit: ae_cancel
+// ---- Cancellation Token (M4.2.05, ADR-0220) ---------------------------------
+typedef struct { _Atomic int *state; } ae_cancel;
+static ae_cancel ae_cancel_new(void) {
+    _Atomic int *p = (_Atomic int *)calloc(1, sizeof(_Atomic int));
+    if (!p) ae_fail("out of memory", 0, 0);
+    atomic_init(p, 0);
+    return (ae_cancel){ p };
+}
+static bool ae_cancel_trigger(ae_cancel c) {
+    int expected = 0;
+    return atomic_compare_exchange_strong(c.state, &expected, 1);
+}
+static bool ae_cancel_complete(ae_cancel c) {
+    int expected = 0;
+    return atomic_compare_exchange_strong(c.state, &expected, 2);
+}
+static bool ae_cancel_is_set(ae_cancel c) {
+    return atomic_load(c.state) == 1;
+}
+// unit: -
+
+// unit: ae_pool
+// ---- Multiworker Work-Stealing Pool (M4.2.07, ADR-0220) ---------------------
+typedef struct ae_pool_task {
+    void (*entry)(void *);
+    void *ctx;
+    struct ae_pool_task *next;
+} ae_pool_task;
+typedef struct {
+    atomic_flag lock;
+    ae_pool_task *head;
+    ae_pool_task *tail;
+} ae_pool_queue;
+typedef struct {
+    int64_t workers;
+    int64_t next_q;
+    _Atomic int64_t completed;
+    ae_pool_queue queues[16];
+} ae_pool_state;
+typedef struct { ae_pool_state *state; } ae_pool;
+typedef struct {
+    ae_pool_state *pool;
+    int64_t id;
+} ae_pool_worker_arg;
+static void ae_pool_lock(atomic_flag *f) {
+    while (atomic_flag_test_and_set_explicit(f, memory_order_acquire)) {}
+}
+static void ae_pool_unlock(atomic_flag *f) {
+    atomic_flag_clear_explicit(f, memory_order_release);
+}
+static ae_pool_task *ae_pool_pop_one(ae_pool_queue *q) {
+    ae_pool_lock(&q->lock);
+    ae_pool_task *t = q->head;
+    if (t) {
+        q->head = t->next;
+        if (!q->head) q->tail = NULL;
+        t->next = NULL;
+    }
+    ae_pool_unlock(&q->lock);
+    return t;
+}
+static void ae_pool_worker_run(void *param) {
+    ae_pool_worker_arg *arg = (ae_pool_worker_arg *)param;
+    ae_pool_state *p = arg->pool;
+    int64_t me = arg->id;
+    for (;;) {
+        ae_pool_task *t = ae_pool_pop_one(&p->queues[me]);
+        if (!t) {
+            for (int64_t off = 1; off < p->workers; off++) {
+                int64_t victim = (me + off) % p->workers;
+                t = ae_pool_pop_one(&p->queues[victim]);
+                if (t) break;
+            }
+        }
+        if (!t) break;
+        t->entry(t->ctx);
+        ae_free(t->ctx);
+        free(t);
+        atomic_fetch_add(&p->completed, 1);
+    }
+}
+static ae_pool ae_pool_new(int64_t workers) {
+    if (workers < 1) workers = 1;
+    if (workers > 16) workers = 16;
+    ae_pool_state *p = (ae_pool_state *)calloc(1, sizeof(ae_pool_state));
+    if (!p) ae_fail("out of memory", 0, 0);
+    p->workers = workers;
+    atomic_init(&p->completed, 0);
+    return (ae_pool){ p };
+}
+static void ae_pool_spawn(ae_pool pool, void (*entry)(void *), void *ctx) {
+    ae_pool_state *p = pool.state;
+    ae_pool_task *t = (ae_pool_task *)calloc(1, sizeof(ae_pool_task));
+    if (!t) ae_fail("out of memory", 0, 0);
+    t->entry = entry;
+    t->ctx = ctx;
+    int64_t qid = p->next_q % p->workers;
+    p->next_q += 1;
+    ae_pool_queue *q = &p->queues[qid];
+    ae_pool_lock(&q->lock);
+    if (q->tail) { q->tail->next = t; q->tail = t; }
+    else { q->head = q->tail = t; }
+    ae_pool_unlock(&q->lock);
+}
+static int64_t ae_pool_join(ae_pool pool) {
+    ae_pool_state *p = pool.state;
+    atomic_store(&p->completed, 0);
+    void *handles[16];
+    ae_pool_worker_arg args[16];
+    for (int64_t i = 0; i < p->workers; i++) {
+        args[i].pool = p;
+        args[i].id = i;
+        handles[i] = ae_thread_spawn(ae_pool_worker_run, &args[i]);
+        if (!handles[i]) ae_fail("out of memory", 0, 0);
+    }
+    for (int64_t i = 0; i < p->workers; i++) {
+        (void)ae_thread_join(handles[i]);
+    }
+    return atomic_load(&p->completed);
+}
+// unit: -

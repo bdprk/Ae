@@ -118,6 +118,18 @@ impl<'a> TreePrinter<'a> {
             Statement::TaskYield => {
                 self.line("task_yield()");
             }
+            Statement::ScopeSpawn(sc, slots, callable, ..) => {
+                let s = self.expression_text(sc);
+                let c = self.expression_text(callable);
+                let caps: Vec<String> = slots.iter().map(|x| self.expression_text(x)).collect();
+                self.line(&format!("scope_spawn({}, {}, [{}])", s, c, caps.join(", ")));
+            }
+            Statement::PoolSpawn(p, slots, callable, ..) => {
+                let s = self.expression_text(p);
+                let c = self.expression_text(callable);
+                let caps: Vec<String> = slots.iter().map(|x| self.expression_text(x)).collect();
+                self.line(&format!("pool_spawn({}, {}, [{}])", s, c, caps.join(", ")));
+            }
             Statement::Return(expr, frees) => {
                 let value = self.expression_text(expr);
                 let drops = self.frees_text(frees);
@@ -384,6 +396,13 @@ impl<'a> TreePrinter<'a> {
             Expr::TimerNew(c, d) => out.push_str(&format!("timer_new({}, {})", self.expression_text(c), self.expression_text(d))),
             Expr::TimerReady(t) => out.push_str(&format!("timer_ready({})", self.expression_text(t))),
             Expr::TimerCancel(t) => out.push_str(&format!("timer_cancel({})", self.expression_text(t))),
+            Expr::ScopeNew => out.push_str("scope_new()"),
+            Expr::CancelNew => out.push_str("cancel_new()"),
+            Expr::CancelTrigger(t) => out.push_str(&format!("cancel_trigger({})", self.expression_text(t))),
+            Expr::CancelComplete(t) => out.push_str(&format!("cancel_complete({})", self.expression_text(t))),
+            Expr::CancelIsSet(t) => out.push_str(&format!("cancel_is_set({})", self.expression_text(t))),
+            Expr::PoolNew(n) => out.push_str(&format!("pool_new({})", self.expression_text(n))),
+            Expr::PoolJoin(p) => out.push_str(&format!("pool_join({})", self.expression_text(p))),
             Expr::AtomicAdd(handle, value) => out.push_str(&format!("cell_add({}, {})", self.expression_text(handle), self.expression_text(value))),
             Expr::AtomicCas(handle, expect, new) => out.push_str(&format!("cell_cas({}, {}, {})", self.expression_text(handle), self.expression_text(expect), self.expression_text(new))),
             // The handle and the capture slots print like any expression; the

@@ -56,6 +56,10 @@ enum Val {
     // Controlled monotonic clock and timer handles (M3.2.05 / M4.2.06, ADR-0219).
     Clock(usize),
     Timer(usize),
+    // Structured task scope, cancel token, and work-stealing pool (ADR-0220).
+    TaskScope(usize),
+    Cancel(usize),
+    Pool(usize),
     Moved,
 }
 
@@ -101,6 +105,8 @@ struct Env<'a> {
     // Controlled monotonic clocks (now_ms) and timers (clk_id, deadline, cancelled).
     clocks: Vec<i64>,
     timers: Vec<(usize, i64, bool)>,
+    // Cancel tokens: 0 = active, 1 = cancelled, 2 = completed.
+    cancels: Vec<u8>,
 }
 
 const MAX_STEPS: usize = 5_000_000;
@@ -118,7 +124,7 @@ pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
         }
     }
     let main_fn = main_fn.ok_or_else(|| (String::new(), "program must define a main function".to_owned()))?;
-    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new(), chans: Vec::new(), execs: Vec::new(), clocks: Vec::new(), timers: Vec::new() };
+    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new(), chans: Vec::new(), execs: Vec::new(), clocks: Vec::new(), timers: Vec::new(), cancels: Vec::new() };
     let mut locals: HashMap<usize, Val> = HashMap::new();
     match eval_stmts(&mut env, &main_fn.body, &mut locals, &mut None) {
         Flow::Next | Flow::Return(_) => Ok((env.out, 0)),
@@ -860,11 +866,19 @@ fn eval_stmts(
                     }
                 }
             }
-            Statement::Return(expr, _) => {
-                return match eval_expr(env, expr, locals, caller_locals, true) {
-                    Ok(v) => Flow::Return(v),
-                    Err(f) => f,
+            Statement::Return(expr, frees) => {
+                let res = match eval_expr(env, expr, locals, caller_locals, true) {
+                    Ok(v) => v,
+                    Err(f) => return f,
                 };
+                for (id, ty) in frees {
+                    if *ty == Type::TaskScope {
+                        if let Some(Val::TaskScope(eid)) = locals.get(id).cloned() {
+                            if let Err(f) = drain_exec_queue(env, eid) { return f; }
+                        }
+                    }
+                }
+                return Flow::Return(res);
             }
             Statement::Exit(expr, _) => {
                 return match eval_expr(env, expr, locals, caller_locals, false) {
@@ -898,7 +912,15 @@ fn eval_stmts(
             // targeting depth. The Flow::Continue(0) is what every loop arm
             // (for, while, for-tokens) catches as its own step.
             Statement::Continue(_) => return Flow::Continue(0),
-            Statement::Frees(_) => {}
+            Statement::Frees(frees) => {
+                for (id, ty) in frees {
+                    if *ty == Type::TaskScope {
+                        if let Some(Val::TaskScope(eid)) = locals.get(id).cloned() {
+                            if let Err(f) = drain_exec_queue(env, eid) { return f; }
+                        }
+                    }
+                }
+            }
             // An `unsafe` block is a scoping container (M2.12 slice 1): the
             // inner statements evaluate inline and any control flow — a
             // return, a break, a continue — unwinds through it unchanged.
@@ -943,10 +965,10 @@ fn eval_stmts(
                 };
                 env.chans[id].2 = true;
             }
-            Statement::TaskSpawn(ex, slots, _callable, cid, ..) => {
+            Statement::TaskSpawn(ex, slots, _callable, cid, ..) | Statement::ScopeSpawn(ex, slots, _callable, cid, ..) | Statement::PoolSpawn(ex, slots, _callable, cid, ..) => {
                 let eid = match eval_expr(env, ex, locals, caller_locals, false) {
-                    Ok(Val::Exec(id)) => id,
-                    Ok(_) => return Flow::Trap("internal: task_spawn on a non-exec".to_owned()),
+                    Ok(Val::Exec(id)) | Ok(Val::TaskScope(id)) | Ok(Val::Pool(id)) => id,
+                    Ok(_) => return Flow::Trap("internal: task/scope/pool spawn on a non-handle".to_owned()),
                     Err(flow) => return flow,
                 };
                 let mut cap_vals = Vec::with_capacity(slots.len());
@@ -2161,77 +2183,59 @@ fn eval_expr(
                 Val::Exec(id) => id,
                 _ => return Err(Flow::Trap("internal: exec_run on a non-exec".to_owned())),
             };
-            let mut completed: i64 = 0;
-            while let Some(mut task) = env.execs[eid].pop_front() {
-                let mut yielded = false;
-                while let Some(frame) = task.stack.pop() {
-                    match frame {
-                        TaskFrame::Block(stmts, mut idx) => {
-                            while idx < stmts.len() {
-                                let stmt = &stmts[idx];
-                                idx += 1;
-                                match stmt {
-                                    Statement::TaskYield => {
-                                        task.stack.push(TaskFrame::Block(stmts, idx));
-                                        yielded = true;
-                                        break;
-                                    }
-                                    Statement::If(cond, then_b, else_b) => {
-                                        let b = match eval_expr(env, cond, &mut task.locals, &mut None, false) {
-                                            Ok(Val::Bool(b)) => b,
-                                            Ok(_) => return Err(Flow::Trap("internal: non-bool if condition".to_owned())),
-                                            Err(f) => return Err(f),
-                                        };
-                                        let branch = if b { then_b.clone() } else { else_b.clone() };
-                                        task.stack.push(TaskFrame::Block(stmts, idx));
-                                        task.stack.push(TaskFrame::Block(branch, 0));
-                                        break;
-                                    }
-                                    Statement::While(cond, body) => {
-                                        let cond_c = cond.clone();
-                                        let body_c = body.clone();
-                                        task.stack.push(TaskFrame::Block(stmts, idx));
-                                        task.stack.push(TaskFrame::While(cond_c, body_c));
-                                        break;
-                                    }
-                                    other => {
-                                        match eval_stmts(env, std::slice::from_ref(other), &mut task.locals, &mut None) {
-                                            Flow::Next => {}
-                                            Flow::Return(_) => { task.stack.clear(); break; }
-                                            Flow::Break => {
-                                                while let Some(f) = task.stack.pop() {
-                                                    if matches!(f, TaskFrame::While(..)) { break; }
-                                                }
-                                                break;
-                                            }
-                                            Flow::Continue(_) => { break; }
-                                            Flow::Exit(c) => return Err(Flow::Exit(c)),
-                                            Flow::Trap(m) => return Err(Flow::Trap(m)),
-                                        }
-                                    }
-                                }
-                            }
-                            if yielded { break; }
-                        }
-                        TaskFrame::While(cond, body) => {
-                            let b = match eval_expr(env, &cond, &mut task.locals, &mut None, false) {
-                                Ok(Val::Bool(b)) => b,
-                                Ok(_) => return Err(Flow::Trap("internal: non-bool while condition".to_owned())),
-                                Err(f) => return Err(f),
-                            };
-                            if b {
-                                task.stack.push(TaskFrame::While(cond, body.clone()));
-                                task.stack.push(TaskFrame::Block(body, 0));
-                            }
-                        }
-                    }
-                }
-                if yielded {
-                    env.execs[eid].push_back(task);
-                } else {
-                    completed += 1;
-                }
+            let completed = drain_exec_queue(env, eid)?;
+            Ok(Val::Int(completed))
+        }
+        Expr::ScopeNew => {
+            env.execs.push(std::collections::VecDeque::new());
+            Ok(Val::TaskScope(env.execs.len() - 1))
+        }
+        Expr::CancelNew => {
+            env.cancels.push(0);
+            Ok(Val::Cancel(env.cancels.len() - 1))
+        }
+        Expr::CancelTrigger(tok) => {
+            let id = match eval_expr(env, tok, locals, caller_locals, false)? {
+                Val::Cancel(id) => id,
+                _ => return Err(Flow::Trap("internal: cancel_trigger on non-cancel".to_owned())),
+            };
+            if env.cancels[id] == 0 {
+                env.cancels[id] = 1;
+                Ok(Val::Bool(true))
+            } else {
+                Ok(Val::Bool(false))
             }
+        }
+        Expr::CancelComplete(tok) => {
+            let id = match eval_expr(env, tok, locals, caller_locals, false)? {
+                Val::Cancel(id) => id,
+                _ => return Err(Flow::Trap("internal: cancel_complete on non-cancel".to_owned())),
+            };
+            if env.cancels[id] == 0 {
+                env.cancels[id] = 2;
+                Ok(Val::Bool(true))
+            } else {
+                Ok(Val::Bool(false))
+            }
+        }
+        Expr::CancelIsSet(tok) => {
+            let id = match eval_expr(env, tok, locals, caller_locals, false)? {
+                Val::Cancel(id) => id,
+                _ => return Err(Flow::Trap("internal: cancel_is_set on non-cancel".to_owned())),
+            };
+            Ok(Val::Bool(env.cancels[id] == 1))
+        }
+        Expr::PoolNew(n) => {
+            let _ = eval_expr(env, n, locals, caller_locals, false)?;
+            env.execs.push(std::collections::VecDeque::new());
+            Ok(Val::Pool(env.execs.len() - 1))
+        }
+        Expr::PoolJoin(p) => {
+            let pid = match eval_expr(env, p, locals, caller_locals, false)? {
+                Val::Pool(id) => id,
+                _ => return Err(Flow::Trap("internal: pool_join on non-pool".to_owned())),
+            };
+            let completed = drain_exec_queue(env, pid)?;
             Ok(Val::Int(completed))
         }
         Expr::ClockNew => {
@@ -2461,4 +2465,79 @@ fn format_val(val: &Val) -> String {
         }
         _ => "<val>".to_owned(),
     }
+}
+
+fn drain_exec_queue(env: &mut Env, eid: usize) -> Result<i64, Flow> {
+    let mut completed: i64 = 0;
+    while let Some(mut task) = env.execs[eid].pop_front() {
+        let mut yielded = false;
+        while let Some(frame) = task.stack.pop() {
+            match frame {
+                TaskFrame::Block(stmts, mut idx) => {
+                    while idx < stmts.len() {
+                        let stmt = &stmts[idx];
+                        idx += 1;
+                        match stmt {
+                            Statement::TaskYield => {
+                                task.stack.push(TaskFrame::Block(stmts, idx));
+                                yielded = true;
+                                break;
+                            }
+                            Statement::If(cond, then_b, else_b) => {
+                                let b = match eval_expr(env, cond, &mut task.locals, &mut None, false) {
+                                    Ok(Val::Bool(b)) => b,
+                                    Ok(_) => return Err(Flow::Trap("internal: non-bool if condition".to_owned())),
+                                    Err(f) => return Err(f),
+                                };
+                                let branch = if b { then_b.clone() } else { else_b.clone() };
+                                task.stack.push(TaskFrame::Block(stmts, idx));
+                                task.stack.push(TaskFrame::Block(branch, 0));
+                                break;
+                            }
+                            Statement::While(cond, body) => {
+                                let cond_c = cond.clone();
+                                let body_c = body.clone();
+                                task.stack.push(TaskFrame::Block(stmts, idx));
+                                task.stack.push(TaskFrame::While(cond_c, body_c));
+                                break;
+                            }
+                            other => {
+                                match eval_stmts(env, std::slice::from_ref(other), &mut task.locals, &mut None) {
+                                    Flow::Next => {}
+                                    Flow::Return(_) => { task.stack.clear(); break; }
+                                    Flow::Break => {
+                                        while let Some(f) = task.stack.pop() {
+                                            if matches!(f, TaskFrame::While(..)) { break; }
+                                        }
+                                        break;
+                                    }
+                                    Flow::Continue(_) => { break; }
+                                    Flow::Exit(c) => return Err(Flow::Exit(c)),
+                                    Flow::Trap(m) => return Err(Flow::Trap(m)),
+                                }
+                            }
+                        }
+                    }
+                    if yielded { break; }
+                }
+                TaskFrame::While(cond, body) => {
+                    let b = match eval_expr(env, &cond, &mut task.locals, &mut None, false) {
+                        Ok(Val::Bool(b)) => b,
+                        Ok(_) => return Err(Flow::Trap("internal: non-bool while condition".to_owned())),
+                        Err(f) => return Err(f),
+                    };
+                    if b {
+                        task.stack.push(TaskFrame::While(cond, body.clone()));
+                        task.stack.push(TaskFrame::Block(body, 0));
+                    }
+                }
+            }
+        }
+        if yielded {
+            env.execs[eid].push_back(task);
+        } else {
+            completed += 1;
+        }
+    }
+    Ok(completed)
 }
