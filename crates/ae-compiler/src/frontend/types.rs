@@ -48,6 +48,8 @@ impl Parser<'_> {
             "task_scope" => Ok(Type::TaskScope),
             "cancel" => Ok(Type::Cancel),
             "pool" => Ok(Type::Pool),
+            // Copy-semantics buffered byte stream reader (M3.2.01 / M3.2.02, ADR-0221).
+            "reader" => Ok(Type::Reader),
             // The copy-semantics shared box handle (ADR-0216, spec/concurrency.md §9):
             // copying the handle shares the process-lifetime box; no handle towers.
             "shared" => {

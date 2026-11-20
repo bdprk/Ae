@@ -46,6 +46,7 @@ pub(super) fn c_type_field(ty: Type) -> String {
         Type::TaskScope => "ae_task_scope".to_owned(),
         Type::Cancel => "ae_cancel".to_owned(),
         Type::Pool => "ae_pool".to_owned(),
+        Type::Reader => "ae_reader".to_owned(),
         // Unreachable: no syntax for a pointer-typed field (M2.12 pointers
         // bind as locals only); the value keeps the pointer shape so a future
         // slip prints valid C.
@@ -106,6 +107,8 @@ pub(super) fn c_type(ty: Type, id: usize, declaration: bool) -> String {
         Type::Cancel => "ae_cancel".to_owned(),
         Type::Pool if declaration => format!("ae_pool v{id}"),
         Type::Pool => "ae_pool".to_owned(),
+        Type::Reader if declaration => format!("ae_reader v{id}"),
+        Type::Reader => "ae_reader".to_owned(),
         // A function pointer parameter declares its name inside the pointer
         // parens, the way C requires.
         Type::Fn(sig) => {
