@@ -583,7 +583,16 @@ M5.1 and M6.2 pauses until R2 and R3a land.
   `shared_new`/`shared_get`/`exec_new`/`exec_run`/`pool_new`/`pool_join` stay
   `migrate` in the allowlist.
 - [ ] R3a. M0.2.08: route the CLI through the `ae-syntax` AST; differential
-  corpus on both routes; delete the legacy parser.
+  corpus on both routes; delete the legacy parser. **Progress:** the statement
+  layer exists (`ae_syntax::statement`: bindings, plain and compound
+  assignment, pointer store, print/assert/return, if/else-if/else, while,
+  for-in, for-range, match over the shared pattern parser, break/continue,
+  unsafe, effect calls) and two differential gates prove the shared grammar
+  matches the compiler today: every function body in `tests/run` + `examples`
+  parses to its closing brace (300 bodies), and every statement in a
+  compiler-accepted program splits at a token boundary without producing a
+  non-propagating call (3291 statements). The compiler still builds the typed
+  tree; routing through the shared AST is the remaining step.
 - [ ] R3b. Resolver pass: DefId per item/local over the AST (HIR-lite),
   resolution dumps as UI snapshots.
 - [ ] R3c. Type checker over the resolved tree emitting the existing typed
