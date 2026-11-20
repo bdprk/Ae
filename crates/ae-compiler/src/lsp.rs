@@ -1,0 +1,947 @@
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::io::{self, BufRead, Write};
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum JsonValue {
+    Null,
+    Bool(bool),
+    Number(f64),
+    String(String),
+    Array(Vec<JsonValue>),
+    Object(BTreeMap<String, JsonValue>),
+}
+
+impl JsonValue {
+    pub fn get(&self, key: &str) -> Option<&JsonValue> {
+        match self {
+            JsonValue::Object(map) => map.get(key),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            JsonValue::String(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn as_i64(&self) -> Option<i64> {
+        match self {
+            JsonValue::Number(n) => Some(*n as i64),
+            _ => None,
+        }
+    }
+
+    pub fn as_array(&self) -> Option<&[JsonValue]> {
+        match self {
+            JsonValue::Array(arr) => Some(arr),
+            _ => None,
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<JsonValue> {
+        let mut chars = s.trim().char_indices().peekable();
+        Self::parse_value(&mut chars, s)
+    }
+
+    fn parse_value(
+        chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
+        s: &str,
+    ) -> Option<JsonValue> {
+        Self::skip_whitespace(chars);
+        let (_, ch) = *chars.peek()?;
+        match ch {
+            'n' => {
+                Self::consume_str(chars, "null")?;
+                Some(JsonValue::Null)
+            }
+            't' => {
+                Self::consume_str(chars, "true")?;
+                Some(JsonValue::Bool(true))
+            }
+            'f' => {
+                Self::consume_str(chars, "false")?;
+                Some(JsonValue::Bool(false))
+            }
+            '"' => Self::parse_string(chars, s).map(JsonValue::String),
+            '[' => Self::parse_array(chars, s).map(JsonValue::Array),
+            '{' => Self::parse_object(chars, s).map(JsonValue::Object),
+            '-' | '0'..='9' => Self::parse_number(chars, s).map(JsonValue::Number),
+            _ => None,
+        }
+    }
+
+    fn skip_whitespace(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>) {
+        while let Some((_, ch)) = chars.peek() {
+            if ch.is_whitespace() {
+                chars.next();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn consume_str(
+        chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
+        expected: &str,
+    ) -> Option<()> {
+        for exp in expected.chars() {
+            let (_, ch) = chars.next()?;
+            if ch != exp {
+                return None;
+            }
+        }
+        Some(())
+    }
+
+    fn parse_string(
+        chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
+        _s: &str,
+    ) -> Option<String> {
+        chars.next();
+        let mut out = String::new();
+        while let Some((_, ch)) = chars.next() {
+            match ch {
+                '"' => return Some(out),
+                '\\' => {
+                    let (_, esc) = chars.next()?;
+                    match esc {
+                        '"' => out.push('"'),
+                        '\\' => out.push('\\'),
+                        '/' => out.push('/'),
+                        'b' => out.push('\x08'),
+                        'f' => out.push('\x0c'),
+                        'n' => out.push('\n'),
+                        'r' => out.push('\r'),
+                        't' => out.push('\t'),
+                        'u' => {
+                            let mut hex = String::new();
+                            for _ in 0..4 {
+                                hex.push(chars.next()?.1);
+                            }
+                            let codepoint = u32::from_str_radix(&hex, 16).ok()?;
+                            out.push(char::from_u32(codepoint)?);
+                        }
+                        _ => return None,
+                    }
+                }
+                c => out.push(c),
+            }
+        }
+        None
+    }
+
+    fn parse_number(
+        chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
+        s: &str,
+    ) -> Option<f64> {
+        let (start, _) = *chars.peek()?;
+        let mut end = start;
+        while let Some((idx, ch)) = chars.peek() {
+            if matches!(ch, '0'..='9' | '-' | '+' | '.' | 'e' | 'E') {
+                end = *idx + ch.len_utf8();
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        s[start..end].parse::<f64>().ok()
+    }
+
+    fn parse_array(
+        chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
+        s: &str,
+    ) -> Option<Vec<JsonValue>> {
+        chars.next();
+        let mut elements = Vec::new();
+        Self::skip_whitespace(chars);
+        if let Some((_, ']')) = chars.peek() {
+            chars.next();
+            return Some(elements);
+        }
+        loop {
+            let val = Self::parse_value(chars, s)?;
+            elements.push(val);
+            Self::skip_whitespace(chars);
+            match chars.next() {
+                Some((_, ']')) => break,
+                Some((_, ',')) => Self::skip_whitespace(chars),
+                _ => return None,
+            }
+        }
+        Some(elements)
+    }
+
+    fn parse_object(
+        chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>,
+        s: &str,
+    ) -> Option<BTreeMap<String, JsonValue>> {
+        chars.next();
+        let mut map = BTreeMap::new();
+        Self::skip_whitespace(chars);
+        if let Some((_, '}')) = chars.peek() {
+            chars.next();
+            return Some(map);
+        }
+        loop {
+            Self::skip_whitespace(chars);
+            let key = Self::parse_string(chars, s)?;
+            Self::skip_whitespace(chars);
+            if chars.next()?.1 != ':' {
+                return None;
+            }
+            let val = Self::parse_value(chars, s)?;
+            map.insert(key, val);
+            Self::skip_whitespace(chars);
+            match chars.next() {
+                Some((_, '}')) => break,
+                Some((_, ',')) => Self::skip_whitespace(chars),
+                _ => return None,
+            }
+        }
+        Some(map)
+    }
+
+    pub fn serialize(&self) -> String {
+        match self {
+            JsonValue::Null => "null".to_owned(),
+            JsonValue::Bool(b) => if *b { "true".to_owned() } else { "false".to_owned() },
+            JsonValue::Number(n) => {
+                if n.fract() == 0.0 && n.abs() < 1e15 {
+                    format!("{}", *n as i64)
+                } else {
+                    format!("{n}")
+                }
+            }
+            JsonValue::String(s) => format!("\"{}\"", escape_json_str(s)),
+            JsonValue::Array(arr) => {
+                let items = arr.iter().map(|item| item.serialize()).collect::<Vec<_>>().join(",");
+                format!("[{items}]")
+            }
+            JsonValue::Object(map) => {
+                let kvs = map
+                    .iter()
+                    .map(|(k, v)| format!("\"{}\":{}", escape_json_str(k), v.serialize()))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("{{{kvs}}}")
+            }
+        }
+    }
+}
+
+fn escape_json_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\x08' => out.push_str("\\b"),
+            '\x0c' => out.push_str("\\f"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Position {
+    pub line: u32,
+    pub character: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Range {
+    pub start: Position,
+    pub end: Position,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Location {
+    pub uri: String,
+    pub range: Range,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub range: Range,
+    pub severity: u32,
+    pub code: Option<String>,
+    pub message: String,
+}
+
+pub struct LineIndex {
+    line_starts: Vec<usize>,
+}
+
+impl LineIndex {
+    pub fn new(text: &str) -> Self {
+        let mut line_starts = vec![0];
+        for (idx, b) in text.bytes().enumerate() {
+            if b == b'\n' {
+                line_starts.push(idx + 1);
+            }
+        }
+        Self { line_starts }
+    }
+
+    pub fn offset_to_position(&self, text: &str, offset: usize) -> Position {
+        let offset = offset.min(text.len());
+        let line = match self.line_starts.binary_search(&offset) {
+            Ok(l) => l,
+            Err(l) => l.saturating_sub(1),
+        };
+        let col_start = self.line_starts[line];
+        let character = text[col_start..offset].chars().count() as u32;
+        Position {
+            line: line as u32,
+            character,
+        }
+    }
+
+    pub fn position_to_offset(&self, text: &str, pos: Position) -> usize {
+        let line = pos.line as usize;
+        if line >= self.line_starts.len() {
+            return text.len();
+        }
+        let start = self.line_starts[line];
+        let line_end = self
+            .line_starts
+            .get(line + 1)
+            .map(|&s| s.saturating_sub(1))
+            .unwrap_or(text.len());
+        let line_str = &text[start..line_end];
+        let mut count = 0usize;
+        for (idx, _) in line_str.char_indices() {
+            if count == pos.character as usize {
+                return start + idx;
+            }
+            count += 1;
+        }
+        start + line_str.len()
+    }
+}
+
+pub struct Document {
+    pub uri: String,
+    pub version: i64,
+    pub text: String,
+    pub line_index: LineIndex,
+}
+
+impl Document {
+    pub fn new(uri: String, version: i64, text: String) -> Self {
+        let line_index = LineIndex::new(&text);
+        Self {
+            uri,
+            version,
+            text,
+            line_index,
+        }
+    }
+
+    pub fn update(&mut self, version: i64, text: String) {
+        self.version = version;
+        self.line_index = LineIndex::new(&text);
+        self.text = text;
+    }
+}
+
+pub struct LspServer {
+    documents: HashMap<String, Document>,
+    cancelled_requests: HashSet<i64>,
+}
+
+impl Default for LspServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LspServer {
+    pub fn new() -> Self {
+        Self {
+            documents: HashMap::new(),
+            cancelled_requests: HashSet::new(),
+        }
+    }
+
+    pub fn handle_message(&mut self, raw: &str) -> Vec<String> {
+        let Some(json) = JsonValue::parse(raw) else {
+            return vec![Self::make_error_response(None, -32700, "Parse error")];
+        };
+
+        let method = json.get("method").and_then(|m| m.as_str());
+        let id = json.get("id").and_then(|v| v.as_i64());
+
+        if let Some(method) = method {
+            if let Some(id) = id {
+                if self.cancelled_requests.remove(&id) {
+                    return vec![Self::make_error_response(Some(id), -32800, "Request cancelled")];
+                }
+                vec![self.dispatch_request(id, method, json.get("params"))]
+            } else {
+                self.dispatch_notification(method, json.get("params"))
+            }
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn dispatch_request(&mut self, id: i64, method: &str, params: Option<&JsonValue>) -> String {
+        match method {
+            "initialize" => {
+                let mut caps = BTreeMap::new();
+                caps.insert("textDocumentSync".to_owned(), JsonValue::Number(1.0));
+                caps.insert("hoverProvider".to_owned(), JsonValue::Bool(true));
+                caps.insert("definitionProvider".to_owned(), JsonValue::Bool(true));
+
+                let mut comp = BTreeMap::new();
+                let triggers = vec![JsonValue::String(".".to_owned()), JsonValue::String(":".to_owned())];
+                comp.insert("triggerCharacters".to_owned(), JsonValue::Array(triggers));
+                caps.insert("completionProvider".to_owned(), JsonValue::Object(comp));
+                caps.insert("renameProvider".to_owned(), JsonValue::Bool(true));
+
+                let mut res = BTreeMap::new();
+                res.insert("capabilities".to_owned(), JsonValue::Object(caps));
+                Self::make_response(id, JsonValue::Object(res))
+            }
+            "shutdown" => Self::make_response(id, JsonValue::Null),
+            "textDocument/hover" => {
+                let Some(params) = params else {
+                    return Self::make_response(id, JsonValue::Null);
+                };
+                let uri = params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()).unwrap_or("");
+                let line = params.get("position").and_then(|p| p.get("line")).and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                let character = params.get("position").and_then(|p| p.get("character")).and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                let hover_info = self.hover(uri, Position { line, character });
+                match hover_info {
+                    Some(info) => {
+                        let mut contents = BTreeMap::new();
+                        contents.insert("kind".to_owned(), JsonValue::String("markdown".to_owned()));
+                        contents.insert("value".to_owned(), JsonValue::String(info));
+                        let mut res = BTreeMap::new();
+                        res.insert("contents".to_owned(), JsonValue::Object(contents));
+                        Self::make_response(id, JsonValue::Object(res))
+                    }
+                    None => Self::make_response(id, JsonValue::Null),
+                }
+            }
+            "textDocument/definition" => {
+                let Some(params) = params else {
+                    return Self::make_response(id, JsonValue::Null);
+                };
+                let uri = params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()).unwrap_or("");
+                let line = params.get("position").and_then(|p| p.get("line")).and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                let character = params.get("position").and_then(|p| p.get("character")).and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                let def = self.definition(uri, Position { line, character });
+                match def {
+                    Some(loc) => Self::make_response(id, Self::location_to_json(&loc)),
+                    None => Self::make_response(id, JsonValue::Null),
+                }
+            }
+            "textDocument/completion" => {
+                let Some(params) = params else {
+                    return Self::make_response(id, JsonValue::Array(Vec::new()));
+                };
+                let uri = params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()).unwrap_or("");
+                let line = params.get("position").and_then(|p| p.get("line")).and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                let character = params.get("position").and_then(|p| p.get("character")).and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                let items = self.completion(uri, Position { line, character });
+                let json_items = items
+                    .into_iter()
+                    .map(|(label, kind, detail)| {
+                        let mut m = BTreeMap::new();
+                        m.insert("label".to_owned(), JsonValue::String(label));
+                        m.insert("kind".to_owned(), JsonValue::Number(kind as f64));
+                        if let Some(detail) = detail {
+                            m.insert("detail".to_owned(), JsonValue::String(detail));
+                        }
+                        JsonValue::Object(m)
+                    })
+                    .collect::<Vec<_>>();
+                Self::make_response(id, JsonValue::Array(json_items))
+            }
+            "textDocument/rename" => {
+                let Some(params) = params else {
+                    return Self::make_response(id, JsonValue::Null);
+                };
+                let uri = params.get("textDocument").and_then(|t| t.get("uri")).and_then(|u| u.as_str()).unwrap_or("");
+                let line = params.get("position").and_then(|p| p.get("line")).and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                let character = params.get("position").and_then(|p| p.get("character")).and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                let new_name = params.get("newName").and_then(|n| n.as_str()).unwrap_or("");
+                let edit = self.rename(uri, Position { line, character }, new_name);
+                match edit {
+                    Some(edit) => Self::make_response(id, edit),
+                    None => Self::make_response(id, JsonValue::Null),
+                }
+            }
+            _ => Self::make_error_response(Some(id), -32601, "Method not found"),
+        }
+    }
+
+    fn dispatch_notification(&mut self, method: &str, params: Option<&JsonValue>) -> Vec<String> {
+        match method {
+            "textDocument/didOpen" => {
+                let Some(params) = params else { return Vec::new(); };
+                let doc = params.get("textDocument");
+                let uri = doc.and_then(|d| d.get("uri")).and_then(|u| u.as_str()).unwrap_or("").to_owned();
+                let version = doc.and_then(|d| d.get("version")).and_then(|v| v.as_i64()).unwrap_or(0);
+                let text = doc.and_then(|d| d.get("text")).and_then(|t| t.as_str()).unwrap_or("").to_owned();
+                self.documents.insert(uri.clone(), Document::new(uri.clone(), version, text));
+                vec![self.publish_diagnostics(&uri)]
+            }
+            "textDocument/didChange" => {
+                let Some(params) = params else { return Vec::new(); };
+                let uri = params.get("textDocument").and_then(|d| d.get("uri")).and_then(|u| u.as_str()).unwrap_or("").to_owned();
+                let version = params.get("textDocument").and_then(|d| d.get("version")).and_then(|v| v.as_i64()).unwrap_or(0);
+                if let Some(doc) = self.documents.get_mut(&uri) {
+                    if version > doc.version {
+                        if let Some(changes) = params.get("contentChanges").and_then(|c| c.as_array()) {
+                            if let Some(last) = changes.last() {
+                                if let Some(new_text) = last.get("text").and_then(|t| t.as_str()) {
+                                    doc.update(version, new_text.to_owned());
+                                }
+                            }
+                        }
+                        return vec![self.publish_diagnostics(&uri)];
+                    }
+                }
+                Vec::new()
+            }
+            "textDocument/didClose" => {
+                let Some(params) = params else { return Vec::new(); };
+                let uri = params.get("textDocument").and_then(|d| d.get("uri")).and_then(|u| u.as_str()).unwrap_or("");
+                self.documents.remove(uri);
+                Vec::new()
+            }
+            "$/cancelRequest" => {
+                if let Some(id) = params.and_then(|p| p.get("id")).and_then(|v| v.as_i64()) {
+                    self.cancelled_requests.insert(id);
+                }
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn check_text(&self, text: &str) -> Vec<Diagnostic> {
+        let line_index = LineIndex::new(text);
+        let mut out = Vec::new();
+        let lex_res = ae_syntax::lex_diagnostic(text);
+        if let Err(diag) = lex_res {
+            if let Some(label) = &diag.primary {
+                let start = line_index.offset_to_position(text, label.span.range.start);
+                let end = line_index.offset_to_position(text, label.span.range.end);
+                out.push(Diagnostic {
+                    range: Range { start, end },
+                    severity: 1,
+                    code: diag.code,
+                    message: diag.message,
+                });
+            }
+            return out;
+        }
+
+        if let Err(err_msg) = crate::frontend::check(text) {
+            let (line, col, msg) = parse_diagnostic_string(&err_msg);
+            let start = Position {
+                line: line.saturating_sub(1),
+                character: col.saturating_sub(1),
+            };
+            let end = Position {
+                line: start.line,
+                character: start.character + 1,
+            };
+            out.push(Diagnostic {
+                range: Range { start, end },
+                severity: 1,
+                code: None,
+                message: msg,
+            });
+        }
+        out
+    }
+
+    pub fn publish_diagnostics(&self, uri: &str) -> String {
+        let diags = self
+            .documents
+            .get(uri)
+            .map(|doc| self.check_text(&doc.text))
+            .unwrap_or_default();
+
+        let diag_arr = diags
+            .into_iter()
+            .map(|d| {
+                let mut m = BTreeMap::new();
+                m.insert("range".to_owned(), Self::range_to_json(&d.range));
+                m.insert("severity".to_owned(), JsonValue::Number(d.severity as f64));
+                if let Some(code) = d.code {
+                    m.insert("code".to_owned(), JsonValue::String(code));
+                }
+                m.insert("message".to_owned(), JsonValue::String(d.message));
+                JsonValue::Object(m)
+            })
+            .collect::<Vec<_>>();
+
+        let mut params = BTreeMap::new();
+        params.insert("uri".to_owned(), JsonValue::String(uri.to_owned()));
+        params.insert("diagnostics".to_owned(), JsonValue::Array(diag_arr));
+
+        let mut notif = BTreeMap::new();
+        notif.insert("jsonrpc".to_owned(), JsonValue::String("2.0".to_owned()));
+        notif.insert("method".to_owned(), JsonValue::String("textDocument/publishDiagnostics".to_owned()));
+        notif.insert("params".to_owned(), JsonValue::Object(params));
+        JsonValue::Object(notif).serialize()
+    }
+
+    pub fn hover(&self, uri: &str, pos: Position) -> Option<String> {
+        let doc = self.documents.get(uri)?;
+        let offset = doc.line_index.position_to_offset(&doc.text, pos);
+        let ident = extract_ident_at(&doc.text, offset)?;
+
+        match ident {
+            "adapter_new" => Some("fn adapter_new() -> adapter\nCreates an asynchronous readiness/completion I/O adapter.".to_owned()),
+            "adapter_step" => Some("fn adapter_step(ad: adapter, req_id: i64) -> i64\nAdvances asynchronous I/O operation (0=Pending, 1=Done, 2=Cancelled, 3=Disconnected).".to_owned()),
+            "adapter_cancel" => Some("fn adapter_cancel(ad: adapter, req_id: i64) -> bool\nCancels pending I/O operation with buffer retention.".to_owned()),
+            "adapter_rearm" => Some("fn adapter_rearm(ad: adapter, req_id: i64) -> bool\nRearms interest on an edge-triggered adapter request.".to_owned()),
+            "adapter_result" => Some("fn adapter_result(ad: adapter, req_id: i64) -> string\nRetrieves processed I/O data or transfer status.".to_owned()),
+            "stream_new" => Some("fn stream_new(cap: i64) -> stream\nCreates a bounded nonblocking stream with capacity limit.".to_owned()),
+            "stream_send" => Some("fn stream_send(s: stream, data: string) -> i64\nWrites data into stream buffer up to available capacity.".to_owned()),
+            "stream_recv" => Some("fn stream_recv(s: stream, max_bytes: i64) -> string\nReads available bytes from stream buffer.".to_owned()),
+            "stream_close" => Some("fn stream_close(s: stream) -> i64\nCloses stream for writing.".to_owned()),
+            "stream_is_closed" => Some("fn stream_is_closed(s: stream) -> bool\nReturns true if stream is closed and empty.".to_owned()),
+            "stream_buffered" => Some("fn stream_buffered(s: stream) -> i64\nReturns count of queued bytes in stream.".to_owned()),
+            "reader_new" => Some("fn reader_new(src: string, chunk_size: i64, buf_cap: i64) -> reader".to_owned()),
+            "reader_read" => Some("fn reader_read(r: reader, max_bytes: i64) -> string".to_owned()),
+            "reader_read_line" => Some("fn reader_read_line(r: reader) -> string".to_owned()),
+            "reader_eof" => Some("fn reader_eof(r: reader) -> bool".to_owned()),
+            "exec_new" => Some("fn exec_new() -> exec".to_owned()),
+            "exec_run" => Some("fn exec_run(ex: exec) -> i64".to_owned()),
+            "task_spawn" => Some("fn task_spawn(ex: exec, task: || -> i64)".to_owned()),
+            "task_yield" => Some("fn task_yield()".to_owned()),
+            "clock_new" => Some("fn clock_new() -> clock".to_owned()),
+            "clock_now" => Some("fn clock_now(c: clock) -> i64".to_owned()),
+            "clock_advance" => Some("fn clock_advance(c: clock, delta: i64) -> i64".to_owned()),
+            "timer_new" => Some("fn timer_new(c: clock, delay: i64) -> timer".to_owned()),
+            "timer_ready" => Some("fn timer_ready(t: timer) -> bool".to_owned()),
+            "timer_cancel" => Some("fn timer_cancel(t: timer) -> bool".to_owned()),
+            "scope_new" => Some("fn scope_new() -> task_scope".to_owned()),
+            "cancel_new" => Some("fn cancel_new() -> cancel".to_owned()),
+            "cancel_trigger" => Some("fn cancel_trigger(c: cancel) -> bool".to_owned()),
+            "cancel_complete" => Some("fn cancel_complete(c: cancel) -> bool".to_owned()),
+            "cancel_is_set" => Some("fn cancel_is_set(c: cancel) -> bool".to_owned()),
+            "pool_new" => Some("fn pool_new(workers: i64) -> pool".to_owned()),
+            "pool_join" => Some("fn pool_join(p: pool) -> i64".to_owned()),
+            "print" => Some("fn print(val: any)\nOutputs formatted representation to stdout.".to_owned()),
+            "len" => Some("fn len(v: any) -> i64\nReturns number of elements in vector or bytes in string.".to_owned()),
+            _ => {
+                for line in doc.text.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("fn ") && trimmed.contains(ident) {
+                        return Some(format!("```ae\n{trimmed}\n```"));
+                    }
+                    if trimmed.starts_with("struct ") && trimmed.contains(ident) {
+                        return Some(format!("```ae\n{trimmed}\n```"));
+                    }
+                }
+                Some(format!("`{ident}`"))
+            }
+        }
+    }
+
+    pub fn definition(&self, uri: &str, pos: Position) -> Option<Location> {
+        let doc = self.documents.get(uri)?;
+        let offset = doc.line_index.position_to_offset(&doc.text, pos);
+        let ident = extract_ident_at(&doc.text, offset)?;
+
+        for (line_idx, line) in doc.text.lines().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("fn ") || trimmed.starts_with("struct ") || trimmed.starts_with("let ") || trimmed.starts_with("var ") {
+                if let Some(col) = line.find(ident) {
+                    let start = Position {
+                        line: line_idx as u32,
+                        character: col as u32,
+                    };
+                    let end = Position {
+                        line: line_idx as u32,
+                        character: (col + ident.len()) as u32,
+                    };
+                    return Some(Location {
+                        uri: uri.to_owned(),
+                        range: Range { start, end },
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    pub fn completion(&self, uri: &str, pos: Position) -> Vec<(String, u32, Option<String>)> {
+        let mut out = Vec::new();
+        let Some(doc) = self.documents.get(uri) else {
+            return out;
+        };
+
+        let offset = doc.line_index.position_to_offset(&doc.text, pos);
+        let prefix_bytes = doc.text[..offset].as_bytes();
+
+        let is_dot = prefix_bytes.iter().rev().find(|&&b| !b.is_ascii_whitespace()) == Some(&b'.');
+        if is_dot {
+            for line in doc.text.lines() {
+                let trimmed = line.trim();
+                if let Some(start_brace) = trimmed.find('{') {
+                    if let Some(end_brace) = trimmed.find('}') {
+                        let inside = &trimmed[start_brace + 1..end_brace];
+                        for field_part in inside.split(',') {
+                            if let Some((field, _)) = field_part.split_once(':') {
+                                let f = field.trim();
+                                if is_ident(f) {
+                                    out.push((f.to_owned(), 5, Some("field".to_owned())));
+                                }
+                            }
+                        }
+                    }
+                }
+                if trimmed.contains(':') && !trimmed.starts_with("fn ") && !trimmed.starts_with("let ") && !trimmed.starts_with("var ") && !trimmed.starts_with("struct ") {
+                    if let Some((field, _)) = trimmed.split_once(':') {
+                        let f = field.trim();
+                        if is_ident(f) {
+                            out.push((f.to_owned(), 5, Some("field".to_owned())));
+                        }
+                    }
+                }
+            }
+            return out;
+        }
+
+        let builtins = [
+            ("print", 3, "fn print(val: any)"),
+            ("len", 3, "fn len(val: any) -> i64"),
+            ("push", 3, "fn push(v: &mut vec, val: any)"),
+            ("pop", 3, "fn pop(v: &mut vec) -> any"),
+            ("adapter_new", 3, "fn adapter_new() -> adapter"),
+            ("adapter_step", 3, "fn adapter_step(ad: adapter, req_id: i64) -> i64"),
+            ("adapter_submit_read", 3, "fn adapter_submit_read(ad: adapter, src: string, chunk_size: i64) -> i64"),
+            ("adapter_submit_write", 3, "fn adapter_submit_write(ad: adapter, data: string, frag_size: i64) -> i64"),
+            ("adapter_cancel", 3, "fn adapter_cancel(ad: adapter, req_id: i64) -> bool"),
+            ("adapter_rearm", 3, "fn adapter_rearm(ad: adapter, req_id: i64) -> bool"),
+            ("adapter_result", 3, "fn adapter_result(ad: adapter, req_id: i64) -> string"),
+            ("stream_new", 3, "fn stream_new(cap: i64) -> stream"),
+            ("stream_send", 3, "fn stream_send(s: stream, data: string) -> i64"),
+            ("stream_recv", 3, "fn stream_recv(s: stream, max_bytes: i64) -> string"),
+            ("stream_close", 3, "fn stream_close(s: stream) -> i64"),
+            ("stream_is_closed", 3, "fn stream_is_closed(s: stream) -> bool"),
+            ("stream_buffered", 3, "fn stream_buffered(s: stream) -> i64"),
+            ("reader_new", 3, "fn reader_new(src: string, chunk_size: i64, buf_cap: i64) -> reader"),
+            ("reader_read", 3, "fn reader_read(r: reader, max_bytes: i64) -> string"),
+            ("reader_read_line", 3, "fn reader_read_line(r: reader) -> string"),
+            ("reader_eof", 3, "fn reader_eof(r: reader) -> bool"),
+            ("exec_new", 3, "fn exec_new() -> exec"),
+            ("exec_run", 3, "fn exec_run(ex: exec) -> i64"),
+            ("task_spawn", 3, "fn task_spawn(ex: exec, task: || -> i64)"),
+            ("task_yield", 3, "fn task_yield()"),
+            ("clock_new", 3, "fn clock_new() -> clock"),
+            ("clock_now", 3, "fn clock_now(c: clock) -> i64"),
+            ("timer_new", 3, "fn timer_new(c: clock, delay: i64) -> timer"),
+            ("timer_ready", 3, "fn timer_ready(t: timer) -> bool"),
+            ("timer_cancel", 3, "fn timer_cancel(t: timer) -> bool"),
+            ("cancel_new", 3, "fn cancel_new() -> cancel"),
+            ("cancel_trigger", 3, "fn cancel_trigger(c: cancel) -> bool"),
+            ("cancel_complete", 3, "fn cancel_complete(c: cancel) -> bool"),
+            ("cancel_is_set", 3, "fn cancel_is_set(c: cancel) -> bool"),
+            ("pool_new", 3, "fn pool_new(workers: i64) -> pool"),
+            ("pool_join", 3, "fn pool_join(p: pool) -> i64"),
+        ];
+        for (name, kind, detail) in builtins {
+            out.push((name.to_owned(), kind, Some(detail.to_owned())));
+        }
+
+        let keywords = ["fn", "let", "var", "if", "else", "while", "return", "struct", "enum", "impl", "use", "pub", "true", "false"];
+        for kw in keywords {
+            out.push((kw.to_owned(), 14, None));
+        }
+
+        out
+    }
+
+    pub fn rename(&self, uri: &str, pos: Position, new_name: &str) -> Option<JsonValue> {
+        let doc = self.documents.get(uri)?;
+        let offset = doc.line_index.position_to_offset(&doc.text, pos);
+        let ident = extract_ident_at(&doc.text, offset)?;
+        if !is_ident(new_name) {
+            return None;
+        }
+
+        let mut edits = Vec::new();
+        for (line_idx, line) in doc.text.lines().enumerate() {
+            let mut search_start = 0;
+            while let Some(rel_pos) = line[search_start..].find(ident) {
+                let col = search_start + rel_pos;
+                let before_ok = col == 0 || !line[..col].chars().next_back().unwrap().is_alphanumeric() && line[..col].chars().next_back().unwrap() != '_';
+                let after_idx = col + ident.len();
+                let after_ok = after_idx >= line.len() || !line[after_idx..].chars().next().unwrap().is_alphanumeric() && line[after_idx..].chars().next().unwrap() != '_';
+
+                if before_ok && after_ok {
+                    let range = Range {
+                        start: Position {
+                            line: line_idx as u32,
+                            character: col as u32,
+                        },
+                        end: Position {
+                            line: line_idx as u32,
+                            character: (col + ident.len()) as u32,
+                        },
+                    };
+                    let mut text_edit = BTreeMap::new();
+                    text_edit.insert("range".to_owned(), Self::range_to_json(&range));
+                    text_edit.insert("newText".to_owned(), JsonValue::String(new_name.to_owned()));
+                    edits.push(JsonValue::Object(text_edit));
+                }
+                search_start = col + ident.len();
+            }
+        }
+
+        let mut changes = BTreeMap::new();
+        changes.insert(uri.to_owned(), JsonValue::Array(edits));
+        let mut res = BTreeMap::new();
+        res.insert("changes".to_owned(), JsonValue::Object(changes));
+        Some(JsonValue::Object(res))
+    }
+
+    fn make_response(id: i64, result: JsonValue) -> String {
+        let mut map = BTreeMap::new();
+        map.insert("jsonrpc".to_owned(), JsonValue::String("2.0".to_owned()));
+        map.insert("id".to_owned(), JsonValue::Number(id as f64));
+        map.insert("result".to_owned(), result);
+        JsonValue::Object(map).serialize()
+    }
+
+    fn make_error_response(id: Option<i64>, code: i64, message: &str) -> String {
+        let mut err = BTreeMap::new();
+        err.insert("code".to_owned(), JsonValue::Number(code as f64));
+        err.insert("message".to_owned(), JsonValue::String(message.to_owned()));
+
+        let mut map = BTreeMap::new();
+        map.insert("jsonrpc".to_owned(), JsonValue::String("2.0".to_owned()));
+        map.insert("id".to_owned(), id.map_or(JsonValue::Null, |i| JsonValue::Number(i as f64)));
+        map.insert("error".to_owned(), JsonValue::Object(err));
+        JsonValue::Object(map).serialize()
+    }
+
+    fn range_to_json(range: &Range) -> JsonValue {
+        let mut start = BTreeMap::new();
+        start.insert("line".to_owned(), JsonValue::Number(range.start.line as f64));
+        start.insert("character".to_owned(), JsonValue::Number(range.start.character as f64));
+
+        let mut end = BTreeMap::new();
+        end.insert("line".to_owned(), JsonValue::Number(range.end.line as f64));
+        end.insert("character".to_owned(), JsonValue::Number(range.end.character as f64));
+
+        let mut map = BTreeMap::new();
+        map.insert("start".to_owned(), JsonValue::Object(start));
+        map.insert("end".to_owned(), JsonValue::Object(end));
+        JsonValue::Object(map)
+    }
+
+    fn location_to_json(loc: &Location) -> JsonValue {
+        let mut map = BTreeMap::new();
+        map.insert("uri".to_owned(), JsonValue::String(loc.uri.clone()));
+        map.insert("range".to_owned(), Self::range_to_json(&loc.range));
+        JsonValue::Object(map)
+    }
+}
+
+fn extract_ident_at(text: &str, offset: usize) -> Option<&str> {
+    if text.is_empty() {
+        return None;
+    }
+    let offset = offset.min(text.len());
+    let bytes = text.as_bytes();
+
+    let mut start = offset;
+    while start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+        start -= 1;
+    }
+
+    let mut end = offset;
+    while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+        end += 1;
+    }
+
+    if start == end {
+        None
+    } else {
+        Some(&text[start..end])
+    }
+}
+
+fn is_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_alphabetic() || first == '_') && chars.all(|c| c.is_alphanumeric() || c == '_')
+}
+
+fn parse_diagnostic_string(msg: &str) -> (u32, u32, String) {
+    let parts: Vec<&str> = msg.splitn(4, ':').collect();
+    if parts.len() >= 4 {
+        let line = parts[1].trim().parse::<u32>().unwrap_or(1);
+        let col = parts[2].trim().parse::<u32>().unwrap_or(1);
+        let message = parts[3].trim().to_owned();
+        (line, col, message)
+    } else {
+        (1, 1, msg.to_owned())
+    }
+}
+
+pub fn read_lsp_message(reader: &mut impl BufRead) -> io::Result<Option<String>> {
+    let mut size: Option<usize> = None;
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let bytes_read = reader.read_line(&mut line)?;
+        if bytes_read == 0 {
+            return Ok(None);
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some(rest) = trimmed.strip_prefix("Content-Length:") {
+            size = rest.trim().parse::<usize>().ok();
+        }
+    }
+
+    let Some(content_length) = size else {
+        return Ok(None);
+    };
+
+    let mut buf = vec![0u8; content_length];
+    reader.read_exact(&mut buf)?;
+    String::from_utf8(buf)
+        .map(Some)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+pub fn write_lsp_message(writer: &mut impl Write, payload: &str) -> io::Result<()> {
+    write!(writer, "Content-Length: {}\r\n\r\n{}", payload.len(), payload)?;
+    writer.flush()
+}
+
+pub fn run_lsp_loop(mut reader: impl BufRead, mut writer: impl Write) -> io::Result<()> {
+    let mut server = LspServer::new();
+    while let Some(msg) = read_lsp_message(&mut reader)? {
+        let responses = server.handle_message(&msg);
+        for resp in responses {
+            write_lsp_message(&mut writer, &resp)?;
+        }
+    }
+    Ok(())
+}
