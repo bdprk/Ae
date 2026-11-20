@@ -892,7 +892,7 @@ mod tests {
             "CreateDirectoryW", "MoveFileExW", "SetCurrentDirectoryW",
             "GetStdHandle", "GetConsoleMode", "WriteConsoleW",
             "GetCommandLineW", "CommandLineToArgvW", "LocalFree", "lstrlenW",
-            "CreateThread", "WaitForSingleObject", "CloseHandle",
+            "CreateThread", "WaitForSingleObject", "CloseHandle", "ExitThread",
             "CreateMutexA", "ReleaseMutex",
             "InitializeSRWLock", "AcquireSRWLockExclusive", "ReleaseSRWLockExclusive",
             "InitializeConditionVariable", "SleepConditionVariableSRW",
@@ -932,7 +932,7 @@ mod tests {
             assert!(WIN32_DECLS.contains(&name), "self-declared Win32 symbol not in the audit list: {name}");
             declared += 1;
         }
-        assert_eq!(declared, 23, "expected twenty-three self-declared Win32 entry points");
+        assert_eq!(declared, 24, "expected twenty-four self-declared Win32 entry points");
     }
 
     #[test]

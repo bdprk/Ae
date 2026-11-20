@@ -94,7 +94,17 @@ _Noreturn static void ae_exit(int64_t code) {
 // Runtime messages are fixed ASCII text (an operation that quotes user data
 // returns an Err the program prints itself, through the console sink), so stderr
 // keeps plain fprintf and a program that never prints carries none of it.
-_Noreturn static void ae_fail(const char *message, size_t line, size_t column) { fprintf(stderr, "ae:%zu:%zu: %s\n", line, column, message); exit(1); }
+// A thread records its own failure and ends, instead of aborting the process at
+// the failure point (ADR-0217); the thread unit installs this sink. With no
+// sink installed — or on a thread without a record — the failure is fatal
+// immediately, exactly as before.
+typedef void (*ae_fail_sink_fn)(const char *message, size_t line, size_t column);
+static ae_fail_sink_fn ae_fail_sink = NULL;
+_Noreturn static void ae_fail(const char *message, size_t line, size_t column) {
+    if (ae_fail_sink) ae_fail_sink(message, line, column);
+    fprintf(stderr, "ae:%zu:%zu: %s\n", line, column, message);
+    exit(1);
+}
 // unit: ae_allocator_impl
 // ---- Allocation interface (ADR-16) ------------------------------------------
 // Every buffer the runtime owns is obtained through one of these three
@@ -1264,7 +1274,22 @@ static void ae_map_forfeit(ae_map *m) {
 // it with its context. A typed member keeps the function pointer out of an
 // object pointer, which ISO C forbids converting.
 typedef void (*ae_thread_entry_fn)(void *ctx);
-typedef struct { ae_thread_entry_fn fn; void *ctx; } ae_thread_job;
+// One thread's failure record, written by that thread's own ae_fail and
+// read by the joiner after the join completes (ADR-0217).
+typedef struct {
+    int failed;
+    const char *message;
+    size_t line;
+    size_t column;
+} ae_thread_failure;
+typedef struct { ae_thread_entry_fn fn; void *ctx; ae_thread_failure *failure; } ae_thread_job;
+// Set for the duration of a spawned body; NULL on the main thread, where a
+// failure has no joiner to report to and stays immediately fatal.
+static _Thread_local ae_thread_failure *ae_thread_current_failure = NULL;
+// The most recent failure, so a handle that is never waited still surfaces at
+// process exit instead of being swallowed.
+static ae_thread_failure ae_thread_latched = { 0, NULL, 0, 0 };
+static int ae_thread_hook_installed = 0;
 #ifdef _WIN32
 // Declared with the real spellings, not void: the argument-conversion part
 // of this file includes <windows.h> on Windows, and a `void *` first
@@ -1278,33 +1303,82 @@ struct _SECURITY_ATTRIBUTES;
 extern void *CreateThread(struct _SECURITY_ATTRIBUTES *attributes, size_t stack, unsigned long (*start)(void *), void *parameter, unsigned long flags, unsigned long *id); /* win32-declared */
 extern unsigned long WaitForSingleObject(void *handle, unsigned long milliseconds); /* win32-declared */
 extern int CloseHandle(void *handle); /* win32-declared */
-typedef struct { void *native; } ae_thread_handle;
+extern void ExitThread(unsigned long exit_code); /* win32-declared */
+typedef struct { void *native; ae_thread_failure failure; } ae_thread_handle;
 static unsigned long ae_thread_body(void *raw) {
     ae_thread_job *job = raw;
+    ae_thread_current_failure = job->failure;
     job->fn(job->ctx);
+    ae_thread_current_failure = NULL;
     ae_free(raw);
     return 0;
 }
 #else
 #include <threads.h>
-typedef struct { thrd_t native; } ae_thread_handle;
+typedef struct { thrd_t native; ae_thread_failure failure; } ae_thread_handle;
 static int ae_thread_body(void *raw) {
     ae_thread_job *job = raw;
+    ae_thread_current_failure = job->failure;
     job->fn(job->ctx);
+    ae_thread_current_failure = NULL;
     ae_free(raw);
     return 0;
 }
 #endif
+// Report a recorded failure the way a main-thread failure reports itself, then
+// end the process: the first observation point decides (a wait or process
+// exit), and the exit status and stderr line match an immediate abort.
+static _Noreturn void ae_thread_report_failure(const ae_thread_failure *failure) {
+    fprintf(stderr, "ae:%zu:%zu: %s\n", failure->line, failure->column, failure->message);
+    fflush(stdout);
+    _Exit(1);
+}
+// The sink ae_fail calls once threads exist: inside a thread it records the
+// failure on that thread's handle and ends only the thread; anywhere else it
+// reports and ends the process.
+static _Noreturn void ae_thread_fail(const char *message, size_t line, size_t column) { /* win32-declared */
+    if (ae_thread_current_failure) {
+        ae_thread_current_failure->failed = 1;
+        ae_thread_current_failure->message = message;
+        ae_thread_current_failure->line = line;
+        ae_thread_current_failure->column = column;
+        ae_thread_latched = *ae_thread_current_failure;
+#ifdef _WIN32
+        ExitThread(1);
+#else
+        thrd_exit(1);
+#endif
+    }
+    ae_thread_failure failure = { 1, message, line, column };
+    ae_thread_report_failure(&failure);
+}
+// A failure nobody waited for is still reported: the process ends nonzero at
+// exit rather than pretending the program succeeded.
+static void ae_thread_check_latch(void) {
+    if (ae_thread_latched.failed) ae_thread_report_failure(&ae_thread_latched);
+}
 static void *ae_thread_spawn(ae_thread_entry_fn entry, void *ctx) { /* win32-declared */
     // Two slots: the entry function and its context. The block is owned by
     // the thread body, which frees it after the call; the handle is a
     // separate allocation so a leaked join stays one leak, not two.
+    // The handle carries the thread's failure record, so the joiner can report
+    // it once the join completed.
+    ae_thread_handle *handle = ae_alloc_try(sizeof(ae_thread_handle));
+    if (!handle) return NULL;
+    handle->failure.failed = 0;
+    handle->failure.message = NULL;
+    handle->failure.line = 0;
+    handle->failure.column = 0;
     ae_thread_job *job = ae_alloc_try(sizeof(ae_thread_job));
-    if (!job) return NULL;
+    if (!job) { ae_free(handle); return NULL; }
     job->fn = entry;
     job->ctx = ctx;
-    ae_thread_handle *handle = ae_alloc_try(sizeof(ae_thread_handle));
-    if (!handle) { ae_free(job); return NULL; }
+    job->failure = &handle->failure;
+    if (!ae_thread_hook_installed) {
+        ae_fail_sink = ae_thread_fail;
+        atexit(ae_thread_check_latch);
+        ae_thread_hook_installed = 1;
+    }
 #ifdef _WIN32
     handle->native = CreateThread(NULL, 0, ae_thread_body, job, 0, NULL);
     if (!handle->native) { ae_free(job); ae_free(handle); return NULL; }
@@ -1326,6 +1400,13 @@ static bool ae_thread_join(void *opaque) { /* win32-declared */
 #else
     if (thrd_join(handle->native, NULL) != thrd_success) return false;
 #endif
+    // The join is complete, so any sibling joined before this point already ran
+    // to completion; this thread's failure now ends the process.
+    if (handle->failure.failed) {
+        ae_thread_failure failure = handle->failure;
+        ae_thread_latched.failed = 0;
+        ae_thread_report_failure(&failure);
+    }
     ae_free(handle);
     return true;
 }
