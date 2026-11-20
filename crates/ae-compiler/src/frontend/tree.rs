@@ -378,6 +378,12 @@ impl<'a> TreePrinter<'a> {
             Expr::ChanSelect(c1, c2) => out.push_str(&format!("chan_select({}, {})", self.expression_text(c1), self.expression_text(c2))),
             Expr::ExecNew => out.push_str("exec_new()"),
             Expr::ExecRun(ex) => out.push_str(&format!("exec_run({})", self.expression_text(ex))),
+            Expr::ClockNew => out.push_str("clock_new()"),
+            Expr::ClockNow(c) => out.push_str(&format!("clock_now({})", self.expression_text(c))),
+            Expr::ClockAdvance(c, d) => out.push_str(&format!("clock_advance({}, {})", self.expression_text(c), self.expression_text(d))),
+            Expr::TimerNew(c, d) => out.push_str(&format!("timer_new({}, {})", self.expression_text(c), self.expression_text(d))),
+            Expr::TimerReady(t) => out.push_str(&format!("timer_ready({})", self.expression_text(t))),
+            Expr::TimerCancel(t) => out.push_str(&format!("timer_cancel({})", self.expression_text(t))),
             Expr::AtomicAdd(handle, value) => out.push_str(&format!("cell_add({}, {})", self.expression_text(handle), self.expression_text(value))),
             Expr::AtomicCas(handle, expect, new) => out.push_str(&format!("cell_cas({}, {}, {})", self.expression_text(handle), self.expression_text(expect), self.expression_text(new))),
             // The handle and the capture slots print like any expression; the

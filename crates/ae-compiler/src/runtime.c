@@ -1935,3 +1935,45 @@ static int64_t ae_exec_run(ae_exec ex) { /* win32-declared */
 #endif
 }
 // unit: -
+
+// unit: ae_clock
+// ---- Controlled Monotonic Clock and Timers (M3.2.05, M4.2.06, ADR-0219) -----
+typedef struct { int64_t *now; } ae_clock;
+typedef struct {
+    int64_t *clk_now;
+    int64_t deadline;
+    int cancelled;
+} ae_timer_state;
+typedef struct { ae_timer_state *state; } ae_timer;
+static ae_clock ae_clock_new(void) {
+    int64_t *p = (int64_t *)calloc(1, sizeof(int64_t));
+    if (!p) ae_fail("out of memory", 0, 0);
+    return (ae_clock){ p };
+}
+static int64_t ae_clock_now(ae_clock c) {
+    return *c.now;
+}
+static int64_t ae_clock_advance(ae_clock c, int64_t delta) {
+    if (delta < 0) ae_fail("clock_advance delta must be non-negative", 0, 0);
+    *c.now += delta;
+    return *c.now;
+}
+static ae_timer ae_timer_new(ae_clock c, int64_t delay) {
+    if (delay < 0) ae_fail("timer_new delay must be non-negative", 0, 0);
+    ae_timer_state *s = (ae_timer_state *)calloc(1, sizeof(ae_timer_state));
+    if (!s) ae_fail("out of memory", 0, 0);
+    s->clk_now = c.now;
+    s->deadline = *c.now + delay;
+    s->cancelled = 0;
+    return (ae_timer){ s };
+}
+static bool ae_timer_ready(ae_timer t) {
+    if (t.state->cancelled) return false;
+    return *t.state->clk_now >= t.state->deadline;
+}
+static bool ae_timer_cancel(ae_timer t) {
+    if (t.state->cancelled || *t.state->clk_now >= t.state->deadline) return false;
+    t.state->cancelled = 1;
+    return true;
+}
+// unit: -

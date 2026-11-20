@@ -436,8 +436,9 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         Expr::ChanNew(cap) => walk_expr(cap, moved),
         Expr::ChanSend(ch, val) | Expr::ChanTrySend(ch, val) | Expr::ChanSelect(ch, val) => { walk_expr(ch, moved); walk_expr(val, moved); None }
         Expr::ChanRecv(ch) => walk_expr(ch, moved),
-        Expr::ExecNew => None,
-        Expr::ExecRun(ex) => walk_expr(ex, moved),
+        Expr::ExecNew | Expr::ClockNew => None,
+        Expr::ExecRun(ex) | Expr::ClockNow(ex) | Expr::TimerReady(ex) | Expr::TimerCancel(ex) => walk_expr(ex, moved),
+        Expr::ClockAdvance(a, b) | Expr::TimerNew(a, b) => { walk_expr(a, moved); walk_expr(b, moved); None }
         Expr::AtomicAdd(handle, value) => { walk_expr(handle, moved); walk_expr(value, moved); None }
         Expr::AtomicCas(handle, expect, new) => {
             if let Some(violation) = walk_expr(handle, moved) { return Some(violation); }

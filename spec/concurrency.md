@@ -179,3 +179,16 @@ Cancellation has no dedicated primitive: a **cancellation channel** is an ordina
 | K3 | 200 tasks spawned and run to completion | `exec_run` returns `200`; stacks reclaimed on completion with bounded memory (`tests/run/tasks_fifo.ae`) |
 | K4 | `task_spawn` with non-`exec` first argument | Compile-time error (`tests/ui/task_spawn_non_exec.ae`) |
 | K5 | `exec_run` with non-`exec` argument | Compile-time error (`tests/ui/exec_run_non_exec.ae`) |
+
+## 14. Controlled Clocks and Timers (`clock`, `timer`, M3.2.05 / M4.2.06, ADR-0219)
+
+1. **`clock` is a copy-semantics handle to a controlled monotonic clock starting at `0`.** `clock_advance(clk, delta)` advances time monotonically (`delta >= 0`) and returns the new timestamp; `clock_now(clk)` reads it.
+2. **`timer` is a copy-semantics handle to a deadline bound to a `clock`.** `timer_new(clk, delay)` sets deadline `clock_now(clk) + delay`. `timer_ready(t)` returns `true` once `clock_now(clk) >= deadline` unless cancelled.
+3. **`timer_cancel(t) -> bool`** cancels a pending timer and returns `true` if it was still pending (not already cancelled and not already ready), `false` otherwise.
+
+| Case | Scenario | Expected |
+|---|---|---|
+| L1 | Two timers with equal deadlines on one controlled clock | Both stay unready before deadline, both become ready together at exact deadline (`tests/run/timers_clock.ae`) |
+| L2 | Cancel one timer before deadline, cancel another after deadline | Pre-deadline cancel returns `true` and keeps `timer_ready` `false`; post-deadline cancel returns `false` (`tests/run/timers_clock.ae`) |
+| L3 | Task executor drives a timeout loop using `clock_advance` and `task_yield` | Waiting task wakes cleanly when controller task advances the clock (`tests/run/timers_clock.ae`) |
+| L4 | `clock_advance` on non-`clock` or `timer_ready` on non-`timer` | Compile-time error (`tests/ui/timer_non_handle.ae`) |

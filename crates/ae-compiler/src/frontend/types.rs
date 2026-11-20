@@ -41,6 +41,9 @@ impl Parser<'_> {
             "chan" => Ok(Type::Chan),
             // Copy-semantics single-worker task executor handle (M4.2, ADR-0218).
             "exec" => Ok(Type::Exec),
+            // Copy-semantics controlled monotonic clock and timer handles (M3.2.05 / M4.2.06, ADR-0219).
+            "clock" => Ok(Type::Clock),
+            "timer" => Ok(Type::Timer),
             // The copy-semantics shared box handle (ADR-0216, spec/concurrency.md §9):
             // copying the handle shares the process-lifetime box; no handle towers.
             "shared" => {
