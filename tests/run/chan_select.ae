@@ -1,0 +1,27 @@
+// M4.3.06, spec/concurrency.md §10: chan_select chooses once when both arms
+// are ready, wakes when a spawned sender feeds the second arm, and
+// chan_try_send reports backpressure without blocking.
+fn main() {
+    let c1 = chan_new(1);
+    let c2 = chan_new(1);
+
+    // Backpressure via chan_try_send
+    print(chan_try_send(c1, 11));
+    print(chan_try_send(c1, 99));
+    print(chan_try_send(c2, 22));
+
+    // Both arms ready together: chooses once (arm 0), then arm 1
+    let first = chan_select(c1, c2);
+    print(first);
+    print(chan_recv(c1));
+    let second = chan_select(c1, c2);
+    print(second);
+    print(chan_recv(c2));
+
+    // Blocked select woken by a spawned sender on arm 1
+    let w = spawn(|| -> bool { return chan_send(c2, 77); });
+    let picked = chan_select(c1, c2);
+    print(picked);
+    print(chan_recv(c2));
+    print(wait(w));
+}

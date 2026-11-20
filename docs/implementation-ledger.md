@@ -226,7 +226,7 @@ Entry dependency: M4.2.
 - [x] M4.3.03. **close.** Close with buffered values and specify the final receive outcome. (implemented in `chan_close`, FIFO drain then `0` on empty closed channel, pinned by `tests/run/channels.ae`; single-platform verified on Windows x86-64)
 - [x] M4.3.04. **blocked sender wakeup.** Close while a sender is parked and return ownership or drop exactly as specified. (`ae_chan_close` broadcasts to `not_full` and `not_empty`; parked senders wake and return `false`; single-platform verified on Windows x86-64)
 - [ ] M4.3.05. **receiver cancellation.** Cancel a parked receiver and deliver the next value to another receiver.
-- [ ] M4.3.06. **select registration and loser cleanup.** Make two arms ready together, choose once and unregister all losing waiters.
+- [x] M4.3.06. **select registration and loser cleanup.** Make two arms ready together, choose once and unregister all losing waiters. (implemented via `chan_select(c1, c2)` and `chan_try_send(ch, val)` in `ae_chan` + `interp.rs`, pinned by `tests/run/chan_select.ae` and `tests/ui/chan_select_non_chan.ae`; single-platform verified on Windows x86-64)
 
 Integration gate: No lost wakeup, duplicate delivery or waiter retained after cancellation.
 

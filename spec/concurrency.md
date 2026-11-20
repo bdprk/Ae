@@ -130,3 +130,5 @@ Status: target for the atomics slice — this section governs the implementation
 | C2 | Bounded buffer (`cap == 1`) backpressure + resume | First send succeeds; second send resumes after first recv (`tests/run/channels.ae`) |
 | C3 | Close with buffered values | Buffered values drain FIFO (`100`, `200`), then `0`; later send returns `false` (`tests/run/channels.ae`) |
 | C4 | `chan_send` / `chan_close` on non-chan value | Compile-time errors (`tests/ui/chan_send_non_chan.ae`, `tests/ui/chan_close_non_chan.ae`) |
+| C5 | `chan_select(c1, c2)` with both arms ready, then woken by spawned sender + `chan_try_send` backpressure | Chooses once (`0`), then (`1`), then (`1` with `77`); `chan_try_send` returns `false` when full (`tests/run/chan_select.ae`) |
+| C6 | `chan_select` on non-chan value | Compile-time error (`tests/ui/chan_select_non_chan.ae`) |

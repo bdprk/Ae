@@ -1,0 +1,5 @@
+// M4.3.06: chan_select expects chan handles.
+fn main() {
+    let c1 = chan_new(1);
+    print(chan_select(c1, 42));
+}
