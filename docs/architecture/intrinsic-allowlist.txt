@@ -1,0 +1,47 @@
+# Frozen runtime-object intrinsics (ADR-0224).
+# Each line: name  family  disposition
+# disposition: keep      = irreducible primitive (Hard Rule 2)
+#              migrate   = must move behind a std module wrapper over a minimal primitive
+#              demote    = test scaffolding; must leave the compiler and live in std/test fakes
+# Adding a name here requires a new ADR. Removing a name (after migration) is always allowed.
+shared_new        sync     migrate
+shared_get        sync     migrate
+mutex_new         sync     keep
+mutex_lock        sync     keep
+chan_new          chan     keep
+chan_send         chan     keep
+chan_try_send     chan     keep
+chan_recv         chan     keep
+chan_select       chan     keep
+exec_new          task     migrate
+exec_run          task     migrate
+clock_new         time     demote
+clock_now         time     demote
+clock_advance     time     demote
+timer_new         time     migrate
+timer_ready       time     migrate
+timer_cancel      time     migrate
+scope_new         task     keep
+cancel_new        task     migrate
+cancel_trigger    task     migrate
+cancel_complete   task     migrate
+cancel_is_set     task     migrate
+pool_new          task     migrate
+pool_join         task     migrate
+reader_new        io       migrate
+reader_read       io       migrate
+reader_read_line  io       migrate
+reader_eof        io       migrate
+adapter_new       net      demote
+adapter_submit_read  net   demote
+adapter_submit_write net   demote
+adapter_step      net      demote
+adapter_cancel    net      demote
+adapter_rearm     net      demote
+adapter_result    net      demote
+stream_new        net      demote
+stream_send       net      demote
+stream_recv       net      demote
+stream_close      net      demote
+stream_is_closed  net      demote
+stream_buffered   net      demote
