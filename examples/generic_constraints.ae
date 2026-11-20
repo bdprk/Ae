@@ -24,7 +24,7 @@ fn is_same[T: Eq](a: T, b: T) -> bool {
 
 fn main() {
     print(combine[i64](2, 3));
-    print(combine[string]("ae", "ther"));
+    print(combine[string]("a", "e"));
     print(combine[f64](1.5, 2.5));
     print(capped_sum[i64](4, 9, 10));
     print(capped_sum[f64](1.5, 2.0, 4.0));

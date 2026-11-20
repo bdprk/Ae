@@ -3,7 +3,7 @@
 // exit code; assert failures keep their location and exit status 1.
 
 fn test_concat() -> i64 {
-    let greeting = "ae" + "ther";
+    let greeting = "a" + "e";
     if greeting != "ae" { return 1; }
     return 0;
 }

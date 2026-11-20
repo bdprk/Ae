@@ -24,7 +24,7 @@ fn both[T: Add + Eq](a: T, b: T) -> bool {
 
 fn main() {
     print(add[i64](2, 3));
-    print(add[string]("ae", "ther"));
+    print(add[string]("a", "e"));
     print(larger[i64](4, 9));
     print(same[bool](true, true));
     print(copy_twice[i64](7));
