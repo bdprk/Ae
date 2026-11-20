@@ -1,5 +1,5 @@
 // std/core/uninit_guard.ae
-// Uninitialized heap memory slot state guard primitive for AE allocators.
+// Uninitialized heap memory slot state guard primitive for ae allocators.
 
 pub enum SlotInitState {
     Uninitialized,

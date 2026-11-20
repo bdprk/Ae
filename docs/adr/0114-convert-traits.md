@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-Per Hard Rule §2.2 #1 ("Implement Once, Use for Any Type") and Type System Charter §2.4, AE strictly prohibits implicit type coercions. Any conversion across type domains must be executed through explicit conversion traits (`Into`, `FromI64`).
+Per Hard Rule §2.2 #1 ("Implement Once, Use for Any Type") and Type System Charter §2.4, ae strictly prohibits implicit type coercions. Any conversion across type domains must be executed through explicit conversion traits (`Into`, `FromI64`).
 
 ## Decision
 1. Introduce standard conversion traits in `std/core/convert.ae`.

@@ -1,5 +1,5 @@
 // std/core/slot_map.ae
-// SlotMap generational index state primitive for AE core.
+// SlotMap generational index state primitive for ae core.
 
 pub struct GenerationalSlot {
     index: i64,

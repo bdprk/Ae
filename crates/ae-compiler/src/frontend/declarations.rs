@@ -221,8 +221,8 @@ impl Parser<'_> {
                 let id = self.generics.next_fn_id;
                 self.generics.next_fn_id += 1;
                 *next_id = self.generics.next_fn_id;
-                // An exposure's body is safe AE code (spec/unsafe.md 4.2):
-                // calls from AE are safe — extern_c stays false. The C name
+                // An exposure's body is safe ae code (spec/unsafe.md 4.2):
+                // calls from ae are safe — extern_c stays false. The C name
                 // rides the exposure registry, not this flag.
                 let signature = if no_mangle {
                     Signature { id, params: types.clone(), ret: ret.clone(), file: self.file.clone(), public, extern_c: false }
@@ -927,7 +927,7 @@ impl Parser<'_> {
                 self.pos = end;
                 let exposure_name = self.identifier()?;
                 // The signature pass decided the shape: an exposure
-                // (extern_c false — its body is safe AE code) parses
+                // (extern_c false — its body is safe ae code) parses
                 // its body here; a declaration skips to its semicolon. The
                 // body's own semicolons make a blind skip wrong.
                 let exposed = self.functions.get(&exposure_name).map(|sig| !sig.extern_c).unwrap_or(false);

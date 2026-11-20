@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-Per Language Charter §2.1 and §2.2 Hard Rule #6 ("Single Error Mechanism"), AE eliminates pre-defined ad-hoc result enums (`FileResult`, `FloatResult`, `BoolResult`) in favor of `Result[T, E]` where `E: Error`.
+Per Language Charter §2.1 and §2.2 Hard Rule #6 ("Single Error Mechanism"), ae eliminates pre-defined ad-hoc result enums (`FileResult`, `FloatResult`, `BoolResult`) in favor of `Result[T, E]` where `E: Error`.
 
 ## Decision
 1. Introduce the `Error` trait in `std/core/error.ae`.

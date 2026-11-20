@@ -1,4 +1,4 @@
-# AE Standard Library Architecture Blueprint (M1 -> M3)
+# ae Standard Library Architecture Blueprint (M1 -> M3)
 
 > **Document ID**: `AE-ARCH-STD-001`  
 > **Status**: Accepted & Active  
@@ -8,7 +8,7 @@
 
 ## 1. 总体分层模型 (Layered Hierarchy)
 
-AE 标准库严格遵循单向依赖规则，禁止循环引用与反向依赖：
+ae 标准库严格遵循单向依赖规则，禁止循环引用与反向依赖：
 
 ```
 +-----------------------------------------------------------------------+

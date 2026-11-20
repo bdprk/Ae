@@ -1,5 +1,5 @@
 // std/core/radix.ae
-// Radix formatting length and digit counting primitives for AE core.
+// Radix formatting length and digit counting primitives for ae core.
 
 pub fn radix10_digit_count(val: i64) -> i64 {
     if val == 0 {

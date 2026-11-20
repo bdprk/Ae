@@ -1938,7 +1938,7 @@ static int64_t ae_exec_run(ae_exec ex) { /* win32-declared */
 
 // unit: ae_timer
 // ---- Timers over caller-supplied clock values (M4.2.06, ADR-0219; ADR-0224 R2.2) ----
-// The fake clock is ordinary AE source (std/test/fake_clock.ae); a timer is
+// The fake clock is ordinary ae source (std/test/fake_clock.ae); a timer is
 // a plain value holding a deadline fixed at creation, so no allocation, no
 // clock handle, and no cleanup are involved.
 typedef struct { int64_t deadline; int cancelled; } ae_timer;

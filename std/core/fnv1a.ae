@@ -1,5 +1,5 @@
 // std/core/fnv1a.ae
-// FNV-1a non-cryptographic fast 32-bit/64-bit integer hash primitive for AE core.
+// FNV-1a non-cryptographic fast 32-bit/64-bit integer hash primitive for ae core.
 
 pub fn fnv1a_init() -> i64 {
     // 32-bit FNV offset basis: 2166136261 (clamped to positive i64)

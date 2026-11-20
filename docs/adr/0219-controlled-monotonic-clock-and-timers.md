@@ -7,7 +7,7 @@ Status: Accepted (2026-11-20)
 - **M3.2.05 (Clocks)** requires driving a timeout with a fake monotonic clock while wall time moves backwards.
 - **M4.2.06 (Timer)** requires triggering equal deadlines and cancellation through a controlled clock.
 
-Previously AE only had `now_ms()` / `now_s()` reading the system wall clock, which cannot be controlled or tested deterministically.
+Previously ae only had `now_ms()` / `now_s()` reading the system wall clock, which cannot be controlled or tested deterministically.
 
 ## Decision
 

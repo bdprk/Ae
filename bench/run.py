@@ -8,13 +8,13 @@ true peak as long as at least one sample lands before exit; a child that exits
 between two 1 ms samples reports no value. For a build, only the direct child is
 sampled, so a compiler driver that spawns cc1/as/ld (gcc) or rustc's codegen
 children are not covered. Repetitions are interleaved across languages within
-each round (not randomized). Cold/hot refers only to the AE
-content-addressed cache: with --cold every AE build gets a fresh empty cache
+each round (not randomized). Cold/hot refers only to the ae
+content-addressed cache: with --cold every ae build gets a fresh empty cache
 directory; the external toolchains' own caches are uncontrolled.
 
 Four workloads are available:
 
-* `sum` — a million checked additions; the languages are AE, Go and Rust.
+* `sum` — a million checked additions; the languages are ae, Go and Rust.
 * `text` — read a generated 3 MiB text file, split it on spaces, and report the
   byte count, token count and summed token length. Python is included here
   because text processing is the case the design plan compares against Python,
@@ -22,7 +22,7 @@ Four workloads are available:
   "build" is nothing at all. This workload materialises the tokens
   (`split` / `strings.Split` / `collect`).
 * `textlazy` — the same statistics over the same input, but scanning the bytes
-  once and never materialising the tokens: AE's `tokenize` cursor, Go's
+  once and never materialising the tokens: ae's `tokenize` cursor, Go's
   manual index scan, Rust's `split(' ')`. Having both entries keeps the two API
   shapes separate instead of crediting one language for the other's algorithm
   (ADR-53). Python is excluded because its `str.split` is eager.
@@ -179,8 +179,8 @@ def build_commands(workload, lang, exe, compiler, options):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--release", action="store_true", help="use AE -O2 and Rust opt-level=2")
-    parser.add_argument("--cold", action="store_true", help="give every build a fresh empty AE cache (measures real compiles)")
+    parser.add_argument("--release", action="store_true", help="use ae -O2 and Rust opt-level=2")
+    parser.add_argument("--cold", action="store_true", help="give every build a fresh empty ae cache (measures real compiles)")
     parser.add_argument("--workload", choices=("sum", "text", "textlazy", "map", "all"), default="all")
     options = parser.parse_args()
     call(["cargo", "build", "--release", "--locked"], cwd=ROOT)
@@ -190,16 +190,16 @@ def main():
     cpu_method = None if _resource is None else "resource.getrusage(RUSAGE_CHILDREN) deltas between calls, direct children only"
     workloads = ("sum", "text", "textlazy", "map") if options.workload == "all" else (options.workload,)
     report = {
-        "note": ("Exploratory same-host measurements with external toolchain caches uncontrolled. AE uses GCC -O2 "
+        "note": ("Exploratory same-host measurements with external toolchain caches uncontrolled. ae uses GCC -O2 "
                  "and Rust opt-level=2 in release, otherwise both use no optimization; Go uses its default; Python is "
                  "not compiled and its run time includes interpreter start-up. Flags do not imply equivalent "
                  "optimization. Runtime includes process start-up; repetitions are interleaved across languages per "
                  "round, not randomized; temperature and frequency not recorded. Peak memory is the OS high-water mark "
                  "of the direct child, sampled every millisecond while it runs, so a child that exits between samples "
                  "reports nothing and a build that spawns grandchildren (gcc, rustc codegen) reports only the driver's "
-                 "peak. AE builds reuse its content-addressed cache unless --cold gives every build a fresh empty "
-                 "cache dir. Every timed run's output is checked against the workload expectation or its round's AE output. "
-                 "Build peak memory uses a separate output path and, for cold AE builds, a separate empty cache."),
+                 "peak. ae builds reuse its content-addressed cache unless --cold gives every build a fresh empty "
+                 "cache dir. Every timed run's output is checked against the workload expectation or its round's ae output. "
+                 "Build peak memory uses a separate output path and, for cold ae builds, a separate empty cache."),
         "cpu_method": cpu_method,
         "peak_method": ("Windows GetProcessMemoryInfo PeakWorkingSetSize" if os.name == "nt"
                         else "Linux /proc/<pid>/status VmHWM") + " sampled in a separate run from the timed one",
@@ -270,7 +270,7 @@ def run_workload(workload, tmp, compiler, options):
             runs[lang].append(sample)
     outputs = {}
     for lang in langs:
-        # Normalize line endings: AE's stdout is opened in text mode on
+        # Normalize line endings: ae's stdout is opened in text mode on
         # Windows, the others write raw bytes.
         outputs[lang] = call(run_args[lang], stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout.replace(b"\r\n", b"\n").strip()
         if expected is None:

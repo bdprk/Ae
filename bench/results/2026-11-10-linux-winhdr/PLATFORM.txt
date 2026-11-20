@@ -1,4 +1,4 @@
-AE Linux native verification, 2026-11-10 (ADR-39)
+ae Linux native verification, 2026-11-10 (ADR-39)
 Scope: conditional <windows.h> inclusion after reachable-runtime pruning
 
 Platform

@@ -1,5 +1,5 @@
 // std/core/line_indexer.ae
-// Text source line offset indexer primitives for AE core.
+// Text source line offset indexer primitives for ae core.
 
 pub struct LineOffsets8 {
     count: i64,

@@ -4,7 +4,7 @@ Status: working design and implementation gates, reviewed against the repository
 
 ## Direction
 
-Implement generic collections in AE, preserving the charter's static safety, deterministic release and no per-element-type container families. First establish a sound, limited scalar container, then extend the same design to owned elements. Retain existing built-ins until a replacement meets the migration gates in `spec/stdlib.md`.
+Implement generic collections in ae, preserving the charter's static safety, deterministic release and no per-element-type container families. First establish a sound, limited scalar container, then extend the same design to owned elements. Retain existing built-ins until a replacement meets the migration gates in `spec/stdlib.md`.
 
 For owned elements, select statically resolved per-type drop glue as the target, including an explicit user-defined destructor mechanism if needed. A per-instance function pointer is not the default: it adds indirection and requires proving hook provenance and transfer. Struct constraints can express admissibility but do not themselves perform destruction. Exact syntax and dispatch remain subject to a spec and implementation review; choosing the direction does not establish that the current compiler supports it.
 

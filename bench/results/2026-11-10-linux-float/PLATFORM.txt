@@ -1,4 +1,4 @@
-AE Linux native verification, 2026-11-10 (W2: f64)
+ae Linux native verification, 2026-11-10 (W2: f64)
 Scope: ADR-37 (f64 type, explicit conversions, checked division, canonical text)
 Source: the Windows repository at the W2 commit, synced as source files only
         (src/, tests/, scripts/, examples/, docs/, Cargo.toml, Cargo.lock, bench/run.py).

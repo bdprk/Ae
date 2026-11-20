@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-Following binary object container formats (ELF64, Mach-O, PE/COFF, Wasm) and assembly generation mappings (ADR-0170 through ADR-0174), the AE self-hosting toolchain requires structured representations for linking, static archiving, platform symbol definitions, and inter-procedural whole-program optimization (LTO). Specifically:
+Following binary object container formats (ELF64, Mach-O, PE/COFF, Wasm) and assembly generation mappings (ADR-0170 through ADR-0174), the ae self-hosting toolchain requires structured representations for linking, static archiving, platform symbol definitions, and inter-procedural whole-program optimization (LTO). Specifically:
 1. **Linker Script Placement**: Declarative memory regions (`MEMORY`) and section mappings (`SECTIONS`), alignment boundaries, and virtual vs load memory addressing (`VMA` / `LMA`).
 2. **Unix Archive (`ar`) Handling**: `.a` static libraries containing multiple object files, member headers (60-byte standard format), 2-byte alignment padding, and special symbol table (`/`) and long-filename (`//`) entries.
 3. **PE Module Definition (`.def`) Exports**: Explicit symbol ordinals, `NONAME`, `DATA` attributes, and DLL export forwarding for Windows binaries.

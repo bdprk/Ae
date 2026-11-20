@@ -1,5 +1,5 @@
 // std/core/ascii_case.ae
-// Case-insensitive ASCII string slice comparison state primitives for AE core.
+// Case-insensitive ASCII string slice comparison state primitives for ae core.
 
 use "ascii_table.ae";
 

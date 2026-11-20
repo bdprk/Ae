@@ -1,6 +1,6 @@
-# AE
+# ae
 
-AE is an independently developed, experimental native programming language whose initial target platforms are Windows and Linux x86-64. Its design aims to match Go's compilation speed, Rust's runtime performance and safety, while minimizing CPU, memory, and disk footprint. General-purpose capabilities and ecosystem development are secondary but long-term essential goals (see [Design Roadmap](docs/design.md)).
+ae is an independently developed, experimental native programming language whose initial target platforms are Windows and Linux x86-64. Its design aims to match Go's compilation speed, Rust's runtime performance and safety, while minimizing CPU, memory, and disk footprint. General-purpose capabilities and ecosystem development are secondary but long-term essential goals (see [Design Roadmap](docs/design.md)).
 
 Priorities: Safety and correctness are non-negotiable bottom lines; runtime CPU and memory are optimized jointly; both compilation speed and disk footprint must meet future benchmark-based budgets. Features may be sacrificed to serve these goals.
 

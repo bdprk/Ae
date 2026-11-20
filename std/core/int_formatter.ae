@@ -1,5 +1,5 @@
 // std/core/int_formatter.ae
-// Fast integer to ASCII digit buffer writer primitives for AE core.
+// Fast integer to ASCII digit buffer writer primitives for ae core.
 
 pub struct DigitBuffer4 {
     d0: i64,

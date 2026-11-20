@@ -1,11 +1,11 @@
 // std/core/murmur3.ae
-// 32-bit MurmurHash3 integer scramble mixing primitive for AE core.
+// 32-bit MurmurHash3 integer scramble mixing primitive for ae core.
 
 pub fn murmur3_scramble_u32(k: i64) -> i64 {
     // k *= 0xcc9e2d51
     // k = ROTL32(k, 15)
     // k *= 0x1b873593
-    // Under AE modulo 2147483647
+    // Under ae modulo 2147483647
     let k1 = (k * 3432918353) % 2147483647;
     let k2 = (k1 * 461845907) % 2147483647;
     if k2 < 0 {

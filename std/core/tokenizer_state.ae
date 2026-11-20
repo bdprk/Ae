@@ -1,5 +1,5 @@
 // std/core/tokenizer_state.ae
-// Lexer / Tokenizer cursor and peek state primitives for AE core.
+// Lexer / Tokenizer cursor and peek state primitives for ae core.
 
 pub struct TokenizerState {
     offset: i64,

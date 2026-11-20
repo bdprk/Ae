@@ -1,5 +1,5 @@
 // std/core/byte_tag.ae
-// Serialized type tag marker classification primitives for AE core.
+// Serialized type tag marker classification primitives for ae core.
 
 pub enum SerializedTypeTag {
     TagNull,

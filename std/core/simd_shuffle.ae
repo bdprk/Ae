@@ -1,5 +1,5 @@
 // std/core/simd_shuffle.ae
-// Conceptual 4-lane SIMD lane rotation and reversal primitives for AE core.
+// Conceptual 4-lane SIMD lane rotation and reversal primitives for ae core.
 
 pub struct Lane4Shuffle {
     v0: i64,

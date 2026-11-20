@@ -1,5 +1,5 @@
 // std/core/cursor.ae
-// Linear buffer read/write position cursor primitive for AE core.
+// Linear buffer read/write position cursor primitive for ae core.
 
 pub struct BufferCursor {
     pos: i64,

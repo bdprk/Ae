@@ -1,5 +1,5 @@
 // std/core/arena_mark.ae
-// Arena allocation watermark rewind checkpoint primitive for AE core.
+// Arena allocation watermark rewind checkpoint primitive for ae core.
 
 pub struct ArenaWatermark {
     offset: i64,

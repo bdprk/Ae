@@ -1,5 +1,5 @@
 // std/core/simd_compare.ae
-// Conceptual 4-lane SIMD equality and comparison mask primitive for AE core.
+// Conceptual 4-lane SIMD equality and comparison mask primitive for ae core.
 
 pub struct LaneMask4 {
     m0: bool,

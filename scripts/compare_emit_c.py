@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare generated C byte for byte between two AE compiler binaries.
+"""Compare generated C byte for byte between two ae compiler binaries.
 
 Build and preserve the baseline executable before changing the compiler. Build
 and preserve the candidate separately, then invoke this script from any working

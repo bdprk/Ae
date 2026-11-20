@@ -2,7 +2,7 @@
 // no -1 sentinel: "not found" is an Err that must be handled, and 0 is a real
 // match at the start of the string.
 fn main() {
-    let line = "name=AE; mode=fast";
+    let line = "name=ae; mode=fast";
 
     let eq = find(line, "=");
     match eq {

@@ -1,7 +1,7 @@
 ADR-65 `map[string, f64]`（f64 值哈希表）· Windows 归档（2026-11-12）
 
 ## 平台
-Windows x86-64，8 核 / 16 线程，MinGW-W64 GCC 16.2.0（UCRT）。AE 0.1.1。
+Windows x86-64，8 核 / 16 线程，MinGW-W64 GCC 16.2.0（UCRT）。ae 0.1.1。
 
 ## 命令（工作目录 = 仓库根）
 - cargo test --locked

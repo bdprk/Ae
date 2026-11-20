@@ -1,4 +1,4 @@
-AE Windows local verification, 2026-11-10 (W2: f64)
+ae Windows local verification, 2026-11-10 (W2: f64)
 Scope: ADR-37 (f64 type, explicit conversions, checked division, canonical text)
 
 Platform

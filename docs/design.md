@@ -1,8 +1,8 @@
-# AE Design and Roadmap
+# ae Design and Roadmap
 
 ## Independent Development and References
 
-The language specification, front-end, type and safety checker, IR, runtime, and standard library are independently designed and written by this project. Public designs may be studied, but Gojo's implementation is not copied. Gojo is an experimental system language; the current repository describes it as using ownership, generating C, and not yet supporting Windows. It serves as a reference and a comparison baseline on Linux, rather than a functional specification for AE. Rust, C compilers, linkers, and system APIs are permitted infrastructure. Reference: https://github.com/egoist/gojo
+The language specification, front-end, type and safety checker, IR, runtime, and standard library are independently designed and written by this project. Public designs may be studied, but Gojo's implementation is not copied. Gojo is an experimental system language; the current repository describes it as using ownership, generating C, and not yet supporting Windows. It serves as a reference and a comparison baseline on Linux, rather than a functional specification for ae. Rust, C compilers, linkers, and system APIs are permitted infrastructure. Reference: https://github.com/egoist/gojo
 
 ## Safety Goals
 

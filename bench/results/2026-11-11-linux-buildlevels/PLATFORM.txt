@@ -2,7 +2,7 @@ ADR-59 build 默认优化构建 · Linux 回填（2026-11-11）
 
 ## 平台
 instabox-node 沙箱：Debian 13，Linux 6.18.54，x86-64，4 vCPU；
-gcc 14.2.0-19；rustc 1.99.0。AE 0.1.1。
+gcc 14.2.0-19；rustc 1.99.0。ae 0.1.1。
 代码与 Windows 归档同一源码树（a15e17d），`python3 bench/build_levels_timings.py
 --runs 5 --run-runs 9 --json build-levels.json`（Windows 同脚本同参数）。
 

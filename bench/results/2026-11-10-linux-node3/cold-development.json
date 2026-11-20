@@ -1,5 +1,5 @@
 {
-  "note": "Exploratory builds with uncontrolled caches. AE uses GCC -O2 and Rust opt-level=2 in release, otherwise both use no optimization; Go uses its default. Flags do not imply equivalent optimization. Runtime includes startup, runs are grouped, CPU time and peak memory are not measured. AE builds reuse its content-addressed cache unless --cold gives every build a fresh empty cache.",
+  "note": "Exploratory builds with uncontrolled caches. ae uses GCC -O2 and Rust opt-level=2 in release, otherwise both use no optimization; Go uses its default. Flags do not imply equivalent optimization. Runtime includes startup, runs are grouped, CPU time and peak memory are not measured. ae builds reuse its content-addressed cache unless --cold gives every build a fresh empty cache.",
   "mode": "cold-development",
   "platform": "Linux-6.18.60-instabox-x86_64-with-glibc2.41",
   "machine": "x86_64",

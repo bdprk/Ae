@@ -7,7 +7,7 @@
 
 ## Environment
 
-Windows 10.0.26300, AMD64, Intel Family 6 Model 141 Stepping 1. Physical memory, temperature, frequency, and power policy were not recorded. Tools: Python 3.10.11, Cargo 1.99.1, rustc 1.99.1, Go 1.26.0, GCC 16.2.0 (MinGW UCRT). The AE release executable SHA-256 was `e5b0cf1fc59229dac9f77dbfcf4951bc7f3fb5ee31aa502dd3f41991e2d8a2d9`.
+Windows 10.0.26300, AMD64, Intel Family 6 Model 141 Stepping 1. Physical memory, temperature, frequency, and power policy were not recorded. Tools: Python 3.10.11, Cargo 1.99.1, rustc 1.99.1, Go 1.26.0, GCC 16.2.0 (MinGW UCRT). The ae release executable SHA-256 was `e5b0cf1fc59229dac9f77dbfcf4951bc7f3fb5ee31aa502dd3f41991e2d8a2d9`.
 
 ## Reproduction
 
@@ -17,13 +17,13 @@ From the repository root:
 python bench/run.py --release --cold --workload sum
 ```
 
-The script builds the release AE compiler, then performs five interleaved build and run rounds for AE, Go and Rust. AE uses GCC `-O2` and a fresh AE cache for each build; Rust uses `opt-level=2`; Go uses its default build mode. External toolchain caches are not controlled. The fixed workload sums integers from 0 through 999,999 with checked addition. A separate final execution per language verified output `499999500000`; the individual timed runs were not output-checked. Raw samples are retained in the linked JSON.
+The script builds the release ae compiler, then performs five interleaved build and run rounds for ae, Go and Rust. ae uses GCC `-O2` and a fresh ae cache for each build; Rust uses `opt-level=2`; Go uses its default build mode. External toolchain caches are not controlled. The fixed workload sums integers from 0 through 999,999 with checked addition. A separate final execution per language verified output `499999500000`; the individual timed runs were not output-checked. Raw samples are retained in the linked JSON.
 
 ## Results
 
 | Language | Build median ms (range) | Run median ms (range) | Executable bytes |
 |---|---:|---:|---:|
-| AE | 498.98 (489.23–741.65) | 56.35 (53.48–110.91) | 65,076 |
+| ae | 498.98 (489.23–741.65) | 56.35 (53.48–110.91) | 65,076 |
 | Go | 1,262.16 (1,146.59–22,658.81) | 201.34 (186.90–267.35) | 2,460,160 |
 | Rust | 336.46 (314.18–447.01) | 79.43 (73.24–129.33) | 131,072 |
 

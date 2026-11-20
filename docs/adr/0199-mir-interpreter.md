@@ -6,7 +6,7 @@
 
 ## Context
 
-The AE language charter (§5.2 M2.11, §7.2 Layer 3) calls for an in-process interpreter (`ae test --interp` and `ae run --interp`) that executes lowered programs directly inside the compiler without invoking a system C compiler or linker. Its primary roles are:
+The ae language charter (§5.2 M2.11, §7.2 Layer 3) calls for an in-process interpreter (`ae test --interp` and `ae run --interp`) that executes lowered programs directly inside the compiler without invoking a system C compiler or linker. Its primary roles are:
 
 1. **Zero-CC Execution & Fast Test Iteration**: Running unit tests (`#[test]`) or scripts without paying external C compilation and linking overhead.
 2. **Reference Semantics & UB Detection**: Acting as an independent execution oracle that checks signed 64-bit arithmetic overflow (`+`, `-`, `*`, `-x`), division/modulo by zero (both `i64` and `f64`), array and vector index bounds, `assert` conditions, use-after-move on owned bindings, and loop-step bounds (`MAX_STEPS`).

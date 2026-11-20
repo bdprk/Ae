@@ -20,5 +20,5 @@ fn main() {
         print(join(row, ""));
         y = y - 0.1;
     }
-    print("  AE ♥");
+    print("  ae ♥");
 }

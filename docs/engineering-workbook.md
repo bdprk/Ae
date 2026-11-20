@@ -1,10 +1,10 @@
-# AE engineering architecture and delivery workbook
+# ae engineering architecture and delivery workbook
 
 Planning baseline: 2026-11-18, revision 58024fe. Read alongside [the charter](plan.md), [current semantics](current-language.md), [platform evidence](platform-matrix.md) and the [specification](../spec/). This workbook proposes implementation order and gates. A checked-in source file establishes presence. Passing behavior requires a dated test result.
 
 ## Product contract
 
-AE is a native programming language combining Rust-style memory safety and zero-cost abstractions with Go-style concise syntax, concurrency and integrated tools. Protect safe code first. Make allocations, copies, blocking and dynamic dispatch discoverable. Infer local details while keeping public contracts readable. Support broad application domains through libraries, target profiles and foreign interfaces. Treat ten million lines as a possible maintenance burden. Measure progress in programs people can build, ship, upgrade and debug.
+ae is a native programming language combining Rust-style memory safety and zero-cost abstractions with Go-style concise syntax, concurrency and integrated tools. Protect safe code first. Make allocations, copies, blocking and dynamic dispatch discoverable. Infer local details while keeping public contracts readable. Support broad application domains through libraries, target profiles and foreign interfaces. Treat ten million lines as a possible maintenance burden. Measure progress in programs people can build, ship, upgrade and debug.
 
 Make explicit compromises. Reject ambiguous escaping borrows until signatures can express them. Start with scoped threads before lightweight tasks. Ship a narrow supported platform matrix before expanding it. Permit C toolchain dependencies during bootstrap. Accept slower release compilation when a separate fast development build exists. Reopen each compromise against its milestone gate.
 
@@ -105,7 +105,7 @@ Each domain starts as an independently versioned package and example unless it n
 
 ## Performance and safety evidence
 
-For iterator fusion, generic dispatch, closures, Result propagation and borrowed slices, maintain three equivalent programs: idiomatic AE, manually lowered AE and a hand-written native reference. Check outputs first. Inspect calls, allocations, copies and layout. Report multiple runs, dispersion, input size, compiler flags and hardware. Apply the charter's Rust comparison budget per named workload. For compilation report cold, warm no-change, single-body edit and public-interface edit separately. For concurrency track throughput, tail latency, parked tasks, memory per task and cancellation latency under saturation.
+For iterator fusion, generic dispatch, closures, Result propagation and borrowed slices, maintain three equivalent programs: idiomatic ae, manually lowered ae and a hand-written native reference. Check outputs first. Inspect calls, allocations, copies and layout. Report multiple runs, dispersion, input size, compiler flags and hardware. Apply the charter's Rust comparison budget per named workload. For compilation report cold, warm no-change, single-body edit and public-interface edit separately. For concurrency track throughput, tail latency, parked tasks, memory per task and cancellation latency under saturation.
 
 Maintain compile-fail suites for aliasing and lifetime rules, interpreter/codegen differential suites, deterministic scheduler interleavings and runtime sanitizer jobs. Minimize failures into versioned regressions. Treat proofs of individual invariants, empirical test results and unchecked assumptions as separate evidence. A backend optimization using alias metadata needs a documented derivation from checked MIR.
 

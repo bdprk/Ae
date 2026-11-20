@@ -1,4 +1,4 @@
-AE Windows local verification, 2026-11-10
+ae Windows local verification, 2026-11-10
 Commit: 3090290 (Borrow a generic T, forward read-only borrows, and find byte offsets as a result)
 Scope: ADR-35 (generic &T borrow, read-only borrow forwarding) and ADR-36 (find -> IntResult)
 

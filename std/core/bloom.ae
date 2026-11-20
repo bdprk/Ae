@@ -1,5 +1,5 @@
 // std/core/bloom.ae
-// Conceptual fixed-filter bloom filter state primitives for AE core.
+// Conceptual fixed-filter bloom filter state primitives for ae core.
 
 pub struct BloomFilter64 {
     bits: i64,

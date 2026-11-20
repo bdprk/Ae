@@ -75,13 +75,13 @@ extern "C" fn abs(v: i64) -> i64;
 - Argument and return types must be C-ABI-shaped: scalars, `*const T`/`*mut T`, `#[repr(C)]` structs by value, and `&[i64; N]`-style borrowed arrays are legal; owned strings, vectors, maps, and enums are not (they carry release logic the C side cannot honor).
 - Calling a declared `extern "C"` fn is `unsafe` — the C side's preconditions are unknown to the compiler.
 
-### 4.2 Exposures (C calling AE)
+### 4.2 Exposures (C calling ae)
 ```
 #[no_mangle]
 extern "C" fn ae_add(a: i64, b: i64) -> i64 { return a + b; }
 ```
 - `#[no_mangle]` keeps the symbol name; without it the name is not emitted as a C-visible symbol.
-- An exposure's body is safe code: the compiler wraps it, so the C side cannot observe an AE panic directly — a trap inside an exposure aborts the process with the runtime's trap diagnostics (same as today).
+- An exposure's body is safe code: the compiler wraps it, so the C side cannot observe an ae panic directly — a trap inside an exposure aborts the process with the runtime's trap diagnostics (same as today).
 - Exposures with `&Struct`/`&mut Struct` parameters or `#[repr(C)]` by-value structs are the only structured crossing points.
 
 ## 5. `#[repr(C)]`

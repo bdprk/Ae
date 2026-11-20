@@ -1,4 +1,4 @@
-"""Compile AE-generated C independently and exercise success and failure paths.
+"""Compile ae-generated C independently and exercise success and failure paths.
 
 --sanitize uses AddressSanitizer where the toolchain provides it.
 --leak adds an allocator wrapper (scripts/leakcheck.c) linked with --wrap, which
@@ -99,7 +99,7 @@ def run():
         ("option_propagate.ae", b"found!\nnone\nalways\nnone\n1\nnone\n3\nnone", True),
         # Generic borrow parameters: no owned value is moved into the callee,
         # so the caller's strings and vectors must still be intact afterwards.
-        ("generic_borrow.ae", b"6\n3\n3\n60\n3\nAE\n10\nbeta", True),
+        ("generic_borrow.ae", b"6\n3\n3\n60\n3\nae\n10\nbeta", True),
         # find returns an IntResult: the Err branch allocates an error string
         # that the enum release must give back exactly once.
         ("find_text.ae", b"4\n13\nsubstring not found\n0\n7", True),

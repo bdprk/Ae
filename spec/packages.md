@@ -11,7 +11,7 @@ Status: The CLI builds dependency-free packages and inspects local path dependen
 4. **The Build Knows Its Inputs**: dependency sources (registry, git, path) feed the existing interface-summary/cache machinery (M3.5) — a package is a compilation unit with a manifest, not a parallel build system.
 
 ### Non-Goals (this cycle):
-- No custom build scripts inside dependencies (a package is AE source + manifest; codegen hooks are future work and need their own ADR).
+- No custom build scripts inside dependencies (a package is ae source + manifest; codegen hooks are future work and need their own ADR).
 - No semver ranges beyond the MVS subset (`^`-style compatible ranges); no `*` wildcards in published manifests.
 - No mutable registries: a published version is immutable; yanking removes it from resolution, never from download.
 
@@ -69,7 +69,7 @@ For local packages, ae update loads the application and writes ae.lock atomicall
 ## 5. Registry
 
 - **Static index + object storage**: the index maps `name` → sorted list of `(version, requirements, content hash, storage key)`; artifacts are immutable blobs.
-- Publishing (`ae publish`) uploads a source archive (the package's AE files + manifest, no `target/`, no lock) and appends to the index; path deps, missing fields, or a re-upload of an existing version fail.
+- Publishing (`ae publish`) uploads a source archive (the package's ae files + manifest, no `target/`, no lock) and appends to the index; path deps, missing fields, or a re-upload of an existing version fail.
 - Signing and revocation policies land with the registry prototype (M3.6) and follow the plan's security posture; until signing exists, the content hash is the only trust anchor and the registry URL is pinned in the lockfile.
 
 ## 6. Diagnostics

@@ -6,7 +6,7 @@
 
 ## Context
 
-Previously, `scripts/diff_fuzz.py` generated deterministic random well-typed AE programs (covering integers, booleans, strings, vectors, structs, conditionals, and checked division/modulo guards) and compared two C-backend execution paths (`ae build --debug` at `-O0` vs `ae build` at `-O2`). With the addition of the in-process interpreter (`ae run --interp`, ADR-0199), the language charter (§7.2 Layer 2) specifies three-way differential testing across independent execution backends.
+Previously, `scripts/diff_fuzz.py` generated deterministic random well-typed ae programs (covering integers, booleans, strings, vectors, structs, conditionals, and checked division/modulo guards) and compared two C-backend execution paths (`ae build --debug` at `-O0` vs `ae build` at `-O2`). With the addition of the in-process interpreter (`ae run --interp`, ADR-0199), the language charter (§7.2 Layer 2) specifies three-way differential testing across independent execution backends.
 
 ## Decision
 

@@ -19,7 +19,7 @@ map 容器负载 · Linux 归档（2026-11-11）
 ## 结果摘要（中位数；原始值在 JSON）
 运行（run_median_ms）与峰值内存（run_peak_median_mb）：
                     dev                          release
-  AE  132.8 ms / 2.41 MB                 81.7 ms / 2.37 MB
+  ae  132.8 ms / 2.41 MB                 81.7 ms / 2.37 MB
   Go       66.4 ms / 未在此列（见 JSON）       70.1 ms / 7.19 MB
   Rust    178.0 ms                            57.6 ms / 3.00 MB
   Python  249.4 ms / 9.31 MB（含解释器启动）   253.4 ms
@@ -27,19 +27,19 @@ map 容器负载 · Linux 归档（2026-11-11）
   draws=1000000 / keys=10000 / distinct=10000 / total=1000000 / checksum=5001661237
 （与 Windows 归档 `2026-11-10-windows-map/` 的输出完全一致。）
 
-冷构建（AE，--cold，真实编译）：
+冷构建（ae，--cold，真实编译）：
   dev 55.8 ms；release 135.5 ms（小程序的完整 前端+gcc+链接 时间）。
 
 ## 观察（只报方向与量级，不作排名）
-1. 运行时间：release 下 AE 82 ms 落在 Go 70 ms 与 Rust 58 ms 之间
-   （≈1.17×Go、≈1.42×Rust）；dev 下 AE 133 ms 快于 Rust dev 178 ms。
-   方向与 Windows 归档一致：AE 的 map 路径慢于两参照，热点未定位。
-2. 运行峰值内存：AE 2.37 MB < Rust 3.00 MB < Go 7.19 MB < Python 9.31 MB。
-   与 Windows 归档同方向（AE ≈ Rust、明显低于 Go），且两平台 AE
+1. 运行时间：release 下 ae 82 ms 落在 Go 70 ms 与 Rust 58 ms 之间
+   （≈1.17×Go、≈1.42×Rust）；dev 下 ae 133 ms 快于 Rust dev 178 ms。
+   方向与 Windows 归档一致：ae 的 map 路径慢于两参照，热点未定位。
+2. 运行峰值内存：ae 2.37 MB < Rust 3.00 MB < Go 7.19 MB < Python 9.31 MB。
+   与 Windows 归档同方向（ae ≈ Rust、明显低于 Go），且两平台 ae
    峰值都最低——map 路径的内存表现是两条负载里最好的一条。
 3. 冷构建 56–136 ms 是该小程序在本机的真实全流程时间（含 gcc 与链接）；
    热缓存 build_med 3.8–4.6 ms 是命中路径，不作编译速度证据（§20.4 第 5 条）。
-4. 产物体积：AE 22.3 KB < Rust 4.56 MB ≈ Go 2.35 MB（release，Linux ELF）。
+4. 产物体积：ae 22.3 KB < Rust 4.56 MB ≈ Go 2.35 MB（release，Linux ELF）。
 
 ## 已知差异 / 归一化规则
 - CPU 时间本平台有值（resource.getrusage，直接子进程），见 JSON。

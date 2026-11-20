@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-Under Milestone M2 and Milestone M3 of the AE roadmap, enabling a multi-target self-hosting compiler backend requires standard WebAssembly (Wasm) binary encoding descriptors alongside native x86_64:
+Under Milestone M2 and Milestone M3 of the ae roadmap, enabling a multi-target self-hosting compiler backend requires standard WebAssembly (Wasm) binary encoding descriptors alongside native x86_64:
 1. Wasm Type Section: function signature encoding with parameter counts, result counts, and `valtype` primitives (`0x7E=i64`, `0x7F=i32`).
 2. Wasm Section Containers: standard section IDs (`0=Custom`, `1=Type`, `3=Function`, `7=Export`, `10=Code`) with length prefixing.
 3. Wasm Stack Opcodes: modeling operand stack push/pop effects to verify stack balance without dynamic allocations.

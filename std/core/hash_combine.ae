@@ -1,9 +1,9 @@
 // std/core/hash_combine.ae
-// Hash combiner primitives (Murmur / Boost hash_combine formula) for AE core.
+// Hash combiner primitives (Murmur / Boost hash_combine formula) for ae core.
 
 pub fn hash_combine_i64(seed: i64, val: i64) -> i64 {
     // seed ^ (val + 0x9e3779b9 + (seed << 6) + (seed >> 2))
-    // AE safe arithmetic mod positive limit 0x7FFFFFFF (2147483647)
+    // ae safe arithmetic mod positive limit 0x7FFFFFFF (2147483647)
     let k = 1000003;
     let combined = (seed * k + val) % 2147483647;
     if combined < 0 {

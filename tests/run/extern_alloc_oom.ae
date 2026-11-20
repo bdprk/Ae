@@ -2,7 +2,7 @@
 // allocator can satisfy (i64-max bytes; glibc rejects sizes at PTRDIFF_MAX
 // and UCRT fails the heap request) comes back NULL inside ae_alloc and
 // terminates with the runtime's terminal diagnostic. The diagnostic's
-// position is the line/column the AE caller passed as constants, so the
+// position is the line/column the ae caller passed as constants, so the
 // stderr snapshot is stable regardless of where the call sits.
 /// Preconditions: size is a positive byte count; blocks released exactly
 /// once with ae_std_free.

@@ -1,4 +1,4 @@
-# AE Programming Language: Design Charter and Maturity Implementation Plan
+# ae Programming Language: Design Charter and Maturity Implementation Plan
 
 Version: 0.4 (Refactored, replaces 0.3; charter, priorities, and roadmap unchanged — §5 status and §10 checklist refreshed against the working tree)
 Date: 2026-11-12
@@ -23,7 +23,7 @@ Status: Prototyping (M0 partially complete; the self-hosting IR/data layer of AD
 
 ## 1. Positioning
 
-**AE: A native programming language combining the memory safety and zero-cost abstractions of Rust with the concise syntax, concurrency model, and tooling experience of Go.**
+**ae: A native programming language combining the memory safety and zero-cost abstractions of Rust with the concise syntax, concurrency model, and tooling experience of Go.**
 
 Initial platforms: Windows x86-64 and Linux x86-64 (equal status), followed by macOS, ARM64, and Wasm.
 
@@ -191,7 +191,7 @@ ae/
     ae-driver      CLI, build system, caching, package management
     ae-lsp         Language server
   runtime/             Minimal runtime (startup, panic, allocation, platform bridge, scheduler)
-  std/                 Standard library (AE source) core / alloc / std
+  std/                 Standard library (ae source) core / alloc / std
   spec/                Language specification
   tests/ui/            Diagnostic snapshot tests (.ae + .stderr)
   tests/run/           Execution result tests (.ae + .stdout)
@@ -417,7 +417,7 @@ Fixed process within each milestone: **Specification & Test Cases → Implementa
 
 | # | Step | Acceptance Criteria |
 |---|---|---|
-| 7.1 | Rewrite compiler in AE (crate-by-crate migration, starting with syntax) | Bootstrapped compiler passes all tests, three-generation build artifacts identical |
+| 7.1 | Rewrite compiler in ae (crate-by-crate migration, starting with syntax) | Bootstrapped compiler passes all tests, three-generation build artifacts identical |
 | 7.2 | `bindgen`, Python extension/embedding, NumPy array bridge | Bidirectional examples |
 | 7.3 | Official libraries: `serde`, `cli`, `sqlite`, `postgres`, Web framework | L2 for each library |
 | 7.4 | Platform extensions: macOS, ARM64, Wasm, cross-compilation | CI matrix |
@@ -430,7 +430,7 @@ Fixed process within each milestone: **Specification & Test Cases → Implementa
 - No known unmitigated severe security vulnerabilities; `unsafe` audits completed.
 - Public benchmarks: Compilation vs. Go, execution/memory vs. Rust/Go, real-world workflows vs. Python, all fully reproducible.
 - At least 3 real-world projects (CLI, Web service, network proxy) in production use.
-- Comprehensive documentation: Getting started tutorial, language reference, standard library API, migration guide (Go/Rust/Python → AE).
+- Comprehensive documentation: Getting started tutorial, language reference, standard library API, migration guide (Go/Rust/Python → ae).
 
 ---
 

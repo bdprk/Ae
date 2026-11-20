@@ -964,7 +964,7 @@ impl Parser<'_> {
                     return self.cell_add_expr(vline, vcol);
                 } else if name == "cell_cas" && *self.current() == Kind::LParen {
                     return self.cell_cas_expr(vline, vcol);
-                } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_try_send" | "chan_recv" | "chan_select" | "exec_new" | "exec_run" | "clock_new" | "clock_now" | "clock_advance" | "timer_new" | "timer_ready" | "timer_cancel" | "scope_new" | "cancel_new" | "cancel_trigger" | "cancel_complete" | "cancel_is_set" | "pool_new" | "pool_join" | "reader_new" | "reader_read" | "reader_read_line" | "reader_eof") && *self.current() == Kind::LParen {
+                } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_try_send" | "chan_recv" | "chan_select" | "exec_new" | "exec_run" | "timer_new" | "timer_ready" | "timer_cancel" | "scope_new" | "cancel_new" | "cancel_trigger" | "cancel_complete" | "cancel_is_set" | "pool_new" | "pool_join" | "reader_new" | "reader_read" | "reader_read_line" | "reader_eof") && *self.current() == Kind::LParen {
                     self.concurrency_builtin_expr(&name, vline, vcol)?
                 } else if name == "spawn" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);

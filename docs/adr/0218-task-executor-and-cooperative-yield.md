@@ -10,7 +10,7 @@ M4.1 (OS threads, atomics, shared boxes, mutex guards, thread failure propagatio
 - **M4.2.02**: Stack lifecycle management that creates and reclaims many task stacks with bounded retained memory.
 - **M4.2.03**: Cooperative `task_yield()` that suspends and resumes a task with all live locals intact and no duplicate execution.
 
-Per the AE Charter:
+Per the ae Charter:
 - **No function coloring**: tasks run regular functions and closures without `async`/`await`.
 - **Pay-as-you-go**: programs that do not use tasks must not link or emit task runtime symbols.
 - **Dual-backend parity**: compiled C binaries and the MIR interpreter (`--interp`) must produce identical deterministic output.

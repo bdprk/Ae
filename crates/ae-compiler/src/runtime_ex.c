@@ -1828,10 +1828,10 @@ static int64_t ae_exposure_trampoline(int64_t a, int64_t b) {
     return test_add(a, b);
 }
 
-// ---- ADR-0208 slice 1: AE-side allocator bridge -------------------------
-// The self-hosted containers declare the allocator extern "C" from AE
+// ---- ADR-0208 slice 1: ae-side allocator bridge -------------------------
+// The self-hosted containers declare the allocator extern "C" from ae
 // source (std/vec.ae and friends). The runtime's own allocator family uses
-// size_t and internal linkage, so an AE declaration's emitted prototype
+// size_t and internal linkage, so an ae declaration's emitted prototype
 // (int64_t everywhere) cannot match it directly; these wrappers carry
 // int64_t signatures and follow the U7 trampoline precedent — static, same
 // translation unit, retained by the pruner whenever a declaration

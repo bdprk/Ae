@@ -1,5 +1,5 @@
 // std/core/probe.ae
-// Hash table open addressing probing primitives for AE core.
+// Hash table open addressing probing primitives for ae core.
 
 pub fn linear_probe(hash_val: i64, step: i64, capacity: i64) -> i64 {
     if capacity <= 0 {

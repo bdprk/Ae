@@ -13,7 +13,7 @@ Proposed (2026-11-15); implementation status reviewed 2026-11-18. Step A has lan
 
 ## Context
 
-ADR-0208 slice 1 landed the allocator bridge (`ae_std_alloc`/`ae_std_free` reachable from AE source through extern declarations, with pointer type annotations to spell the signatures). Writing the actual `Vec[T]` source immediately runs into four walls, each confirmed in the code today:
+ADR-0208 slice 1 landed the allocator bridge (`ae_std_alloc`/`ae_std_free` reachable from ae source through extern declarations, with pointer type annotations to spell the signatures). Writing the actual `Vec[T]` source immediately runs into four walls, each confirmed in the code today:
 
 1. **No pointer reinterpret casts.** The borrow-as-pointer cast rejects pointee changes outright — `cannot cast &i64 to *mut f64; reinterpret casts do not exist yet` (`expression.rs`, the cast grammar only takes the address of a same-typed local). A scalar-generic container allocating through an `i64`-pointee bridge cannot obtain a `*mut f64` view of its own buffer.
 2. **`c_size_of[T]()` does not evaluate over a type parameter.** The layout queries resolve the bracketed name through `struct_names` directly (`expression.rs:458`) — inside a generic body, `T` is not a struct name and the query fails at parse time, even under instantiation re-parsing (the substitution table is consulted by `named_type`, never by this query path). A generic container cannot learn its element size.

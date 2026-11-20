@@ -1,5 +1,5 @@
 // std/core/crc8.ae
-// Fast 8-bit Cyclic Redundancy Check (CRC-8-CCITT) primitive for AE core.
+// Fast 8-bit Cyclic Redundancy Check (CRC-8-CCITT) primitive for ae core.
 
 pub fn crc8_update_byte(crc: i64, data_byte: i64) -> i64 {
     // Polynomial: x^8 + x^2 + x + 1 (0x07)

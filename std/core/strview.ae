@@ -1,5 +1,5 @@
 // std/core/strview.ae
-// String slice view state primitives for AE core.
+// String slice view state primitives for ae core.
 
 pub struct StrView {
     start: i64,

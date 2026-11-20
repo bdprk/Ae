@@ -1,5 +1,5 @@
 // std/core/interval.ae
-// Closed interval [start, end] numeric range primitives for AE core.
+// Closed interval [start, end] numeric range primitives for ae core.
 
 pub struct Interval {
     start: i64,

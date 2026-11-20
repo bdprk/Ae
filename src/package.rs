@@ -11,7 +11,7 @@ fn valid_name(name: &str) -> bool {
     })
 }
 
-const HELLO: &str = "fn main() {\n    print(\"Hello, AE!\");\n}\n";
+const HELLO: &str = "fn main() {\n    print(\"Hello, ae!\");\n}\n";
 
 fn manifest_text(name: &str) -> String {
     format!(
@@ -267,7 +267,7 @@ fn read_manifest(manifest: &Path) -> Result<Manifest, String> {
     let current = Version::parse(env!("CARGO_PKG_VERSION"), false)
         .expect("the compiler has a numeric release version");
     if minimum > current {
-        return Err(fail(&format!("package requires AE {floor} or later, installed version is {current}")));
+        return Err(fail(&format!("package requires ae {floor} or later, installed version is {current}")));
     }
 
     let name = name.to_owned();

@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-ADR-0160 and ADR-0162 model landing pads, safepoints, and exception action tables as *structures*: which regions have cleanups, which edges leave a frame. They do not model a single byte of the tables an unwinder actually reads. That leaves the self-hosting toolchain unable to emit or verify `.eh_frame`, `.eh_frame_hdr`, or the LSDA a landing pad points at — the part that matters as soon as Rust or C++ frames must unwind across AE code, which ADR-0177's plan section 8 lists as a risk ("C backend UB leaking into semantics" is one thing; an unwinder walking a table with wrong field widths is another).
+ADR-0160 and ADR-0162 model landing pads, safepoints, and exception action tables as *structures*: which regions have cleanups, which edges leave a frame. They do not model a single byte of the tables an unwinder actually reads. That leaves the self-hosting toolchain unable to emit or verify `.eh_frame`, `.eh_frame_hdr`, or the LSDA a landing pad points at — the part that matters as soon as Rust or C++ frames must unwind across ae code, which ADR-0177's plan section 8 lists as a risk ("C backend UB leaking into semantics" is one thing; an unwinder walking a table with wrong field widths is another).
 
 Four pieces are missing and each has an independently checkable rule:
 1. The pointer encoding byte (`DW_EH_PE_*`) that tells a reader how every field in these tables is stored.

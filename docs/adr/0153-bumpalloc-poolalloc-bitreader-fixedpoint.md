@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-Under the `core` layer of the AE architecture (`docs/architecture/std_architecture_blueprint.md`), fast scratch memory management (bump pointer allocation), fixed chunk pooling, bit-level stream decoding, and deterministic Q16.16 fixed-point arithmetic are fundamental requirements across Domain B (Memory Topology), Domain E (Binary Parsing), and Domain F (Arithmetic & Metrics).
+Under the `core` layer of the ae architecture (`docs/architecture/std_architecture_blueprint.md`), fast scratch memory management (bump pointer allocation), fixed chunk pooling, bit-level stream decoding, and deterministic Q16.16 fixed-point arithmetic are fundamental requirements across Domain B (Memory Topology), Domain E (Binary Parsing), and Domain F (Arithmetic & Metrics).
 
 ## Decision
 1. **BumpAlloc (`std/core/bump_alloc.ae`)**: High-performance contiguous bump allocator state tracking offset, capacity, alignment padding, and high watermark.

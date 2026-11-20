@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-Per §2.2 Hard Rule #1 ("Implement Once, Use for Any Type") and §5.2 ("Structural Gaps"), AE must transition away from specialized compiler-internal container families (`vec[i64]`, `vec[f64]`, `strvec`, `f64map`) toward language-level generic collections.
+Per §2.2 Hard Rule #1 ("Implement Once, Use for Any Type") and §5.2 ("Structural Gaps"), ae must transition away from specialized compiler-internal container families (`vec[i64]`, `vec[f64]`, `strvec`, `f64map`) toward language-level generic collections.
 
 ## Decision
 1. Standardize user-space type layouts for core collections in `std/core/`:

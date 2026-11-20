@@ -1,4 +1,4 @@
-AE Windows build timings, 2026-11-10 (ADR-39)
+ae Windows build timings, 2026-11-10 (ADR-39)
 
 Three independent runs of:
   python bench/build_timings.py --runs 3 --header-baseline

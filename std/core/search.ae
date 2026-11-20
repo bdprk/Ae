@@ -1,5 +1,5 @@
 // std/core/search.ae
-// Search primitives for AE standard library.
+// Search primitives for ae standard library.
 
 pub struct BinarySearchResult {
     found: bool,

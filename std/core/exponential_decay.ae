@@ -1,5 +1,5 @@
 // std/core/exponential_decay.ae
-// Exponential decay moving average (EMA) integer estimation primitives for AE core.
+// Exponential decay moving average (EMA) integer estimation primitives for ae core.
 
 pub struct EmaEstimator {
     value: i64,

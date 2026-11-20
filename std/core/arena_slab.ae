@@ -1,5 +1,5 @@
 // std/core/arena_slab.ae
-// Conceptual slab allocation bin sizing state primitives for AE core.
+// Conceptual slab allocation bin sizing state primitives for ae core.
 
 pub struct SlabBin {
     slot_size: i64,

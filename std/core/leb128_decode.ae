@@ -1,5 +1,5 @@
 // std/core/leb128_decode.ae
-// LEB128 decoded byte sequence parsing state primitives for AE core.
+// LEB128 decoded byte sequence parsing state primitives for ae core.
 
 pub struct Leb128Decoder {
     value: i64,

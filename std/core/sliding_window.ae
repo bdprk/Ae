@@ -1,5 +1,5 @@
 // std/core/sliding_window.ae
-// Conceptual fixed sliding window average and sum accumulator primitives for AE core.
+// Conceptual fixed sliding window average and sum accumulator primitives for ae core.
 
 pub struct WindowAccumulator4 {
     v0: i64,
