@@ -105,6 +105,19 @@ impl<'a> TreePrinter<'a> {
                 let h = self.expression_text(handle);
                 self.line(&format!("chan_close({})", h));
             }
+            Statement::TaskSpawn(ex, slots, callable, ..) => {
+                let e = self.expression_text(ex);
+                let c = self.expression_text(callable);
+                let caps: Vec<String> = slots.iter().map(|s| self.expression_text(s)).collect();
+                if caps.is_empty() {
+                    self.line(&format!("task_spawn({}, {})", e, c));
+                } else {
+                    self.line(&format!("task_spawn({}, {}, [{}])", e, c, caps.join(", ")));
+                }
+            }
+            Statement::TaskYield => {
+                self.line("task_yield()");
+            }
             Statement::Return(expr, frees) => {
                 let value = self.expression_text(expr);
                 let drops = self.frees_text(frees);
@@ -363,6 +376,8 @@ impl<'a> TreePrinter<'a> {
             Expr::ChanTrySend(ch, val) => out.push_str(&format!("chan_try_send({}, {})", self.expression_text(ch), self.expression_text(val))),
             Expr::ChanRecv(ch) => out.push_str(&format!("chan_recv({})", self.expression_text(ch))),
             Expr::ChanSelect(c1, c2) => out.push_str(&format!("chan_select({}, {})", self.expression_text(c1), self.expression_text(c2))),
+            Expr::ExecNew => out.push_str("exec_new()"),
+            Expr::ExecRun(ex) => out.push_str(&format!("exec_run({})", self.expression_text(ex))),
             Expr::AtomicAdd(handle, value) => out.push_str(&format!("cell_add({}, {})", self.expression_text(handle), self.expression_text(value))),
             Expr::AtomicCas(handle, expect, new) => out.push_str(&format!("cell_cas({}, {}, {})", self.expression_text(handle), self.expression_text(expect), self.expression_text(new))),
             // The handle and the capture slots print like any expression; the

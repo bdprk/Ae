@@ -388,6 +388,12 @@ pub(super) fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker)
             None
         }
         Statement::ChanClose(handle) => walk_expr(handle, moved),
+        Statement::TaskSpawn(ex, slots, callable, ..) => {
+            if let Some(v) = walk_expr(ex, moved) { return Some(v); }
+            for s in slots { if let Some(v) = walk_expr(s, moved) { return Some(v); } }
+            walk_expr(callable, moved)
+        }
+        Statement::TaskYield => None,
     }
 }
 
@@ -430,6 +436,8 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         Expr::ChanNew(cap) => walk_expr(cap, moved),
         Expr::ChanSend(ch, val) | Expr::ChanTrySend(ch, val) | Expr::ChanSelect(ch, val) => { walk_expr(ch, moved); walk_expr(val, moved); None }
         Expr::ChanRecv(ch) => walk_expr(ch, moved),
+        Expr::ExecNew => None,
+        Expr::ExecRun(ex) => walk_expr(ex, moved),
         Expr::AtomicAdd(handle, value) => { walk_expr(handle, moved); walk_expr(value, moved); None }
         Expr::AtomicCas(handle, expect, new) => {
             if let Some(violation) = walk_expr(handle, moved) { return Some(violation); }

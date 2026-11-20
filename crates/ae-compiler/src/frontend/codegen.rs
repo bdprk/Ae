@@ -120,6 +120,17 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             out.push_str(&format!("    int64_t t{t} = ae_chan_select({}, {});\n", a.text, b.text));
             Emitted { text: format!("t{t}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
         }
+        Expr::ExecNew => {
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_exec t{t} = ae_exec_new();\n"));
+            Emitted { text: format!("t{t}"), ty: Type::Exec, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::ExecRun(ex) => {
+            let e = emit_expr(ex, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{t} = ae_exec_run({});\n", e.text));
+            Emitted { text: format!("t{t}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
         // M2.12 slice 2: the address of addressable storage. The operand is a
         // variable or a field of one, so the C is an address-of; the pointer
         // itself is a plain value that neither moves nor releases.
@@ -1508,6 +1519,25 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
             Statement::ChanClose(handle) => {
                 let c = emit_expr(handle, out, next, false);
                 out.push_str(&format!("    ae_chan_close({});\n", c.text));
+            }
+            Statement::TaskSpawn(ex, slots, _callable, cid, line, column) => {
+                let e = emit_expr(ex, out, next, false);
+                let fn_id = crate::frontend::closures::closure_fn_id(*cid);
+                let entry = format!("ae_thread_entry_{fn_id}");
+                let ctx_ty = format!("ae_thread_ctx_{fn_id}");
+                let t = *next; *next += 1;
+                out.push_str(&format!("    {ctx_ty} *ctx{t} = ae_alloc(sizeof({ctx_ty}), {line}, {column});\n"));
+                let mut moves = Vec::new();
+                for (index, slot) in slots.iter().enumerate() {
+                    let value = emit_expr(slot, out, next, true);
+                    moves.extend(value.moves);
+                    out.push_str(&format!("    ctx{t}->f{index} = {};\n", value.text));
+                }
+                null_moves(out, &moves);
+                out.push_str(&format!("    ae_task_spawn({}, {entry}, ctx{t});\n", e.text));
+            }
+            Statement::TaskYield => {
+                out.push_str("    ae_task_yield();\n");
             }
         }
     }

@@ -1,0 +1,4 @@
+fn main() {
+    let n = exec_run(42);
+    print(n);
+}

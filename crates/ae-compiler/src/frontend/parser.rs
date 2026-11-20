@@ -163,7 +163,61 @@ impl<'a> Parser<'a> {
     }
     #[inline(never)]
     fn concurrency_stmt(&mut self, name: &str) -> Result<Statement, ae_span::Diagnostic> {
+        let (line, col) = self.position();
+        let at = self.tokens[self.pos].offset;
         self.pos += 2;
+        if name == "task_yield" {
+            self.take(Kind::RParen)?;
+            self.take(Kind::Semi)?;
+            return Ok(Statement::TaskYield);
+        }
+        if name == "task_spawn" {
+            let (ex, ex_ty) = self.expression(0, false)?;
+            if ex_ty != Type::Exec {
+                return Err(self.fail("task_spawn expects an exec handle as its first argument"));
+            }
+            self.take(Kind::Comma)?;
+            let (callable, callable_ty) = self.expression(0, false)?;
+            self.take(Kind::RParen)?;
+            self.take(Kind::Semi)?;
+            let mut slots = Vec::new();
+            let cid = match (&callable, callable_ty) {
+                (Expr::ClosureLit(cid), Type::Closure(_)) | (Expr::Variable(_, Type::Closure(cid), ..), _) => {
+                    let def = self.generics.closures[*cid].clone();
+                    if !def.params.is_empty() {
+                        return Err(self.fail("the spawned task closure must take no parameters"));
+                    }
+                    if def.ret != Type::Int {
+                        return Err(self.fail("the spawned task closure must return i64"));
+                    }
+                    if !def.borrow_captures.is_empty() {
+                        return Err(self.fail("task_spawn moves its captures into the task; borrow captures are not allowed"));
+                    }
+                    for (outer_id, ty) in &def.value_captures {
+                        if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic | Type::Shared(_) | Type::Mutex | Type::Chan | Type::Exec) {
+                            return Err(self.fail("task_spawn moves its captures into the task; this capture's storage cannot cross"));
+                        }
+                        if self.moved.contains(outer_id) {
+                            return Err(moved_value_hint(self.error_at(at, "cannot spawn a task that captures a moved variable").with_code("E0102")));
+                        }
+                        if self.is_borrowed(*outer_id) {
+                            return Err(self.fail("cannot spawn a task while one of the closure's captured variables is borrowed"));
+                        }
+                        if ty.owned() { self.moved.insert(*outer_id); }
+                        slots.push(Expr::Variable(*outer_id, *ty, 0, 0));
+                    }
+                    crate::frontend::closures::record_spawned(crate::frontend::closures::SpawnedThread::Closure {
+                        fn_id: crate::frontend::closures::closure_fn_id(*cid),
+                        captures: def.value_captures.iter().map(|(_, ty)| *ty).collect(),
+                        borrows: Vec::new(),
+                        ret: def.ret,
+                    });
+                    *cid
+                }
+                _ => return Err(self.fail("task_spawn expects a zero-parameter closure returning i64")),
+            };
+            return Ok(Statement::TaskSpawn(Box::new(ex), slots, Box::new(callable), cid, line, col));
+        }
         if name == "chan_close" {
             let (handle, handle_ty) = self.expression(0, false)?;
             if handle_ty != Type::Chan {
@@ -466,7 +520,7 @@ impl<'a> Parser<'a> {
                         result.push(Statement::AtomicStore(Box::new(handle), Box::new(value)));
                         continue;
                     }
-                    if matches!(name.as_str(), "shared_set" | "chan_close") && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
+                    if matches!(name.as_str(), "shared_set" | "chan_close" | "task_spawn" | "task_yield") && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
                         result.push(self.concurrency_stmt(&name)?);
                         continue;
                     }

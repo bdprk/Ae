@@ -207,9 +207,9 @@ Integration gate: Borrowed child joins before parent exits, unsafe sharing rejec
 
 Entry dependency: M4.1.
 
-- [ ] M4.2.01. **Single worker queue.** Replay three ready tasks under a deterministic FIFO executor.
-- [ ] M4.2.02. **stack lifecycle.** Create and reclaim many stacks and verify bounded retained memory.
-- [ ] M4.2.03. **yield.** Suspend and resume with live locals intact and no duplicate execution.
+- [x] M4.2.01. **Single worker queue.** Replay three ready tasks under a deterministic FIFO executor. (implemented per [ADR-0218](adr/0218-task-executor-and-cooperative-yield.md): `exec_new()`, `task_spawn(ex, || -> i64 { ... })`, `exec_run(ex) -> i64` behind the pruned `ae_exec` unit; K1 in `tests/run/tasks_fifo.ae` replays three ready tasks in exact FIFO order `k1:1, k1:2, k1:3` and returns `3`; compiled + `--interp` parity pinned by `tasks_fifo_yield_and_reclaim_agree_across_backends`; single-platform verified on Windows x86-64)
+- [x] M4.2.02. **stack lifecycle.** Create and reclaim many stacks and verify bounded retained memory. (implemented in `ae_exec_run`: Win32 `DeleteFiber` + `ae_free(ctx)` + `free(node)` on every completion on Windows, `thrd_join` + destroy + free on POSIX; K3 in `tests/run/tasks_fifo.ae` spawns and reclaims 200 tasks with bounded memory; single-platform verified on Windows x86-64)
+- [x] M4.2.03. **yield.** Suspend and resume with live locals intact and no duplicate execution. (implemented via `task_yield()` — Win32 `SwitchToFiber` on Windows, C11 `mtx_t`/`cnd_t` baton on POSIX, explicit frame stack in `interp.rs`; K2 in `tests/run/tasks_fifo.ae` interleaves two yielding loops with live locals intact `0, 10, 1, 11, 2, 12`; compiled + `--interp` parity pinned; single-platform verified on Windows x86-64)
 - [ ] M4.2.04. **scope join.** Leave a task scope with unfinished children and verify the join contract.
 - [ ] M4.2.05. **cancellation points.** Cancel before park, during park and after completion with one terminal outcome.
 - [ ] M4.2.06. **timer.** Trigger equal deadlines and cancellation through a controlled clock.

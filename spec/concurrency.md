@@ -164,3 +164,18 @@ Cancellation has no dedicated primitive: a **cancellation channel** is an ordina
 | T12 | Same program under `--interp` | Identical stdout and the same failing wait (`a_failed_child_surfaces_at_its_wait_after_the_sibling_joined`) |
 | T13 | Failure that is never waited | The `atexit` latch reports it and exits 1 when it is set before exit |
 | T14 | Failure on the main thread | Immediate abort, unchanged: the diagnostic and exit 1 print at the failure point |
+
+## 13. Tasks (`exec`, M4.2.01–M4.2.03, ADR-0218)
+
+1. **`exec` is a copy-semantics handle to a single-worker deterministic FIFO task executor.** `exec_new()` allocates an executor; copying the handle shares the same queue.
+2. **`task_spawn(ex, || -> i64 { ... })` enqueues a zero-parameter closure returning `i64`.** Value captures move at the `task_spawn` site (ordinary E0102 use-after-move afterwards); borrow captures are rejected at compile time.
+3. **`task_yield()` suspends the running task and moves it to the tail of the FIFO ready queue.** All live locals survive across yields and the task resumes at the statement immediately after `task_yield()` with no duplicate execution. Outside a task, `task_yield()` is a no-op.
+4. **`exec_run(ex) -> i64` runs all queued tasks to completion in deterministic FIFO order and returns the count of completed tasks.** Each task's stack and context are reclaimed immediately upon completion so spawning many tasks retains bounded memory.
+
+| Case | Scenario | Expected |
+|---|---|---|
+| K1 | Three tasks enqueued on one executor without yields | Execute in exact FIFO submission order `1, 2, 3`; `exec_run` returns `3` (`tests/run/tasks_fifo.ae`) |
+| K2 | Two tasks interleave via `task_yield()` while mutating locals | Locals stay intact across yields; exact interleaved FIFO output; no duplicate execution (`tests/run/tasks_fifo.ae`) |
+| K3 | 200 tasks spawned and run to completion | `exec_run` returns `200`; stacks reclaimed on completion with bounded memory (`tests/run/tasks_fifo.ae`) |
+| K4 | `task_spawn` with non-`exec` first argument | Compile-time error (`tests/ui/task_spawn_non_exec.ae`) |
+| K5 | `exec_run` with non-`exec` argument | Compile-time error (`tests/ui/exec_run_non_exec.ae`) |

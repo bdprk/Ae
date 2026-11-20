@@ -1,0 +1,1 @@
+ae: $DIR/task_spawn_non_exec.ae:2:17: task_spawn expects an exec handle as its first argument

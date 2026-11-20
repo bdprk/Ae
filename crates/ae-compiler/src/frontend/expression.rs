@@ -234,6 +234,22 @@ impl Parser<'_> {
         Ok((Expr::ChanSelect(Box::new(c1), Box::new(c2)), Type::Int))
     }
     #[inline(never)]
+    fn exec_new_expr(&mut self, _line: usize, _col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::LParen)?;
+        self.take(Kind::RParen)?;
+        Ok((Expr::ExecNew, Type::Exec))
+    }
+    #[inline(never)]
+    fn exec_run_expr(&mut self, _line: usize, _col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::LParen)?;
+        let (ex, ex_ty) = self.expression(0, false)?;
+        if ex_ty != Type::Exec {
+            return Err(self.fail("exec_run expects an exec handle"));
+        }
+        self.take(Kind::RParen)?;
+        Ok((Expr::ExecRun(Box::new(ex)), Type::Int))
+    }
+    #[inline(never)]
     fn concurrency_builtin_expr(&mut self, name: &str, line: usize, col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
         match name {
             "shared_new" => self.shared_new_expr(line, col),
@@ -244,6 +260,8 @@ impl Parser<'_> {
             "chan_send" => self.chan_send_expr(line, col),
             "chan_try_send" => self.chan_try_send_expr(line, col),
             "chan_select" => self.chan_select_expr(line, col),
+            "exec_new" => self.exec_new_expr(line, col),
+            "exec_run" => self.exec_run_expr(line, col),
             _ => self.chan_recv_expr(line, col),
         }
     }
@@ -828,7 +846,7 @@ impl Parser<'_> {
                     return self.cell_add_expr(vline, vcol);
                 } else if name == "cell_cas" && *self.current() == Kind::LParen {
                     return self.cell_cas_expr(vline, vcol);
-                } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_try_send" | "chan_recv" | "chan_select") && *self.current() == Kind::LParen {
+                } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_try_send" | "chan_recv" | "chan_select" | "exec_new" | "exec_run") && *self.current() == Kind::LParen {
                     self.concurrency_builtin_expr(&name, vline, vcol)?
                 } else if name == "spawn" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
@@ -866,7 +884,7 @@ impl Parser<'_> {
                                 // closure/pointer values have no byte layout to
                                 // package; owned scalars, strings, vectors,
                                 // maps, structs, and enums move.
-                                if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic | Type::Shared(_) | Type::Mutex | Type::Chan) {
+                                if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic | Type::Shared(_) | Type::Mutex | Type::Chan | Type::Exec) {
                                     return Err(self.fail("spawn moves its captures into the thread; this capture's storage cannot cross"));
                                 }
                                 if self.moved.contains(outer_id) {

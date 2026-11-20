@@ -1,0 +1,48 @@
+fn main() {
+    let ex = exec_new();
+    task_spawn(ex, || -> i64 {
+        print("k1:1");
+        return 0;
+    });
+    task_spawn(ex, || -> i64 {
+        print("k1:2");
+        return 0;
+    });
+    task_spawn(ex, || -> i64 {
+        print("k1:3");
+        return 0;
+    });
+    print(exec_run(ex));
+
+    task_spawn(ex, || -> i64 {
+        var i = 0;
+        while i < 3 {
+            print(i);
+            i = i + 1;
+            task_yield();
+        }
+        return 0;
+    });
+    task_spawn(ex, || -> i64 {
+        var j = 10;
+        while j < 13 {
+            print(j);
+            j = j + 1;
+            task_yield();
+        }
+        return 0;
+    });
+    print(exec_run(ex));
+
+    let counter = cell_new(0);
+    var n = 0;
+    while n < 200 {
+        task_spawn(ex, || -> i64 {
+            let _ = cell_add(counter, 1);
+            return 0;
+        });
+        n = n + 1;
+    }
+    print(exec_run(ex));
+    print(cell_load(counter));
+}

@@ -39,6 +39,8 @@ impl Parser<'_> {
             "guard" => Ok(Type::Guard),
             // Copy-semantics i64 channel handle (M4.3, spec/concurrency.md §10).
             "chan" => Ok(Type::Chan),
+            // Copy-semantics single-worker task executor handle (M4.2, ADR-0218).
+            "exec" => Ok(Type::Exec),
             // The copy-semantics shared box handle (ADR-0216, spec/concurrency.md §9):
             // copying the handle shares the process-lifetime box; no handle towers.
             "shared" => {
