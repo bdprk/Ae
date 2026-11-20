@@ -573,7 +573,15 @@ M5.1 and M6.2 pauses until R2 and R3a land.
   --workspace` 453 passing on Windows (14 bin + 319 execution + 3 snapshot +
   11 LSP + 44 compiler + 2 span + 58 syntax), UI snapshots green.
 - [ ] R2.4. Migrate `cancel_*`, `pool_*`, `exec_*`, `timer_*` and `shared_*`
-  to `std/task` / `std/sync` over the `keep` primitives.
+  to `std/task` / `std/sync` over the `keep` primitives. **Partially done:**
+  `cancel_*`/`timer_*` landed (R2.4a). The remaining three families are
+  blocked on language features, with probes recorded in ADR-0226: a user
+  aggregate cannot be copyable (so a shared box moves into `spawn`), pointers
+  cannot cross `spawn`, `as` only reinterprets pointer-to-pointer, `fn(..)`
+  is not a field type and closures have no byte layout (so a work queue cannot
+  hold its work), and the scheduler/yield primitives live only in `runtime.c`.
+  `shared_new`/`shared_get`/`exec_new`/`exec_run`/`pool_new`/`pool_join` stay
+  `migrate` in the allowlist.
 - [ ] R3a. M0.2.08: route the CLI through the `ae-syntax` AST; differential
   corpus on both routes; delete the legacy parser.
 - [ ] R3b. Resolver pass: DefId per item/local over the AST (HIR-lite),
