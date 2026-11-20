@@ -1,7 +1,7 @@
 # M0 baseline: checked integer sum on Windows
 
 - Status: exploratory, single-platform verification (Windows x86-64 only).
-- Date: 2026-11-12; source revision: `be1f8cdd0bd9e12804ee4428127e00e3b5028ee2`; tracked working tree was clean during measurement.
+- Date: 2026-11-12; source revision: `1c7aa525a8804948c0916f2e61583d0522cea808`; tracked working tree was clean during measurement.
 - Raw samples, source hashes, outputs and tool versions: [JSON](2026-11-12-windows-sum-baseline.json).
 - Purpose: establish an initial reproducible same-host measurement for the existing `sum` workload. It is not an M1 performance acceptance result.
 

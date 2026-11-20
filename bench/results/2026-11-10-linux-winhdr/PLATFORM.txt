@@ -9,7 +9,7 @@ Platform
 
 Source tree
   The remote tree has no .git. Synchronised from the local working tree
-  immediately after commit f4c1e11 (W3 stage 1), plus the then-uncommitted
+  immediately after commit cde2e3f (W3 stage 1), plus the then-uncommitted
   ADR-39 changes: src/, tests/, scripts/, examples/, docs/, Cargo.toml,
   Cargo.lock and bench/*.py. The docs/ copy predates the ADR-39 prose edits,
   which do not affect any compiled artefact or test.

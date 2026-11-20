@@ -8,7 +8,7 @@ Platform
   AddressSanitizer: unavailable on MinGW; allocation counting uses -Wl,--wrap
 
 Source tree
-  Local working tree immediately after commit f4c1e11 (W3 stage 1), plus the
+  Local working tree immediately after commit cde2e3f (W3 stage 1), plus the
   uncommitted ADR-39 changes. This archive is committed together with that
   tree, so git history identifies the exact sources.
 

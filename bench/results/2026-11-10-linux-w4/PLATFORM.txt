@@ -9,7 +9,7 @@ Platform
 
 Source tree
   Remote tree ~/ae-lang synced from the Windows working tree immediately
-  after commit 6566262 (ADR-39), plus the uncommitted ADR-40 changes:
+  after commit e003b1e (ADR-39), plus the uncommitted ADR-40 changes:
     tar -czf - src tests scripts examples docs Cargo.toml Cargo.lock \
         bench/build_timings.py bench/constraint_audit_timings.py \
         bench/run.py bench/phases.py | ssh instabox-node 'cd ~/ae-lang && tar -xzf -'

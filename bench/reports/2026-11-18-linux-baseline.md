@@ -1,6 +1,6 @@
 # Linux Baseline Verification — evaluate-2 (Debian 13)
 
-Date: 2026-11-18  ·  Revision: `6db7808` (feat: enforce caret version constraints on path dependencies)
+Date: 2026-11-18  ·  Revision: `a5d0a32` (feat: enforce caret version constraints on path dependencies)
 
 ## Host
 
@@ -20,7 +20,7 @@ re-run after that load started to wind down. Only correctness claims are drawn f
 ## Setup (reproducer)
 
 ```sh
-# from the Windows checkout at revision 6db7808
+# from the Windows checkout at revision a5d0a32
 git archive --format=tar HEAD | gzip -1 | ssh instabox-node3 'mkdir -p ~/ae && tar xz -C ~/ae'
 ssh instabox-node3 'cd ~/ae && cargo test --workspace --locked'
 ```

@@ -1,6 +1,6 @@
 # 24-Hour Differential Fuzz Campaign (M2.13) — 2026-11-18
 
-Revision `6db7808`. Five InstaBox Debian 13 hosts, four workers each; seed space partitioned by host so the
+Revision `a5d0a32`. Five InstaBox Debian 13 hosts, four workers each; seed space partitioned by host so the
 campaign never repeats a program. Every seed is compiled by the MIR block-graph backend, the structured tree
 backend, the release profile and the MIR interpreter, and all four outputs must agree byte for byte.
 
@@ -55,10 +55,10 @@ load-independent.
 ## Incident 2026-11-19 — seed 40115917 (ai) and driver hardening
 
 At `fuzz.log:111417` the ai host recorded `seed 40115917: FAILURE (0 lines)`. The seed passed on every
-re-run (locally at `f06093a` and on the host itself, `ok (4 lines)` in 1.3 s), and `(0 lines)` matches the
+re-run (locally at `cbc33e4` and on the host itself, `ok (4 lines)` in 1.3 s), and `(0 lines)` matches the
 driver's exception path, so the verdict was a compile timeout under the fleet's shared benchmark load —
 the host lost the race, the language did not diverge. The running driver carried the old classification,
-which charged environmental timeouts to the M2.13 failure count; `b15db5c` fixes `scripts/diff_fuzz.py`:
+which charged environmental timeouts to the M2.13 failure count; `fdd61ff` fixes `scripts/diff_fuzz.py`:
 environmental timeouts and OS errors retry once and are reported as `ENV` with a separate summary count
 (`N environmental`) and excluded from the exit code, while a compiler rejection of a generated program
 (`RuntimeError`) stays a real differential FAILURE. `--save-corpus` also crashed on an undefined name
@@ -67,7 +67,7 @@ host including evaluate-3 once its sandbox woke at 08:10 (`md5 e9e0f426…`); ai
 seed 40,117,992 (the old 7.6 h segment stays in the log as history). ¹ ai's failure column excludes the
 one environmental timeout; its segment before the relaunch had 0 differential failures.
 
-## Fleet upgrade plan — driver 1103ec5+ (spawn/cell shapes)
+## Fleet upgrade plan — driver 817ba31+ (spawn/cell shapes)
 
 The driver gained kind 21 (spawn with moved scalar/string captures) and kind 22 (two threads sharing one `cell_*` handle) — the thread surface's differential coverage. The fleet's running segments carry the fixed driver (`e9e0f426`) and an older compiler; upgrading a host mid-segment requires a compiler rebuild and a segment restart, which resets that host's 24-hour M2.13 gate clock. Plan: upgrade each host at its next natural segment boundary (the supervisor's relaunch), never mid-segment; the new shapes are already covered locally (80+ seeds across two ranges, plus the execution tests).
 

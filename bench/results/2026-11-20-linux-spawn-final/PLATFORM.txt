@@ -1,7 +1,7 @@
 AE spawn/wait final verification (incl. fn-value spawn) — Linux
 
 Host: InstaBox evaluate-3 (Debian 13 x86-64, rustc 1.99.0, gcc 14.2.0)
-Revision: 57a7e88 (git archive of HEAD)
+Revision: ac53215 (git archive of HEAD)
 Linux: cargo test --workspace --locked EXIT=0, 432 passed, 0 failed; scripts unittest all OK
 (incl. thread harness, C11 branch); verify_generated_c sanitize/leak completed with 0 FAILs.
 Windows: same suite 432 green, fuzz 40 seeds 0 failures, verify 41 PASS.

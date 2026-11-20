@@ -1,7 +1,7 @@
 字面量拼接融合（litcat）· Linux 回填归档（2026-11-11）
 
 ## 源码树身份
-工作树 = 提交 b78c282 + 未提交的融合改动（与 Windows 归档
+工作树 = 提交 5010189 + 未提交的融合改动（与 Windows 归档
 `2026-11-11-windows-litcat/` 同一改动），tar 管道同步到 ~/ae-litcat：
   tar -czf - src tests scripts examples tests_demo bench/map.ae Cargo.toml Cargo.lock \
       | ssh instabox-node 'cd ~/ae-litcat && tar -xzf -'

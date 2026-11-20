@@ -1,8 +1,8 @@
 map 容器负载 · Linux 归档（2026-11-11）
 
 ## 源码树身份
-提交 5d153d4（与 `2026-11-11-linux-fmt-test/` 同一次同步）：
-`git archive 5d153d4 | gzip | ssh instabox-node 'tar -xzf -'` 到 ~/ae-fmt-test。
+提交 6caa3c1（与 `2026-11-11-linux-fmt-test/` 同一次同步）：
+`git archive 6caa3c1 | gzip | ssh instabox-node 'tar -xzf -'` 到 ~/ae-fmt-test。
 
 ## 平台
 - instabox-node 沙箱：Debian 13，内核 6.18.54-instabox，x86-64，4 vCPU / 7.8 GB

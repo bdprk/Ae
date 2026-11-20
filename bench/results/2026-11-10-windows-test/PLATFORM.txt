@@ -1,7 +1,7 @@
 W5 test 子命令 · Windows 归档（2026-11-10）
 
 ## 源码树身份
-提交 fd3149f（"Add a whitespace-only idempotent formatter ..."）
+提交 7bab8c4（"Add a whitespace-only idempotent formatter ..."）
 + 与本归档同批提交的 src/harness.rs、src/main.rs、src/frontend.rs
 （可见性放宽）、tests/execution.rs、文档。
 

@@ -9,7 +9,7 @@ Platform
 
 Source tree
   ~/ae-lang synced from the Windows working tree immediately after commit
-  55f6b14 (ADR-40), plus the uncommitted ADR-41 changes:
+  674247e (ADR-40), plus the uncommitted ADR-41 changes:
     tar -czf - src tests scripts examples docs Cargo.toml Cargo.lock \
         bench/*.py | ssh instabox-node 'cd ~/ae-lang && tar -xzf -'
   The remote tree has no .git; the Windows archive is committed together with
@@ -18,7 +18,7 @@ Source tree
 
 Baseline binary (NOT committed; rebuilt on this host)
   The same pre-ADR-41 source tree was exported on Windows with
-  `git archive 55f6b14 src Cargo.toml Cargo.lock`, copied so runtime.c and
+  `git archive 674247e src Cargo.toml Cargo.lock`, copied so runtime.c and
   runtime_ex.c use the same line endings as the working tree, then synced:
     tar -czf - -C target/probe/old-tree src Cargo.toml Cargo.lock \
         | ssh instabox-node 'mkdir -p ~/ae-old && cd ~/ae-old && tar -xzf -'

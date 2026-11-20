@@ -3,7 +3,7 @@ ADR-58 map 未命中的理由文本改为只读常量 · Linux 归档（2026-11-
 ## 平台
 instabox-node 沙箱：Debian 13，Linux 6.18.54，x86-64，4 vCPU；gcc 14.2.0-19；rustc 1.99.0。
 代码由 tar 管道同步自工作区：`~/ae-mapmiss-new`（本工作区）与
-`~/ae-mapmiss-old`（`git archive HEAD`，HEAD = 88965d8，ADR-57）。
+`~/ae-mapmiss-old`（`git archive HEAD`，HEAD = 3eb92e0，ADR-57）。
 探针与脚本在 `~/mapmiss`，旧/新编译器分别生成 `miss-old`/`miss-new` 与 `hit-old`/`hit-new`。
 
 ## 命令（工作目录 = 各自仓库根，除探针外）

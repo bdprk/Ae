@@ -6,7 +6,7 @@
 
 ## Context
 
-The plan's M2.12 asks for `unsafe`, raw pointers, `extern "C"`, and `#[repr(C)]` with dual-platform FFI use cases. The language's safety story (ADR-0205) holds for safe code; the boundary needs an explicit, opt-in surface where the author — not the compiler — owns the invariants. The design (spec-first, cb8d860) fixed five hard rules before any implementation: unsafe does not weaken safe code; the author owns the invariant; safe code cannot reach UB; every boundary is explicit; dual-platform semantics agree.
+The plan's M2.12 asks for `unsafe`, raw pointers, `extern "C"`, and `#[repr(C)]` with dual-platform FFI use cases. The language's safety story (ADR-0205) holds for safe code; the boundary needs an explicit, opt-in surface where the author — not the compiler — owns the invariants. The design (spec-first, 1c605c2) fixed five hard rules before any implementation: unsafe does not weaken safe code; the author owns the invariant; safe code cannot reach UB; every boundary is explicit; dual-platform semantics agree.
 
 The slices landed in order, each gated by the spec's U-matrix cells: the `unsafe {}` scoping container (slice 1), `*const T` reads (2), `*mut T` writes (3), `extern "C"` declarations (4), `unsafe fn` declarations (5), `#[repr(C)]` structs with the layout query pair (6/8), the precondition doc-comment enforcement (7/10), the `#[no_mangle]` exposure (8/9), the W0702 decoration warning (4), and the differential surfaces for pointers in the fuzzer.
 
