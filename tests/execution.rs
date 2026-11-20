@@ -8312,3 +8312,25 @@ fn tasks_fifo_yield_and_reclaim_agree_across_backends() {
     assert_eq!(c_out, i_out);
     assert_eq!(c_out, "k1:1\nk1:2\nk1:3\n3\n0\n10\n1\n11\n2\n12\n2\n200\n200\n");
 }
+
+#[test]
+fn controlled_clock_and_timers_agree_across_backends() {
+    // M3.2.05 / M4.2.06 (ADR-0219): controlled monotonic clock, equal deadlines,
+    // pre/post-deadline cancellation, and task-driven timeout must match
+    // byte-for-byte between compiled C and --interp.
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run/timers_clock.ae");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", fixture.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let interp = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", fixture.to_str().unwrap(), "--interp"])
+        .output()
+        .unwrap();
+    assert!(interp.status.success(), "{}", String::from_utf8_lossy(&interp.stderr));
+    let c_out = String::from_utf8_lossy(&compiled.stdout).replace("\r\n", "\n");
+    let i_out = String::from_utf8_lossy(&interp.stdout).replace("\r\n", "\n");
+    assert_eq!(c_out, i_out);
+    assert_eq!(c_out, "0\nfalse\nfalse\ntrue\nfalse\n50\ntrue\ntrue\nfalse\n110\nfalse\n2\ntimeout_fired\n2\n140\n");
+}

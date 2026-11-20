@@ -131,6 +131,43 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             out.push_str(&format!("    int64_t t{t} = ae_exec_run({});\n", e.text));
             Emitted { text: format!("t{t}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
         }
+        Expr::ClockNew => {
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_clock t{t} = ae_clock_new();\n"));
+            Emitted { text: format!("t{t}"), ty: Type::Clock, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::ClockNow(c) => {
+            let c = emit_expr(c, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{t} = ae_clock_now({});\n", c.text));
+            Emitted { text: format!("t{t}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::ClockAdvance(c, d) => {
+            let c = emit_expr(c, out, next, false);
+            let d = emit_expr(d, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{t} = ae_clock_advance({}, {});\n", c.text, d.text));
+            Emitted { text: format!("t{t}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::TimerNew(c, d) => {
+            let c = emit_expr(c, out, next, false);
+            let d = emit_expr(d, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_timer t{t} = ae_timer_new({}, {});\n", c.text, d.text));
+            Emitted { text: format!("t{t}"), ty: Type::Timer, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::TimerReady(tm) => {
+            let tm = emit_expr(tm, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    bool t{t} = ae_timer_ready({});\n", tm.text));
+            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::TimerCancel(tm) => {
+            let tm = emit_expr(tm, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    bool t{t} = ae_timer_cancel({});\n", tm.text));
+            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
         // M2.12 slice 2: the address of addressable storage. The operand is a
         // variable or a field of one, so the C is an address-of; the pointer
         // itself is a plain value that neither moves nor releases.

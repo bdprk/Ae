@@ -485,8 +485,9 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
         Expr::ChanNew(cap) => walk_expr(cap, used, mutated),
         Expr::ChanSend(ch, val) | Expr::ChanTrySend(ch, val) | Expr::ChanSelect(ch, val) => { walk_expr(ch, used, mutated); walk_expr(val, used, mutated); }
         Expr::ChanRecv(ch) => walk_expr(ch, used, mutated),
-        Expr::ExecNew => {}
-        Expr::ExecRun(ex) => walk_expr(ex, used, mutated),
+        Expr::ExecNew | Expr::ClockNew => {}
+        Expr::ExecRun(ex) | Expr::ClockNow(ex) | Expr::TimerReady(ex) | Expr::TimerCancel(ex) => walk_expr(ex, used, mutated),
+        Expr::ClockAdvance(a, b) | Expr::TimerNew(a, b) => { walk_expr(a, used, mutated); walk_expr(b, used, mutated); }
         Expr::AtomicAdd(handle, value) => { walk_expr(handle, used, mutated); walk_expr(value, used, mutated); }
         Expr::AtomicCas(handle, expect, new) => { walk_expr(handle, used, mutated); walk_expr(expect, used, mutated); walk_expr(new, used, mutated); }
         Expr::Number(_) | Expr::FloatLit(_) | Expr::BoolLit(_) | Expr::StrLit(..) | Expr::Args(..) | Expr::ReadStdin(..) | Expr::Cwd(..) | Expr::StrVecNew(..) | Expr::F64VecNew(..) | Expr::NowMs | Expr::NowS | Expr::ClosureLit(_) | Expr::MapNew(..) => {}
