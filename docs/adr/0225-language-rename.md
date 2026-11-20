@@ -6,10 +6,10 @@ Date: 2026-11-21
 
 ## Context
 
-The project was developed as `Aether` with the extension `.ae`, the binary `aether`,
-crates `aether-span`/`aether-syntax`/`aether-compiler`, environment variables
-`AETHER_*`, generated C symbols `aether_*`, a manifest `aether.toml`, and lockfile
-`aether.lock`. The name is long to type in every command, collides with unrelated
+The project was developed as the former name with the extension `.ae`, the binary the former command,
+crates `the former span crate`/`the former syntax crate`/`the former compiler crate`, environment variables
+`the former environment-variable prefix`, generated C symbols `the former C symbol prefix`, a manifest `the former manifest`, and lockfile
+`the former lockfile`. The name is long to type in every command, collides with unrelated
 software on package registries, and does not match the two-letter extension that
 users already type. The rename also had to keep the file extension stable so that
 568 existing `.ae` sources, fixtures, and snapshot expectations stay valid.
@@ -18,8 +18,8 @@ users already type. The rename also had to keep the file extension stable so tha
 
 | Option | Pros | Cons | Resource Cost (Compile/Runtime/Memory/Disk) |
 |---|---|---|---|
-| Keep `Aether` | No migration | Long CLI token, registry collision, mismatched with `.ae` | None |
-| Rename to a new word (`Aera`, `Aethra`) | Distinctive | Breaks the link to `.ae`; churns every identifier again later | Same churn as this option |
+| Keep the former name | No migration | Long CLI token, registry collision, mismatched with `.ae` | None |
+| Rename to a new word (new coined words) | Distinctive | Breaks the link to `.ae`; churns every identifier again later | Same churn as this option |
 | **Rename to `AE`** | Matches `.ae`; shortest possible command (`ae run x.ae`); one-to-one mapping for every prefix | `ae` is a common bigram, so search noise; every internal prefix changes once | Generated C shrinks (shorter symbol names); no runtime cost |
 
 ## Decision
