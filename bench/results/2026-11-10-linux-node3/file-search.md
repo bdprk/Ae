@@ -3,7 +3,7 @@
 Date: 2026-11-10 ｜ Input: `bench-input.txt` (20,000 lines, ~1.4 MB, generated with a fixed seed)
 Semantics: Count total lines and lines containing the substring `ae`. All four implementations output identically: `20,000` / `12,140`.
 
-Version pinning: AE commit `8bf8000`+ (working tree at the time of archiving this directory); Gojo `b460b17` ("Report where a segfault happened", `git clone --depth 1`); Go 1.27.1; rustc 1.99.0; GCC 14.2.0. Machine: 4 vCPU / 7.8 GiB / Debian 13.
+Version pinning: AE commit `a0dbee1`+ (working tree at the time of archiving this directory); Gojo `b460b17` ("Report where a segfault happened", `git clone --depth 1`); Go 1.27.1; rustc 1.99.0; GCC 14.2.0. Machine: 4 vCPU / 7.8 GiB / Debian 13.
 
 ## Results (Median of 7 runs / 3 builds)
 
