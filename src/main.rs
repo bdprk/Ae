@@ -6,7 +6,7 @@ mod package;
 mod render;
 mod frontend_cache;
 
-const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae check --render [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae init [directory]\n       ae doc [--test] [source.ae|project]\n       ae explain <E0000>\n       ae add <path>\n       ae remove <name>\n       ae update [project]\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae check --render [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae init [directory]\n       ae doc [--test] [source.ae|project]\n       ae explain <E0000>\n       ae add <path>\n       ae remove <name>\n       ae update [project]\n       ae lsp\n       ae version";
 
 /// A toolchain failure with the exit code it maps to. Usage errors exit 2 and
 /// everything else exits 1, so a script can tell "you called it wrong" from
@@ -370,13 +370,20 @@ fn cache_command(subcommand: Option<&OsString>) -> Result<u8, String> {
 fn run(args: Vec<OsString>) -> Result<u8, Failure> {
     if args.is_empty() { return Err(Failure::usage(USAGE)); }
     let cmd = args[0].to_str().ok_or(Failure::usage("command must be UTF-8"))?.to_owned();
-    const COMMANDS: [&str; 19] = [
+    const COMMANDS: [&str; 20] = [
         "check", "emit-c", "emit-tree", "emit-cfg", "emit-mir", "run", "build", "test",
         "fmt", "cache", "new", "init", "update", "deps", "version", "doc", "explain",
-        "add", "remove",
+        "add", "remove", "lsp",
     ];
     if !COMMANDS.contains(&cmd.as_str()) {
         return Err(Failure::usage(format!("unknown command: {cmd}\n{USAGE}")));
+    }
+    if cmd == "lsp" {
+        let stdin = std::io::stdin();
+        let stdout = std::io::stdout();
+        ae_compiler::lsp::run_lsp_loop(stdin.lock(), stdout.lock())
+            .map_err(|e| Failure { code: 1, message: format!("lsp error: {e}") })?;
+        return Ok(0);
     }
     if cmd == "version" {
         if args.len() != 1 { return Err(Failure::usage(USAGE)); }

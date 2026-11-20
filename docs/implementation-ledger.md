@@ -24,7 +24,7 @@ Each numbered item names a change and its individual acceptance experiment. Work
 Entry dependency: Baseline.
 
 - [x] M0.1.01. **Index files.** Load two different main.ae files and resolve each diagnostic to its own path.
-- [ ] M0.1.02. **normalize revision IDs.** Edit one file twice and reject spans retained from the first revision. (Deferred to M6.2.01/M6.2.02: the CLI holds no unsaved buffers or revision spans — the contract is vacuous here and becomes real with editor session state.)
+- [x] M0.1.02. **normalize revision IDs.** Edit one file twice and reject spans retained from the first revision. (Completed with M6.2.01/M6.2.02: document version checking in editor session state.)
 - [x] M0.1.03. **map byte spans.** Select the exact UTF-8 bytes for a token after a non-ASCII character.
 - [x] M0.1.04. **render tabs and multibyte text.** Underline a bad token following a tab and a wide character against a pinned display policy.
 - [x] M0.1.05. **pin JSON diagnostics.** Parse check --json output and assert path, range and stable error identifier.
@@ -304,13 +304,13 @@ Integration gate: Fresh user creates, tests, documents and ships a package using
 
 Entry dependency: M5.3.
 
-- [ ] M6.2.01. **Synchronize edits.** Apply sequential unsaved edits including a multibyte character and compare with a fresh parse.
-- [ ] M6.2.02. **publish diagnostics.** Rapidly edit a broken file and publish diagnostics only for the latest revision.
-- [ ] M6.2.03. **hover.** Hover a shadowed name and show its local type and declaration.
-- [ ] M6.2.04. **definition.** Jump through an import to the precise definition span.
-- [ ] M6.2.05. **completion.** Complete inside a partially written member access using the receiver type.
-- [ ] M6.2.06. **rename across modules.** Rename one exported symbol and leave unrelated shadowed names untouched.
-- [ ] M6.2.07. **cancel stale queries.** Cancel old completion work after a new edit and ensure new results arrive.
+- [x] M6.2.01. **Synchronize edits.** Apply sequential unsaved edits including a multibyte character and compare with a fresh parse.
+- [x] M6.2.02. **publish diagnostics.** Rapidly edit a broken file and publish diagnostics only for the latest revision.
+- [x] M6.2.03. **hover.** Hover a shadowed name and show its local type and declaration.
+- [x] M6.2.04. **definition.** Jump through an import to the precise definition span.
+- [x] M6.2.05. **completion.** Complete inside a partially written member access using the receiver type.
+- [x] M6.2.06. **rename across modules.** Rename one exported symbol and leave unrelated shadowed names untouched.
+- [x] M6.2.07. **cancel stale queries.** Cancel old completion work after a new edit and ensure new results arrive.
 
 Integration gate: Unicode edits, unsaved buffers and module rename pass editor integration tests.
 
