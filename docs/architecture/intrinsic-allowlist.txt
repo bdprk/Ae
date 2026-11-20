@@ -15,9 +15,6 @@ chan_recv         chan     keep
 chan_select       chan     keep
 exec_new          task     migrate
 exec_run          task     migrate
-clock_new         time     demote
-clock_now         time     demote
-clock_advance     time     demote
 timer_new         time     migrate
 timer_ready       time     migrate
 timer_cancel      time     migrate

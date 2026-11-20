@@ -1,0 +1,4 @@
+fn main() {
+    let clk = clock_new();
+    print(0);
+}

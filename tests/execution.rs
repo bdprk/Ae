@@ -8314,11 +8314,12 @@ fn tasks_fifo_yield_and_reclaim_agree_across_backends() {
 }
 
 #[test]
-fn controlled_clock_and_timers_agree_across_backends() {
-    // M3.2.05 / M4.2.06 (ADR-0219): controlled monotonic clock, equal deadlines,
-    // pre/post-deadline cancellation, and task-driven timeout must match
-    // byte-for-byte between compiled C and --interp.
-    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run/timers_clock.ae");
+fn fake_clock_and_timers_agree_across_backends() {
+    // ADR-0224 R2.2: the fake clock lives in std/test/fake_clock.ae; equal
+    // deadlines, pre/post-deadline cancellation, and task-driven timeout must
+    // match byte-for-byte between compiled C and --interp (pinned to the
+    // former builtin implementation's output).
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run/fake_clock.ae");
     let compiled = Command::new(env!("CARGO_BIN_EXE_ae"))
         .args(["run", fixture.to_str().unwrap()])
         .output()
