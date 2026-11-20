@@ -25,7 +25,3 @@ cancel_complete   task     migrate
 cancel_is_set     task     migrate
 pool_new          task     migrate
 pool_join         task     migrate
-reader_new        io       migrate
-reader_read       io       migrate
-reader_read_line  io       migrate
-reader_eof        io       migrate
