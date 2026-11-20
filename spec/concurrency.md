@@ -117,7 +117,7 @@ Status: target for the atomics slice — this section governs the implementation
 | M4 | `guard` captured by `spawn` | Compile-time error (`tests/ui/mutex_guard_escape_spawn.ae`) |
 | M5 | `mutex_lock` on non-mutex value | Compile-time error (`tests/ui/mutex_lock_non_mutex.ae`) |
 
-## 10. Channels (`chan`, M4.3.01–M4.3.04)
+## 10. Channels (`chan`, M4.3.01–M4.3.06)
 
 1. **`chan` is a copy-semantics handle to one process-lifetime i64 channel.** `chan_new(cap)` creates a rendezvous channel (`cap == 0`) or a bounded ring-buffer channel (`cap > 0`). Copying the handle (including into `spawn` closures) shares the channel.
 2. **`chan_send(ch, v) -> bool` blocks when full (or until a receiver arrives for `cap == 0`).** Returns `true` when delivered/buffered, or `false` if the channel is closed or closed while the sender is parked.
@@ -132,3 +132,20 @@ Status: target for the atomics slice — this section governs the implementation
 | C4 | `chan_send` / `chan_close` on non-chan value | Compile-time errors (`tests/ui/chan_send_non_chan.ae`, `tests/ui/chan_close_non_chan.ae`) |
 | C5 | `chan_select(c1, c2)` with both arms ready, then woken by spawned sender + `chan_try_send` backpressure | Chooses once (`0`), then (`1`), then (`1` with `77`); `chan_try_send` returns `false` when full (`tests/run/chan_select.ae`) |
 | C6 | `chan_select` on non-chan value | Compile-time error (`tests/ui/chan_select_non_chan.ae`) |
+
+## 11. Receiver cancellation (M4.3.05)
+
+Cancellation has no dedicated primitive: a **cancellation channel** is an ordinary `chan` that only ever closes. Closing it makes the arm ready forever, so a receiver waiting on it wakes even when no value arrives.
+
+1. **`chan_close(stop);` is the cancellation signal.** Any `chan_select` arm over `stop` becomes ready; nothing is sent, so the channel carries no payload.
+2. **A closed arm wins the select.** When one arm is closed and the other merely holds a value (a buffered element, or a rendezvous sender parked with its slot), `chan_select` returns the closed arm. Among two closed arms the earlier one wins. This rule is what makes cancellation lossless.
+3. **A cancelled receiver consumes nothing.** `chan_select` itself never receives; the caller receives only after the select reports the data arm. A receiver that sees the cancel arm returns and leaves the value in place, so the next receiver gets it — no duplicate delivery, no lost wakeup.
+4. **A parked receiver is cancelled within the poll interval.** A receiver parked in `chan_select` re-checks both arms about every millisecond, so `chan_close(stop)` from another thread releases it shortly after. There is no separate waiter registry, so a waiter cannot outlive a cancellation in this implementation.
+5. **A parked rendezvous sender keeps its slot.** Cancelling every receiver leaves `chan_send` parked; the value moves only when a live receiver arrives, or the data channel closes and the sender returns `false`.
+
+| Case | Scenario | Expected |
+|---|---|---|
+| C7 | A buffered value and a closed cancel arm are ready together, with the cancel arm listed second | `chan_select(ch, stop)` returns `1` and the following `chan_recv(ch)` still returns the buffered value — the closed arm wins without consuming (`tests/run/chan_cancel.ae`) |
+| C8 | A rendezvous sender parks with its value while the receiver's cancel arm is already closed | Select returns the cancel arm (`1`), a second receiver's `chan_recv` gets `7`, and the sender returns `true` (`tests/run/chan_cancel.ae`) |
+| C9 | A receiver parked in `chan_select` is cancelled by another thread, then a value is sent | The parked receiver wakes on the cancel arm (`1`), and the next receiver takes `9` (`tests/run/chan_cancel.ae`) |
+

@@ -688,7 +688,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn closure_literals_preserve_params_return_and_body_ranges() {
         let source = "|x: i64, y: string| -> i64 { return len(x); }";
         let expression = parse_operator_expression("case.ae", source).unwrap();

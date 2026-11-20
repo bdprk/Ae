@@ -2144,9 +2144,13 @@ fn eval_expr(
                 Val::Chan(id) => id,
                 _ => return Err(Flow::Trap("internal: chan_select on a non-handle".to_owned())),
             };
-            let r1 = !env.chans[id1].0.is_empty() || env.chans[id1].2;
-            let r2 = !env.chans[id2].0.is_empty() || env.chans[id2].2;
-            if r1 { Ok(Val::Int(0)) } else if r2 { Ok(Val::Int(1)) } else { Ok(Val::Int(0)) }
+            // M4.3.05: a closed arm wins over an arm that merely holds a
+            // value, so a cancelled receiver returns without consuming.
+            let closed1 = env.chans[id1].2;
+            let closed2 = env.chans[id2].2;
+            let ready1 = !env.chans[id1].0.is_empty();
+            let ready2 = !env.chans[id2].0.is_empty();
+            if closed1 { Ok(Val::Int(0)) } else if closed2 { Ok(Val::Int(1)) } else if ready1 { Ok(Val::Int(0)) } else if ready2 { Ok(Val::Int(1)) } else { Ok(Val::Int(0)) }
         }
         other => Err(Flow::Trap(format!("unsupported expression in MIR interpreter: {}", format!("{other:?}").chars().take(60).collect::<String>()))),
     }

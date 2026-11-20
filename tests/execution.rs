@@ -8140,6 +8140,46 @@ fn main() {
 }
 
 #[test]
+fn cancelled_receivers_leave_the_value_for_the_next_receiver() {
+    // spec/concurrency.md §11 (M4.3.05): a cancellation channel only closes,
+    // and a closed arm wins the select even when it is listed second. A
+    // receiver that sees the cancel arm returns without consuming, so the
+    // buffered value and a parked rendezvous sender's value both survive for
+    // the next receiver — no duplicate delivery, no lost wakeup.
+    let source = r#"fn main() {
+    let stop = chan_new(1);
+    let c = chan_new(1);
+    print(chan_try_send(c, 41));
+    chan_close(stop);
+    print(chan_select(c, stop));
+    print(chan_recv(c));
+    let r = chan_new(0);
+    let sender = spawn(|| -> bool { return chan_send(r, 7); });
+    print(chan_select(r, stop));
+    print(chan_recv(r));
+    print(wait(sender));
+}"#;
+    let output = execute(source);
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "true\n1\n41\n1\n7\ntrue\n"
+    );
+
+    // The interpreter ranks a closed arm above a ready one too, so the same
+    // program prints the same bytes with --interp.
+    let path = std::env::temp_dir().join(format!("ae-chan-cancel-interp-{}.ae", std::process::id()));
+    fs::write(&path, source).unwrap();
+    let interp = Command::new(env!("CARGO_BIN_EXE_ae")).args(["run", path.to_str().unwrap(), "--interp"]).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert!(interp.status.success(), "{}", String::from_utf8_lossy(&interp.stderr));
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout).replace("\r\n", "\n"),
+        "true\n1\n41\n1\n7\ntrue\n"
+    );
+}
+
+#[test]
 fn scoped_borrow_captures_join_before_the_region_ends() {
     // ADR-0215 (M4.1.02): a borrow capture is accepted when every path from
     // the spawn reaches a wait of the handle before any exit. The frozen

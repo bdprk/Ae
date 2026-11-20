@@ -1433,6 +1433,7 @@ extern void WakeAllConditionVariable(struct _RTL_CONDITION_VARIABLE *cv); /* win
 extern void Sleep(unsigned long ms); /* win32-declared */
 #else
 #include <pthread.h>
+#include <threads.h>
 #endif
 typedef struct {
 #ifdef _WIN32
@@ -1645,8 +1646,28 @@ static bool ae_chan_is_ready(ae_chan ch) { /* win32-declared */
 #endif
     return ready;
 }
+static bool ae_chan_is_closed(ae_chan ch) { /* win32-declared */
+    ae_chan_state *s = ch.state;
+#ifdef _WIN32
+    AcquireSRWLockExclusive((struct _RTL_SRWLOCK *)&s->lock_storage);
+#else
+    pthread_mutex_lock(&s->lock);
+#endif
+    bool closed = s->closed != 0;
+#ifdef _WIN32
+    ReleaseSRWLockExclusive((struct _RTL_SRWLOCK *)&s->lock_storage);
+#else
+    pthread_mutex_unlock(&s->lock);
+#endif
+    return closed;
+}
+// A closed arm wins over an arm that merely holds a value (M4.3.05): a
+// cancellation channel only ever closes, so the cancelled receiver returns
+// without consuming and the pending value stays for the next receiver.
 static int64_t ae_chan_select(ae_chan ch1, ae_chan ch2) { /* win32-declared */
     for (;;) {
+        if (ae_chan_is_closed(ch1)) return 0;
+        if (ae_chan_is_closed(ch2)) return 1;
         if (ae_chan_is_ready(ch1)) return 0;
         if (ae_chan_is_ready(ch2)) return 1;
 #ifdef _WIN32
@@ -1655,7 +1676,7 @@ static int64_t ae_chan_select(ae_chan ch1, ae_chan ch2) { /* win32-declared */
         struct timespec ts;
         ts.tv_sec = 0;
         ts.tv_nsec = 1000000;
-        nanosleep(&ts, NULL);
+        thrd_sleep(&ts, NULL);
 #endif
     }
 }
