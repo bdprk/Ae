@@ -481,6 +481,8 @@ pub(super) fn expr_type(expr: &Expr) -> Type {
         Expr::AtomicCas(..) => Type::Bool,
         Expr::SharedNew(_, sid) => Type::Shared(*sid),
         Expr::SharedGet(_, sid) => shared_types_get(*sid),
+        Expr::MutexNew => Type::Mutex,
+        Expr::MutexLock(..) => Type::Guard,
         Expr::Number(..) | Expr::Index(..) | Expr::Len(..) => Type::Int,
         Expr::VecIndex(_, _, _, _, _, ty) => *ty,
         Expr::StrVecIndex(..) => Type::String,

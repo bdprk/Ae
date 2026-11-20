@@ -34,6 +34,9 @@ impl Parser<'_> {
             // The copy-semantics cell handle (spec/concurrency.md §8): a
             // parameter typed `atomic` shares the caller's cell.
             "atomic" => Ok(Type::Atomic),
+            // The copy-semantics mutex handle and owned lock guard (ADR-0216).
+            "mutex" => Ok(Type::Mutex),
+            "guard" => Ok(Type::Guard),
             // The copy-semantics shared box handle (ADR-0216, spec/concurrency.md §9):
             // copying the handle shares the process-lifetime box; no handle towers.
             "shared" => {

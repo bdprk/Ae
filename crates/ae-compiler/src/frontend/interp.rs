@@ -46,6 +46,9 @@ enum Val {
     Atomic(usize),
     // Shared boxes (ADR-0216, spec/concurrency.md §9), indexed by handle.
     Shared(usize),
+    // Mutex and lock guard (ADR-0216, single-threaded interpreter).
+    Mutex,
+    Guard,
     Moved,
 }
 
@@ -893,6 +896,18 @@ fn eval_stmts(
                     Err(flow) => return flow,
                 };
                 env.atomics[cell] = stored;
+            }
+            Statement::SharedSet(handle, value, _) => {
+                let id = match eval_expr(env, handle, locals, caller_locals, false) {
+                    Ok(Val::Shared(id)) => id,
+                    Ok(_) => return Flow::Trap("internal: shared_set on a non-handle".to_owned()),
+                    Err(flow) => return flow,
+                };
+                let stored = match eval_expr(env, value, locals, caller_locals, false) {
+                    Ok(v) => v,
+                    Err(flow) => return flow,
+                };
+                env.shared[id] = stored;
             }
             Statement::PtrStore(id, value, ..) => {
                 let pointer = match eval_expr(env, &Expr::Variable(*id, Type::Int, 0, 0), locals, caller_locals, false) {
@@ -2051,6 +2066,11 @@ fn eval_expr(
         Expr::SharedGet(handle, _) => match eval_expr(env, handle, locals, caller_locals, false)? {
             Val::Shared(id) => Ok(env.shared[id].clone()),
             _ => Err(Flow::Trap("internal: shared_get on a non-handle".to_owned())),
+        },
+        Expr::MutexNew => Ok(Val::Mutex),
+        Expr::MutexLock(handle) => match eval_expr(env, handle, locals, caller_locals, false)? {
+            Val::Mutex => Ok(Val::Guard),
+            _ => Err(Flow::Trap("internal: mutex_lock on a non-handle".to_owned())),
         },
         other => Err(Flow::Trap(format!("unsupported expression in MIR interpreter: {}", format!("{other:?}").chars().take(60).collect::<String>()))),
     }

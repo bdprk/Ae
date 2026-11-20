@@ -1,0 +1,5 @@
+// ADR-0216: shared_set without a live mutex guard is rejected.
+fn main() {
+    let s = shared_new(1);
+    shared_set(s, 2);
+}

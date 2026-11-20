@@ -1,0 +1,41 @@
+// ADR-0216 / spec/concurrency.md §9 (M4.1.03): mutex_lock returns an owned
+// guard whose scope-exit release unlocks the mutex on every exit path
+// (including early return), and shared_set requires a live guard in scope.
+fn bump_early(m: mutex, s: shared[i64], stop: bool) -> i64 {
+    let g = mutex_lock(m);
+    let cur = shared_get(s);
+    shared_set(s, cur + 10);
+    if stop {
+        return shared_get(s);
+    }
+    return 0;
+}
+
+fn main() {
+    let m = mutex_new();
+    let s = shared_new(0);
+    print(bump_early(m, s, true));
+
+    let t1 = spawn(|| -> i64 {
+        var i = 0;
+        while i < 500 {
+            let g = mutex_lock(m);
+            shared_set(s, shared_get(s) + 1);
+            i = i + 1;
+        }
+        return i;
+    });
+    let t2 = spawn(|| -> i64 {
+        var i = 0;
+        while i < 500 {
+            let g = mutex_lock(m);
+            shared_set(s, shared_get(s) + 1);
+            i = i + 1;
+        }
+        return i;
+    });
+    let r1 = wait(t1);
+    let r2 = wait(t2);
+    print(r1 + r2);
+    print(shared_get(s));
+}

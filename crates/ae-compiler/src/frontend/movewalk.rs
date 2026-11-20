@@ -382,7 +382,7 @@ pub(super) fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker)
         }
         // An atomic store reads the handle and the value; copy semantics
         // mean neither side moves (spec/concurrency.md §8).
-        Statement::AtomicStore(handle, value) => {
+        Statement::AtomicStore(handle, value) | Statement::SharedSet(handle, value, _) => {
             if let Some(violation) = walk_expr(handle, moved) { return Some(violation); }
             if let Some(violation) = walk_expr(value, moved) { return Some(violation); }
             None
@@ -424,6 +424,8 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         Expr::AtomicLoad(handle) => walk_expr(handle, moved),
         Expr::SharedNew(value, _) => walk_expr(value, moved),
         Expr::SharedGet(handle, _) => walk_expr(handle, moved),
+        Expr::MutexNew => None,
+        Expr::MutexLock(handle) => walk_expr(handle, moved),
         Expr::AtomicAdd(handle, value) => { walk_expr(handle, moved); walk_expr(value, moved); None }
         Expr::AtomicCas(handle, expect, new) => {
             if let Some(violation) = walk_expr(handle, moved) { return Some(violation); }

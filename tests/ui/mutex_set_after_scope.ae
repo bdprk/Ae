@@ -1,0 +1,10 @@
+// ADR-0216: shared_set after the guard's scope has ended is rejected.
+fn main() {
+    let m = mutex_new();
+    let s = shared_new(1);
+    if true {
+        let g = mutex_lock(m);
+        shared_set(s, 2);
+    }
+    shared_set(s, 3);
+}

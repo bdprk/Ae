@@ -1,0 +1,4 @@
+// ADR-0216: mutex_lock expects a mutex handle.
+fn main() {
+    let g = mutex_lock(42);
+}

@@ -76,6 +76,17 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             out.push_str(&format!("    {elem_c} t{t} = *({elem_c} *)({}.box);\n", h.text));
             Emitted { text: format!("t{t}"), ty: elem, owned: false, moves: Vec::new(), materialized: true }
         }
+        Expr::MutexNew => {
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_mutex t{t} = ae_mutex_new();\n"));
+            Emitted { text: format!("t{t}"), ty: Type::Mutex, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::MutexLock(handle) => {
+            let m = emit_expr(handle, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_guard t{t} = ae_mutex_lock({});\n", m.text));
+            Emitted { text: format!("t{t}"), ty: Type::Guard, owned: true, moves: Vec::new(), materialized: true }
+        }
         // M2.12 slice 2: the address of addressable storage. The operand is a
         // variable or a field of one, so the C is an address-of; the pointer
         // itself is a plain value that neither moves nor releases.
@@ -211,9 +222,9 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
                     // Structs and enums have no runtime sentinel: the compile-time
                     // move set is their only guard (documented limitation).
                     Type::Struct(_) | Type::Enum(_, _) => {}
-                    // A thread handle is a plain pointer: wait's own check
-                    // rejects the moved (NULL) slot, so no backstop here.
-                    Type::Thread(_) => {}
+                    // A thread handle or mutex guard is a plain handle: no runtime
+                    // string/vec sentinel backstop here.
+                    Type::Thread(_) | Type::Guard => {}
                     _ => {
                         let probe = match ty { Type::Vec | Type::StrVec | Type::VecF => format!("!v{id}.data"), Type::Map | Type::MapF => format!("!v{id}.slots"), _ => format!("!v{id}.ptr") };
                         let message = match ty { Type::Vec | Type::StrVec | Type::VecF => "use of moved vector", Type::Map | Type::MapF => "use of moved map", _ => "use of moved string" };
@@ -1051,9 +1062,11 @@ pub(super) fn release_var(out: &mut String, id: usize, ty: Type) {
         // §1 rule 3); the release is idempotent because wait nulls the
         // variable first.
         Type::Thread(_) => out.push_str(&format!("    ae_free(v{id});\n")),
-        // The cell/box is process-lifetime (spec/concurrency.md §8–§9):
+        // The cell/box/mutex is process-lifetime (spec/concurrency.md §8–§9):
         // nothing releases it, and copies share it.
-        Type::Atomic | Type::Shared(_) => {}
+        Type::Atomic | Type::Shared(_) | Type::Mutex => {}
+        // ADR-0216: scope exit unlocks the mutex guard (idempotent if moved).
+        Type::Guard => out.push_str(&format!("    ae_mutex_unlock(&v{id});\n")),
         _ => out.push_str(&format!("    ae_str_release(&v{id});\n")),
     }
 }
@@ -1083,6 +1096,7 @@ pub(super) fn drop_owned_temp(out: &mut String, emitted: &Emitted) {
         Type::MapF => out.push_str(&format!("    ae_mapf_release(&{});\n", emitted.text)),
         Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&{});\n", emitted.text)),
         Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_release(&{});\n", emitted.text)),
+        Type::Guard => out.push_str(&format!("    ae_mutex_unlock(&{});\n", emitted.text)),
         _ => out.push_str(&format!("    free({});\n", emitted.text)),
     }
 }
@@ -1097,6 +1111,7 @@ pub(super) fn null_moves(out: &mut String, moves: &[(usize, Type)]) {
             Type::MapF => out.push_str(&format!("    ae_mapf_forfeit(&v{id});\n")),
             Type::Struct(k) => out.push_str(&format!("    ae_t{k}_forfeit(&v{id});\n")),
             Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_forfeit(&v{id});\n")),
+            Type::Guard => out.push_str(&format!("    v{id}.lock = NULL;\n")),
             _ => out.push_str(&format!("    v{id} = NULL;\n")),
         }
     }
@@ -1450,6 +1465,12 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
                 let v = emit_expr(value, out, next, false);
                 out.push_str(&format!("    ae_cell_store({}, {});
 ", a.text, v.text));
+            }
+            Statement::SharedSet(handle, value, sid) => {
+                let h = emit_expr(handle, out, next, false);
+                let v = emit_expr(value, out, next, false);
+                let elem_c = c_type_field(shared_types_get(*sid));
+                out.push_str(&format!("    *({elem_c} *)({}.box) = {};\n", h.text, v.text));
             }
         }
     }

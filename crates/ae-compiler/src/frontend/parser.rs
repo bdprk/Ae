@@ -435,6 +435,26 @@ impl<'a> Parser<'a> {
                         result.push(Statement::AtomicStore(Box::new(handle), Box::new(value)));
                         continue;
                     }
+                    if name == "shared_set" && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
+                        self.pos += 2;
+                        let (handle, handle_ty) = self.expression(0, false)?;
+                        let sid = match handle_ty {
+                            Type::Shared(sid) => sid,
+                            _ => return Err(self.fail("shared_set expects a shared handle")),
+                        };
+                        self.take(Kind::Comma)?;
+                        let (value, value_ty) = self.expression(0, false)?;
+                        let expected_ty = shared_types_get(sid);
+                        if value_ty != expected_ty {
+                            return Err(self.fail(&format!("shared_set expects {}, found {}", expected_ty.name(), value_ty.name())));
+                        }
+                        self.take(Kind::RParen)?; self.take(Kind::Semi)?;
+                        if !self.live_owned().iter().any(|(_, ty)| *ty == Type::Guard) {
+                            return Err(self.fail("shared_set requires a live mutex guard in scope; call mutex_lock(...) first"));
+                        }
+                        result.push(Statement::SharedSet(Box::new(handle), Box::new(value), sid));
+                        continue;
+                    }
                     if matches!(name.as_str(), "push" | "pop" | "sort" | "reverse") && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
                         let (line, col) = self.position();
                         self.pos += 2;

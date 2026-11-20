@@ -1,0 +1,1 @@
+ae: $DIR/mutex_set_after_scope.ae:10:1: shared_set requires a live mutex guard in scope; call mutex_lock(...) first
