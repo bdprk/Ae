@@ -1,7 +1,7 @@
 W5 fmt · Windows 归档（2026-11-10）
 
 ## 源码树身份
-提交 e285898（"Add a map histogram workload to the exploratory benchmark"）
+提交 d33e8aa（"Add a map histogram workload to the exploratory benchmark"）
 + 与本归档同批提交的 src/fmt.rs、src/main.rs、src/frontend.rs、
 tests/execution.rs、scripts/fmt_acceptance.py（工作树内完成，随后一并提交）。
 

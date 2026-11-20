@@ -1,7 +1,7 @@
 # Benchmark report: 2026-11-14 Windows — M2.4 drop elaboration (release elision)
 
 - Status: exploratory; platforms tested: Windows only (single-platform measurement)
-- Source revision and working tree state: commit `72d8b53` (fix(movewalk): a plain read must not abandon the move walk), clean tree
+- Source revision and working tree state: commit `5b0f273` (fix(movewalk): a plain read must not abandon the move walk), clean tree
 - Raw results: [bench/results/2026-11-14-windows-drop-elision-alloc.json](../results/2026-11-14-windows-drop-elision-alloc.json), [bench/results/2026-11-14-windows-drop-elision-straight.json](../results/2026-11-14-windows-drop-elision-straight.json)
 - Purpose and scope: what does drop elaboration (ADR-0204) buy for the programs it was built for — fewer release calls in the shipped C, and does eliding the provably-dead ones show in wall-clock time? It does not measure compile time, code size beyond release-call counts, or any other optimization's effect.
 

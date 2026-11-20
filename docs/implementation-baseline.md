@@ -1,6 +1,6 @@
 # Implementation baseline
 
-Revision 31e6179, clean Windows checkout. Verified 2026-11-18.
+Revision c5765d3, clean Windows checkout. Verified 2026-11-18.
 
 | Ledger | Evidence | Result |
 |---|---|---|

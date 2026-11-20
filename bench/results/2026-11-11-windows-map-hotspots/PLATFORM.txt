@@ -1,7 +1,7 @@
 map 负载热点分解 · Windows 归档（2026-11-11）
 
 ## 源码树身份
-提交 b78c282 工作树（诊断变体是临时程序，不进 examples；三个 .ae 源随归档）。
+提交 5010189 工作树（诊断变体是临时程序，不进 examples；三个 .ae 源随归档）。
 
 ## 平台
 Windows 10.0.26100 / gcc 16.2.0 MinGW ucrt / ae release (-O2) / 热缓存。

@@ -7,7 +7,7 @@ Windows x86-64，i7-11800H（8 核 / 16 线程），16 GB，MinGW-W64 GCC 16.2.0
 - cargo test --release
 - python scripts/verify_generated_c.py --leak
 - for f in examples/*.ae; do ae check "$f"; done
-- 旧/新编译器对照：`C:\Users\trevv\AppData\Local\Temp\ae-old-head`（`git worktree` 指向 88965d8，ADR-57）
+- 旧/新编译器对照：`C:\Users\trevv\AppData\Local\Temp\ae-old-head`（`git worktree` 指向 3eb92e0，ADR-57）
   与本工作区分别 `ae build <probe> -o <out> --release`，`ae emit-c` 比对生成 C。
 
 ## 结果

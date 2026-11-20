@@ -1,7 +1,7 @@
 to_string 栈缓冲融合（intbuf）· Linux 回填归档（2026-11-11）
 
 ## 源码树身份
-工作树 = 提交 d71c7f4（ADR-45），tar 管道同步到 ~/ae-intbuf；日志由
+工作树 = 提交 5998f08（ADR-45），tar 管道同步到 ~/ae-intbuf；日志由
 nohup 后台任务在沙箱内生成（SSH 证书窗口极短，连接多次过期重取，
 `instabox ssh-cert node` 刷新；后台任务不受连接影响）。
 

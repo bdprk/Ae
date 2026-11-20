@@ -1,6 +1,6 @@
 # AE engineering architecture and delivery workbook
 
-Planning baseline: 2026-11-18, revision 660cec0. Read alongside [the charter](plan.md), [current semantics](current-language.md), [platform evidence](platform-matrix.md) and the [specification](../spec/). This workbook proposes implementation order and gates. A checked-in source file establishes presence. Passing behavior requires a dated test result.
+Planning baseline: 2026-11-18, revision 58024fe. Read alongside [the charter](plan.md), [current semantics](current-language.md), [platform evidence](platform-matrix.md) and the [specification](../spec/). This workbook proposes implementation order and gates. A checked-in source file establishes presence. Passing behavior requires a dated test result.
 
 ## Product contract
 
@@ -12,7 +12,7 @@ Make explicit compromises. Reject ambiguous escaping borrows until signatures ca
 
 The root Cargo package uses ae-compiler. The workspace already includes ae-span and ae-syntax. The compiler still carries C runtime sources. The README describes generic specialization, limited shared borrowing, static trait calls, CLI tools and a native C11 path. Inventory each against executable evidence. In particular the desktop charter's historical statement about absent M0 crates is stale.
 
-1. Pin 660cec0 as the comparison point. Record Rust, C compiler, OS, CPU, flags and checkout cleanliness in a baseline report.
+1. Pin 58024fe as the comparison point. Record Rust, C compiler, OS, CPU, flags and checkout cleanliness in a baseline report.
 2. Run cargo test --workspace on Windows and Linux. Preserve failures with exact reproducer, target and exit code.
 3. Run the existing check, emit-c, run, fmt and test routes on a shared fixture. Capture stdout, stderr, exit status and diagnostics independently.
 4. Exercise the unary precedence change with nested prefix and binary operators. Compare the production parser and the extracted parser on the same source.

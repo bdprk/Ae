@@ -1,4 +1,4 @@
-# Baseline Matrix — revision 15321cf
+# Baseline Matrix — revision a8a7f51
 
 Date: 2026-11-18  ·  Windows 11 x86-64 (rustc 1.99.1, gcc 16.2.0 MinGW-W64 UCRT) and Debian 13 x86-64
 (InstaBox evaluate-2, rustc 1.99.0, gcc 14.2.0). Commands run from the repository root; the binary is
@@ -6,7 +6,7 @@ Date: 2026-11-18  ·  Windows 11 x86-64 (rustc 1.99.1, gcc 16.2.0 MinGW-W64 UCRT
 
 | # | Command | Target | Expected | Observed | Reproducer |
 |---|---|---|---|---|---|
-| B01 | `git rev-parse HEAD` / `git status -sb` | both | pinned revision, clean tree | `15321cf`, clean | any checkout |
+| B01 | `git rev-parse HEAD` / `git status -sb` | both | pinned revision, clean tree | `a8a7f51`, clean | any checkout |
 | B02 | `rustc -Vv`, `cargo -V`, `gcc --version` | both | versions recorded per host | Windows: 1.99.1 / 1.99.1 / 16.2.0; Linux: 1.99.0 / 1.99.0 / 14.2.0 | same commands |
 | B03 | `cargo test --workspace` | Windows | no failures | 10 + 280 + 3 + 43 + 2 + 23 passed, 0 failed | `cargo test --workspace` |
 | B04 | `cargo test --workspace --locked` | Debian 13 | same suites, no host-specific skips | 280 execution + 43 JSON + 3 run snapshots passed | see `2026-11-18-linux-baseline.md` |

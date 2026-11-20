@@ -3,7 +3,7 @@ ADR-60 数学内建 · Linux 回填（2026-11-11）
 ## 平台
 instabox-node 沙箱：Debian 13，Linux 6.18.54，x86-64，4 vCPU；
 gcc 14.2.0-19；rustc 1.99.0；Python 3.13.5。AE 0.1.1。
-代码由 ssh tar 管道同步自 Windows 工作区（提交 3916057，与 Windows 归档同一源码树），
+代码由 ssh tar 管道同步自 Windows 工作区（提交 a15e17d，与 Windows 归档同一源码树），
 位于 `~/ae-backfill`；批次脚本 `~/run-backfill.sh`，日志 `~/backfill-logs/`。
 
 ## 命令（工作目录 = ~/ae-backfill）

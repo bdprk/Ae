@@ -1,10 +1,10 @@
 W5 fmt + test · Linux 回填归档（2026-11-11）
 
 ## 源码树身份
-提交 5d153d4（"Add a test runner that synthesizes main instead of touching
-the front end"），`git archive 5d153d4 | gzip | ssh instabox-node
+提交 6caa3c1（"Add a test runner that synthesizes main instead of touching
+the front end"），`git archive 6caa3c1 | gzip | ssh instabox-node
 'tar -xzf -'` 同步到 ~/ae-fmt-test（远端无 .git；本归档与该提交同批入库，
-由 git 历史确定源码身份）。上一提交为 fd3149f（fmt）。
+由 git 历史确定源码身份）。上一提交为 7bab8c4（fmt）。
 
 ## 平台
 - instabox-node 沙箱（证书 2026-11-11T01:01+08:00 前有效，用

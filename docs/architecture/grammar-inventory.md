@@ -1,6 +1,6 @@
 # M0.2.01 — Grammar Inventory of the Active Parser
 
-Status: verified against revision 6c77795 (2026-11-19); the M0.2.01 deliverable of the parser-migration plan. Scope: the compiler front end as it exists today —
+Status: verified against revision d50be35 (2026-11-19); the M0.2.01 deliverable of the parser-migration plan. Scope: the compiler front end as it exists today —
 `crates/ae-compiler/src/frontend/{parser,expression,types,declarations,closures,mod,loader}.rs`
 plus the token surface in `crates/ae-syntax/src/lib.rs`. Every production
 maps to (a) a witness (example file, run test, or `tests/execution.rs` test

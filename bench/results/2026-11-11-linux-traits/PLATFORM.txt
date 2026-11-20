@@ -1,7 +1,7 @@
 trait/impl 静态分派 · Linux 回填归档（2026-11-11）
 
 ## 源码树身份
-提交 ed780a2（ADR-47），tar 管道同步到 ~/ae-traits；验证由 nohup
+提交 2dea5c1（ADR-47），tar 管道同步到 ~/ae-traits；验证由 nohup
 后台任务在沙箱内完成（证书窗口短，任务不受连接影响）。
 
 ## 平台

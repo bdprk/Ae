@@ -12,7 +12,7 @@ Windows x86-64，MinGW-W64 GCC 16.2.0（UCRT），控制台代码页 936（GBK�
 - ae emit-c <print(1)> / <args-only>
 
 ## 结果（before-after.txt）
-- 修复前（HEAD 5aeb8a8 构建的编译器）：len(args[1]) = 8（GBK 字节），
+- 修复前（HEAD 423b2a1 构建的编译器）：len(args[1]) = 8（GBK 字节），
   中文绝对路径 `cannot write file`。
 - 修复后：len(args[1]) = 12（UTF-8），中文绝对路径 write_file + read_file 走通（7 / payload）。
 - cargo test：35 单元 + 161 集成全通过（新增的 UTF-8 参数用例在回滚修复后确实失败）。

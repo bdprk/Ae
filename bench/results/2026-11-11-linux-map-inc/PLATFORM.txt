@@ -1,7 +1,7 @@
 map_inc 计数内建 · Linux 回填归档（2026-11-11）
 
 ## 源码树身份
-提交 b9610d0（ADR-46），tar 管道同步到 ~/ae-mapinc；验证由 nohup
+提交 e1fafb2（ADR-46），tar 管道同步到 ~/ae-mapinc；验证由 nohup
 后台任务在沙箱内完成（SSH 证书窗口短，任务不受连接影响）。
 
 ## 平台

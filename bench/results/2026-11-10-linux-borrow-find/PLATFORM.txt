@@ -1,6 +1,6 @@
 AE Linux native verification, 2026-11-10 (W1 backfill)
 Scope: ADR-35 (generic &T borrow, read-only borrow forwarding) and ADR-36 (find -> IntResult)
-Source: the Windows repository at commit 2e26000, synced as source files only
+Source: the Windows repository at commit 349a13f, synced as source files only
         (src/, tests/, scripts/, examples/, docs/, Cargo.toml, Cargo.lock, bench/run.py).
         The remote checkout has no .git; the commit above identifies the exact tree.
 
@@ -35,5 +35,5 @@ Example output comparison
   identity; the platform matrix was corrected to say so.
 
 Not covered here
-  Performance benchmarks, and any capability added after commit 2e26000.
+  Performance benchmarks, and any capability added after commit 349a13f.
   This directory is a correctness/safety verification log, not a benchmark.

@@ -1,6 +1,6 @@
 # M2.4.01 — Inventory of Raw Pointer Operations
 
-Status: verified against revision 3e8ba9b (2026-11-19) on Windows x86-64; the
+Status: verified against revision e6610a3 (2026-11-19) on Windows x86-64; the
 same source drives both platforms. Scope: every unchecked memory access the
 language can emit, plus the runtime entry points that receive pointers and the
 safe wrappers whose invariant keeps those pointers valid.

@@ -8,13 +8,13 @@ Platform
   AddressSanitizer: unavailable on MinGW; allocation counting uses -Wl,--wrap
 
 Source tree
-  Local working tree immediately after commit 55f6b14 (ADR-40), plus the
+  Local working tree immediately after commit 674247e (ADR-40), plus the
   uncommitted ADR-41 changes. This archive is committed together with that
   tree, so git history identifies the exact sources.
 
 Baseline binary (NOT committed; rebuild exactly as follows)
   mkdir -p target/probe/old-tree
-  git archive 55f6b14 src Cargo.toml Cargo.lock | tar -x -C target/probe/old-tree
+  git archive 674247e src Cargo.toml Cargo.lock | tar -x -C target/probe/old-tree
   cp src/runtime.c src/runtime_ex.c target/probe/old-tree/src/
       # git archive exports these with CRLF, while the working tree has LF.
       # Matching line endings keeps the generated C byte-identical, so the
