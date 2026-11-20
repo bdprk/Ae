@@ -8180,6 +8180,42 @@ fn cancelled_receivers_leave_the_value_for_the_next_receiver() {
 }
 
 #[test]
+fn a_failed_child_surfaces_at_its_wait_after_the_sibling_joined() {
+    // spec/concurrency.md §12 (M4.1.06): a child failure stops the failing
+    // thread, not the process. The sibling joined first runs to completion, and
+    // the failed handle's wait then reports the child's failure with the same
+    // stderr line and exit status an immediate abort produced.
+    let source = r#"fn main() {
+    let sibling = spawn(|| -> i64 { print("sibling"); return 7; });
+    let failing = spawn(|| -> i64 { let zero = 0; return 10 / zero; });
+    print(wait(sibling));
+    print(wait(failing));
+    print("unreachable");
+}"#;
+    let output = execute(source);
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    let stderr = String::from_utf8_lossy(&output.stderr).replace("\r\n", "\n");
+    assert_eq!(stdout, "sibling\n7\n", "the sibling completed before the abort");
+    assert_eq!(output.status.code(), Some(1), "a child failure ends the process nonzero");
+    assert!(stderr.starts_with("ae:"), "the child's diagnostic keeps the runtime prefix: {stderr}");
+    assert!(stderr.contains("division by zero"), "the child's message travels to the joiner: {stderr}");
+    assert!(!stdout.contains("unreachable"), "the failing wait ends the process: {stdout}");
+
+    // The interpreter stores the body's trap and replays it at wait, so the
+    // same program prints the same bytes and fails at the same point.
+    let path = std::env::temp_dir().join(format!("ae-thread-failure-interp-{}.ae", std::process::id()));
+    fs::write(&path, source).unwrap();
+    let interp = Command::new(env!("CARGO_BIN_EXE_ae")).args(["run", path.to_str().unwrap(), "--interp"]).output().unwrap();
+    fs::remove_file(path).unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout).replace("\r\n", "\n"),
+        "sibling\n7\n",
+        "the interpreter agrees on the output ordering"
+    );
+    assert_eq!(interp.status.code(), Some(1));
+}
+
+#[test]
 fn scoped_borrow_captures_join_before_the_region_ends() {
     // ADR-0215 (M4.1.02): a borrow capture is accepted when every path from
     // the spawn reaches a wait of the handle before any exit. The frozen

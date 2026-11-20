@@ -12,6 +12,7 @@ All notable, user-visible changes to the `ae` toolchain and the language it comp
 - **`#[no_mangle]` exposures** — C calls AE: `#[no_mangle] extern "C" fn ae_add(a: i64, b: i64) -> i64 { ... }` is emitted as an external symbol; its body is safe AE code.
 - **`#[repr(C)]` structs** — fixes field order and C padding rules; required for any struct crossing the FFI boundary by value. Rejected on generic structs and structs with owned fields. Layout is pinned by the compile-time queries `c_size_of[T]()` and `c_offset_of[T]("field")`, evaluated to constants.
 - **Channel cancellation** (M4.3.05). `chan_select` ranks a closed arm above an arm that merely holds a value, so closing a dedicated channel cancels a waiting receiver without consuming anything: the pending value stays in the channel for the next receiver, whether it was buffered or parked in a rendezvous send (`spec/concurrency.md` §11).
+- **Thread failure propagation** (M4.1.06, ADR-0217). A failure inside a spawned body stops only that thread and is reported by the `wait` that joins it: same `ae:<line>:<column>: <message>` line and exit status 1 as an immediate abort, after the join completed, so siblings joined first finish their work. A failure no one waits for still ends the process at exit.
 
 ### Added — diagnostics
 

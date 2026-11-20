@@ -8,7 +8,7 @@ Status: describes the implemented language (2026-11-20). The surface, the runtim
 1. **Owned Data Crosses, Nothing Else**: a thread boundary accepts owned values only. Views (`StrView`), borrows (`VecRef`, `StrVecRef`, `VecFRef`, `StructRef`, `StructMut`), and raw pointers are rejected at the `spawn` call site with a positioned diagnostic — the same proof that a borrow never outlives its frame (`borrow_view_escape`) is what makes the boundary safe.
 2. **The Thread Owns Its Captures**: a spawned closure's value captures move at the `spawn` site, exactly like a plain call's move. After `spawn`, the outer variables are moved: reading or re-spawning them is the ordinary use-after-move rejection (E0102). There is no shared stack, no escaping borrow, no detach.
 3. **One Result, One Join**: `wait(t)` blocks until the thread finishes and returns the spawned callable's return value as an owned value. `wait` consumes the handle (a second `wait` is use-after-move). The handle is an owned value like everything else; a dropped handle without `wait` leaks the thread's slot and shows up in a leak check. The name is `wait`, not `join`: `join` is the string-vector builtin's reserved name.
-4. **Failure Aborts**: a failure inside the thread (`ae_fail`) terminates the process. There is no panic, no unwinding, no catch — thread failure semantics are whole-process by definition until a panic model exists (M4.1.06 is blocked on that ADR).
+4. **Failure Propagates Through the Join**: a failure inside the thread (`ae_fail`) records itself on that thread's handle and ends only that thread; the process ends when the failure is observed — at the `wait` of that handle, after the join completes, or at process exit if the handle is never waited. The stderr line (`ae:<line>:<column>: <message>`) and the exit status (1) are the same an immediate abort produced. There is no panic, no unwinding, no catch (ADR-0217).
 
 ### Non-Goals (this version):
 - No scoped borrows (`thread::scope`), no `Send`/`Sync` marker traits, no mutex/atomics/`Arc`, no channels, no worker pools, no detached threads in safe code.
@@ -62,7 +62,7 @@ Rejections are compile-time: borrow-capture crossing (§3), non-zero visible par
 | T7 | Two threads with different return types; both joined | Both compile; types kept apart |
 | T8 | Spawn in a loop, wait each iteration | Runs; every value released once (`--leak` clean) |
 | T9 | Thread does heavy allocation under `AE_ALLOC_LIMIT` | Budget accounting exact; limit trips at most one request |
-| T10 | Failure inside the thread | Process exits nonzero (abort contract) |
+| T10 | Failure inside the thread | The failing thread stops; waiting its handle reports the child's diagnostic and exits 1 (`tests/run/thread_failure.ae`) |
 
 Evidence anchors: `scripts/thread_harness.c` (runtime layer, dual platform), the spawn slice's UI/execution fixtures (language layer), `bench/results/2026-11-20-linux-threads/`.
 
@@ -149,3 +149,18 @@ Cancellation has no dedicated primitive: a **cancellation channel** is an ordina
 | C8 | A rendezvous sender parks with its value while the receiver's cancel arm is already closed | Select returns the cancel arm (`1`), a second receiver's `chan_recv` gets `7`, and the sender returns `true` (`tests/run/chan_cancel.ae`) |
 | C9 | A receiver parked in `chan_select` is cancelled by another thread, then a value is sent | The parked receiver wakes on the cancel arm (`1`), and the next receiver takes `9` (`tests/run/chan_cancel.ae`) |
 
+## 12. Thread failure and propagation (M4.1.06)
+
+1. **A failure stops its thread.** Inside a spawned body `ae_fail` (division by zero, overflow, bounds, out of memory, an explicit failure) records `{message, line, column}` on that thread's handle and ends the thread. Nothing unwinds across the thread boundary and nothing is caught.
+2. **The join reports it.** `wait` joins first and reports after: a failed handle prints `ae:<line>:<column>: <message>` and ends the process with status 1. Output printed before the wait is flushed and survives.
+3. **The order of waits is the policy.** Siblings joined before the failing handle run to completion; waiting the failed handle first ends the process at that wait. The runtime does not join siblings on the program's behalf (there is no runtime scope object).
+4. **Unwaited failures surface at exit.** The thread unit latches the most recent failure and an `atexit` hook reports it if the process reaches exit without a wait having seen it. This is best effort: a failure that lands after `main` returned cannot be observed.
+5. **The main thread is unchanged.** A failure outside a spawned body has no joiner and aborts immediately.
+6. **The interpreter replays at the same point.** `spawn` stores a body's trap and `wait` re-raises it, so both backends print the same bytes and fail at the same wait; `exit` inside a thread leaves immediately in both.
+
+| Case | Scenario | Expected |
+|---|---|---|
+| T11 | Sibling joined first, then the failed handle | The sibling's output survives (`sibling`, `7`), then `ae:<line>:<column>: division by zero` and exit 1 (`tests/run/thread_failure.ae`) |
+| T12 | Same program under `--interp` | Identical stdout and the same failing wait (`a_failed_child_surfaces_at_its_wait_after_the_sibling_joined`) |
+| T13 | Failure that is never waited | The `atexit` latch reports it and exits 1 when it is set before exit |
+| T14 | Failure on the main thread | Immediate abort, unchanged: the diagnostic and exit 1 print at the failure point |

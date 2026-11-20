@@ -1,0 +1,11 @@
+// M4.1.06, spec/concurrency.md §12: a child failure does not end the process
+// at the failure point. The sibling joined first runs to completion, and the
+// failure surfaces when the failed handle is waited; the status and stderr
+// line match an immediate abort.
+fn main() {
+    let sibling = spawn(|| -> i64 { print("sibling"); return 7; });
+    let failing = spawn(|| -> i64 { let zero = 0; return 10 / zero; });
+    print(wait(sibling));
+    print(wait(failing));
+    print("unreachable");
+}

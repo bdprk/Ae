@@ -70,7 +70,9 @@ struct Env<'a> {
     steps: usize,
     // Spawned results, indexed by handle (ADR-0214). `None` marks a handle
     // whose value wait already took.
-    threads: Vec<Option<Val>>,
+    // A spawned body's outcome, replayed at wait: a recorded trap surfaces at
+    // the same program point as the compiled backend (ADR-0217).
+    threads: Vec<Option<Result<Val, Flow>>>,
     // Atomic cells (spec/concurrency.md §8), indexed by handle: the
     // single-threaded interpreter orders operations naturally, so the cell
     // is a plain i64 and the handle shares it by copy.
@@ -1983,7 +1985,7 @@ fn eval_expr(
         // markers match the compiled move), and wait reads the stashed value.
         Expr::Spawn(slots, callable, ..) => {
             let mut args = slots.iter().map(|slot| Argument::Value(slot.clone())).collect::<Vec<_>>();
-            let value = match &**callable {
+            let outcome = match &**callable {
                 Expr::ClosureLit(cid) => {
                     // The borrow captures read the caller's frame through the
                     // same read-only forms the compiled context packages.
@@ -1993,7 +1995,7 @@ fn eval_expr(
                             _ => args.push(Argument::Borrow(outer_id, matches!(hidden, Type::VecRef | Type::StrVecRef | Type::VecFRef))),
                         }
                     }
-                    invoke_call(env, closures::closure_fn_id(*cid), &args, locals, caller_locals)?
+                    invoke_call(env, closures::closure_fn_id(*cid), &args, locals, caller_locals)
                 }
                 Expr::Variable(_, Type::Closure(cid), ..) => {
                     for (outer_id, hidden) in closures::closure_borrow_captures(*cid) {
@@ -2002,23 +2004,32 @@ fn eval_expr(
                             _ => args.push(Argument::Borrow(outer_id, matches!(hidden, Type::VecRef | Type::StrVecRef | Type::VecFRef))),
                         }
                     }
-                    invoke_call(env, closures::closure_fn_id(*cid), &args, locals, caller_locals)?
+                    invoke_call(env, closures::closure_fn_id(*cid), &args, locals, caller_locals)
                 }
                 Expr::Variable(id, Type::Fn(_), ..) => {
                     let target = match read_var(locals, caller_locals, *id, 0, 0)? {
                         Val::FnPtr(fid) => fid,
                         _ => return Err(Flow::Trap("internal: spawn of a non-function value".to_owned())),
                     };
-                    invoke_call(env, target, &args, locals, caller_locals)?
+                    invoke_call(env, target, &args, locals, caller_locals)
                 }
                 _ => return Err(Flow::Trap("internal: spawn callable shape".to_owned())),
             };
-            env.threads.push(Some(value));
+            // A body's failure is recorded and re-raised at wait, so the
+            // failure surfaces at the same program point as the compiled
+            // backend; process-wide outcomes (exit) still leave immediately.
+            let stored = match outcome {
+                Ok(value) => Ok(value),
+                Err(Flow::Trap(message)) => Err(Flow::Trap(message)),
+                Err(other) => return Err(other),
+            };
+            env.threads.push(Some(stored));
             Ok(Val::Thread(env.threads.len() - 1))
         }
         Expr::Wait(handle, ..) => match eval_expr(env, handle, locals, caller_locals, true)? {
             Val::Thread(seq) => match env.threads[seq].take() {
-                Some(value) => Ok(value),
+                Some(Ok(value)) => Ok(value),
+                Some(Err(flow)) => Err(flow),
                 None => Err(Flow::Trap("internal: thread value already taken".to_owned())),
             },
             _ => Err(Flow::Trap("internal: wait on a non-handle".to_owned())),
