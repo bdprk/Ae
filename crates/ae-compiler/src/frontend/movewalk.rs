@@ -428,7 +428,7 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         Expr::MutexNew => None,
         Expr::MutexLock(handle) => walk_expr(handle, moved),
         Expr::ChanNew(cap) => walk_expr(cap, moved),
-        Expr::ChanSend(ch, val) => { walk_expr(ch, moved); walk_expr(val, moved); None }
+        Expr::ChanSend(ch, val) | Expr::ChanTrySend(ch, val) | Expr::ChanSelect(ch, val) => { walk_expr(ch, moved); walk_expr(val, moved); None }
         Expr::ChanRecv(ch) => walk_expr(ch, moved),
         Expr::AtomicAdd(handle, value) => { walk_expr(handle, moved); walk_expr(value, moved); None }
         Expr::AtomicCas(handle, expect, new) => {

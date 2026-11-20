@@ -204,6 +204,36 @@ impl Parser<'_> {
     }
 
     #[inline(never)]
+    fn chan_try_send_expr(&mut self, _line: usize, _col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::LParen)?;
+        let (ch, ch_ty) = self.expression(0, false)?;
+        if ch_ty != Type::Chan {
+            return Err(self.fail("chan_try_send expects a chan handle"));
+        }
+        self.take(Kind::Comma)?;
+        let (val, val_ty) = self.expression(0, false)?;
+        if val_ty != Type::Int {
+            return Err(self.fail("chan_try_send expects an i64 value"));
+        }
+        self.take(Kind::RParen)?;
+        Ok((Expr::ChanTrySend(Box::new(ch), Box::new(val)), Type::Bool))
+    }
+    #[inline(never)]
+    fn chan_select_expr(&mut self, _line: usize, _col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::LParen)?;
+        let (c1, c1_ty) = self.expression(0, false)?;
+        if c1_ty != Type::Chan {
+            return Err(self.fail("chan_select expects chan handles"));
+        }
+        self.take(Kind::Comma)?;
+        let (c2, c2_ty) = self.expression(0, false)?;
+        if c2_ty != Type::Chan {
+            return Err(self.fail("chan_select expects chan handles"));
+        }
+        self.take(Kind::RParen)?;
+        Ok((Expr::ChanSelect(Box::new(c1), Box::new(c2)), Type::Int))
+    }
+    #[inline(never)]
     fn concurrency_builtin_expr(&mut self, name: &str, line: usize, col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
         match name {
             "shared_new" => self.shared_new_expr(line, col),
@@ -212,6 +242,8 @@ impl Parser<'_> {
             "mutex_lock" => self.mutex_lock_expr(line, col),
             "chan_new" => self.chan_new_expr(line, col),
             "chan_send" => self.chan_send_expr(line, col),
+            "chan_try_send" => self.chan_try_send_expr(line, col),
+            "chan_select" => self.chan_select_expr(line, col),
             _ => self.chan_recv_expr(line, col),
         }
     }
@@ -796,7 +828,7 @@ impl Parser<'_> {
                     return self.cell_add_expr(vline, vcol);
                 } else if name == "cell_cas" && *self.current() == Kind::LParen {
                     return self.cell_cas_expr(vline, vcol);
-                } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_recv") && *self.current() == Kind::LParen {
+                } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_try_send" | "chan_recv" | "chan_select") && *self.current() == Kind::LParen {
                     self.concurrency_builtin_expr(&name, vline, vcol)?
                 } else if name == "spawn" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);

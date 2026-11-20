@@ -2110,6 +2110,23 @@ fn eval_expr(
                 Ok(Val::Bool(true))
             }
         }
+        Expr::ChanTrySend(ch, val) => {
+            let id = match eval_expr(env, ch, locals, caller_locals, false)? {
+                Val::Chan(id) => id,
+                _ => return Err(Flow::Trap("internal: chan_try_send on a non-handle".to_owned())),
+            };
+            let v = match eval_expr(env, val, locals, caller_locals, false)? {
+                Val::Int(n) => n,
+                _ => return Err(Flow::Trap("internal: chan_try_send value".to_owned())),
+            };
+            let (buf, cap, closed) = &mut env.chans[id];
+            if *closed || *cap <= 0 || (buf.len() as i64) >= *cap {
+                Ok(Val::Bool(false))
+            } else {
+                buf.push_back(v);
+                Ok(Val::Bool(true))
+            }
+        }
         Expr::ChanRecv(ch) => {
             let id = match eval_expr(env, ch, locals, caller_locals, false)? {
                 Val::Chan(id) => id,
@@ -2117,6 +2134,19 @@ fn eval_expr(
             };
             let (buf, _cap, _closed) = &mut env.chans[id];
             Ok(Val::Int(buf.pop_front().unwrap_or(0)))
+        }
+        Expr::ChanSelect(c1, c2) => {
+            let id1 = match eval_expr(env, c1, locals, caller_locals, false)? {
+                Val::Chan(id) => id,
+                _ => return Err(Flow::Trap("internal: chan_select on a non-handle".to_owned())),
+            };
+            let id2 = match eval_expr(env, c2, locals, caller_locals, false)? {
+                Val::Chan(id) => id,
+                _ => return Err(Flow::Trap("internal: chan_select on a non-handle".to_owned())),
+            };
+            let r1 = !env.chans[id1].0.is_empty() || env.chans[id1].2;
+            let r2 = !env.chans[id2].0.is_empty() || env.chans[id2].2;
+            if r1 { Ok(Val::Int(0)) } else if r2 { Ok(Val::Int(1)) } else { Ok(Val::Int(0)) }
         }
         other => Err(Flow::Trap(format!("unsupported expression in MIR interpreter: {}", format!("{other:?}").chars().take(60).collect::<String>()))),
     }

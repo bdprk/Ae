@@ -360,7 +360,9 @@ impl<'a> TreePrinter<'a> {
             Expr::MutexLock(handle) => out.push_str(&format!("mutex_lock({})", self.expression_text(handle))),
             Expr::ChanNew(cap) => out.push_str(&format!("chan_new({})", self.expression_text(cap))),
             Expr::ChanSend(ch, val) => out.push_str(&format!("chan_send({}, {})", self.expression_text(ch), self.expression_text(val))),
+            Expr::ChanTrySend(ch, val) => out.push_str(&format!("chan_try_send({}, {})", self.expression_text(ch), self.expression_text(val))),
             Expr::ChanRecv(ch) => out.push_str(&format!("chan_recv({})", self.expression_text(ch))),
+            Expr::ChanSelect(c1, c2) => out.push_str(&format!("chan_select({}, {})", self.expression_text(c1), self.expression_text(c2))),
             Expr::AtomicAdd(handle, value) => out.push_str(&format!("cell_add({}, {})", self.expression_text(handle), self.expression_text(value))),
             Expr::AtomicCas(handle, expect, new) => out.push_str(&format!("cell_cas({}, {}, {})", self.expression_text(handle), self.expression_text(expect), self.expression_text(new))),
             // The handle and the capture slots print like any expression; the

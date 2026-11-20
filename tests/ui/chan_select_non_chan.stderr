@@ -1,0 +1,1 @@
+ae: $DIR/chan_select_non_chan.ae:4:29: chan_select expects chan handles

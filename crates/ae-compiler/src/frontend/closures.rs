@@ -477,7 +477,7 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
         Expr::MutexNew => {}
         Expr::MutexLock(handle) => walk_expr(handle, used, mutated),
         Expr::ChanNew(cap) => walk_expr(cap, used, mutated),
-        Expr::ChanSend(ch, val) => { walk_expr(ch, used, mutated); walk_expr(val, used, mutated); }
+        Expr::ChanSend(ch, val) | Expr::ChanTrySend(ch, val) | Expr::ChanSelect(ch, val) => { walk_expr(ch, used, mutated); walk_expr(val, used, mutated); }
         Expr::ChanRecv(ch) => walk_expr(ch, used, mutated),
         Expr::AtomicAdd(handle, value) => { walk_expr(handle, used, mutated); walk_expr(value, used, mutated); }
         Expr::AtomicCas(handle, expect, new) => { walk_expr(handle, used, mutated); walk_expr(expect, used, mutated); walk_expr(new, used, mutated); }

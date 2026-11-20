@@ -100,10 +100,24 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             out.push_str(&format!("    bool t{t} = ae_chan_send({}, {});\n", c.text, v.text));
             Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
         }
+        Expr::ChanTrySend(ch, val) => {
+            let c = emit_expr(ch, out, next, false);
+            let v = emit_expr(val, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    bool t{t} = ae_chan_try_send({}, {});\n", c.text, v.text));
+            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
         Expr::ChanRecv(ch) => {
             let c = emit_expr(ch, out, next, false);
             let t = *next; *next += 1;
             out.push_str(&format!("    int64_t t{t} = ae_chan_recv({});\n", c.text));
+            Emitted { text: format!("t{t}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::ChanSelect(c1, c2) => {
+            let a = emit_expr(c1, out, next, false);
+            let b = emit_expr(c2, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{t} = ae_chan_select({}, {});\n", a.text, b.text));
             Emitted { text: format!("t{t}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
         }
         // M2.12 slice 2: the address of addressable storage. The operand is a

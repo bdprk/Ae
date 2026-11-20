@@ -1430,6 +1430,7 @@ extern void InitializeConditionVariable(struct _RTL_CONDITION_VARIABLE *cv); /* 
 extern int SleepConditionVariableSRW(struct _RTL_CONDITION_VARIABLE *cv, struct _RTL_SRWLOCK *lock, unsigned long ms, unsigned long flags); /* win32-declared */
 extern void WakeConditionVariable(struct _RTL_CONDITION_VARIABLE *cv); /* win32-declared */
 extern void WakeAllConditionVariable(struct _RTL_CONDITION_VARIABLE *cv); /* win32-declared */
+extern void Sleep(unsigned long ms); /* win32-declared */
 #else
 #include <pthread.h>
 #endif
@@ -1602,5 +1603,60 @@ static void ae_chan_close(ae_chan ch) { /* win32-declared */
     pthread_cond_broadcast(&s->not_empty);
     pthread_mutex_unlock(&s->lock);
 #endif
+}
+static bool ae_chan_try_send(ae_chan ch, int64_t value) { /* win32-declared */
+    ae_chan_state *s = ch.state;
+#ifdef _WIN32
+    AcquireSRWLockExclusive((struct _RTL_SRWLOCK *)&s->lock_storage);
+#else
+    pthread_mutex_lock(&s->lock);
+#endif
+    bool ok = false;
+    if (!s->closed && s->cap > 0 && s->count < s->cap) {
+        int64_t tail = (s->head + s->count) % s->cap;
+        s->buf[tail] = value;
+        s->count += 1;
+        ok = true;
+#ifdef _WIN32
+        WakeConditionVariable((struct _RTL_CONDITION_VARIABLE *)&s->not_empty_storage);
+#else
+        pthread_cond_signal(&s->not_empty);
+#endif
+    }
+#ifdef _WIN32
+    ReleaseSRWLockExclusive((struct _RTL_SRWLOCK *)&s->lock_storage);
+#else
+    pthread_mutex_unlock(&s->lock);
+#endif
+    return ok;
+}
+static bool ae_chan_is_ready(ae_chan ch) { /* win32-declared */
+    ae_chan_state *s = ch.state;
+#ifdef _WIN32
+    AcquireSRWLockExclusive((struct _RTL_SRWLOCK *)&s->lock_storage);
+#else
+    pthread_mutex_lock(&s->lock);
+#endif
+    bool ready = s->closed || (s->cap == 0 ? s->has_slot != 0 : s->count > 0);
+#ifdef _WIN32
+    ReleaseSRWLockExclusive((struct _RTL_SRWLOCK *)&s->lock_storage);
+#else
+    pthread_mutex_unlock(&s->lock);
+#endif
+    return ready;
+}
+static int64_t ae_chan_select(ae_chan ch1, ae_chan ch2) { /* win32-declared */
+    for (;;) {
+        if (ae_chan_is_ready(ch1)) return 0;
+        if (ae_chan_is_ready(ch2)) return 1;
+#ifdef _WIN32
+        Sleep(1);
+#else
+        struct timespec ts;
+        ts.tv_sec = 0;
+        ts.tv_nsec = 1000000;
+        nanosleep(&ts, NULL);
+#endif
+    }
 }
 // unit: -
