@@ -53,11 +53,9 @@ enum Val {
     Chan(usize),
     // Task executor handle (M4.2, ADR-0218).
     Exec(usize),
-    // Timer handle (M4.2.06, ADR-0219; clock value supplied per call, ADR-0224 R2.2).
-    Timer(usize),
-    // Structured task scope, cancel token, and work-stealing pool (ADR-0220).
+    // Structured task scope and work-stealing pool (ADR-0220); cancel
+    // tokens are ae source since ADR-0224 R2.4.
     TaskScope(usize),
-    Cancel(usize),
     Pool(usize),
     Moved,
 }
@@ -101,10 +99,6 @@ struct Env<'a> {
     chans: Vec<(std::collections::VecDeque<i64>, i64, bool)>,
     // Task executors (M4.2, ADR-0218): FIFO queues of cooperative tasks.
     execs: Vec<std::collections::VecDeque<TaskState>>,
-    // Timers (ADR-0219/0224): (deadline, cancelled); callers supply the clock value.
-    timers: Vec<(i64, bool)>,
-    // Cancel tokens: 0 = active, 1 = cancelled, 2 = completed.
-    cancels: Vec<u8>,
 }
 
 const MAX_STEPS: usize = 5_000_000;
@@ -122,7 +116,7 @@ pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
         }
     }
     let main_fn = main_fn.ok_or_else(|| (String::new(), "program must define a main function".to_owned()))?;
-    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new(), chans: Vec::new(), execs: Vec::new(), timers: Vec::new(), cancels: Vec::new() };
+    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new(), chans: Vec::new(), execs: Vec::new() };
     let mut locals: HashMap<usize, Val> = HashMap::new();
     match eval_stmts(&mut env, &main_fn.body, &mut locals, &mut None) {
         Flow::Next | Flow::Return(_) => Ok((env.out, 0)),
@@ -2188,41 +2182,6 @@ fn eval_expr(
             env.execs.push(std::collections::VecDeque::new());
             Ok(Val::TaskScope(env.execs.len() - 1))
         }
-        Expr::CancelNew => {
-            env.cancels.push(0);
-            Ok(Val::Cancel(env.cancels.len() - 1))
-        }
-        Expr::CancelTrigger(tok) => {
-            let id = match eval_expr(env, tok, locals, caller_locals, false)? {
-                Val::Cancel(id) => id,
-                _ => return Err(Flow::Trap("internal: cancel_trigger on non-cancel".to_owned())),
-            };
-            if env.cancels[id] == 0 {
-                env.cancels[id] = 1;
-                Ok(Val::Bool(true))
-            } else {
-                Ok(Val::Bool(false))
-            }
-        }
-        Expr::CancelComplete(tok) => {
-            let id = match eval_expr(env, tok, locals, caller_locals, false)? {
-                Val::Cancel(id) => id,
-                _ => return Err(Flow::Trap("internal: cancel_complete on non-cancel".to_owned())),
-            };
-            if env.cancels[id] == 0 {
-                env.cancels[id] = 2;
-                Ok(Val::Bool(true))
-            } else {
-                Ok(Val::Bool(false))
-            }
-        }
-        Expr::CancelIsSet(tok) => {
-            let id = match eval_expr(env, tok, locals, caller_locals, false)? {
-                Val::Cancel(id) => id,
-                _ => return Err(Flow::Trap("internal: cancel_is_set on non-cancel".to_owned())),
-            };
-            Ok(Val::Bool(env.cancels[id] == 1))
-        }
         Expr::PoolNew(n) => {
             let _ = eval_expr(env, n, locals, caller_locals, false)?;
             env.execs.push(std::collections::VecDeque::new());
@@ -2235,50 +2194,6 @@ fn eval_expr(
             };
             let completed = drain_exec_queue(env, pid)?;
             Ok(Val::Int(completed))
-        }
-        // ADR-0224 R2.2: timers take the current time as a plain value; the fake
-        // clock lives in std/test/fake_clock.ae.
-        Expr::TimerNew(n, d) => {
-            let now = match eval_expr(env, n, locals, caller_locals, false)? {
-                Val::Int(v) => v,
-                _ => return Err(Flow::Trap("internal: timer_new now".to_owned())),
-            };
-            let delay = match eval_expr(env, d, locals, caller_locals, false)? {
-                Val::Int(v) if v >= 0 => v,
-                Val::Int(_) => return Err(Flow::Trap("timer_new delay must be non-negative".to_owned())),
-                _ => return Err(Flow::Trap("internal: timer_new delay".to_owned())),
-            };
-            env.timers.push((now + delay, false));
-            Ok(Val::Timer(env.timers.len() - 1))
-        }
-        Expr::TimerReady(t, n) => {
-            let tid = match eval_expr(env, t, locals, caller_locals, false)? {
-                Val::Timer(id) => id,
-                _ => return Err(Flow::Trap("internal: timer_ready on a non-timer".to_owned())),
-            };
-            let now = match eval_expr(env, n, locals, caller_locals, false)? {
-                Val::Int(v) => v,
-                _ => return Err(Flow::Trap("internal: timer_ready now".to_owned())),
-            };
-            let (deadline, cancelled) = env.timers[tid];
-            Ok(Val::Bool(!cancelled && now >= deadline))
-        }
-        Expr::TimerCancel(t, n) => {
-            let tid = match eval_expr(env, t, locals, caller_locals, false)? {
-                Val::Timer(id) => id,
-                _ => return Err(Flow::Trap("internal: timer_cancel on a non-timer".to_owned())),
-            };
-            let now = match eval_expr(env, n, locals, caller_locals, false)? {
-                Val::Int(v) => v,
-                _ => return Err(Flow::Trap("internal: timer_cancel now".to_owned())),
-            };
-            let (deadline, cancelled) = env.timers[tid];
-            if cancelled || now >= deadline {
-                Ok(Val::Bool(false))
-            } else {
-                env.timers[tid].1 = true;
-                Ok(Val::Bool(true))
-            }
         }
         Expr::ChanSend(ch, val) => {
             let id = match eval_expr(env, ch, locals, caller_locals, false)? {

@@ -15,13 +15,6 @@ chan_recv         chan     keep
 chan_select       chan     keep
 exec_new          task     migrate
 exec_run          task     migrate
-timer_new         time     migrate
-timer_ready       time     migrate
-timer_cancel      time     migrate
 scope_new         task     keep
-cancel_new        task     migrate
-cancel_trigger    task     migrate
-cancel_complete   task     migrate
-cancel_is_set     task     migrate
 pool_new          task     migrate
 pool_join         task     migrate
