@@ -102,3 +102,17 @@ Status: target for the atomics slice — this section governs the implementation
 | S3 | Handle tower `shared_new(shared_new(1))` | Compile-time error (`tests/ui/shared_tower.ae`) |
 | S4 | Non-copy `T` in v1 (`shared_new("hello")`) | Compile-time error (`tests/ui/shared_non_copy.ae`) |
 | S5 | `shared_get` on non-shared value | Compile-time error (`tests/ui/shared_get_non_handle.ae`) |
+
+### 9.1 Mutexes, Guards, and `shared_set` (M4.1.03)
+
+1. **`mutex` is a copy-semantics handle to one process-lifetime OS mutex.** `mutex_new()` allocates and initializes an OS mutex (`CreateMutexA` on Windows, `pthread_mutex_t` on POSIX). Copying the handle (including into `spawn` closures) shares the same mutex.
+2. **`mutex_lock(m)` returns an owned `guard`.** A `guard` is non-copyable and unlocks the mutex automatically on every scope exit (normal exit, early `return`, `break`, `continue`) via the standard `Frees` release path. Guards cannot be captured by `spawn`.
+3. **`shared_set(s, v)` requires a live `guard` in scope.** Calling `shared_set` without a live, unmoved `guard` dominating the statement is rejected at compile time.
+
+| Case | Scenario | Expected |
+|---|---|---|
+| M1 | Early return inside a locked function + two-thread 500× counter increment | No deadlock; deterministic final count `1010`; compiled and `--interp` agree (`tests/run/mutex_guard.ae`) |
+| M2 | `shared_set` without a live guard | Compile-time error (`tests/ui/mutex_unpaired_set.ae`) |
+| M3 | `shared_set` after guard scope exited | Compile-time error (`tests/ui/mutex_set_after_scope.ae`) |
+| M4 | `guard` captured by `spawn` | Compile-time error (`tests/ui/mutex_guard_escape_spawn.ae`) |
+| M5 | `mutex_lock` on non-mutex value | Compile-time error (`tests/ui/mutex_lock_non_mutex.ae`) |

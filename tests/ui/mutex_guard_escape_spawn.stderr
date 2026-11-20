@@ -1,0 +1,1 @@
+ae: $DIR/mutex_guard_escape_spawn.ae:9:52: spawn moves its captures into the thread; this capture's storage cannot cross

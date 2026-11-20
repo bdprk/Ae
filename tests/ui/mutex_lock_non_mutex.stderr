@@ -1,0 +1,1 @@
+ae: $DIR/mutex_lock_non_mutex.ae:3:26: mutex_lock expects a mutex handle

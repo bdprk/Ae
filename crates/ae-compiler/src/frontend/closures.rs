@@ -376,7 +376,7 @@ fn walk_statements(statements: &[Statement], used: &mut std::collections::HashSe
             Statement::PtrStore(id, value, ..) => { used.insert(*id); walk_expr(value, used, mutated); }
             // An atomic store reads the handle and the value; the cell is
             // shared by copy, so neither side is a mutation of tracked state.
-            Statement::AtomicStore(handle, value) => { walk_expr(handle, used, mutated); walk_expr(value, used, mutated); }
+            Statement::AtomicStore(handle, value) | Statement::SharedSet(handle, value, _) => { walk_expr(handle, used, mutated); walk_expr(value, used, mutated); }
             Statement::Return(expr, _) | Statement::Declare(_, expr) => walk_expr(expr, used, mutated),
             Statement::Array(_, values) => for v in values { walk_expr(v, used, mutated); },
             Statement::Assign(id, expr, _) => { mutated.insert(*id); walk_expr(expr, used, mutated); }
@@ -473,6 +473,8 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
         Expr::AtomicLoad(handle) => walk_expr(handle, used, mutated),
         Expr::SharedNew(value, _) => walk_expr(value, used, mutated),
         Expr::SharedGet(handle, _) => walk_expr(handle, used, mutated),
+        Expr::MutexNew => {}
+        Expr::MutexLock(handle) => walk_expr(handle, used, mutated),
         Expr::AtomicAdd(handle, value) => { walk_expr(handle, used, mutated); walk_expr(value, used, mutated); }
         Expr::AtomicCas(handle, expect, new) => { walk_expr(handle, used, mutated); walk_expr(expect, used, mutated); walk_expr(new, used, mutated); }
         Expr::Number(_) | Expr::FloatLit(_) | Expr::BoolLit(_) | Expr::StrLit(..) | Expr::Args(..) | Expr::ReadStdin(..) | Expr::Cwd(..) | Expr::StrVecNew(..) | Expr::F64VecNew(..) | Expr::NowMs | Expr::NowS | Expr::ClosureLit(_) | Expr::MapNew(..) => {}

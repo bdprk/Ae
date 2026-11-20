@@ -146,7 +146,7 @@ fn collect_waits_stmt(statement: &Statement, out: &mut Vec<usize>) {
         Statement::Match(_, _, arms) => {
             for arm in arms { for s in &arm.body { collect_waits_stmt(s, out); } }
         }
-        Statement::AtomicStore(handle, value) => {
+        Statement::AtomicStore(handle, value) | Statement::SharedSet(handle, value, _) => {
             collect_waits_expr(handle, out);
             collect_waits_expr(value, out);
         }

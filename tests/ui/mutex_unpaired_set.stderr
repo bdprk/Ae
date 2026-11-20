@@ -1,0 +1,1 @@
+ae: $DIR/mutex_unpaired_set.ae:5:1: shared_set requires a live mutex guard in scope; call mutex_lock(...) first

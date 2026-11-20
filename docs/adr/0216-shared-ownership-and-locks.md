@@ -1,6 +1,6 @@
 # ADR-0216: Shared Ownership and Mutual Exclusion (M4.1.03 / M4.1.05)
 
-- Status: Proposed (design) — the implementation follows in slices, each carrying its own evidence
+- Status: Accepted (Slice 1 + Slice 2 implemented; single-platform verified on Windows x86-64)
 - Date: 2026-11-20
 - Associated Milestone: M4.1.03 (mutex guards) and M4.1.05 (shared owner)
 - Depends on: ADR-0214 (threaded execution ground rules), ADR-0215 (scoped borrow captures), and the charter's error rule ("panic is only for invariant violations and terminates by default")

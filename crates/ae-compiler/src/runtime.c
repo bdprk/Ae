@@ -1366,3 +1366,51 @@ static ae_shared ae_shared_alloc(size_t size) {
     return (ae_shared){ ae_alloc(size, 0, 0) };
 }
 // unit: -
+
+// unit: ae_mutex
+// ---- Mutexes and guards (ADR-0216, spec/concurrency.md §9) -------------------
+// One process-lifetime OS mutex behind a copy-semantics handle. mutex_lock
+// returns an owned guard whose scope-exit release calls ae_mutex_unlock.
+#ifdef _WIN32
+struct _SECURITY_ATTRIBUTES;
+extern void *CreateMutexA(struct _SECURITY_ATTRIBUTES *attributes, int initial_owner, const char *name); /* win32-declared */
+extern unsigned long WaitForSingleObject(void *handle, unsigned long milliseconds); /* win32-declared */
+extern int ReleaseMutex(void *handle); /* win32-declared */
+typedef struct { void *lock; } ae_mutex;
+typedef struct { void *lock; } ae_guard;
+static ae_mutex ae_mutex_new(void) { /* win32-declared */
+    void *h = CreateMutexA(NULL, 0, NULL);
+    if (!h) { fprintf(stderr, "ae: mutex_new failed\n"); exit(1); }
+    return (ae_mutex){ h };
+}
+static ae_guard ae_mutex_lock(ae_mutex m) { /* win32-declared */
+    WaitForSingleObject(m.lock, 0xFFFFFFFFu);
+    return (ae_guard){ m.lock };
+}
+static void ae_mutex_unlock(ae_guard *g) { /* win32-declared */
+    if (g->lock != NULL) {
+        ReleaseMutex(g->lock);
+        g->lock = NULL;
+    }
+}
+#else
+#include <pthread.h>
+typedef struct { pthread_mutex_t *lock; } ae_mutex;
+typedef struct { pthread_mutex_t *lock; } ae_guard;
+static ae_mutex ae_mutex_new(void) {
+    pthread_mutex_t *m = ae_alloc(sizeof(pthread_mutex_t), 0, 0);
+    if (pthread_mutex_init(m, NULL) != 0) { fprintf(stderr, "ae: mutex_new failed\n"); exit(1); }
+    return (ae_mutex){ m };
+}
+static ae_guard ae_mutex_lock(ae_mutex m) {
+    pthread_mutex_lock(m.lock);
+    return (ae_guard){ m.lock };
+}
+static void ae_mutex_unlock(ae_guard *g) {
+    if (g->lock != NULL) {
+        pthread_mutex_unlock(g->lock);
+        g->lock = NULL;
+    }
+}
+#endif
+// unit: -

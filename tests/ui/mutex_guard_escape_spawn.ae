@@ -1,0 +1,11 @@
+// ADR-0216: a mutex guard cannot escape into a spawned thread.
+fn consume(g: guard) -> i64 {
+    return 1;
+}
+
+fn main() {
+    let m = mutex_new();
+    let g = mutex_lock(m);
+    let t = spawn(|| -> i64 { return consume(g); });
+    print(wait(t));
+}
