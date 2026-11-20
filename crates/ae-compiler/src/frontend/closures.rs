@@ -378,7 +378,7 @@ fn walk_statements(statements: &[Statement], used: &mut std::collections::HashSe
             // shared by copy, so neither side is a mutation of tracked state.
             Statement::AtomicStore(handle, value) | Statement::SharedSet(handle, value, _) => { walk_expr(handle, used, mutated); walk_expr(value, used, mutated); }
             Statement::ChanClose(handle) => walk_expr(handle, used, mutated),
-            Statement::TaskSpawn(ex, slots, callable, ..) => {
+            Statement::TaskSpawn(ex, slots, callable, ..) | Statement::ScopeSpawn(ex, slots, callable, ..) | Statement::PoolSpawn(ex, slots, callable, ..) => {
                 walk_expr(ex, used, mutated);
                 for s in slots { walk_expr(s, used, mutated); }
                 walk_expr(callable, used, mutated);
@@ -485,8 +485,8 @@ fn walk_expr(expr: &Expr, used: &mut std::collections::HashSet<usize>, mutated: 
         Expr::ChanNew(cap) => walk_expr(cap, used, mutated),
         Expr::ChanSend(ch, val) | Expr::ChanTrySend(ch, val) | Expr::ChanSelect(ch, val) => { walk_expr(ch, used, mutated); walk_expr(val, used, mutated); }
         Expr::ChanRecv(ch) => walk_expr(ch, used, mutated),
-        Expr::ExecNew | Expr::ClockNew => {}
-        Expr::ExecRun(ex) | Expr::ClockNow(ex) | Expr::TimerReady(ex) | Expr::TimerCancel(ex) => walk_expr(ex, used, mutated),
+        Expr::ExecNew | Expr::ClockNew | Expr::ScopeNew | Expr::CancelNew => {}
+        Expr::ExecRun(ex) | Expr::ClockNow(ex) | Expr::TimerReady(ex) | Expr::TimerCancel(ex) | Expr::CancelTrigger(ex) | Expr::CancelComplete(ex) | Expr::CancelIsSet(ex) | Expr::PoolNew(ex) | Expr::PoolJoin(ex) => walk_expr(ex, used, mutated),
         Expr::ClockAdvance(a, b) | Expr::TimerNew(a, b) => { walk_expr(a, used, mutated); walk_expr(b, used, mutated); }
         Expr::AtomicAdd(handle, value) => { walk_expr(handle, used, mutated); walk_expr(value, used, mutated); }
         Expr::AtomicCas(handle, expect, new) => { walk_expr(handle, used, mutated); walk_expr(expect, used, mutated); walk_expr(new, used, mutated); }

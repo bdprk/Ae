@@ -44,6 +44,10 @@ impl Parser<'_> {
             // Copy-semantics controlled monotonic clock and timer handles (M3.2.05 / M4.2.06, ADR-0219).
             "clock" => Ok(Type::Clock),
             "timer" => Ok(Type::Timer),
+            // Owned structured task scope, copy-semantics cancel token & work-stealing pool (ADR-0220).
+            "task_scope" => Ok(Type::TaskScope),
+            "cancel" => Ok(Type::Cancel),
+            "pool" => Ok(Type::Pool),
             // The copy-semantics shared box handle (ADR-0216, spec/concurrency.md §9):
             // copying the handle shares the process-lifetime box; no handle towers.
             "shared" => {

@@ -388,7 +388,7 @@ pub(super) fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker)
             None
         }
         Statement::ChanClose(handle) => walk_expr(handle, moved),
-        Statement::TaskSpawn(ex, slots, callable, ..) => {
+        Statement::TaskSpawn(ex, slots, callable, ..) | Statement::ScopeSpawn(ex, slots, callable, ..) | Statement::PoolSpawn(ex, slots, callable, ..) => {
             if let Some(v) = walk_expr(ex, moved) { return Some(v); }
             for s in slots { if let Some(v) = walk_expr(s, moved) { return Some(v); } }
             walk_expr(callable, moved)
@@ -436,8 +436,8 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         Expr::ChanNew(cap) => walk_expr(cap, moved),
         Expr::ChanSend(ch, val) | Expr::ChanTrySend(ch, val) | Expr::ChanSelect(ch, val) => { walk_expr(ch, moved); walk_expr(val, moved); None }
         Expr::ChanRecv(ch) => walk_expr(ch, moved),
-        Expr::ExecNew | Expr::ClockNew => None,
-        Expr::ExecRun(ex) | Expr::ClockNow(ex) | Expr::TimerReady(ex) | Expr::TimerCancel(ex) => walk_expr(ex, moved),
+        Expr::ExecNew | Expr::ClockNew | Expr::ScopeNew | Expr::CancelNew => None,
+        Expr::ExecRun(ex) | Expr::ClockNow(ex) | Expr::TimerReady(ex) | Expr::TimerCancel(ex) | Expr::CancelTrigger(ex) | Expr::CancelComplete(ex) | Expr::CancelIsSet(ex) | Expr::PoolNew(ex) | Expr::PoolJoin(ex) => walk_expr(ex, moved),
         Expr::ClockAdvance(a, b) | Expr::TimerNew(a, b) => { walk_expr(a, moved); walk_expr(b, moved); None }
         Expr::AtomicAdd(handle, value) => { walk_expr(handle, moved); walk_expr(value, moved); None }
         Expr::AtomicCas(handle, expect, new) => {

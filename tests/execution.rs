@@ -8334,3 +8334,26 @@ fn controlled_clock_and_timers_agree_across_backends() {
     assert_eq!(c_out, i_out);
     assert_eq!(c_out, "0\nfalse\nfalse\ntrue\nfalse\n50\ntrue\ntrue\nfalse\n110\nfalse\n2\ntimeout_fired\n2\n140\n");
 }
+
+#[test]
+fn task_scope_cancel_and_work_stealing_agree_across_backends() {
+    // M4.2.04 / M4.2.05 / M4.2.07 (ADR-0220): structured task scope join on
+    // early return, one-terminal-outcome cancellation tokens, and 4-worker
+    // work-stealing pool executing 100 tasks exactly once must match between
+    // compiled C and --interp.
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run/tasks_advanced.ae");
+    let compiled = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", fixture.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(compiled.status.success(), "{}", String::from_utf8_lossy(&compiled.stderr));
+    let interp = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .args(["run", fixture.to_str().unwrap(), "--interp"])
+        .output()
+        .unwrap();
+    assert!(interp.status.success(), "{}", String::from_utf8_lossy(&interp.stderr));
+    let c_out = String::from_utf8_lossy(&compiled.stdout).replace("\r\n", "\n");
+    let i_out = String::from_utf8_lossy(&interp.stdout).replace("\r\n", "\n");
+    assert_eq!(c_out, i_out);
+    assert_eq!(c_out, "7\n30\ntrue\nfalse\ntrue\ntrue\nfalse\nfalse\ntrue\n2\n2\n100\n100\n");
+}

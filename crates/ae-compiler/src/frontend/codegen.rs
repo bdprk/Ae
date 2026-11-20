@@ -168,6 +168,46 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
             out.push_str(&format!("    bool t{t} = ae_timer_cancel({});\n", tm.text));
             Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
         }
+        Expr::ScopeNew => {
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_task_scope t{t} = ae_scope_new();\n"));
+            Emitted { text: format!("t{t}"), ty: Type::TaskScope, owned: true, moves: Vec::new(), materialized: true }
+        }
+        Expr::CancelNew => {
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_cancel t{t} = ae_cancel_new();\n"));
+            Emitted { text: format!("t{t}"), ty: Type::Cancel, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::CancelTrigger(tok) => {
+            let tok = emit_expr(tok, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    bool t{t} = ae_cancel_trigger({});\n", tok.text));
+            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::CancelComplete(tok) => {
+            let tok = emit_expr(tok, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    bool t{t} = ae_cancel_complete({});\n", tok.text));
+            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::CancelIsSet(tok) => {
+            let tok = emit_expr(tok, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    bool t{t} = ae_cancel_is_set({});\n", tok.text));
+            Emitted { text: format!("t{t}"), ty: Type::Bool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::PoolNew(n) => {
+            let n = emit_expr(n, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    ae_pool t{t} = ae_pool_new({});\n", n.text));
+            Emitted { text: format!("t{t}"), ty: Type::Pool, owned: false, moves: Vec::new(), materialized: true }
+        }
+        Expr::PoolJoin(p) => {
+            let p = emit_expr(p, out, next, false);
+            let t = *next; *next += 1;
+            out.push_str(&format!("    int64_t t{t} = ae_pool_join({});\n", p.text));
+            Emitted { text: format!("t{t}"), ty: Type::Int, owned: false, moves: Vec::new(), materialized: true }
+        }
         // M2.12 slice 2: the address of addressable storage. The operand is a
         // variable or a field of one, so the C is an address-of; the pointer
         // itself is a plain value that neither moves nor releases.
@@ -305,7 +345,7 @@ pub(super) fn emit_expr(expr: &Expr, out: &mut String, next: &mut usize, moving:
                     Type::Struct(_) | Type::Enum(_, _) => {}
                     // A thread handle or mutex guard is a plain handle: no runtime
                     // string/vec sentinel backstop here.
-                    Type::Thread(_) | Type::Guard => {}
+                    Type::Thread(_) | Type::Guard | Type::TaskScope => {}
                     _ => {
                         let probe = match ty { Type::Vec | Type::StrVec | Type::VecF => format!("!v{id}.data"), Type::Map | Type::MapF => format!("!v{id}.slots"), _ => format!("!v{id}.ptr") };
                         let message = match ty { Type::Vec | Type::StrVec | Type::VecF => "use of moved vector", Type::Map | Type::MapF => "use of moved map", _ => "use of moved string" };
@@ -1148,6 +1188,7 @@ pub(super) fn release_var(out: &mut String, id: usize, ty: Type) {
         Type::Atomic | Type::Shared(_) | Type::Mutex | Type::Chan => {}
         // ADR-0216: scope exit unlocks the mutex guard (idempotent if moved).
         Type::Guard => out.push_str(&format!("    ae_mutex_unlock(&v{id});\n")),
+        Type::TaskScope => out.push_str(&format!("    ae_scope_release(&v{id});\n")),
         _ => out.push_str(&format!("    ae_str_release(&v{id});\n")),
     }
 }
@@ -1178,6 +1219,7 @@ pub(super) fn drop_owned_temp(out: &mut String, emitted: &Emitted) {
         Type::Struct(k) => out.push_str(&format!("    ae_t{k}_release(&{});\n", emitted.text)),
         Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_release(&{});\n", emitted.text)),
         Type::Guard => out.push_str(&format!("    ae_mutex_unlock(&{});\n", emitted.text)),
+        Type::TaskScope => out.push_str(&format!("    ae_scope_release(&{});\n", emitted.text)),
         _ => out.push_str(&format!("    free({});\n", emitted.text)),
     }
 }
@@ -1193,6 +1235,7 @@ pub(super) fn null_moves(out: &mut String, moves: &[(usize, Type)]) {
             Type::Struct(k) => out.push_str(&format!("    ae_t{k}_forfeit(&v{id});\n")),
             Type::Enum(_, k) => out.push_str(&format!("    ae_e{k}_forfeit(&v{id});\n")),
             Type::Guard => out.push_str(&format!("    v{id}.lock = NULL;\n")),
+            Type::TaskScope => out.push_str(&format!("    v{id}.state = NULL;\n")),
             _ => out.push_str(&format!("    v{id} = NULL;\n")),
         }
     }
@@ -1575,6 +1618,38 @@ pub(super) fn emit_statements(stmts: &[Statement], out: &mut String, next: &mut 
             }
             Statement::TaskYield => {
                 out.push_str("    ae_task_yield();\n");
+            }
+            Statement::ScopeSpawn(sc, slots, _callable, cid, line, column) => {
+                let s = emit_expr(sc, out, next, false);
+                let fn_id = crate::frontend::closures::closure_fn_id(*cid);
+                let entry = format!("ae_thread_entry_{fn_id}");
+                let ctx_ty = format!("ae_thread_ctx_{fn_id}");
+                let t = *next; *next += 1;
+                out.push_str(&format!("    {ctx_ty} *ctx{t} = ae_alloc(sizeof({ctx_ty}), {line}, {column});\n"));
+                let mut moves = Vec::new();
+                for (index, slot) in slots.iter().enumerate() {
+                    let value = emit_expr(slot, out, next, true);
+                    moves.extend(value.moves);
+                    out.push_str(&format!("    ctx{t}->f{index} = {};\n", value.text));
+                }
+                null_moves(out, &moves);
+                out.push_str(&format!("    ae_scope_spawn({}, {entry}, ctx{t});\n", s.text));
+            }
+            Statement::PoolSpawn(p, slots, _callable, cid, line, column) => {
+                let s = emit_expr(p, out, next, false);
+                let fn_id = crate::frontend::closures::closure_fn_id(*cid);
+                let entry = format!("ae_thread_entry_{fn_id}");
+                let ctx_ty = format!("ae_thread_ctx_{fn_id}");
+                let t = *next; *next += 1;
+                out.push_str(&format!("    {ctx_ty} *ctx{t} = ae_alloc(sizeof({ctx_ty}), {line}, {column});\n"));
+                let mut moves = Vec::new();
+                for (index, slot) in slots.iter().enumerate() {
+                    let value = emit_expr(slot, out, next, true);
+                    moves.extend(value.moves);
+                    out.push_str(&format!("    ctx{t}->f{index} = {};\n", value.text));
+                }
+                null_moves(out, &moves);
+                out.push_str(&format!("    ae_pool_spawn({}, {entry}, ctx{t});\n", s.text));
             }
         }
     }

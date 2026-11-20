@@ -1,0 +1,65 @@
+fn early_return_scope(c: atomic) -> i64 {
+    let sc = scope_new();
+    scope_spawn(sc, || -> i64 {
+        let _ = cell_add(c, 10);
+        return 0;
+    });
+    scope_spawn(sc, || -> i64 {
+        let _ = cell_add(c, 20);
+        return 0;
+    });
+    return 7;
+}
+
+fn main() {
+    // M4.2.04: scope join on early return drains unfinished children
+    let c = cell_new(0);
+    let r = early_return_scope(c);
+    print(r);
+    print(cell_load(c));
+
+    // M4.2.05: cancel before park, during park, and after completion
+    let t_before = cancel_new();
+    print(cancel_trigger(t_before));
+    print(cancel_complete(t_before));
+    print(cancel_is_set(t_before));
+
+    let t_after = cancel_new();
+    print(cancel_complete(t_after));
+    print(cancel_trigger(t_after));
+    print(cancel_is_set(t_after));
+
+    // Cancel during park inside cooperative task
+    let t_park = cancel_new();
+    let ex = exec_new();
+    task_spawn(ex, || -> i64 {
+        var steps = 0;
+        while !cancel_is_set(t_park) {
+            steps = steps + 1;
+            task_yield();
+        }
+        print(steps);
+        return 0;
+    });
+    task_spawn(ex, || -> i64 {
+        task_yield();
+        let ok = cancel_trigger(t_park);
+        print(ok);
+        return 0;
+    });
+    print(exec_run(ex));
+
+    // M4.2.07: 4-worker work-stealing pool executes 100 tasks exactly once
+    let p = pool_new(4);
+    let sum = cell_new(0);
+    var i = 0;
+    while i < 100 {
+        pool_spawn(p, || -> i64 {
+            let _ = cell_add(sum, 1);
+            return 0;
+        });
+        i = i + 1;
+    }
+    print(pool_join(p));
+    print(cell_load(sum));
+}
