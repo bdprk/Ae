@@ -1,0 +1,4 @@
+// M4.3: chan_close expects a chan handle.
+fn main() {
+    chan_close(1);
+}

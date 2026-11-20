@@ -1,0 +1,1 @@
+ae: $DIR/chan_send_non_chan.ae:3:25: chan_send expects a chan handle

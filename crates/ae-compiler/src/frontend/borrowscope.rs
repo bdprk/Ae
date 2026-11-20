@@ -150,6 +150,9 @@ fn collect_waits_stmt(statement: &Statement, out: &mut Vec<usize>) {
             collect_waits_expr(handle, out);
             collect_waits_expr(value, out);
         }
+        Statement::ChanClose(handle) => {
+            collect_waits_expr(handle, out);
+        }
         _ => {}
     }
 }

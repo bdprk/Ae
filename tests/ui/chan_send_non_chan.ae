@@ -1,0 +1,5 @@
+// M4.3: chan_send expects a chan handle.
+fn main() {
+    let ok = chan_send(1, 2);
+    print(ok);
+}

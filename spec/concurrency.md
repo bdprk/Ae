@@ -116,3 +116,17 @@ Status: target for the atomics slice — this section governs the implementation
 | M3 | `shared_set` after guard scope exited | Compile-time error (`tests/ui/mutex_set_after_scope.ae`) |
 | M4 | `guard` captured by `spawn` | Compile-time error (`tests/ui/mutex_guard_escape_spawn.ae`) |
 | M5 | `mutex_lock` on non-mutex value | Compile-time error (`tests/ui/mutex_lock_non_mutex.ae`) |
+
+## 10. Channels (`chan`, M4.3.01–M4.3.04)
+
+1. **`chan` is a copy-semantics handle to one process-lifetime i64 channel.** `chan_new(cap)` creates a rendezvous channel (`cap == 0`) or a bounded ring-buffer channel (`cap > 0`). Copying the handle (including into `spawn` closures) shares the channel.
+2. **`chan_send(ch, v) -> bool` blocks when full (or until a receiver arrives for `cap == 0`).** Returns `true` when delivered/buffered, or `false` if the channel is closed or closed while the sender is parked.
+3. **`chan_recv(ch) -> i64` blocks when empty.** After `chan_close(ch);`, buffered values drain in FIFO order; once empty, `chan_recv` returns `0` without blocking.
+4. **`chan_close(ch);` marks the channel closed and wakes all parked senders and receivers.**
+
+| Case | Scenario | Expected |
+|---|---|---|
+| C1 | Rendezvous (`cap == 0`) handoff across threads | Receiver gets `42`; sender returns `true` (`tests/run/channels.ae`) |
+| C2 | Bounded buffer (`cap == 1`) backpressure + resume | First send succeeds; second send resumes after first recv (`tests/run/channels.ae`) |
+| C3 | Close with buffered values | Buffered values drain FIFO (`100`, `200`), then `0`; later send returns `false` (`tests/run/channels.ae`) |
+| C4 | `chan_send` / `chan_close` on non-chan value | Compile-time errors (`tests/ui/chan_send_non_chan.ae`, `tests/ui/chan_close_non_chan.ae`) |

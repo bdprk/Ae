@@ -387,6 +387,7 @@ pub(super) fn walk_statement(statement: &Statement, moved: &mut dyn MoveTracker)
             if let Some(violation) = walk_expr(value, moved) { return Some(violation); }
             None
         }
+        Statement::ChanClose(handle) => walk_expr(handle, moved),
     }
 }
 
@@ -426,6 +427,9 @@ pub(super) fn walk_expr(expr: &Expr, moved: &mut dyn MoveTracker) -> Option<usiz
         Expr::SharedGet(handle, _) => walk_expr(handle, moved),
         Expr::MutexNew => None,
         Expr::MutexLock(handle) => walk_expr(handle, moved),
+        Expr::ChanNew(cap) => walk_expr(cap, moved),
+        Expr::ChanSend(ch, val) => { walk_expr(ch, moved); walk_expr(val, moved); None }
+        Expr::ChanRecv(ch) => walk_expr(ch, moved),
         Expr::AtomicAdd(handle, value) => { walk_expr(handle, moved); walk_expr(value, moved); None }
         Expr::AtomicCas(handle, expect, new) => {
             if let Some(violation) = walk_expr(handle, moved) { return Some(violation); }

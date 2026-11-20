@@ -1414,3 +1414,193 @@ static void ae_mutex_unlock(ae_guard *g) {
 }
 #endif
 // unit: -
+
+// unit: ae_chan
+// ---- Channels (M4.3.01–M4.3.04, spec/concurrency.md §10) ---------------------
+// Copy-semantics handle to a process-lifetime bounded or rendezvous (cap == 0)
+// i64 channel. Supports blocking send/recv, draining after close, and waking
+// blocked senders with false on close.
+#ifdef _WIN32
+struct _RTL_SRWLOCK;
+struct _RTL_CONDITION_VARIABLE;
+extern void InitializeSRWLock(struct _RTL_SRWLOCK *lock); /* win32-declared */
+extern void AcquireSRWLockExclusive(struct _RTL_SRWLOCK *lock); /* win32-declared */
+extern void ReleaseSRWLockExclusive(struct _RTL_SRWLOCK *lock); /* win32-declared */
+extern void InitializeConditionVariable(struct _RTL_CONDITION_VARIABLE *cv); /* win32-declared */
+extern int SleepConditionVariableSRW(struct _RTL_CONDITION_VARIABLE *cv, struct _RTL_SRWLOCK *lock, unsigned long ms, unsigned long flags); /* win32-declared */
+extern void WakeConditionVariable(struct _RTL_CONDITION_VARIABLE *cv); /* win32-declared */
+extern void WakeAllConditionVariable(struct _RTL_CONDITION_VARIABLE *cv); /* win32-declared */
+#else
+#include <pthread.h>
+#endif
+typedef struct {
+#ifdef _WIN32
+    void *lock_storage;
+    void *not_full_storage;
+    void *not_empty_storage;
+#else
+    pthread_mutex_t lock;
+    pthread_cond_t not_full;
+    pthread_cond_t not_empty;
+#endif
+    int64_t *buf;
+    int64_t cap;
+    int64_t head;
+    int64_t count;
+    int64_t slot;
+    int has_slot;
+    int closed;
+} ae_chan_state;
+typedef struct { ae_chan_state *state; } ae_chan;
+static ae_chan ae_chan_new(int64_t cap) { /* win32-declared */
+    if (cap < 0) { fprintf(stderr, "ae: chan_new capacity must be non-negative\n"); exit(1); }
+    ae_chan_state *s = ae_alloc(sizeof(ae_chan_state), 0, 0);
+    memset(s, 0, sizeof(ae_chan_state));
+    s->cap = cap;
+    if (cap > 0) {
+        s->buf = ae_alloc((size_t)cap * sizeof(int64_t), 0, 0);
+    }
+#ifdef _WIN32
+    InitializeSRWLock((struct _RTL_SRWLOCK *)&s->lock_storage);
+    InitializeConditionVariable((struct _RTL_CONDITION_VARIABLE *)&s->not_full_storage);
+    InitializeConditionVariable((struct _RTL_CONDITION_VARIABLE *)&s->not_empty_storage);
+#else
+    pthread_mutex_init(&s->lock, NULL);
+    pthread_cond_init(&s->not_full, NULL);
+    pthread_cond_init(&s->not_empty, NULL);
+#endif
+    return (ae_chan){ s };
+}
+static bool ae_chan_send(ae_chan ch, int64_t value) { /* win32-declared */
+    ae_chan_state *s = ch.state;
+#ifdef _WIN32
+    AcquireSRWLockExclusive((struct _RTL_SRWLOCK *)&s->lock_storage);
+#else
+    pthread_mutex_lock(&s->lock);
+#endif
+    bool ok = false;
+    if (s->cap == 0) {
+        while (!s->closed && s->has_slot) {
+#ifdef _WIN32
+            SleepConditionVariableSRW((struct _RTL_CONDITION_VARIABLE *)&s->not_full_storage, (struct _RTL_SRWLOCK *)&s->lock_storage, 0xFFFFFFFFu, 0);
+#else
+            pthread_cond_wait(&s->not_full, &s->lock);
+#endif
+        }
+        if (!s->closed) {
+            s->slot = value;
+            s->has_slot = 1;
+#ifdef _WIN32
+            WakeConditionVariable((struct _RTL_CONDITION_VARIABLE *)&s->not_empty_storage);
+#else
+            pthread_cond_signal(&s->not_empty);
+#endif
+            while (!s->closed && s->has_slot) {
+#ifdef _WIN32
+                SleepConditionVariableSRW((struct _RTL_CONDITION_VARIABLE *)&s->not_full_storage, (struct _RTL_SRWLOCK *)&s->lock_storage, 0xFFFFFFFFu, 0);
+#else
+                pthread_cond_wait(&s->not_full, &s->lock);
+#endif
+            }
+            if (!s->has_slot) {
+                ok = true;
+            } else {
+                s->has_slot = 0;
+                ok = false;
+            }
+        }
+    } else {
+        while (!s->closed && s->count == s->cap) {
+#ifdef _WIN32
+            SleepConditionVariableSRW((struct _RTL_CONDITION_VARIABLE *)&s->not_full_storage, (struct _RTL_SRWLOCK *)&s->lock_storage, 0xFFFFFFFFu, 0);
+#else
+            pthread_cond_wait(&s->not_full, &s->lock);
+#endif
+        }
+        if (!s->closed) {
+            int64_t tail = (s->head + s->count) % s->cap;
+            s->buf[tail] = value;
+            s->count += 1;
+            ok = true;
+#ifdef _WIN32
+            WakeConditionVariable((struct _RTL_CONDITION_VARIABLE *)&s->not_empty_storage);
+#else
+            pthread_cond_signal(&s->not_empty);
+#endif
+        }
+    }
+#ifdef _WIN32
+    ReleaseSRWLockExclusive((struct _RTL_SRWLOCK *)&s->lock_storage);
+#else
+    pthread_mutex_unlock(&s->lock);
+#endif
+    return ok;
+}
+static int64_t ae_chan_recv(ae_chan ch) { /* win32-declared */
+    ae_chan_state *s = ch.state;
+#ifdef _WIN32
+    AcquireSRWLockExclusive((struct _RTL_SRWLOCK *)&s->lock_storage);
+#else
+    pthread_mutex_lock(&s->lock);
+#endif
+    int64_t value = 0;
+    if (s->cap == 0) {
+        while (!s->closed && !s->has_slot) {
+#ifdef _WIN32
+            SleepConditionVariableSRW((struct _RTL_CONDITION_VARIABLE *)&s->not_empty_storage, (struct _RTL_SRWLOCK *)&s->lock_storage, 0xFFFFFFFFu, 0);
+#else
+            pthread_cond_wait(&s->not_empty, &s->lock);
+#endif
+        }
+        if (s->has_slot) {
+            value = s->slot;
+            s->has_slot = 0;
+#ifdef _WIN32
+            WakeAllConditionVariable((struct _RTL_CONDITION_VARIABLE *)&s->not_full_storage);
+#else
+            pthread_cond_broadcast(&s->not_full);
+#endif
+        }
+    } else {
+        while (!s->closed && s->count == 0) {
+#ifdef _WIN32
+            SleepConditionVariableSRW((struct _RTL_CONDITION_VARIABLE *)&s->not_empty_storage, (struct _RTL_SRWLOCK *)&s->lock_storage, 0xFFFFFFFFu, 0);
+#else
+            pthread_cond_wait(&s->not_empty, &s->lock);
+#endif
+        }
+        if (s->count > 0) {
+            value = s->buf[s->head];
+            s->head = (s->head + 1) % s->cap;
+            s->count -= 1;
+#ifdef _WIN32
+            WakeConditionVariable((struct _RTL_CONDITION_VARIABLE *)&s->not_full_storage);
+#else
+            pthread_cond_signal(&s->not_full);
+#endif
+        }
+    }
+#ifdef _WIN32
+    ReleaseSRWLockExclusive((struct _RTL_SRWLOCK *)&s->lock_storage);
+#else
+    pthread_mutex_unlock(&s->lock);
+#endif
+    return value;
+}
+static void ae_chan_close(ae_chan ch) { /* win32-declared */
+    ae_chan_state *s = ch.state;
+#ifdef _WIN32
+    AcquireSRWLockExclusive((struct _RTL_SRWLOCK *)&s->lock_storage);
+    s->closed = 1;
+    WakeAllConditionVariable((struct _RTL_CONDITION_VARIABLE *)&s->not_full_storage);
+    WakeAllConditionVariable((struct _RTL_CONDITION_VARIABLE *)&s->not_empty_storage);
+    ReleaseSRWLockExclusive((struct _RTL_SRWLOCK *)&s->lock_storage);
+#else
+    pthread_mutex_lock(&s->lock);
+    s->closed = 1;
+    pthread_cond_broadcast(&s->not_full);
+    pthread_cond_broadcast(&s->not_empty);
+    pthread_mutex_unlock(&s->lock);
+#endif
+}
+// unit: -

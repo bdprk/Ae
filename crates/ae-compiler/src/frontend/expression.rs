@@ -167,6 +167,54 @@ impl Parser<'_> {
         self.take(Kind::RParen)?;
         Ok((Expr::MutexLock(Box::new(handle)), Type::Guard))
     }
+    #[inline(never)]
+    fn chan_new_expr(&mut self, _line: usize, _col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::LParen)?;
+        let (cap, cap_ty) = self.expression(0, false)?;
+        if cap_ty != Type::Int {
+            return Err(self.fail("chan_new expects an i64 capacity"));
+        }
+        self.take(Kind::RParen)?;
+        Ok((Expr::ChanNew(Box::new(cap)), Type::Chan))
+    }
+    #[inline(never)]
+    fn chan_send_expr(&mut self, _line: usize, _col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::LParen)?;
+        let (ch, ch_ty) = self.expression(0, false)?;
+        if ch_ty != Type::Chan {
+            return Err(self.fail("chan_send expects a chan handle"));
+        }
+        self.take(Kind::Comma)?;
+        let (val, val_ty) = self.expression(0, false)?;
+        if val_ty != Type::Int {
+            return Err(self.fail("chan_send expects an i64 value"));
+        }
+        self.take(Kind::RParen)?;
+        Ok((Expr::ChanSend(Box::new(ch), Box::new(val)), Type::Bool))
+    }
+    #[inline(never)]
+    fn chan_recv_expr(&mut self, _line: usize, _col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        self.take(Kind::LParen)?;
+        let (ch, ch_ty) = self.expression(0, false)?;
+        if ch_ty != Type::Chan {
+            return Err(self.fail("chan_recv expects a chan handle"));
+        }
+        self.take(Kind::RParen)?;
+        Ok((Expr::ChanRecv(Box::new(ch)), Type::Int))
+    }
+
+    #[inline(never)]
+    fn concurrency_builtin_expr(&mut self, name: &str, line: usize, col: usize) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        match name {
+            "shared_new" => self.shared_new_expr(line, col),
+            "shared_get" => self.shared_get_expr(line, col),
+            "mutex_new" => self.mutex_new_expr(line, col),
+            "mutex_lock" => self.mutex_lock_expr(line, col),
+            "chan_new" => self.chan_new_expr(line, col),
+            "chan_send" => self.chan_send_expr(line, col),
+            _ => self.chan_recv_expr(line, col),
+        }
+    }
 
     // One interned shape per distinct return type: wait's result type comes
     // from the handle (spec/concurrency.md §2).
@@ -748,14 +796,8 @@ impl Parser<'_> {
                     return self.cell_add_expr(vline, vcol);
                 } else if name == "cell_cas" && *self.current() == Kind::LParen {
                     return self.cell_cas_expr(vline, vcol);
-                } else if name == "shared_new" && *self.current() == Kind::LParen {
-                    self.shared_new_expr(vline, vcol)?
-                } else if name == "shared_get" && *self.current() == Kind::LParen {
-                    self.shared_get_expr(vline, vcol)?
-                } else if name == "mutex_new" && *self.current() == Kind::LParen {
-                    self.mutex_new_expr(vline, vcol)?
-                } else if name == "mutex_lock" && *self.current() == Kind::LParen {
-                    self.mutex_lock_expr(vline, vcol)?
+                } else if matches!(name.as_str(), "shared_new" | "shared_get" | "mutex_new" | "mutex_lock" | "chan_new" | "chan_send" | "chan_recv") && *self.current() == Kind::LParen {
+                    self.concurrency_builtin_expr(&name, vline, vcol)?
                 } else if name == "spawn" && *self.current() == Kind::LParen {
                     let (line, col) = (vline, vcol);
                     let at = self.tokens[self.pos - 1].offset;
@@ -792,7 +834,7 @@ impl Parser<'_> {
                                 // closure/pointer values have no byte layout to
                                 // package; owned scalars, strings, vectors,
                                 // maps, structs, and enums move.
-                                if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic | Type::Shared(_) | Type::Mutex) {
+                                if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic | Type::Shared(_) | Type::Mutex | Type::Chan) {
                                     return Err(self.fail("spawn moves its captures into the thread; this capture's storage cannot cross"));
                                 }
                                 if self.moved.contains(outer_id) {
