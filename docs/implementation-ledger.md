@@ -234,13 +234,13 @@ Integration gate: No lost wakeup, duplicate delivery or waiter retained after ca
 
 Entry dependency: M4.2.
 
-- [x] M4.4.01. **Define readiness/completion adapter.** Model pending, completion, cancellation and late completion with a fake I/O backend.
-- [x] M4.4.02. **Linux epoll.** Drain nonblocking reads through would-block and rearm interest correctly.
-- [x] M4.4.03. **Windows IOCP.** Keep submitted buffers alive until final completion even after cancellation.
-- [x] M4.4.04. **partial I/O.** Split a frame across reads and force writes to complete in fragments.
-- [x] M4.4.05. **deadlines.** Race a deadline against completion and publish one outcome.
-- [x] M4.4.06. **blocking-call pool.** Saturate the pool and show a timer task can still run.
-- [x] M4.4.07. **backpressure.** Throttle a slow peer and verify bounded queued bytes and eventual recovery.
+- [ ] M4.4.01. **Define readiness/completion adapter.** Model pending, completion, cancellation and late completion with a fake I/O backend. (The deterministic adapter covers pending, completion and cancellation. Late completion still needs an independent completion source and a retention oracle.)
+- [ ] M4.4.02. **Linux epoll.** Drain nonblocking reads through would-block and rearm interest correctly. (The adapter models rearming over in-memory buffers. Native Linux readiness and socket tests are pending.)
+- [ ] M4.4.03. **Windows IOCP.** Keep submitted buffers alive until final completion even after cancellation. (The adapter models cancellation in memory. Native Windows submission, completion and buffer retirement are pending.)
+- [ ] M4.4.04. **partial I/O.** Split a frame across reads and force writes to complete in fragments. (The in-memory fixture exercises chunking and fragmentation. Native partial reads and writes are pending.)
+- [ ] M4.4.05. **deadlines.** Race a deadline against completion and publish one outcome. (A deadline and completion race with a single terminal outcome still needs end-to-end verification.)
+- [ ] M4.4.06. **blocking-call pool.** Saturate the pool and show a timer task can still run. (The network slice has no test saturating blocking workers while a timer progresses.)
+- [ ] M4.4.07. **backpressure.** Throttle a slow peer and verify bounded queued bytes and eventual recovery. (The fixture covers bounded in-memory buffering. Slow-peer recovery over a socket is pending.)
 
 Integration gate: Disconnect during read and cancel during write release all handles.
 
@@ -304,13 +304,13 @@ Integration gate: Fresh user creates, tests, documents and ships a package using
 
 Entry dependency: M5.3.
 
-- [x] M6.2.01. **Synchronize edits.** Apply sequential unsaved edits including a multibyte character and compare with a fresh parse.
-- [x] M6.2.02. **publish diagnostics.** Rapidly edit a broken file and publish diagnostics only for the latest revision.
-- [x] M6.2.03. **hover.** Hover a shadowed name and show its local type and declaration.
-- [x] M6.2.04. **definition.** Jump through an import to the precise definition span.
-- [x] M6.2.05. **completion.** Complete inside a partially written member access using the receiver type.
-- [x] M6.2.06. **rename across modules.** Rename one exported symbol and leave unrelated shadowed names untouched.
-- [x] M6.2.07. **cancel stale queries.** Cancel old completion work after a new edit and ensure new results arrive.
+- [ ] M6.2.01. **Synchronize edits.** Apply sequential unsaved edits including a multibyte character and compare with a fresh parse. (Full-text edits and UTF-16 positions are implemented. Compare unsaved project snapshots against the compiler through imports.)
+- [ ] M6.2.02. **publish diagnostics.** Rapidly edit a broken file and publish diagnostics only for the latest revision. (Versioned diagnostics, stale edit rejection and close clearing are covered. Project-aware diagnostic queries and in-flight revision filtering are pending.)
+- [ ] M6.2.03. **hover.** Hover a shadowed name and show its local type and declaration. (Hover uses text and a built-in signature table. Resolve bindings and types through the compiler.)
+- [ ] M6.2.04. **definition.** Jump through an import to the precise definition span. (Definition searches the open document by spelling. Resolve the use to its declaration through the project module graph.)
+- [ ] M6.2.05. **completion.** Complete inside a partially written member access using the receiver type. (Completion collects fields by scanning text. Resolve the receiver type and verify the large-project latency target.)
+- [ ] M6.2.06. **rename across modules.** Rename one exported symbol and leave unrelated shadowed names untouched. (Rename matches spellings in one document. Derive edits from resolved references and verify shadowing and imports.)
+- [ ] M6.2.07. **cancel stale queries.** Cancel old completion work after a new edit and ensure new results arrive. (The synchronous loop handles cancellation messages before later requests. Cancellation of in-flight queries needs a scheduler and revision check.)
 
 Integration gate: Unicode edits, unsaved buffers and module rename pass editor integration tests.
 

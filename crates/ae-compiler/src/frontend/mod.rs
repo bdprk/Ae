@@ -462,6 +462,39 @@ impl StructDef {
 // itself and every payload has a trivial release.
 #[derive(Debug, Clone)]
 struct EnumDef { name: &'static str, variants: Vec<(String, Vec<Type>)>, file: String, public: bool, pattern: String }
+
+impl EnumDef {
+    fn c_layout(&self, structs: &[StructDef]) -> (i64, i64) {
+        let tag_size = 4i64;
+        let tag_align = 4i64;
+        let mut max_payload_size = 0i64;
+        let mut max_payload_align = 1i64;
+        for (_, fields) in &self.variants {
+            let (mut v_offset, mut v_max_align) = (0i64, 1i64);
+            for ty in fields {
+                let (sz, al) = match ty {
+                    Type::Int | Type::F64 | Type::Bool => ty.scalar_c_layout().unwrap_or((8, 8)),
+                    Type::String => (16, 8),
+                    Type::Struct(k) => structs[*k].c_layout(structs).map(|(s, a, _)| (s, a)).unwrap_or((8, 8)),
+                    _ => (8, 8),
+                };
+                v_offset = (v_offset + al - 1) / al * al;
+                v_offset += sz;
+                v_max_align = v_max_align.max(al);
+            }
+            let v_size = (v_offset + v_max_align - 1) / v_max_align * v_max_align;
+            max_payload_size = max_payload_size.max(v_size);
+            max_payload_align = max_payload_align.max(v_max_align);
+        }
+        if max_payload_size == 0 {
+            max_payload_size = 1;
+        }
+        let total_align = tag_align.max(max_payload_align);
+        let union_offset = (tag_size + max_payload_align - 1) / max_payload_align * max_payload_align;
+        let total_size = (union_offset + max_payload_size + total_align - 1) / total_align * total_align;
+        (total_size, total_align)
+    }
+}
 // A payload type in a generic declaration: either fixed, or one of the
 // declaration's type parameters. Substitution replaces every Param with a
 // concrete argument, so Param never reaches code generation.

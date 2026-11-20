@@ -291,13 +291,13 @@ impl LineIndex {
     }
 
     pub fn offset_to_position(&self, text: &str, offset: usize) -> Position {
-        let offset = offset.min(text.len());
+        let offset = text.floor_char_boundary(offset.min(text.len()));
         let line = match self.line_starts.binary_search(&offset) {
             Ok(l) => l,
             Err(l) => l.saturating_sub(1),
         };
         let col_start = self.line_starts[line];
-        let character = text[col_start..offset].chars().count() as u32;
+        let character = text[col_start..offset.min(self.line_end(text, line))].encode_utf16().count() as u32;
         Position {
             line: line as u32,
             character,
@@ -310,20 +310,23 @@ impl LineIndex {
             return text.len();
         }
         let start = self.line_starts[line];
-        let line_end = self
-            .line_starts
-            .get(line + 1)
-            .map(|&s| s.saturating_sub(1))
-            .unwrap_or(text.len());
-        let line_str = &text[start..line_end];
-        let mut count = 0usize;
-        for (idx, _) in line_str.char_indices() {
-            if count == pos.character as usize {
+        let end = self.line_end(text, line);
+        let mut units = 0;
+        for (idx, ch) in text[start..end].char_indices() {
+            units += ch.len_utf16();
+            if units > pos.character as usize {
                 return start + idx;
             }
-            count += 1;
         }
-        start + line_str.len()
+        end
+    }
+
+    fn line_end(&self, text: &str, line: usize) -> usize {
+        let Some(&next_start) = self.line_starts.get(line + 1) else {
+            return text.len();
+        };
+        let newline = next_start - 1;
+        newline - usize::from(newline > 0 && text.as_bytes()[newline - 1] == b'\r')
     }
 }
 
@@ -398,6 +401,7 @@ impl LspServer {
             "initialize" => {
                 let mut caps = BTreeMap::new();
                 caps.insert("textDocumentSync".to_owned(), JsonValue::Number(1.0));
+                caps.insert("positionEncoding".to_owned(), JsonValue::String("utf-16".to_owned()));
                 caps.insert("hoverProvider".to_owned(), JsonValue::Bool(true));
                 caps.insert("definitionProvider".to_owned(), JsonValue::Bool(true));
 
@@ -500,25 +504,28 @@ impl LspServer {
                 let Some(params) = params else { return Vec::new(); };
                 let uri = params.get("textDocument").and_then(|d| d.get("uri")).and_then(|u| u.as_str()).unwrap_or("").to_owned();
                 let version = params.get("textDocument").and_then(|d| d.get("version")).and_then(|v| v.as_i64()).unwrap_or(0);
-                if let Some(doc) = self.documents.get_mut(&uri) {
-                    if version > doc.version {
-                        if let Some(changes) = params.get("contentChanges").and_then(|c| c.as_array()) {
-                            if let Some(last) = changes.last() {
-                                if let Some(new_text) = last.get("text").and_then(|t| t.as_str()) {
-                                    doc.update(version, new_text.to_owned());
-                                }
-                            }
-                        }
-                        return vec![self.publish_diagnostics(&uri)];
-                    }
+                let Some(doc) = self.documents.get_mut(&uri) else { return Vec::new(); };
+                if version <= doc.version {
+                    return Vec::new();
                 }
-                Vec::new()
+                let change = params.get("contentChanges").and_then(JsonValue::as_array)
+                    .and_then(|changes| changes.last());
+                let Some(change) = change.filter(|change| change.get("range").is_none()) else {
+                    return Vec::new();
+                };
+                let Some(text) = change.get("text").and_then(JsonValue::as_str) else {
+                    return Vec::new();
+                };
+                doc.update(version, text.to_owned());
+                vec![self.publish_diagnostics(&uri)]
             }
             "textDocument/didClose" => {
                 let Some(params) = params else { return Vec::new(); };
                 let uri = params.get("textDocument").and_then(|d| d.get("uri")).and_then(|u| u.as_str()).unwrap_or("");
-                self.documents.remove(uri);
-                Vec::new()
+                self.documents.remove(uri)
+                    .map(|_| self.publish_diagnostics(uri))
+                    .into_iter()
+                    .collect()
             }
             "$/cancelRequest" => {
                 if let Some(id) = params.and_then(|p| p.get("id")).and_then(|v| v.as_i64()) {
@@ -550,14 +557,18 @@ impl LspServer {
 
         if let Err(err_msg) = crate::frontend::check(text) {
             let (line, col, msg) = parse_diagnostic_string(&err_msg);
-            let start = Position {
-                line: line.saturating_sub(1),
-                character: col.saturating_sub(1),
-            };
-            let end = Position {
-                line: start.line,
-                character: start.character + 1,
-            };
+            let line = line.saturating_sub(1) as usize;
+            let offset = line_index.line_starts.get(line).map_or(text.len(), |&start| {
+                let end = line_index.line_end(text, line);
+                text[start..end].char_indices()
+                    .nth(col.saturating_sub(1) as usize)
+                    .map_or(end, |(index, _)| start + index)
+            });
+            let start = line_index.offset_to_position(text, offset);
+            let end_offset = text[offset..].chars().next()
+                .filter(|ch| !matches!(ch, '\r' | '\n'))
+                .map_or(offset, |ch| offset + ch.len_utf8());
+            let end = line_index.offset_to_position(text, end_offset);
             out.push(Diagnostic {
                 range: Range { start, end },
                 severity: 1,
@@ -592,6 +603,9 @@ impl LspServer {
         let mut params = BTreeMap::new();
         params.insert("uri".to_owned(), JsonValue::String(uri.to_owned()));
         params.insert("diagnostics".to_owned(), JsonValue::Array(diag_arr));
+        if let Some(doc) = self.documents.get(uri) {
+            params.insert("version".to_owned(), JsonValue::Number(doc.version as f64));
+        }
 
         let mut notif = BTreeMap::new();
         notif.insert("jsonrpc".to_owned(), JsonValue::String("2.0".to_owned()));
@@ -666,11 +680,11 @@ impl LspServer {
                 if let Some(col) = line.find(ident) {
                     let start = Position {
                         line: line_idx as u32,
-                        character: col as u32,
+                        character: line[..col].encode_utf16().count() as u32,
                     };
                     let end = Position {
                         line: line_idx as u32,
-                        character: (col + ident.len()) as u32,
+                        character: line[..col + ident.len()].encode_utf16().count() as u32,
                     };
                     return Some(Location {
                         uri: uri.to_owned(),
@@ -696,8 +710,7 @@ impl LspServer {
             for line in doc.text.lines() {
                 let trimmed = line.trim();
                 if let Some(start_brace) = trimmed.find('{') {
-                    if let Some(end_brace) = trimmed.find('}') {
-                        let inside = &trimmed[start_brace + 1..end_brace];
+                    if let Some((inside, _)) = trimmed[start_brace + 1..].split_once('}') {
                         for field_part in inside.split(',') {
                             if let Some((field, _)) = field_part.split_once(':') {
                                 let f = field.trim();
@@ -791,11 +804,11 @@ impl LspServer {
                     let range = Range {
                         start: Position {
                             line: line_idx as u32,
-                            character: col as u32,
+                            character: line[..col].encode_utf16().count() as u32,
                         },
                         end: Position {
                             line: line_idx as u32,
-                            character: (col + ident.len()) as u32,
+                            character: line[..col + ident.len()].encode_utf16().count() as u32,
                         },
                     };
                     let mut text_edit = BTreeMap::new();

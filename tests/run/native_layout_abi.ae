@@ -1,0 +1,66 @@
+#[repr(C)]
+struct Mixed {
+    flag: bool,
+    val: i64,
+    rate: f64,
+}
+
+enum Status {
+    Idle,
+    Code(i64),
+    Data(i64, bool),
+}
+
+struct Guard {
+    id: i64,
+}
+
+impl Guard {
+    fn drop(&mut self) -> i64 {
+        print(self.id);
+        return 0;
+    }
+}
+
+fn sum_ten(a: i64, b: i64, c: i64, d: i64, e: i64, f: i64, g: i64, h: i64, i: i64, j: i64) -> i64 {
+    return a + b + c + d + e + f + g + h + i + j;
+}
+
+fn transform_mixed(m: Mixed) -> Mixed {
+    return Mixed {
+        flag: !m.flag,
+        val: m.val + 10,
+        rate: m.rate * 2.0,
+    };
+}
+
+fn test_early_drop(early: bool) -> i64 {
+    let g = Guard { id: 777 };
+    if early {
+        return 1;
+    }
+    return 2;
+}
+
+fn main() {
+    print(c_size_of[i64]());
+    print(c_align_of[i64]());
+    print(c_size_of[Mixed]());
+    print(c_align_of[Mixed]());
+    print(c_offset_of[Mixed]("flag"));
+    print(c_offset_of[Mixed]("val"));
+    print(c_offset_of[Mixed]("rate"));
+    print(c_size_of[Status]());
+    print(c_align_of[Status]());
+
+    print(-100 + 250);
+    print(sum_ten(1, 2, 3, 4, 5, 6, 7, 8, 9, 10));
+
+    let m = transform_mixed(Mixed { flag: true, val: 5, rate: 1.5 });
+    print(m.flag);
+    print(m.val);
+    print(m.rate);
+
+    print(test_early_drop(true));
+    print(test_early_drop(false));
+}
