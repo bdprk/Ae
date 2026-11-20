@@ -22,11 +22,13 @@ static size_t cycle_size(long id, int i) {
 }
 
 static unsigned long long expected_total(void) {
-    // Each spawn itself asks for the job block (entry + ctx) and the handle;
-    // the join frees only the handle, and the thread body frees the job, so
-    // the cumulative-ask counter keeps every byte the run requested.
+    // Each spawn itself asks for the job block (entry, context and the pointer
+    // to the handle's failure record) and the handle; the join frees only the
+    // handle, and the thread body frees the job, so the cumulative-ask counter
+    // keeps every byte the run requested. Both blocks are measured by type, not
+    // by field count, so a field added to either one updates the mirror too.
     unsigned long long total =
-        (unsigned long long)THREADS * (2 * sizeof(void *) + sizeof(ae_thread_handle));
+        (unsigned long long)THREADS * (sizeof(ae_thread_job) + sizeof(ae_thread_handle));
     for (long id = 0; id < THREADS; id++) {
         for (int i = 0; i < CYCLES; i++) {
             unsigned long long size = (unsigned long long)cycle_size(id, i);
