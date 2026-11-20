@@ -41,17 +41,17 @@ fn resolve_import(file: &Path, canonical: &Path, import: &str) -> Result<PathBuf
 }
 
 #[allow(dead_code)] // exercised by in-memory unit tests
-pub(super) fn parse_source(file: &str, source: &str, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, generics: &mut Generics, next_id: &mut usize) -> Result<Vec<Function>, String> {
-    let tokens = Rc::new(lex(source)?);
-    let uses = parse_use_headers(file, source, tokens.as_ref()).map_err(|error| error.to_string())?;
+pub(super) fn parse_source(file: &str, source: &str, shared: &mut SharedFunctions, structs: &mut Vec<StructDef>, struct_names: &mut HashMap<String, usize>, enums: &mut Vec<EnumDef>, enum_names: &mut HashMap<String, usize>, generics: &mut Generics, next_id: &mut usize) -> Result<Vec<Function>, FrontendDiagnostic> {
+    let tokens = Rc::new(ae_syntax::lex_diagnostic(source)?);
+    let uses = parse_use_headers(file, source, tokens.as_ref())?;
     if !uses.paths.is_empty() {
-        return Err(error(file, source, 0, "'use' is only supported when compiling a source file"));
+        return Err(ae_syntax::diagnostic(file, source, 0, "'use' is only supported when compiling a source file"));
     }
     let mut p = make_parser(file, source, tokens, shared, structs, struct_names, enums, enum_names, generics);
-    let declarations = p.collect_functions(next_id, uses.body_start).map_err(|e| e.to_string())?;
-    let functions = p.program(&declarations).map_err(|e| e.to_string())?;
+    let declarations = p.collect_functions(next_id, uses.body_start)?;
+    let functions = p.program(&declarations)?;
     if functions.iter().filter(|f| f.is_main).count() != 1 {
-        return Err(error(file, source, 0, "missing main function"));
+        return Err(ae_syntax::diagnostic(file, source, 0, "missing main function"));
     }
     Ok(functions)
 }

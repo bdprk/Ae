@@ -538,45 +538,19 @@ impl LspServer {
     }
 
     pub fn check_text(&self, text: &str) -> Vec<Diagnostic> {
-        let line_index = LineIndex::new(text);
-        let mut out = Vec::new();
-        let lex_res = ae_syntax::lex_diagnostic(text);
-        if let Err(diag) = lex_res {
-            if let Some(label) = &diag.primary {
-                let start = line_index.offset_to_position(text, label.span.range.start);
-                let end = line_index.offset_to_position(text, label.span.range.end);
-                out.push(Diagnostic {
-                    range: Range { start, end },
-                    severity: 1,
-                    code: diag.code,
-                    message: diag.message,
-                });
-            }
-            return out;
-        }
-
-        if let Err(err_msg) = crate::frontend::check(text) {
-            let (line, col, msg) = parse_diagnostic_string(&err_msg);
-            let line = line.saturating_sub(1) as usize;
-            let offset = line_index.line_starts.get(line).map_or(text.len(), |&start| {
-                let end = line_index.line_end(text, line);
-                text[start..end].char_indices()
-                    .nth(col.saturating_sub(1) as usize)
-                    .map_or(end, |(index, _)| start + index)
-            });
-            let start = line_index.offset_to_position(text, offset);
-            let end_offset = text[offset..].chars().next()
-                .filter(|ch| !matches!(ch, '\r' | '\n'))
-                .map_or(offset, |ch| offset + ch.len_utf8());
-            let end = line_index.offset_to_position(text, end_offset);
-            out.push(Diagnostic {
-                range: Range { start, end },
-                severity: 1,
-                code: None,
-                message: msg,
-            });
-        }
-        out
+        let Err(diagnostic) = crate::frontend::check_source_diagnostic(text) else {
+            return Vec::new();
+        };
+        let index = LineIndex::new(text);
+        let offsets = diagnostic.primary.map_or(0..0, |label| label.span.range);
+        let start = index.offset_to_position(text, offsets.start);
+        let end = index.offset_to_position(text, offsets.end);
+        vec![Diagnostic {
+            range: Range { start, end },
+            severity: 1,
+            code: diagnostic.code,
+            message: diagnostic.message,
+        }]
     }
 
     pub fn publish_diagnostics(&self, uri: &str) -> String {
@@ -900,18 +874,6 @@ fn is_ident(s: &str) -> bool {
         return false;
     };
     (first.is_alphabetic() || first == '_') && chars.all(|c| c.is_alphanumeric() || c == '_')
-}
-
-fn parse_diagnostic_string(msg: &str) -> (u32, u32, String) {
-    let parts: Vec<&str> = msg.splitn(4, ':').collect();
-    if parts.len() >= 4 {
-        let line = parts[1].trim().parse::<u32>().unwrap_or(1);
-        let col = parts[2].trim().parse::<u32>().unwrap_or(1);
-        let message = parts[3].trim().to_owned();
-        (line, col, message)
-    } else {
-        (1, 1, msg.to_owned())
-    }
 }
 
 pub fn read_lsp_message(reader: &mut impl BufRead) -> io::Result<Option<String>> {
