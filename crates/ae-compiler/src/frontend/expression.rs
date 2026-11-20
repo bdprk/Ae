@@ -253,42 +253,34 @@ impl Parser<'_> {
     fn clock_timer_expr(&mut self, name: &str) -> Result<(Expr, Type), ae_span::Diagnostic> {
         self.take(Kind::LParen)?;
         match name {
-            "clock_new" => { self.take(Kind::RParen)?; Ok((Expr::ClockNew, Type::Clock)) }
-            "clock_now" => {
-                let (c, ty) = self.expression(0, false)?;
-                if ty != Type::Clock { return Err(self.fail("clock_now expects a clock handle")); }
-                self.take(Kind::RParen)?;
-                Ok((Expr::ClockNow(Box::new(c)), Type::Int))
-            }
-            "clock_advance" => {
-                let (c, ty) = self.expression(0, false)?;
-                if ty != Type::Clock { return Err(self.fail("clock_advance expects a clock handle")); }
-                self.take(Kind::Comma)?;
-                let (d, dty) = self.expression(0, false)?;
-                if dty != Type::Int { return Err(self.fail("clock_advance expects an i64 delta")); }
-                self.take(Kind::RParen)?;
-                Ok((Expr::ClockAdvance(Box::new(c), Box::new(d)), Type::Int))
-            }
+            // ADR-0224 R2.2: the fake clock left the compiler (std/test/fake_clock.ae).
+            // Timers take the current time as a plain value, not a clock handle.
             "timer_new" => {
-                let (c, ty) = self.expression(0, false)?;
-                if ty != Type::Clock { return Err(self.fail("timer_new expects a clock handle")); }
+                let (n, nty) = self.expression(0, false)?;
+                if nty != Type::Int { return Err(self.fail("timer_new expects an i64 now")); }
                 self.take(Kind::Comma)?;
                 let (d, dty) = self.expression(0, false)?;
                 if dty != Type::Int { return Err(self.fail("timer_new expects an i64 delay")); }
                 self.take(Kind::RParen)?;
-                Ok((Expr::TimerNew(Box::new(c), Box::new(d)), Type::Timer))
+                Ok((Expr::TimerNew(Box::new(n), Box::new(d)), Type::Timer))
             }
             "timer_ready" => {
                 let (t, ty) = self.expression(0, false)?;
                 if ty != Type::Timer { return Err(self.fail("timer_ready expects a timer handle")); }
+                self.take(Kind::Comma)?;
+                let (n, nty) = self.expression(0, false)?;
+                if nty != Type::Int { return Err(self.fail("timer_ready expects an i64 now")); }
                 self.take(Kind::RParen)?;
-                Ok((Expr::TimerReady(Box::new(t)), Type::Bool))
+                Ok((Expr::TimerReady(Box::new(t), Box::new(n)), Type::Bool))
             }
             "timer_cancel" => {
                 let (t, ty) = self.expression(0, false)?;
                 if ty != Type::Timer { return Err(self.fail("timer_cancel expects a timer handle")); }
+                self.take(Kind::Comma)?;
+                let (n, nty) = self.expression(0, false)?;
+                if nty != Type::Int { return Err(self.fail("timer_cancel expects an i64 now")); }
                 self.take(Kind::RParen)?;
-                Ok((Expr::TimerCancel(Box::new(t)), Type::Bool))
+                Ok((Expr::TimerCancel(Box::new(t), Box::new(n)), Type::Bool))
             }
             "scope_new" => { self.take(Kind::RParen)?; Ok((Expr::ScopeNew, Type::TaskScope)) }
             "cancel_new" => { self.take(Kind::RParen)?; Ok((Expr::CancelNew, Type::Cancel)) }
@@ -370,7 +362,7 @@ impl Parser<'_> {
             "chan_select" => self.chan_select_expr(line, col),
             "exec_new" => self.exec_new_expr(line, col),
             "exec_run" => self.exec_run_expr(line, col),
-            "clock_new" | "clock_now" | "clock_advance" | "timer_new" | "timer_ready" | "timer_cancel"
+            "timer_new" | "timer_ready" | "timer_cancel"
             | "scope_new" | "cancel_new" | "cancel_trigger" | "cancel_complete" | "cancel_is_set"
             | "pool_new" | "pool_join"
             | "reader_new" | "reader_read" | "reader_read_line" | "reader_eof" => self.clock_timer_expr(name),
@@ -1010,7 +1002,7 @@ impl Parser<'_> {
                                 // closure/pointer values have no byte layout to
                                 // package; owned scalars, strings, vectors,
                                 // maps, structs, and enums move.
-                                if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic | Type::Shared(_) | Type::Mutex | Type::Chan | Type::Exec | Type::Clock | Type::Timer | Type::Cancel | Type::Pool) {
+                                if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::StrVec | Type::VecF | Type::Map | Type::MapF | Type::Struct(_) | Type::Enum(..) | Type::Atomic | Type::Shared(_) | Type::Mutex | Type::Chan | Type::Exec | Type::Timer | Type::Cancel | Type::Pool) {
                                     return Err(self.fail("spawn moves its captures into the thread; this capture's storage cannot cross"));
                                 }
                                 if self.moved.contains(outer_id) {

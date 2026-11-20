@@ -41,8 +41,8 @@ impl Parser<'_> {
             "chan" => Ok(Type::Chan),
             // Copy-semantics single-worker task executor handle (M4.2, ADR-0218).
             "exec" => Ok(Type::Exec),
-            // Copy-semantics controlled monotonic clock and timer handles (M3.2.05 / M4.2.06, ADR-0219).
-            "clock" => Ok(Type::Clock),
+            // Copy-semantics timer handle (M4.2.06, ADR-0219); clock values are
+            // ordinary structs since ADR-0224 R2.2 demoted the fake clock.
             "timer" => Ok(Type::Timer),
             // Owned structured task scope, copy-semantics cancel token & work-stealing pool (ADR-0220).
             "task_scope" => Ok(Type::TaskScope),

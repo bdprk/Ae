@@ -53,8 +53,7 @@ enum Val {
     Chan(usize),
     // Task executor handle (M4.2, ADR-0218).
     Exec(usize),
-    // Controlled monotonic clock and timer handles (M3.2.05 / M4.2.06, ADR-0219).
-    Clock(usize),
+    // Timer handle (M4.2.06, ADR-0219; clock value supplied per call, ADR-0224 R2.2).
     Timer(usize),
     // Structured task scope, cancel token, and work-stealing pool (ADR-0220).
     TaskScope(usize),
@@ -103,9 +102,8 @@ struct Env<'a> {
     chans: Vec<(std::collections::VecDeque<i64>, i64, bool)>,
     // Task executors (M4.2, ADR-0218): FIFO queues of cooperative tasks.
     execs: Vec<std::collections::VecDeque<TaskState>>,
-    // Controlled monotonic clocks (now_ms) and timers (clk_id, deadline, cancelled).
-    clocks: Vec<i64>,
-    timers: Vec<(usize, i64, bool)>,
+    // Timers (ADR-0219/0224): (deadline, cancelled); callers supply the clock value.
+    timers: Vec<(i64, bool)>,
     // Cancel tokens: 0 = active, 1 = cancelled, 2 = completed.
     cancels: Vec<u8>,
     // Scripted buffered byte readers: (src, src_pos, chunk_size, buf, buf_pos, buf_cap).
@@ -127,7 +125,7 @@ pub fn interpret_path(path: &Path) -> Result<(String, u8), (String, String)> {
         }
     }
     let main_fn = main_fn.ok_or_else(|| (String::new(), "program must define a main function".to_owned()))?;
-    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new(), chans: Vec::new(), execs: Vec::new(), clocks: Vec::new(), timers: Vec::new(), cancels: Vec::new(), readers: Vec::new() };
+    let mut env = Env { program: &program, fns, out: String::new(), steps: 0, threads: Vec::new(), atomics: Vec::new(), shared: Vec::new(), chans: Vec::new(), execs: Vec::new(), timers: Vec::new(), cancels: Vec::new(), readers: Vec::new() };
     let mut locals: HashMap<usize, Val> = HashMap::new();
     match eval_stmts(&mut env, &main_fn.body, &mut locals, &mut None) {
         Flow::Next | Flow::Return(_) => Ok((env.out, 0)),
@@ -2318,62 +2316,47 @@ fn eval_expr(
             let (src, src_pos, _chunk, buf, buf_pos, _bcap) = &env.readers[rid];
             Ok(Val::Bool(*buf_pos >= buf.len() && *src_pos >= src.len()))
         }
-        Expr::ClockNew => {
-            env.clocks.push(0);
-            Ok(Val::Clock(env.clocks.len() - 1))
-        }
-        Expr::ClockNow(c) => {
-            let cid = match eval_expr(env, c, locals, caller_locals, false)? {
-                Val::Clock(id) => id,
-                _ => return Err(Flow::Trap("internal: clock_now on a non-clock".to_owned())),
-            };
-            Ok(Val::Int(env.clocks[cid]))
-        }
-        Expr::ClockAdvance(c, d) => {
-            let cid = match eval_expr(env, c, locals, caller_locals, false)? {
-                Val::Clock(id) => id,
-                _ => return Err(Flow::Trap("internal: clock_advance on a non-clock".to_owned())),
-            };
-            let delta = match eval_expr(env, d, locals, caller_locals, false)? {
-                Val::Int(n) if n >= 0 => n,
-                Val::Int(_) => return Err(Flow::Trap("clock_advance delta must be non-negative".to_owned())),
-                _ => return Err(Flow::Trap("internal: clock_advance delta".to_owned())),
-            };
-            env.clocks[cid] += delta;
-            Ok(Val::Int(env.clocks[cid]))
-        }
-        Expr::TimerNew(c, d) => {
-            let cid = match eval_expr(env, c, locals, caller_locals, false)? {
-                Val::Clock(id) => id,
-                _ => return Err(Flow::Trap("internal: timer_new on a non-clock".to_owned())),
+        // ADR-0224 R2.2: timers take the current time as a plain value; the fake
+        // clock lives in std/test/fake_clock.ae.
+        Expr::TimerNew(n, d) => {
+            let now = match eval_expr(env, n, locals, caller_locals, false)? {
+                Val::Int(v) => v,
+                _ => return Err(Flow::Trap("internal: timer_new now".to_owned())),
             };
             let delay = match eval_expr(env, d, locals, caller_locals, false)? {
-                Val::Int(n) if n >= 0 => n,
+                Val::Int(v) if v >= 0 => v,
                 Val::Int(_) => return Err(Flow::Trap("timer_new delay must be non-negative".to_owned())),
                 _ => return Err(Flow::Trap("internal: timer_new delay".to_owned())),
             };
-            let deadline = env.clocks[cid] + delay;
-            env.timers.push((cid, deadline, false));
+            env.timers.push((now + delay, false));
             Ok(Val::Timer(env.timers.len() - 1))
         }
-        Expr::TimerReady(t) => {
+        Expr::TimerReady(t, n) => {
             let tid = match eval_expr(env, t, locals, caller_locals, false)? {
                 Val::Timer(id) => id,
                 _ => return Err(Flow::Trap("internal: timer_ready on a non-timer".to_owned())),
             };
-            let (cid, deadline, cancelled) = env.timers[tid];
-            Ok(Val::Bool(!cancelled && env.clocks[cid] >= deadline))
+            let now = match eval_expr(env, n, locals, caller_locals, false)? {
+                Val::Int(v) => v,
+                _ => return Err(Flow::Trap("internal: timer_ready now".to_owned())),
+            };
+            let (deadline, cancelled) = env.timers[tid];
+            Ok(Val::Bool(!cancelled && now >= deadline))
         }
-        Expr::TimerCancel(t) => {
+        Expr::TimerCancel(t, n) => {
             let tid = match eval_expr(env, t, locals, caller_locals, false)? {
                 Val::Timer(id) => id,
                 _ => return Err(Flow::Trap("internal: timer_cancel on a non-timer".to_owned())),
             };
-            let (cid, deadline, cancelled) = env.timers[tid];
-            if cancelled || env.clocks[cid] >= deadline {
+            let now = match eval_expr(env, n, locals, caller_locals, false)? {
+                Val::Int(v) => v,
+                _ => return Err(Flow::Trap("internal: timer_cancel now".to_owned())),
+            };
+            let (deadline, cancelled) = env.timers[tid];
+            if cancelled || now >= deadline {
                 Ok(Val::Bool(false))
             } else {
-                env.timers[tid].2 = true;
+                env.timers[tid].1 = true;
                 Ok(Val::Bool(true))
             }
         }
