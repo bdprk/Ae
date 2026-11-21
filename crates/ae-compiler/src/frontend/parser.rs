@@ -1401,7 +1401,10 @@ impl<'a> Parser<'a> {
                             return Err(self.fail(&format!("cannot modify '{name}' while it is borrowed")));
                         }
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
-                        let (index, index_ty) = self.expression(0, false)?;
+                        let (index, index_ty) = match self.lower_shared_value(Some(Kind::RBracket), false) {
+                            Some(pair) => pair,
+                            None => self.expression(0, false)?,
+                        };
                         if index_ty != Type::Int { return Err(self.fail("vector index must be an integer")); }
                         self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
                         let (value, value_ty) = match self.lower_shared_value(None, true) {
@@ -1503,7 +1506,10 @@ impl<'a> Parser<'a> {
                                 }
                                 let (line, col) = self.position();
                                 self.take(Kind::LBracket)?;
-                                let (key, key_ty) = self.expression(0, false)?;
+                                let (key, key_ty) = match self.lower_shared_value(Some(Kind::RBracket), false) {
+                                    Some(pair) => pair,
+                                    None => self.expression(0, false)?,
+                                };
                                 if !matches!(key_ty, Type::String | Type::StrView) { return Err(self.fail("map keys must be strings")); }
                                 self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
                                 let (value, value_ty) = match self.lower_shared_value(None, false) {
@@ -1903,7 +1909,10 @@ let (rhs, rhs_ty) = match self.lower_shared_value(None, false) {
                     }
                     let (line, col) = self.position();
                     self.pos += 1; self.take(Kind::LParen)?;
-                    let (condition, ty) = self.expression(0, false)?;
+                    let (condition, ty) = match self.lower_shared_value(Some(Kind::RParen), false) {
+                        Some(pair) => pair,
+                        None => self.expression(0, false)?,
+                    };
                     if ty != Type::Bool { return Err(self.fail("assert requires a boolean condition")); }
                     self.take(Kind::RParen)?; self.take(Kind::Semi)?;
                     result.push(Statement::Assert(condition, line, col));
@@ -1915,7 +1924,10 @@ let (rhs, rhs_ty) = match self.lower_shared_value(None, false) {
                     }
                     self.pos += 1; self.take(Kind::LParen)?;
                     // print borrows its value; only `+` consumes strings.
-                    let (value, ty) = self.expression(0, false)?;
+                    let (value, ty) = match self.lower_shared_value(Some(Kind::RParen), false) {
+                        Some(pair) => pair,
+                        None => self.expression(0, false)?,
+                    };
                     if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView) {
                         return Err(self.fail(&format!("cannot print a value of type {}", ty.name())).with_code("E0206"));
                     }
