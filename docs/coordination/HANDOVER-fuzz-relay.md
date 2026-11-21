@@ -1,6 +1,6 @@
 # Handover — fuzz relay
 
-- Date: 2026-11-21 19:25 +08:00
+- Date: 2026-11-21 19:39 +08:00
 - Branch: `agent/fuzz-relay`
 - Worktree: the dedicated fuzz-relay worktree of this checkout
 - Area claim: docs
@@ -43,7 +43,7 @@
 
 ```powershell
 ssh instabox-evaluate-3 'tail -n 20 ~/ae/bench/results/fuzz-segment-start768241.log'
-wsl -d Ubuntu -- bash -lc 'tail -n 20 ~/ae/bench/results/fuzz-segment-start1092844.log'
+wsl -d Ubuntu -- bash -lc 'tail -n 20 ~/ae/bench/results/fuzz-segment-start1100120.log'
 Get-Content ../../ae/bench/results/2026-11-21-distributed-campaign/windows-baseline-start975869.log -Tail 20
 cargo test --workspace --locked
 ```
@@ -116,3 +116,5 @@ cargo test --workspace --locked
 - evaluate-3 and ai completed a further 16,254 seeds without failures. Their verified successors are 768241 (PID 1026848) and 828827 (PID 1219720).
 
 - Shared lowering now handles named struct constructors. Both platforms passed the full corpus and 36 focused comparisons. Next, consume field access nodes and preserve the compiler field path semantics. The Ubuntu relay remains bounded at 1100000.
+
+- Scalar field reads now lower from shared postfix trees. Next, handle read-only owned-field expressions while preserving the original move diagnostics. Ubuntu reached its ceiling with 7,156 additional successful seeds and resumed at 1100120 (guest PID 14, host PID 26140), stopping before 1200000.
