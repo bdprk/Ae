@@ -770,9 +770,9 @@ impl<'a> Parser<'a> {
                     || arguments.len() != signature.params.len() || arguments.len() > 64
                     || !signature.params.iter().all(|ty| {
                         matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView
-                            | Type::Vec | Type::VecF | Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_) | Type::Struct(_) | Type::StructRef(_) | Type::StructMut(_))
+                            | Type::Vec | Type::VecF | Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_) | Type::Struct(_) | Type::Enum(..) | Type::StructRef(_) | Type::StructMut(_))
                     })
-                    || !matches!(signature.ret, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::VecF | Type::Struct(_))
+                    || !matches!(signature.ret, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::VecF | Type::Struct(_) | Type::Enum(..))
                 {
                     return None;
                 }

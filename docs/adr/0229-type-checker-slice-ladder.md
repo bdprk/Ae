@@ -164,6 +164,8 @@ updates this ADR as slices land.
    Qualified concrete enum constructors also use resolver variant
    targets. Unit and payload variants use the same layout and preserve
    string payload moves and the original arity and type diagnostics.
+   Shared direct calls accept enum temporaries and move owned enum
+   arguments, including unit variants, using the existing move rules.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

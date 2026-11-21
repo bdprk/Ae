@@ -122,3 +122,5 @@ cargo test --workspace --locked
 - Shared string field reads passed the full corpus and 36 focused comparisons on both platforms. Next, consume resolved enum constructor nodes. The seven active relay PIDs were verified live.
 
 - Concrete enum constructors passed the full frontend corpus and 36 focused comparisons on both platforms. Next, handle enum values at shared direct-call boundaries.
+
+- Enum value calls passed the full byte gate and 32 focused comparisons on both platforms. Next, connect shared lowering at the match-subject boundary while preserving pattern ownership.
