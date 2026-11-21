@@ -1,0 +1,1 @@
+Add a file docs/agent-smoke.md that says agent pipeline ok
