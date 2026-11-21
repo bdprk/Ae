@@ -1,6 +1,6 @@
 # Handover — fuzz relay
 
-- Date: 2026-11-21 13:03 +08:00
+- Date: 2026-11-21 13:04 +08:00
 - Branch: `agent/fuzz-relay`
 - Worktree: the dedicated fuzz-relay worktree of this checkout
 - Area claim: docs
@@ -12,7 +12,7 @@
 - Continued evaluate-2 at 622800, eva at 409536 and evaluate-1 at 515799 after their terminal summaries. Windows resumed at 953000 with a fresh log.
 - Added the full frontend differential gate, stabilized generated output and routed the compiler's impl-body parameter handling through the shared method declaration tree (`f8a234a`).
 - Continued evaluate-3 at 722356 and ai at 808862 after their zero-failure terminal summaries.
-- Resumed Ubuntu at 929886 from the last contiguous verdict. The successor is capped at 949999.
+- Ubuntu completed the bounded 929886–949999 segment with zero failures. The next one-hour segment starts at 1000000 and stops before 1100000. Keep Windows below 1000000.
 - Bounded statement-tree nesting and switched loop jumps to shared statement nodes before attaching ownership cleanup and loop targets.
 - The Windows replay completed all 1,080 missing seeds. The 953000 segment then completed 4,969 seeds with zero failures and continued at 957969.
 - Module assembly and resolution now share the entry token stream in `emit-resolve`. The same entry points accept the compiler's existing token slice.
@@ -35,7 +35,7 @@
 
 ```powershell
 ssh instabox-evaluate-3 'tail -n 20 ~/ae/bench/results/fuzz-segment-start722356.log'
-wsl -d Ubuntu -- bash -lc 'tail -n 20 ~/ae/bench/results/fuzz-segment-start929886.log'
+wsl -d Ubuntu -- bash -lc 'tail -n 20 ~/ae/bench/results/fuzz-segment-start1000000.log'
 cargo test --workspace --locked
 ```
 

@@ -222,3 +222,5 @@
 - 2026-11-21 12:57 (+08:00): Scalar binding initializers and return values now lower from shared expression trees when the next token is their semicolon. Windows and Ubuntu each passed 484 workspace tests and byte parity on 50 generated C examples and 646 CLI fixture invocations. Windows also matched 32 focused invocations covering ownership, propagation and diagnostic fallback. Ubuntu candidate fuzz passed 40 seeds.
 
 - 2026-11-21 13:03 (+08:00): Scalar if and while conditions now lower shared expressions and preserve the opening body brace and the existing boolean diagnostic. Windows and Ubuntu passed 484 workspace tests and byte parity on 50 C examples and 646 CLI invocations. Windows also matched 28 targeted invocations. Ubuntu candidate fuzz passed 40 seeds.
+
+- 2026-11-21 13:04 (+08:00): Ubuntu completed all 20,114 seeds through 949999 with zero differential failures and zero environmental verdicts. The same compiler resumed from 1000000 using a one-hour run with an exclusive ceiling of 1100000. Windows retains the range below 1000000.
