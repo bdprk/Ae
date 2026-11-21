@@ -42,7 +42,7 @@
 ## Next step
 
 ```powershell
-ssh instabox-evaluate-3 'tail -n 20 ~/ae/bench/results/fuzz-segment-start757011.log'
+ssh instabox-evaluate-3 'tail -n 20 ~/ae/bench/results/fuzz-segment-start768241.log'
 wsl -d Ubuntu -- bash -lc 'tail -n 20 ~/ae/bench/results/fuzz-segment-start1092844.log'
 Get-Content ../../ae/bench/results/2026-11-21-distributed-campaign/windows-baseline-start975869.log -Tail 20
 cargo test --workspace --locked
@@ -112,3 +112,5 @@ cargo test --workspace --locked
 - Owned struct value arguments and returns now lower from shared calls. Both platforms passed the full corpus and 40 focused comparisons. Next, lower struct constructor nodes from the resolver tree.
 
 - At 19:25, seven terminal logs covered 78,897 seeds with zero differential or environmental failures. Active starts and PIDs: eva 435878 (1342854), evaluate-1 562107 (3693383), evaluate-2 670902 (2051232), evaluate-3 757011 (686040), ai 823803 (816250), Windows 975869 (34036), and Ubuntu 1092844 (guest 11). The evaluate-3 and ai continuations are the next expected to finish.
+
+- evaluate-3 and ai completed a further 16,254 seeds without failures. Their verified successors are 768241 (PID 1026848) and 828827 (PID 1219720).
