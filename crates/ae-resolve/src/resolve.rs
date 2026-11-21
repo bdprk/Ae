@@ -1021,25 +1021,6 @@ impl Walker<'_> {
         }
     }
 
-    /// Byte range of `name` inside `window` (for shapes whose grammar keeps
-    /// the name as a bare string without its own range).
-    fn name_range(&self, name: &str, window: Range<usize>) -> Range<usize> {
-        for token in self.tokens {
-            if token.offset < window.start {
-                continue;
-            }
-            if token.end > window.end {
-                break;
-            }
-            if let Kind::Ident(spelled) = &token.kind {
-                if spelled == name {
-                    return token.offset..token.end;
-                }
-            }
-        }
-        window
-    }
-
     fn block(&mut self, body: &[Statement]) {
         self.blocks.push(Vec::new());
         for statement in body {
@@ -1343,8 +1324,8 @@ impl Walker<'_> {
             }
             ExpressionKind::Atom(_) => None,
             ExpressionKind::Group(inner) | ExpressionKind::Propagate(inner) => self.expr(inner, role),
-            ExpressionKind::AddressCast { binding, mutable, .. } => {
-                let range = self.name_range(binding, expression.range.clone());
+            ExpressionKind::AddressCast { binding, binding_range, mutable, .. } => {
+                let range = binding_range.clone();
                 let mutable = *mutable;
                 let target = self.occurrence(binding, range.clone(), Role::Borrow, Lookup::LocalOnly);
                 if mutable {

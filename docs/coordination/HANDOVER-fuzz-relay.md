@@ -248,3 +248,10 @@ Shared expression lowering consumes pointer-to-pointer casts to scalar
 pointees, preserving the typed cursor location and pointer interning.
 Address casts still use the typed path for borrow and ownership checks.
 Compound pointee types and generic specialization remain compiler work.
+
+## Address casts (2026-11-22)
+
+Shared lowering handles address casts of scalar locals with the resolver
+binding span. Writable addresses require a mutable slot. Mismatched or
+non-scalar types and invalid borrows retain the typed parser diagnostics.
+Generic specialization and compound pointee types remain open.
