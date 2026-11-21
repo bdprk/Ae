@@ -1387,7 +1387,10 @@ impl<'a> Parser<'a> {
                         let (index, index_ty) = self.expression(0, false)?;
                         if index_ty != Type::Int { return Err(self.fail("vector index must be an integer")); }
                         self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
-                        let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
+                        let (value, value_ty) = match self.lower_shared_value(None, true) {
+                            Some(pair) => pair,
+                            None => self.expression(0, true)?,
+                        }; self.take(Kind::Semi)?;
                         if !matches!(value_ty, Type::String | Type::StrView) { return Err(self.fail("vector elements must be string")); }
                         result.push(Statement::StrVecStore(id, index, value, line, col, value_ty == Type::StrView));
                     } else if (ty == Type::Vec || ty == Type::VecF) && *self.current() == Kind::LBracket {
@@ -1416,7 +1419,10 @@ impl<'a> Parser<'a> {
                         }
                         self.take(Kind::Equal)?;
                         let moved_before = self.moved.contains(&id);
-                        let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
+                        let (value, value_ty) = match self.lower_shared_value(None, true) {
+                            Some(pair) => pair,
+                            None => self.expression(0, true)?,
+                        }; self.take(Kind::Semi)?;
                         if value_ty != ty { return Err(self.fail(&format!("cannot assign a {} value to {} variable", value_ty.name(), ty.name()))); }
                         if self.moved.contains(&id) && !moved_before {
                             return Err(moved_self_assignment_hint(self.binding_label(self.error_at(name_offset, &format!("cannot assign to '{name}' because it was moved in the same statement")).with_code("E0102"), id)));
@@ -1454,7 +1460,10 @@ impl<'a> Parser<'a> {
                             // right side — the field owns the bytes after
                             // the write, so the source must forfeit them
                             // (the same rule the scalar assignment uses).
-                            let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
+                            let (value, value_ty) = match self.lower_shared_value(None, true) {
+                            Some(pair) => pair,
+                            None => self.expression(0, true)?,
+                        }; self.take(Kind::Semi)?;
                             if value_ty != fty { return Err(self.fail(&format!("field '{}' must be {}", fname, fty.name()))); }
                             result.push(Statement::FieldStore(id, fname, fty, value, ty));
                             continue;
@@ -1531,7 +1540,10 @@ impl<'a> Parser<'a> {
                             self.take(Kind::Equal)?;
                             // Same consuming rule as the `&mut` write: the
                             // field owns the bytes afterwards.
-                            let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
+                            let (value, value_ty) = match self.lower_shared_value(None, true) {
+                            Some(pair) => pair,
+                            None => self.expression(0, true)?,
+                        }; self.take(Kind::Semi)?;
                             if value_ty != fty { return Err(self.fail(&format!("field '{}' must be {}", fname, fty.name()))); }
                             result.push(Statement::FieldStore(id, fname, fty, value, ty));
                             continue;
@@ -1542,7 +1554,10 @@ impl<'a> Parser<'a> {
                         }
                         self.take(Kind::Equal)?;
                         let moved_before = self.moved.contains(&id);
-                        let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
+                        let (value, value_ty) = match self.lower_shared_value(None, true) {
+                            Some(pair) => pair,
+                            None => self.expression(0, true)?,
+                        }; self.take(Kind::Semi)?;
                         if value_ty != ty { return Err(self.fail(&format!("cannot assign a {} value to {} variable", value_ty.name(), ty.name()))); }
                         if self.moved.contains(&id) && !moved_before {
                             return Err(moved_self_assignment_hint(self.binding_label(self.error_at(name_offset, &format!("cannot assign to '{name}' because it was moved in the same statement")).with_code("E0102"), id)));
@@ -1599,7 +1614,10 @@ impl<'a> Parser<'a> {
                             return Err(self.fail("a view binding cannot be reassigned; declare a new view with 'let'"));
                         }
                         let moved_before = self.moved.contains(&id);
-                        let (value, value_ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
+                        let (value, value_ty) = match self.lower_shared_value(None, true) {
+                            Some(pair) => pair,
+                            None => self.expression(0, true)?,
+                        }; self.take(Kind::Semi)?;
                         if value_ty != ty { return Err(self.fail(&format!("cannot assign a {} value to {} variable '{name}'", value_ty.name(), ty.name()))); }
                         // The right-hand side may not consume the target itself;
                         // assigning to an already-moved variable is a legal
