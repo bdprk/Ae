@@ -1249,7 +1249,10 @@ impl<'a> Parser<'a> {
                     // balanced and buffered output still flushes.
                     if name == "exit" && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
                         self.pos += 2;
-                        let (code, code_ty) = self.expression(0, false)?;
+                        let (code, code_ty) = match self.lower_shared_value(Some(Kind::RParen), false) {
+                            Some(pair) => pair,
+                            None => self.expression(0, false)?,
+                        };
                         if code_ty != Type::Int { return Err(self.fail("exit expects an i64 status code")); }
                         self.take(Kind::RParen)?; self.take(Kind::Semi)?;
                         result.push(Statement::Exit(code, self.live_owned()));
