@@ -5066,6 +5066,24 @@ fn repr_c_layout_queries_and_extern_prototypes() {
 }
 
 #[test]
+fn extern_prototypes_follow_declaration_order() {
+    let dir = unique_temp_dir("extern_prototype_order");
+    let source = dir.join("main.ae");
+    fs::write(&source, "extern \"C\" fn second_by_name() -> i64;\nextern \"C\" fn first_by_name() -> i64;\nfn main() {}\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ae"))
+        .arg("emit-c")
+        .arg(&source)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    let c = String::from_utf8(output.stdout).unwrap();
+    let second = c.find("int64_t second_by_name(void);").unwrap();
+    let first = c.find("int64_t first_by_name(void);").unwrap();
+    assert!(second < first, "foreign declarations changed order");
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn repr_c_attribute_guards_and_extern_struct_rejections() {
     // The attribute's three guards and the E0703 crossing rejection.
     let cases = [

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::rc::Rc;
 mod parser;
@@ -40,7 +40,7 @@ thread_local! {
 // to the C symbol the declaration names. The code emitter and the interpreter
 // both read it; the parser fills it.
 thread_local! {
-    static EXTERN_NAMES: std::cell::RefCell<HashMap<usize, (String, Vec<Type>, Type)>> = std::cell::RefCell::new(HashMap::new());
+    static EXTERN_NAMES: std::cell::RefCell<BTreeMap<usize, (String, Vec<Type>, Type)>> = const { std::cell::RefCell::new(BTreeMap::new()) };
 }
 fn register_extern(id: usize, c_name: String, params: Vec<Type>, ret: Type) {
     EXTERN_NAMES.with(|map| { map.borrow_mut().insert(id, (c_name, params, ret)); });
@@ -55,7 +55,7 @@ fn extern_name(id: usize) -> Option<String> {
 pub(super) fn is_extern_fn(id: usize) -> bool {
     EXTERN_NAMES.with(|map| map.borrow().contains_key(&id))
 }
-// Every declared extern with its C signature, for the prototype emission.
+// Every declared extern in function ID order, for stable prototype emission.
 fn extern_declarations() -> Vec<(String, Vec<Type>, Type)> {
     EXTERN_NAMES.with(|map| map.borrow().values().cloned().collect())
 }

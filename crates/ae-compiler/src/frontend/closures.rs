@@ -84,9 +84,11 @@ impl Parser<'_> {
         // Pass 1 binds every name of the enclosing scope so the body parses
         // once; the walk afterwards says which of them the body actually
         // used, and the moved set says which of those it consumed.
-        let outer: Vec<(String, usize, bool, Type)> = self.names.iter()
+        let mut outer: Vec<(String, usize, bool, Type)> = self.names.iter()
             .map(|(name, &(id, mutable, ty))| (name.clone(), id, mutable, ty))
             .collect();
+        // Keep generated capture slots in binding order across compiler runs.
+        outer.sort_unstable_by_key(|(_, id, _, _)| *id);
         // Both forms start their body range ON the opening token: the pipe
         // form's parameter section consumes the pipe, the Or form's skips
         // Or and the arrow beside it.
