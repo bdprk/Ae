@@ -161,7 +161,8 @@ expansion of `shared_expression_start` and the `values` coverage), not
 this site count.
 
 Per-construct locations (for the next slices):
-- concurrency statements: TaskYield ×2, PoolSpawn ×1, ChanClose ×2
+- concurrency statements: TaskYield ×2, PoolSpawn ×1, ChanClose ×2 — the
+  chan_close handle now lowers through the shared route (relay continuation)
 - stores (value sides): Store ×2, StrVecStore ×2, VecStore ×1,
   FieldStore ×6, Star (pointer store) ×1
 - compound assignment: PercentEqual ×2; plain Assign ×2
