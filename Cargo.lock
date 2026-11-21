@@ -16,6 +16,7 @@ dependencies = [
 name = "ae-compiler"
 version = "0.1.1"
 dependencies = [
+ "ae-resolve",
  "ae-span",
  "ae-syntax",
 ]

@@ -516,6 +516,7 @@ Design rationale and rejected alternatives: `docs/adr/0211-add-remove-dependency
 | Relay recovery at 11:15 (+08:00) | The Ubuntu tool-owned process ended at seed 916624 without a summary. A separate hidden Windows process resumed Ubuntu from seed 916600; progress was independently verified in the Linux process table and log. |
 | Relay checkpoint at 11:41 (+08:00) | The logs readable at collection contained 90,776 distinct seed verdicts, with 0 differential failures and 0 environmental verdicts. The Windows log at the original path had been replaced; earlier observations remain recorded above. An independent Windows process resumed at 953000 and logs to `bench/results/2026-11-21-distributed-campaign/windows-relay-start953000.log`. |
 | evaluate-2 completed | Seed 610700–622799, 12,100 seeds / 0 failures in 3,602.4 s over 3 jobs. The successor starts at 622800. |
+| evaluate-2 successor completed | Seed 622800–634914, 12,115 seeds / 0 failures in 3,602.5 s over 3 jobs. The next segment starts at 634915. |
 | eva completed | Seed 403000–409535, 6,536 seeds / 0 failures in 3,604.3 s over 3 jobs. The successor starts at 409536. |
 | evaluate-1 completed | Seed 504200–515798, 11,599 seeds / 0 failures in 3,602.3 s over 3 jobs. The successor starts at 515799. |
 | evaluate-3 completed | Seed 710351–722355, 12,005 seeds / 0 failures in 3,602.1 s over 3 jobs. The successor starts at 722356. |

@@ -92,9 +92,10 @@ updates this ADR as slices land.
    The `emit-resolve` route uses this path for the entry module.
    `print` and `assert` lower scalar constant expressions from shared
    statement and expression nodes, including grouped and operator
-   expressions. Both paths share operator typing. Arguments with local
-   references and ownership-sensitive values still use typed expression
-   parsing.
+   expressions. Both paths share operator typing. Scalar local reads can
+   use a resolver `DefId` when its definition range matches the active
+   compiler slot. Ownership-sensitive expressions and unresolved reads
+   still use typed expression parsing.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

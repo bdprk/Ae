@@ -412,6 +412,24 @@ impl<'a> Parser<'a> {
         let base = *self.loop_scopes.last().unwrap_or(&0);
         self.scopes[base.min(self.scopes.len())..].iter().flatten().filter(|(_, ty)| ty.owned()).map(|&(id, ty)| (id, ty)).collect()
     }
+    fn resolved_local_reads(&mut self) -> &HashMap<usize, std::ops::Range<usize>> {
+        self.resolved_local_reads.get_or_insert_with(|| {
+            let Ok(module) = ae_resolve::module::parse_module_tokens(&self.file, self.source, &self.tokens) else {
+                return HashMap::new();
+            };
+            let resolution = ae_resolve::resolve::resolve_with_tokens(&module, &[], &self.tokens);
+            resolution.functions.iter()
+                .flat_map(|function| &function.occurrences)
+                .filter(|occurrence| occurrence.role == ae_resolve::Role::Read)
+                .filter_map(|occurrence| {
+                    let definition = resolution.defs.get(occurrence.target?.0 as usize)?;
+                    definition.kind.is_local()
+                        .then(|| (occurrence.range.start, definition.range.clone()))
+                })
+                .collect()
+        })
+    }
+
     fn lower_scalar_expression(
         &mut self,
         expression: ae_syntax::expression::Expression,
@@ -425,6 +443,23 @@ impl<'a> Parser<'a> {
             ExpressionKind::Atom(Kind::Float(value)) => Some((Expr::FloatLit(value), Type::F64)),
             ExpressionKind::Atom(Kind::True) => Some((Expr::BoolLit(true), Type::Bool)),
             ExpressionKind::Atom(Kind::False) => Some((Expr::BoolLit(false), Type::Bool)),
+            ExpressionKind::Atom(Kind::Ident(name)) => {
+                let (id, _, ty) = *self.names.get(&name)?;
+                if !matches!(ty, Type::Int | Type::F64 | Type::Bool) || self.moved.contains(&id)
+                    || self.shadow_ok || !self.subst.is_empty()
+                {
+                    return None;
+                }
+                let offset = expression.range.start;
+                let definition = self.resolved_local_reads().get(&offset)?.clone();
+                // Resolver DefIds identify source definitions. Verify the
+                // active compiler slot belongs to the same declaration.
+                if self.binding_ranges.get(&id)? != &definition {
+                    return None;
+                }
+                let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < offset))?;
+                Some((Expr::Variable(id, ty, token.line, token.column), ty))
+            }
             ExpressionKind::Group(inner) => self.lower_scalar_expression(*inner, remaining),
             ExpressionKind::Prefix { operator, operand } => {
                 let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < expression.range.start))?;
@@ -455,7 +490,7 @@ impl<'a> Parser<'a> {
         };
         if open.kind != Kind::LParen
             || !(matches!(argument.kind, Kind::Number(_) | Kind::Float(_) | Kind::True | Kind::False |
-                Kind::Text(_) | Kind::LParen)
+                Kind::Text(_) | Kind::LParen | Kind::Ident(_))
                 || ae_syntax::operator::prefix_binding_power(&argument.kind).is_some())
         {
             return None;
@@ -1358,5 +1393,40 @@ impl<'a> Parser<'a> {
             return Err(self.fail(&format!("match is not exhaustive: '{}::{}' is not handled", def.name, def.variants[missing].0)));
         }
         Ok(Statement::Match(sid, subject_ty, arms))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scalar_output_matches_resolver_definition_to_live_slot() {
+        let source = "fn main() { let flag = true; print(flag); }";
+        let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
+        let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
+        let binding = source.find("flag").unwrap();
+        let mut functions = SharedFunctions::default();
+        let mut structs = Vec::new();
+        let mut struct_names = HashMap::new();
+        let mut enums = Vec::new();
+        let mut enum_names = HashMap::new();
+        let mut generics = Generics::default();
+        let mut parser = make_parser(
+            "case.ae", source, tokens, &mut functions, &mut structs,
+            &mut struct_names, &mut enums, &mut enum_names, &mut generics,
+        );
+        parser.pos = print_token;
+        parser.names.insert("flag".into(), (7, false, Type::Bool));
+        parser.binding_ranges.insert(7, binding..binding + 4);
+        assert!(matches!(
+            parser.lower_output_from_syntax(),
+            Some(Statement::Print(Printed::Expr(Expr::Variable(7, Type::Bool, _, _)))),
+        ));
+
+        parser.pos = print_token;
+        parser.binding_ranges.insert(7, 0..4);
+        assert!(parser.lower_output_from_syntax().is_none());
+        assert_eq!(parser.pos, print_token);
     }
 }

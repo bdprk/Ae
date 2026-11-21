@@ -214,3 +214,5 @@
 - 2026-11-21 12:38 (+08:00): Shared output statements now lower scalar constant operator trees, including groups, through the compiler's existing prefix and infix type rules. Windows and Ubuntu each passed 483 workspace tests and matched 50 generated C examples and 646 CLI invocations. Windows also matched 27 focused C, MIR, and diagnostic invocations. Ubuntu candidate fuzz smoke passed all 40 seeds.
 
 - 2026-11-21 12:40 (+08:00): The Windows 953000 fuzz segment completed all 4,969 seeds through 957968 with zero differential or environmental verdicts. The new one-hour segment began at 957969 and produced verdicts.
+
+- 2026-11-21 12:47 (+08:00): Shared scalar print and assert trees now lower local reads through resolver DefIds whose declaration ranges match live compiler slots. The regression covers a correct slot and a mismatched declaration. Windows and Ubuntu passed 484 workspace tests and full frontend parity on 50 C examples and 646 CLI invocations. Windows matched 24 focused local-reference invocations. Ubuntu candidate fuzz passed 40 seeds. evaluate-2 completed 12,115 seeds with zero failures and resumed at 634915.

@@ -1130,7 +1130,7 @@ impl Parser<'_> {
         }
         let mut sub = Parser {
             file: def.file.clone(), source: &*def.source, tokens: Rc::clone(&def.tokens), shared_source: Rc::clone(&def.source), pos: def.start,
-            names: HashMap::new(), binding_ranges: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0,
+            names: HashMap::new(), binding_ranges: HashMap::new(), resolved_local_reads: None, next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0,
             loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, unsafe_depth: 0,
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
@@ -1202,7 +1202,7 @@ impl Parser<'_> {
         }
         let mut sub = Parser {
             file: def.file.clone(), source: &*mdef.source, tokens: Rc::clone(&mdef.tokens), shared_source: Rc::clone(&mdef.source), pos: mdef.body_start,
-            names: HashMap::new(), binding_ranges: HashMap::new(), next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0,
+            names: HashMap::new(), binding_ranges: HashMap::new(), resolved_local_reads: None, next_var: 0, expression_depth: 0, expression_nodes: 0, block_depth: 0,
             loop_depth: 0, loop_scopes: Vec::new(), loop_labels: Vec::new(), next_label: 0, unsafe_depth: 0,
             functions: &mut *self.functions, structs: &mut *self.structs, struct_names: &mut *self.struct_names,
             enums: &mut *self.enums, enum_names: &mut *self.enum_names, generics: &mut *self.generics,
