@@ -497,7 +497,9 @@ impl<'a> Parser<'a> {
                 let signature = self.functions.get(&name)?;
                 if signature.file != self.file || signature.extern_c || is_unsafe_fn(signature.id)
                     || arguments.len() != signature.params.len() || arguments.len() > 64
-                    || !signature.params.iter().all(|ty| matches!(ty, Type::Int | Type::Bool | Type::F64))
+                    || !signature.params.iter().all(|ty| {
+                        matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView)
+                    })
                     || !matches!(signature.ret, Type::Int | Type::Bool | Type::F64 | Type::String)
                 {
                     return None;
@@ -505,11 +507,22 @@ impl<'a> Parser<'a> {
                 let (id, params, ret) = (signature.id, signature.params.clone(), signature.ret);
                 let mut args = Vec::with_capacity(arguments.len());
                 for (argument, expected) in arguments.into_iter().zip(params) {
-                    let (value, actual) = self.lower_shared_expression(argument, remaining, nodes_left)?;
-                    if actual != expected {
-                        return None;
-                    }
-                    args.push(Argument::Value(value));
+                    let value = if expected == Type::StrView {
+                        if let ExpressionKind::Atom(Kind::Ident(name)) = &argument.kind {
+                            remaining.checked_sub(1)?;
+                            *nodes_left = nodes_left.checked_sub(1)?;
+                            self.lower_resolved_local(name, argument.range.start)?
+                        } else {
+                            self.lower_shared_expression(argument, remaining, nodes_left)?
+                        }
+                    } else {
+                        self.lower_shared_expression(argument, remaining, nodes_left)?
+                    };
+                    args.push(match (expected, value) {
+                        (Type::StrView, (value, Type::String | Type::StrView)) => Argument::View(value),
+                        (expected, (value, actual)) if expected == actual => Argument::Value(value),
+                        _ => return None,
+                    });
                 }
                 Some((Expr::Call(id, args, ret), ret))
             }

@@ -26,6 +26,7 @@
 - Shared expression lowering now covers string literals and literal-only string operations.
 - Bare owned local reads and moves now use resolver definitions and the compiler's existing borrow checks. Compound owned expressions still use typed lowering.
 - Safe direct calls to same-module functions with scalar arguments and scalar or string results now lower through resolver definitions and compiler signatures.
+- Shared direct calls now accept owned string temporaries and borrow string views from temporaries or resolved locals.
 - All seven lanes were restarted from the next seeds after 93,428 seeds completed with zero differential failures. See the ledger for the ranges.
 - evaluate-2 resumed at 634915 after completing 12,115 seeds with zero failures.
 - eva resumed at 416112 after completing 6,576 seeds with zero failures.
@@ -74,3 +75,7 @@ cargo test --workspace --locked
 
 - `docs/implementation-ledger.md`
 - `AGENT_PROGRESS.md`
+
+## Latest validation
+
+- String call arguments passed 484 tests, 50 generated C example comparisons, and 646 CLI comparisons on Windows and Ubuntu. Windows matched 24 focused invocations. Ubuntu passed 41 generated-C sanitizer and leak checks.

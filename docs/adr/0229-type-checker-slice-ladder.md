@@ -118,8 +118,11 @@ updates this ADR as slices land.
    marking the slot moved. Compound expressions with owned local
    operands continue through the typed path.
    Safe direct calls in the same module also lower through resolver
-   definitions when scalar arguments match the signature and the result
-   is scalar or string. Other call shapes retain the typed call path.
+   definitions when arguments match the signature and the result is
+   scalar or string. The shared route handles scalar arguments, owned
+   string temporaries, and string-view arguments backed by temporaries or
+   resolved locals. Calls that move owned local arguments and other call
+   shapes retain the typed call path.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 
