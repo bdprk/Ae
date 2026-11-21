@@ -24,16 +24,25 @@ def emit(executable: Path, source: Path) -> subprocess.CompletedProcess:
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 
 
-def compare_cli_corpus(binaries: list[Path]) -> tuple[int, int]:
+def compare_cli_corpus(
+    binaries: list[Path], frontend_examples: list[Path] | None = None
+) -> tuple[int, int]:
     suites = (
         ("ui", ("check",), ()),
         ("ui-json", ("check", "--json"), ()),
         ("run", ("run",), ()),
         ("run", ("run",), ("--release",)),
     )
+    if frontend_examples is not None:
+        suites += (
+            ("run", ("emit-c",), ()),
+            ("run", ("emit-mir",), ()),
+            ("examples", ("emit-mir",), ()),
+        )
     compared = failures = 0
     for suite, command, flags in suites:
-        sources = sorted((ROOT / "tests" / suite).glob("*.ae"))
+        sources = (frontend_examples if suite == "examples"
+                   else sorted((ROOT / "tests" / suite).glob("*.ae")))
         if not sources:
             print(f"ERROR missing CLI fixtures in tests/{suite}", file=sys.stderr)
             failures += 1
@@ -71,13 +80,16 @@ def main() -> int:
     parser.add_argument("--candidate", type=Path, required=True, help="compiler built after the change")
     parser.add_argument("--cli-corpus", action="store_true",
                         help="also compare diagnostic and debug/release execution fixtures")
+    parser.add_argument("--frontend-corpus", action="store_true",
+                        help="compare the CLI corpus plus fixture C and example/fixture MIR")
     args = parser.parse_args()
     binaries = [args.baseline.resolve(), args.candidate.resolve()]
     for binary in binaries:
         if not binary.is_file():
             parser.error(f"compiler executable does not exist: {binary}")
-    if args.cli_corpus and binaries[0].samefile(binaries[1]):
-        parser.error("--cli-corpus requires two separately built executables")
+    cli_corpus = args.cli_corpus or args.frontend_corpus
+    if cli_corpus and binaries[0].samefile(binaries[1]):
+        parser.error("corpus comparison requires two separately built executables")
     examples = sorted((ROOT / "examples").glob("*.ae"))
     module_main = ROOT / "examples" / "modules" / "main.ae"
     if not examples or not module_main.is_file():
@@ -106,8 +118,10 @@ def main() -> int:
         else:
             print(f"OK {name} sha256={digest(before.stdout)}")
     print(f"Compared {len(examples)} example entry points; {failures} failed.")
-    if args.cli_corpus:
-        compared, cli_failures = compare_cli_corpus(binaries)
+    if cli_corpus:
+        compared, cli_failures = compare_cli_corpus(
+            binaries, examples if args.frontend_corpus else None
+        )
         print(f"Compared {compared} CLI fixture invocations; {cli_failures} failed.")
         failures += cli_failures
     return 1 if failures else 0

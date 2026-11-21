@@ -61,16 +61,22 @@ class ComparisonTest(unittest.TestCase):
         def invoke(command, **_options):
             release = "--release" in command
             candidate = command[0] == str(self.candidate)
+            mir = command[1] == "emit-mir"
             return subprocess.CompletedProcess(
                 command, 1 if release and candidate else 0,
-                b"changed" if release and candidate else b"expected", b"",
+                b"changed" if release and candidate else b"expected",
+                b"changed" if mir and candidate else b"",
             )
 
         errors = io.StringIO()
         with patch.object(compare, "ROOT", self.root), patch.object(compare.subprocess, "run", side_effect=invoke), \
              contextlib.redirect_stderr(errors):
             self.assertEqual(compare.compare_cli_corpus([self.baseline, self.candidate]), (4, 1))
+            examples = [self.root / "examples" / "one.ae"]
+            self.assertEqual(compare.compare_cli_corpus([self.baseline, self.candidate], examples), (7, 3))
         self.assertIn("tests/run/case.ae --release: returncode, stdout", errors.getvalue())
+        self.assertIn("emit-mir tests/run/case.ae: stderr", errors.getvalue())
+        self.assertIn("emit-mir examples/one.ae: stderr", errors.getvalue())
 
 
 if __name__ == "__main__":

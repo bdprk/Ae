@@ -76,6 +76,10 @@ updates this ADR as slices land.
    tree instead of re-parsing tokens; `emit-c`/`emit-mir`/`run` output must
    be byte-identical on the whole corpus (the strongest gate of the arc, and
    the one that finally closes M0.2.08).
+   Run `python scripts/compare_emit_c.py --baseline <before> --candidate
+   <after> --frontend-corpus` with independently built binaries. The gate
+   compares example C and MIR, run-fixture C and MIR, debug/release execution,
+   and diagnostic fixtures.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 
