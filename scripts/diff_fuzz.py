@@ -657,6 +657,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--seeds", type=int, default=40)
     parser.add_argument("--start", type=int, default=0)
+    parser.add_argument("--stop-before", type=int,
+                        help="exclusive seed limit, also honored in duration mode")
     parser.add_argument("--jobs", type=int, default=min(os.cpu_count() or 2, 8),
                         help="parallel workers; each gets its own files and content cache")
     parser.add_argument("--compile-timeout", type=int, default=120,
@@ -669,6 +671,8 @@ def main() -> int:
                              "continues past any count and the summary reports "
                              "the seeds actually run")
     args = parser.parse_args()
+    if args.stop_before is not None and args.stop_before <= args.start:
+        parser.error("--stop-before must exceed --start")
 
     if not EXE.exists():
         print(f"ae binary missing: {EXE}\nbuild it first: cargo build --workspace", file=sys.stderr)
@@ -686,10 +690,8 @@ def main() -> int:
         seed = args.start
 
         def stream():
-            # Count-driven yields the planned range; duration-driven yields
-            # until the wall clock (M2.13) says stop — the seed number keeps
-            # climbing past any count.
-            while True:
+            # The optional ceiling keeps adjacent campaign ranges disjoint.
+            while args.stop_before is None or seed < args.stop_before:
                 if args.duration > 0:
                     if time.perf_counter() >= deadline:
                         return
