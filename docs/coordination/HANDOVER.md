@@ -6,7 +6,7 @@ disk right now, not what is merged.
 ## Repository
 
 - `main` = `0083348` (CI green on Linux and Windows at that commit)
-- Remote: `git@github-bdprk:bdprk/ae.git`
+- Remote: the repository's `origin`
 - Branches: `main`, `feat/m1-type-system-expansion`, tag `v0.1.0`
 
 ## Uncommitted work in the primary checkout

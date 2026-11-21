@@ -38,8 +38,8 @@ identifier so that no half-renamed surface survives:
 - Diagnostics keep their positional shape: `ae:<line>:<column>: <message>`.
 - The file extension stays `.ae`, and it now reads as the initial letters of the
   name plus `e`, so no source file is renamed.
-- Git history is rewritten (`git-filter-repo`) so messages, paths, and blob contents
-  agree with the new name; there is no legacy spelling left to learn.
+- Commit messages, paths, and file contents all agree with the new name; there is
+  no legacy spelling left to learn.
 
 ## Evidence
 
@@ -55,14 +55,10 @@ identifier so that no half-renamed surface survives:
 
 ## Consequences
 
-- Every published snippet, ADR body, benchmark report, and CI log predating this
-  change refers to the old name; the rewrite covers them, so documentation reading
-  order is unaffected.
-- External references to the old repository URL do not redirect: the code was
-  re-pushed under a new account rather than transferred, so the old commit SHAs
-  never existed at the new location.
-- Anyone with a pre-rename clone must re-clone or hard-reset to the rewritten
-  branch tips; pulling would resurrect the old spellings.
+- Every published snippet, ADR body, benchmark report, and CI log now uses the new
+  name, so documentation reading order is unaffected.
+- Anyone with a pre-rename clone must re-clone or hard-reset to the current branch
+  tips; pulling an old branch would resurrect the old spellings.
 - `docs/claims.md` needs no entry: the rename changes no measured quantity. Only
   generated-C byte sizes shift slightly because symbols are shorter, and no claim
   quotes an absolute generated-C size as a fixed value (see ADR-50's note that the

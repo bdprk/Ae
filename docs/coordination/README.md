@@ -6,7 +6,7 @@ parallel work from turning into interleaved edits.
 ## Layout
 
 ```
-projects-bdprk-副号/
+<repo>/
 ├─ ae/                     primary checkout, stays on main and clean
 ├─ worktrees/<agent>/      one git worktree per agent, branch agent/<agent>
 └─ _cache/ae/target/       shared build directory (configured in .cargo/)

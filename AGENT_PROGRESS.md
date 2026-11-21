@@ -7,7 +7,7 @@
 1. `tests/run/enum_generic_impls.ae` 语义与借用规则一致（修复 value receiver move 问题，如单独绑定或克隆/重新构造），使测试套件中所有 207 个 execution 测试全部通过。
 2. `cargo test` 0 失败，全绿通过。
 3. `agent-failure-log/2026-11-13.md` 记录本次排查原因与教训。
-4. 依据规则 1，将修复与更新 commit 并 push 到 GitHub 远端（2026-11-21 起为 bdprk 账号 `origin/main`；此前历史日志中的 `origin/master` 指当时的主账号分支，不改写）。
+4. 依据规则 1，将修复与更新 commit 并 push 到 GitHub 远端（`origin/main`）。
 
 ## Checklist
 - [x] 1. 修复 `tests/run/enum_generic_impls.ae` 中 string payload 枚举 receiver move 冲突并清理 `declarations.rs` 调试打印
@@ -158,11 +158,11 @@
 - 2026-11-21 03:20 R3a 语句层落地 + 双差分门（Windows 463 绿）：ae-syntax 新增 statement 模块（let/var 绑定、普通与复合赋值含 name[i]/name.field 目标、*p 写入、print/assert/return、if/else-if/else、while、for-in/for-range、match 复用共享 pattern、break/continue、unsafe、带传播标记的效果调用），visit_expressions 统一遍历。移植中抓到一条真实文法规则：条件/可迭代位置的 `{` 开的是语句体而不是结构体字面量（`if x > best { .. }`、`for x in values { .. }`、`if !is_dir { .. }`），且该规则要穿过前缀运算符与二元右操作数、在括号内解除——否则 `a {` 被当成结构体并吞掉整个块。expression 解析器新增位置性 no_struct 模式。双门：全语料 300 个函数体都解析到闭合花括号；编译器接受程序里的 3291 条语句逐条切在 token 边界且不出现非传播调用。编译器仍建类型树，换路是下一步。
 
 - 2026-11-21 03:35 **停点交接**（上一会话收尾，本条保留为历史）。本次会话推进：R2.4a（cancel_*/timer_* 降级到 std/sync + std/task，453 绿）→ ADR-0226（pool_*/exec_*/shared_* 裁定为语言能力阻塞，逐项探针取证）→ R3a 语句层（ae-syntax::statement + 两个差分门，463 绿）。
-- 2026-11-21 02:20 **停点交接（本会话持续推进中，用户要求全部改动留在工作区，未提交未推送）**。HEAD 0083348，工作树未提交路径：新 crate `crates/ae-resolve`（R3b + R3c 第一步，ADR-0227/0228）+ `ae emit-resolve` CLI + `tests/resolve` 快照族 + 执行差分门 + 共享文法修复（接收者拼写、特化/索引回退、no_struct 贯穿、Declaration 记录 pub）+ 例检脚本 cargo-metadata 二进制定位。全绿证据：`cargo test --workspace --locked` 475（14+322+2+11+4+44+9+2+67）、0 警告、verify_generated_c 41/0、diff_fuzz 40/0。会话内完成：R3b 主体 → R3b.2 限定成员 → R3b.3 闭包体 → R3c 第一步（类型拼写分类 + import 跟随）。**下一步（按路线，不要跳）**：(1) R3c 第二步按 ADR-0229 梯子推进——切片 1-4 已落地（绑定类型/表达式推断/参数数/控制流检查，checker 开始拒绝），切片 4 余项（缺失返回路径）已落地，下一片=切片 5 前端切换（语料字节级一致，M0.2.08 随之关闭）；(2) R3b/R3c 留白：接收者方法名（需类型）、import 与 loader 的可见性对齐；(3) R2.4 解锁点仍是用户类型 Copy 语义；(4) R4.1 执法先行已落地（层级测试 + std 全树绿，拆分本身待做）；R5.1 已落地（生成器 + CI 防过期 + 提交纪律检查器，余项=CI 历史接线）。git 恢复后按 bdprk 账号提交推送（SSH 通道已验证：git@github-bdprk → Hi bdprk!，origin=bdprk/Ae，pre-commit/pre-push 守卫已装）。
+- 2026-11-21 02:20 **停点交接（本会话持续推进中，用户要求全部改动留在工作区，未提交未推送）**。HEAD 0083348，工作树未提交路径：新 crate `crates/ae-resolve`（R3b + R3c 第一步，ADR-0227/0228）+ `ae emit-resolve` CLI + `tests/resolve` 快照族 + 执行差分门 + 共享文法修复（接收者拼写、特化/索引回退、no_struct 贯穿、Declaration 记录 pub）+ 例检脚本 cargo-metadata 二进制定位。全绿证据：`cargo test --workspace --locked` 475（14+322+2+11+4+44+9+2+67）、0 警告、verify_generated_c 41/0、diff_fuzz 40/0。会话内完成：R3b 主体 → R3b.2 限定成员 → R3b.3 闭包体 → R3c 第一步（类型拼写分类 + import 跟随）。**下一步（按路线，不要跳）**：(1) R3c 第二步按 ADR-0229 梯子推进——切片 1-4 已落地（绑定类型/表达式推断/参数数/控制流检查，checker 开始拒绝），切片 4 余项（缺失返回路径）已落地，下一片=切片 5 前端切换（语料字节级一致，M0.2.08 随之关闭）；(2) R3b/R3c 留白：接收者方法名（需类型）、import 与 loader 的可见性对齐；(3) R2.4 解锁点仍是用户类型 Copy 语义；(4) R4.1 执法先行已落地（层级测试 + std 全树绿，拆分本身待做）；R5.1 已落地（生成器 + CI 防过期 + 提交纪律检查器，余项=CI 历史接线）。git 恢复后按仓库配置的提交身份推送（origin/main，pre-commit/pre-push 守卫已装）。
 
 - 2026-11-21 03:35 **停点交接**（上一会话收尾，保留为历史）。本次会话推进：R2.4a（cancel_*/timer_* 降级到 std/sync + std/task，453 绿）→ ADR-0226（pool_*/exec_*/shared_* 裁定为语言能力阻塞，逐项探针取证）→ R3a 语句层（ae-syntax::statement + 两个差分门，463 绿）。全部已推送，HEAD 与 origin/main 一致（75ad43b）。**下一步（按路线，不要跳）**：(1) R3a 收口——把编译器 block_inner 的类型化建树改为消费 ae_syntax::statement 的树，需要先补 R3b 的 DefId 解析层，否则表达式仍要靠编译器自己的类型信息；(2) R2.4 剩余项的解锁点是用户类型 Copy 语义（章程 §2.3 已列为 1.0 前必答），做完再回来迁 shared_*，然后才是 exec_*/pool_*（还需函数值可入聚合 + 调度原语下沉）；(3) R4.1 std 分层与 R5.1 台账生成脚本仍未动。当前无红：cargo test --workspace 14+321+3+11+44+2+67=462 项全过（最后一次全量运行），工作树干净。
 
-- 2026-11-21 01:25 R3b（ADR-0227）完成：ae-resolve crate + `ae emit-resolve` + `tests/resolve` 快照族 + 执行差分门，全量 473 绿（Windows 单平台）。途中修正两处设计：局部 DefId 的 base 原来在循环外取值导致每个函数都从同一编号开始（改为每函数取 defs.len()）；dump 的未命中标签按角色区分（写/借用 = unresolved 对应 E0101，值位置 = external 对应 prelude/内建/import 面）。共享文法补接收者拼写（`self`/`&self`/`&mut self`），`tests/run/enum_methods.ae` 由解析失败变为全量解析。本会话按用户指示全部改动留在工作区不提交不推送；bdprk 账号通道已验证（git@github-bdprk SSH：Hi bdprk!，origin=bdprk/Ae，远端零待推）。
+- 2026-11-21 01:25 R3b（ADR-0227）完成：ae-resolve crate + `ae emit-resolve` + `tests/resolve` 快照族 + 执行差分门，全量 473 绿（Windows 单平台）。途中修正两处设计：局部 DefId 的 base 原来在循环外取值导致每个函数都从同一编号开始（改为每函数取 defs.len()）；dump 的未命中标签按角色区分（写/借用 = unresolved 对应 E0101，值位置 = external 对应 prelude/内建/import 面）。共享文法补接收者拼写（`self`/`&self`/`&mut self`），`tests/run/enum_methods.ae` 由解析失败变为全量解析。本会话按用户指示全部改动留在工作区不提交不推送；远端通道已验证（origin/main，远端零待推）。
 
 - 2026-11-21 02:15 R3b 收尾例检（本会话三项切片 R3b/R3b.2/R3b.3 之后的例行证据）：`scripts/verify_generated_c.py` 41 PASS / 0 FAIL，`scripts/diff_fuzz.py` 40 seeds / 0 failures（8 jobs, 5.06 seeds/s）。途中修复两脚本对旧树内 `target/debug` 的硬编码——`.cargo/config.toml` 的 target-dir 已外移，两脚本现经 `cargo metadata` 解析二进制位置（教训入 failure-log）。全量 `cargo test --workspace --locked` 474 绿、0 警告。HEAD 仍在 0083348（全部改动仅在工作区，未提交未推送——用户指示本地优先）。
 
@@ -186,7 +186,7 @@
 
 - 2026-11-21 06:20 R3c 切片 4 余项落地：缺失返回路径分析（CFG-lite）——`return` 出现在语句列任意位置即决（其后不可达）、if 需两臂、match 需全臂、unsafe 递归、while 永不保证（编译器连 `while true` 都拒绝，探针 r2）；诊断落点与编译器一致（函数体闭括号）。快照族新增 return_paths.ae（r1-r5 形状：accepted 全静默、`while true` 与裸落出各 1 条 `function may exit without returning a value`）。全量 479 绿、0 警告。
 
-- 2026-11-21 09:15 WSL2 验证腿建立（用户确认混合策略）：全历史克隆到 WSL 原生文件系统（~/ae，bc238a5，rustc 1.100.0 / gcc 11.4.0 / 16 线程），Windows 工作区未提交状态经补丁+打包精确迁移（24 路径，CRLF 噪声用 git apply 天然规避）；bdprk 身份配置在克隆本地。首轮 Linux 全量：cargo test 481 绿与 Windows 逐数一致（执行套件 1.93s vs Windows 10s）、verify_generated_c --sanitize 41/0、fuzz 40 seeds 0 failures（15.02 seeds/s，Windows 的 2.7 倍）、层级与提交纪律检查一致。已写入 platform-matrix（新行 Linux (WSL2) + 2026-11-21 follow-up）。Windows 树仍是唯一真相源：WSL 未提交未推送；后续 milestone 后 `python scripts/wsl_sync.py` 一次完成同步+双平台验证。
+- 2026-11-21 09:15 WSL2 验证腿建立（用户确认混合策略）：全历史克隆到 WSL 原生文件系统（~/ae，bc238a5，rustc 1.100.0 / gcc 11.4.0 / 16 线程），Windows 工作区未提交状态经补丁+打包精确迁移（24 路径，CRLF 噪声用 git apply 天然规避）；提交身份配置在克隆本地。首轮 Linux 全量：cargo test 481 绿与 Windows 逐数一致（执行套件 1.93s vs Windows 10s）、verify_generated_c --sanitize 41/0、fuzz 40 seeds 0 failures（15.02 seeds/s，Windows 的 2.7 倍）、层级与提交纪律检查一致。已写入 platform-matrix（新行 Linux (WSL2) + 2026-11-21 follow-up）。Windows 树仍是唯一真相源：WSL 未提交未推送；后续 milestone 后 `python scripts/wsl_sync.py` 一次完成同步+双平台验证。
 
 - 2026-11-21 09:20 混合策略工具化：`scripts/wsl_sync.py`——一条命令完成 Windows 工作区→WSL 克隆的精确迁移（tracked diff + `git ls-files --others --exclude-standard` 打包，`git checkout -- .` 先清 CRLF 噪声）并跑完整 Linux 门（cargo build/test、verify_generated_c --sanitize --leak、fuzz 40 seeds、std 层级、提交纪律），原始输出归档 `bench/results/<timestamp>-wsl2/`（符合仓库证据惯例）。首轮实测：481 绿（13 测试二进制汇总）、sanitize+leak 全过、fuzz 16 seeds/s、层级与纪律一致。`--leak` 分配计数扫描（Windows 基线 2 块 vs Linux 0 块）自本日起本地可用。
 
@@ -194,5 +194,5 @@
 
 - 2026-11-21 10:40 推送机制升级（用户指令：每个小节点完成立即推，不要定时）：全局 post-commit 钩子（C:/Users/trevv/.config/git/hooks/post-commit）——每次提交后后台自动 push（有 upstream 才推、绝不 force、失败记 .git/autopush.log），覆盖本机全部仓库；`ae-autopush` 每 15 分钟计划任务保留为兜底（接住钩子失败与 amend/merge）。本提交即为钩子首验。
 
-- 2026-11-21 11:00 R4.1 分类草案：std 261 文件扫描——240 个零宿主内建调用（core-eligible），21 个引用宿主面（bytes/exit/cell_*/io/task 族；bytes 与 cell_* 是否纯到可入 core 留给拆分切片裁决）。已记入台账 R4.1 进度。同日确认接力模式：下一 AI 直接在主树工作（工作目录 D:/用户/trevv/桌面/projects-bdprk-副号/ae；入口 = docs/HANDOFF-20261121.md → AGENT_PROGRESS 停点交接 → 台账）。
+- 2026-11-21 11:00 R4.1 分类草案：std 261 文件扫描——240 个零宿主内建调用（core-eligible），21 个引用宿主面（bytes/exit/cell_*/io/task 族；bytes 与 cell_* 是否纯到可入 core 留给拆分切片裁决）。已记入台账 R4.1 进度。同日确认接力模式：下一 AI 直接在主树工作（仓库根目录；入口 = docs/HANDOFF-20261121.md → AGENT_PROGRESS 停点交接 → 台账）。
 

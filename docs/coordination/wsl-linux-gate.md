@@ -5,7 +5,7 @@ variant because AddressSanitizer is a Linux toolchain feature. That is
 what WSL2 is for:
 
 ```sh
-wsl -d Ubuntu -e bash /mnt/d/用户/trevv/桌面/projects-bdprk-副号/ae/scripts/wsl-linux-gate.sh
+wsl -d Ubuntu -e bash /mnt/d/<path-to-repo>/scripts/wsl-linux-gate.sh
 ```
 
 What it does:
