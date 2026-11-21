@@ -96,6 +96,10 @@ updates this ADR as slices land.
    use a resolver `DefId` when its definition range matches the active
    compiler slot. Ownership-sensitive expressions and unresolved reads
    still use typed expression parsing.
+   Scalar binding initializers and return values also lower from shared
+   expression nodes when the expression ends at its semicolon. Binding,
+   return type, ownership and propagation rules retain their existing
+   diagnostics.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

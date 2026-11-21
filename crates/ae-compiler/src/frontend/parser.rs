@@ -481,6 +481,28 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn scalar_expression_start(kind: &Kind) -> bool {
+        matches!(kind, Kind::Number(_) | Kind::Float(_) | Kind::True | Kind::False |
+            Kind::LParen | Kind::Ident(_))
+            || ae_syntax::operator::prefix_binding_power(kind).is_some()
+    }
+
+    fn lower_scalar_value_before_semicolon(&mut self) -> Option<(Expr, Type)> {
+        if !Self::scalar_expression_start(self.current()) {
+            return None;
+        }
+        let (expression, end) = ae_syntax::expression::parse_expression_tokens(
+            &self.file, self.source, &self.tokens, self.pos, false,
+        ).ok()?;
+        // Propagation and incomplete expressions stay with the typed parser.
+        if self.tokens.get(end)?.kind != Kind::Semi {
+            return None;
+        }
+        let value = self.lower_scalar_expression(expression, 64)?;
+        self.pos = end;
+        Some(value)
+    }
+
     fn lower_output_from_syntax(&mut self) -> Option<Statement> {
         use ae_syntax::expression::ExpressionKind;
         use ae_syntax::statement::{parse_statement_tokens, StatementKind};
@@ -489,9 +511,7 @@ impl<'a> Parser<'a> {
             return None;
         };
         if open.kind != Kind::LParen
-            || !(matches!(argument.kind, Kind::Number(_) | Kind::Float(_) | Kind::True | Kind::False |
-                Kind::Text(_) | Kind::LParen | Kind::Ident(_))
-                || ae_syntax::operator::prefix_binding_power(&argument.kind).is_some())
+            || !(matches!(argument.kind, Kind::Text(_)) || Self::scalar_expression_start(&argument.kind))
         {
             return None;
         }
@@ -571,8 +591,11 @@ impl<'a> Parser<'a> {
                         self.take(Kind::RBracket)?; self.take(Kind::Semi)?;
                         let len = values.len(); (Statement::Array(id, values), Type::Array(len))
                     } else {
-                        // The initializer consumes string values.
-                        let (value, ty) = self.expression(0, true)?;
+                        let (value, ty) = match self.lower_scalar_value_before_semicolon() {
+                            Some(value) => value,
+                            // The typed initializer consumes string values.
+                            None => self.expression(0, true)?,
+                        };
                         // `let x = call()?;` binds the Ok payload and returns the
                         // error to the caller instead of continuing.
                         if *self.current() == Kind::Question {
@@ -970,7 +993,11 @@ impl<'a> Parser<'a> {
                 Kind::Return => {
                     if self.in_main { return Err(self.fail("return is not supported in main")); }
                     self.pos += 1;
-                    let (value, ty) = self.expression(0, true)?; self.take(Kind::Semi)?;
+                    let (value, ty) = match self.lower_scalar_value_before_semicolon() {
+                        Some(value) => value,
+                        None => self.expression(0, true)?,
+                    };
+                    self.take(Kind::Semi)?;
                     if matches!(ty, Type::Closure(_)) { return Err(self.fail("a closure cannot be returned: it has no storage, and its captures live in this frame")); }
                     if ty != self.return_type { return Err(self.fail(&format!("return type must be {}", self.return_type.name())).with_code("E0204")); }
                     // Every live owned value that is not returned is released.
@@ -1402,9 +1429,11 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn main() { let flag = true; print(flag); }";
+        let source = "fn main() { let flag = true; let value = flag; print(flag); }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
+        let initializer = source.find("flag;").unwrap();
+        let initializer_token = tokens.iter().position(|token| token.offset == initializer).unwrap();
         let binding = source.find("flag").unwrap();
         let mut functions = SharedFunctions::default();
         let mut structs = Vec::new();
@@ -1416,9 +1445,20 @@ mod tests {
             "case.ae", source, tokens, &mut functions, &mut structs,
             &mut struct_names, &mut enums, &mut enum_names, &mut generics,
         );
-        parser.pos = print_token;
         parser.names.insert("flag".into(), (7, false, Type::Bool));
         parser.binding_ranges.insert(7, binding..binding + 4);
+        parser.pos = initializer_token;
+        assert!(matches!(
+            parser.lower_scalar_value_before_semicolon(),
+            Some((Expr::Variable(7, Type::Bool, _, _), Type::Bool)),
+        ));
+        assert_eq!(*parser.current(), Kind::Semi);
+
+        parser.pos = print_token + 2;
+        assert!(parser.lower_scalar_value_before_semicolon().is_none());
+        assert_eq!(parser.pos, print_token + 2);
+
+        parser.pos = print_token;
         assert!(matches!(
             parser.lower_output_from_syntax(),
             Some(Statement::Print(Printed::Expr(Expr::Variable(7, Type::Bool, _, _)))),
