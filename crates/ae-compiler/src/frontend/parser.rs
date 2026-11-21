@@ -412,6 +412,48 @@ impl<'a> Parser<'a> {
         let base = *self.loop_scopes.last().unwrap_or(&0);
         self.scopes[base.min(self.scopes.len())..].iter().flatten().filter(|(_, ty)| ty.owned()).map(|&(id, ty)| (id, ty)).collect()
     }
+    fn lower_literal_output(&mut self) -> Result<Option<Statement>, ae_span::Diagnostic> {
+        use ae_syntax::expression::ExpressionKind;
+        use ae_syntax::statement::{parse_statement_tokens, StatementKind};
+
+        let [keyword, open, argument, close, ..] = &self.tokens[self.pos..] else {
+            return Ok(None);
+        };
+        if open.kind != Kind::LParen || close.kind != Kind::RParen {
+            return Ok(None);
+        }
+        let supported = match keyword.kind {
+            Kind::Print => matches!(argument.kind, Kind::Number(_) | Kind::Float(_) | Kind::True | Kind::False | Kind::Text(_)),
+            Kind::Assert => matches!(argument.kind, Kind::True | Kind::False),
+            _ => false,
+        };
+        if !supported {
+            return Ok(None);
+        }
+
+        let (statement, end) = parse_statement_tokens(&self.file, self.source, &self.tokens, self.pos)?;
+        let (line, column) = self.position();
+        self.pos = end;
+        let (argument, assertion) = match statement.kind {
+            StatementKind::Print(argument) => (argument, false),
+            StatementKind::Assert(argument) => (argument, true),
+            _ => unreachable!("literal output statement"),
+        };
+        let value = match argument.kind {
+            ExpressionKind::Atom(Kind::Number(value)) => Expr::Number(value),
+            ExpressionKind::Atom(Kind::Float(value)) => Expr::FloatLit(value),
+            ExpressionKind::Atom(Kind::True) => Expr::BoolLit(true),
+            ExpressionKind::Atom(Kind::False) => Expr::BoolLit(false),
+            ExpressionKind::Atom(Kind::Text(value)) => return Ok(Some(Statement::Print(Printed::Text(value)))),
+            _ => unreachable!("literal output argument"),
+        };
+        Ok(Some(if assertion {
+            Statement::Assert(value, line, column)
+        } else {
+            Statement::Print(Printed::Expr(value))
+        }))
+    }
+
     pub(super) fn block_inner(&mut self) -> Result<Vec<Statement>, ae_span::Diagnostic> {
         self.take(Kind::LBrace)?;
         let mut declared = Vec::new();
@@ -1073,6 +1115,10 @@ impl<'a> Parser<'a> {
                     });
                 }
                 Kind::Assert => {
+                    if let Some(statement) = self.lower_literal_output()? {
+                        result.push(statement);
+                        continue;
+                    }
                     let (line, col) = self.position();
                     self.pos += 1; self.take(Kind::LParen)?;
                     let (condition, ty) = self.expression(0, false)?;
@@ -1081,21 +1127,18 @@ impl<'a> Parser<'a> {
                     result.push(Statement::Assert(condition, line, col));
                 }
                 Kind::Print => {
+                    if let Some(statement) = self.lower_literal_output()? {
+                        result.push(statement);
+                        continue;
+                    }
                     self.pos += 1; self.take(Kind::LParen)?;
-                    let is_bare_text = matches!(self.current(), Kind::Text(_))
-                        && matches!(self.tokens.get(self.pos + 1).map(|t| &t.kind), Some(Kind::RParen));
-                    let printed = if is_bare_text {
-                        if let Kind::Text(text) = self.current().clone() { self.pos += 1; Printed::Text(text) } else { unreachable!() }
-                    } else {
-                        // print borrows its value; only `+` consumes strings.
-                        let (value, ty) = self.expression(0, false)?;
-                        if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView) {
-                            return Err(self.fail(&format!("cannot print a value of type {}", ty.name())).with_code("E0206"));
-                        }
-                        Printed::Expr(value)
-                    };
+                    // print borrows its value; only `+` consumes strings.
+                    let (value, ty) = self.expression(0, false)?;
+                    if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView) {
+                        return Err(self.fail(&format!("cannot print a value of type {}", ty.name())).with_code("E0206"));
+                    }
                     self.take(Kind::RParen)?; self.take(Kind::Semi)?;
-                    result.push(Statement::Print(printed));
+                    result.push(Statement::Print(Printed::Expr(value)));
                 }
                 _ => return Err(self.fail("expected declaration, assignment, print, or '}'")),
             };
