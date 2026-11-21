@@ -11,8 +11,17 @@ disk right now, not what is merged.
 
 ## Uncommitted work in the primary checkout
 
-The primary worktree has 27 dirty entries from an interrupted agent. They
-are coherent enough to be worth keeping; they are **not** committed.
+**UPDATE 2026-11-21 09:55 (+08:00): superseded.** The interrupted agent
+finished and COMMITTED the work as `f704c7a` ("R3b R3c R5.1 R4.1: resolver
+crate, name-level checker, checklist tooling, std layering and WSL2
+verification leg"), pushed to `origin/main`, and left its own handoff at
+`docs/HANDOFF-20261121.md`. Do **not** restore the `refs/wip/20261121-084550`
+snapshot — it is older than the commit. The full handoff checklist lives in
+`docs/HANDOFF-20261121.md`; read that first.
+
+Historical note (the state as of 08:45): the primary worktree had 27 dirty
+entries from an interrupted agent. They were coherent enough to be worth
+keeping; they were **not** committed at the time.
 
 - New crate `crates/ae-resolve/` — resolver pass (ADR-0227), modules and
   imports, plus `src/dump.rs`.
