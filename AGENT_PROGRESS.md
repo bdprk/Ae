@@ -273,3 +273,6 @@
 - 2026-11-21 19:29 (+08:00): The next evaluate-3 and ai segments completed 16,254 more contiguous seeds without failures. Verified successors at 768241 and 828827.
 
 - 2026-11-21 19:34 (+08:00): Named struct constructors now lower from resolver nodes, type and move fields in source order, and produce fields in layout order. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 frontend CLI comparisons, and 36 focused comparisons. Ubuntu passed sanitizer and leak checks. All seven relay PIDs were verified live.
+
+
+- 2026-11-21 19:39 (+08:00): Scalar struct field reads now lower from shared postfix trees, including nested fields and borrowed receivers. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 frontend CLI comparisons, and 32 focused comparisons. Ubuntu passed the sanitizer and leak checks.

@@ -521,6 +521,42 @@ impl<'a> Parser<'a> {
         self.lower_shared_expression(argument, remaining, nodes_left, effects)
     }
 
+    fn lower_shared_field(
+        &mut self,
+        expression: &ae_syntax::expression::Expression,
+        remaining: usize,
+        nodes_left: &mut usize,
+        effects: &mut SharedExpressionEffects,
+    ) -> Option<(Expr, Type)> {
+        use ae_syntax::expression::ExpressionKind;
+
+        let ExpressionKind::Field { base, name } = &expression.kind else {
+            return None;
+        };
+        let remaining = remaining.checked_sub(1)?;
+        let (value, ty) = match &base.kind {
+            ExpressionKind::Atom(Kind::Ident(binding)) => {
+                *nodes_left = nodes_left.checked_sub(1)?;
+                let (value, ty) = self.lower_resolved_local(binding, base.range.start)?;
+                let Expr::Variable(slot, ..) = value else { unreachable!("resolved local") };
+                if effects.moves.contains(&slot) {
+                    return None;
+                }
+                (value, ty)
+            }
+            ExpressionKind::Field { .. } => self.lower_shared_field(base, remaining, nodes_left, effects)?,
+            // The typed parser requires parentheses around a literal receiver.
+            ExpressionKind::Struct { .. } => return None,
+            _ => self.lower_shared_expression(base, remaining, nodes_left, effects)?,
+        };
+        let sid = match ty {
+            Type::Struct(sid) | Type::StructRef(sid) | Type::StructMut(sid) => sid,
+            _ => return None,
+        };
+        let (_, ty) = self.structs.get(sid)?.fields.iter().find(|(field, _)| field == name)?;
+        Some((Expr::Field(Box::new(value), name.clone(), *ty), *ty))
+    }
+
     fn lower_shared_expression(
         &mut self,
         expression: &ae_syntax::expression::Expression,
@@ -530,6 +566,11 @@ impl<'a> Parser<'a> {
     ) -> Option<(Expr, Type)> {
         use ae_syntax::expression::ExpressionKind;
 
+        if matches!(expression.kind, ExpressionKind::Field { .. }) {
+            let (value, ty) = self.lower_shared_field(expression, remaining, nodes_left, effects)?;
+            // Owned fields need the typed parser's context-sensitive move checks.
+            return matches!(ty, Type::Int | Type::F64 | Type::Bool).then_some((value, ty));
+        }
         let remaining = remaining.checked_sub(1)?;
         // The typed Pratt parser charges operands, groups and prefixes.
         // An infix node adds no charge beyond its two operand walks.

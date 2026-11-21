@@ -154,6 +154,10 @@ updates this ADR as slices land.
    lowering checks and moves fields in source order and arranges the
    resulting values by layout order. Constructors with invalid fields
    retain the typed diagnostics.
+   Scalar struct field reads lower from shared postfix nodes. The
+   compiler resolves each field against its typed receiver, including
+   nested fields and shared or mutable references. Moves from owned
+   fields retain the typed parser's context-sensitive checks.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 
