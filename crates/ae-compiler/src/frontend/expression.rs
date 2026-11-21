@@ -297,7 +297,14 @@ impl Parser<'_> {
     }
 
     pub(super) fn expression(&mut self, min: u8, moving: bool) -> Result<(Expr, Type), ae_span::Diagnostic> {
-        if self.expression_depth == 0 { self.expression_nodes = 0; }
+        if self.expression_depth == 0 {
+            self.expression_nodes = 0;
+            if min == 0 {
+                if let Some(value) = self.lower_scalar_value(None) {
+                    return Ok(value);
+                }
+            }
+        }
         if self.expression_depth >= 128 { return Err(self.fail("expression nesting limit exceeded (128)")); }
         self.expression_depth += 1;
         let result = self.expression_inner(min, moving);

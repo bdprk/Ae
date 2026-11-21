@@ -103,6 +103,10 @@ updates this ADR as slices land.
    Scalar `if` and `while` conditions also lower from shared expressions.
    The condition parser preserves the opening brace for the loop or branch
    body, and the type check retains the frontend's boolean diagnostic.
+   The general expression entry also lowers outermost scalar expressions
+   at shared delimiters. This covers scalar assignment values, array
+   store indexes and range starts through the same operator and
+   definition checks.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

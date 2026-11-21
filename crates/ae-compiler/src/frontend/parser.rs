@@ -487,18 +487,24 @@ impl<'a> Parser<'a> {
             || ae_syntax::operator::prefix_binding_power(kind).is_some()
     }
 
-    fn lower_scalar_value_before(&mut self, boundary: Kind) -> Option<(Expr, Type)> {
+    pub(super) fn lower_scalar_value(&mut self, boundary: Option<Kind>) -> Option<(Expr, Type)> {
         if !Self::scalar_expression_start(self.current()) {
             return None;
         }
-        let parse = if boundary == Kind::LBrace {
+        let parse = if boundary == Some(Kind::LBrace) {
             ae_syntax::expression::parse_expression_tokens_no_struct
         } else {
             ae_syntax::expression::parse_expression_tokens
         };
         let (expression, end) = parse(&self.file, self.source, &self.tokens, self.pos, false).ok()?;
-        // Propagation and incomplete expressions stay with the typed parser.
-        if self.tokens.get(end)?.kind != boundary {
+        let next = &self.tokens.get(end)?.kind;
+        // Stop only at delimiters on which both parsers agree. Propagation
+        // and type-dependent postfix syntax stay with the typed parser.
+        let complete = match boundary {
+            Some(expected) => *next == expected,
+            None => matches!(next, Kind::Semi | Kind::Comma | Kind::RParen | Kind::RBracket | Kind::DotDot),
+        };
+        if !complete {
             return None;
         }
         let value = self.lower_scalar_expression(expression, 64)?;
@@ -507,7 +513,7 @@ impl<'a> Parser<'a> {
     }
 
     fn condition(&mut self) -> Result<Expr, ae_span::Diagnostic> {
-        let (condition, ty) = match self.lower_scalar_value_before(Kind::LBrace) {
+        let (condition, ty) = match self.lower_scalar_value(Some(Kind::LBrace)) {
             Some(value) => value,
             None => self.expression(0, false)?,
         };
@@ -605,11 +611,8 @@ impl<'a> Parser<'a> {
                         self.take(Kind::RBracket)?; self.take(Kind::Semi)?;
                         let len = values.len(); (Statement::Array(id, values), Type::Array(len))
                     } else {
-                        let (value, ty) = match self.lower_scalar_value_before(Kind::Semi) {
-                            Some(value) => value,
-                            // The typed initializer consumes string values.
-                            None => self.expression(0, true)?,
-                        };
+                        // The typed initializer consumes string values.
+                        let (value, ty) = self.expression(0, true)?;
                         // `let x = call()?;` binds the Ok payload and returns the
                         // error to the caller instead of continuing.
                         if *self.current() == Kind::Question {
@@ -1007,10 +1010,7 @@ impl<'a> Parser<'a> {
                 Kind::Return => {
                     if self.in_main { return Err(self.fail("return is not supported in main")); }
                     self.pos += 1;
-                    let (value, ty) = match self.lower_scalar_value_before(Kind::Semi) {
-                        Some(value) => value,
-                        None => self.expression(0, true)?,
-                    };
+                    let (value, ty) = self.expression(0, true)?;
                     self.take(Kind::Semi)?;
                     if matches!(ty, Type::Closure(_)) { return Err(self.fail("a closure cannot be returned: it has no storage, and its captures live in this frame")); }
                     if ty != self.return_type { return Err(self.fail(&format!("return type must be {}", self.return_type.name())).with_code("E0204")); }
@@ -1462,18 +1462,18 @@ mod tests {
         parser.binding_ranges.insert(7, binding..binding + 4);
         parser.pos = initializer_token;
         assert!(matches!(
-            parser.lower_scalar_value_before(Kind::Semi),
-            Some((Expr::Variable(7, Type::Bool, _, _), Type::Bool)),
+            parser.expression(0, true).unwrap(),
+            (Expr::Variable(7, Type::Bool, _, _), Type::Bool),
         ));
         assert_eq!(*parser.current(), Kind::Semi);
 
         parser.pos = print_token + 2;
-        assert!(parser.lower_scalar_value_before(Kind::Semi).is_none());
+        assert!(parser.lower_scalar_value(Some(Kind::Semi)).is_none());
         assert_eq!(parser.pos, print_token + 2);
 
         parser.pos = condition_token;
         assert!(matches!(
-            parser.lower_scalar_value_before(Kind::LBrace),
+            parser.lower_scalar_value(Some(Kind::LBrace)),
             Some((Expr::Variable(7, Type::Bool, _, _), Type::Bool)),
         ));
         assert_eq!(*parser.current(), Kind::LBrace);
