@@ -535,6 +535,7 @@ Design rationale and rejected alternatives: `docs/adr/0211-add-remove-dependency
 | Ubuntu reached its seed ceiling | The bounded segment ran all 7,156 seeds from 1092844 through 1099999 with zero differential or environmental failures in 802.6 seconds. The baseline successor at 1100120 produced fresh verdicts and stops before 1200000. Seeds 1100000–1100119 were already used for three candidate smoke segments. |
 | Four terminal segments at 20:25 (+08:00) | The four contiguous ranges covered 36,698 seeds with 0 differential or environmental failures: eva 435878–442315 (6,438) → 442316, evaluate-1 562107–573903 (11,797) → 573904, evaluate-2 670902–682727 (11,826) → 682728, and Windows 975869–982505 (6,637) → 982506. All four successors produced verdicts. Windows is still capped before 1000000. |
 | Two terminal segments at 20:29 (+08:00) | evaluate-3 ran 768241–779892 (11,652) and ai ran 828827–838434 (9,608). All 21,260 seeds succeeded with zero differential or environmental failures. Verified successors at 779893 and 838435. |
+| Ubuntu terminal segment at 20:39 (+08:00) | All 27,418 seeds from 1100120 through 1127537 succeeded with zero differential or environmental failures in 3602.4 seconds. The verified successor starts at 1127538 and stops before 1200000. |
 
 ## Fuzz campaign incident — 2026-11-19 (M2.13)
 

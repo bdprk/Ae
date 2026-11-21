@@ -1,6 +1,6 @@
 # Handover — fuzz relay
 
-- Date: 2026-11-21 20:30 +08:00
+- Date: 2026-11-21 20:39 +08:00
 - Branch: `agent/fuzz-relay`
 - Worktree: the dedicated fuzz-relay worktree of this checkout
 - Area claim: docs
@@ -43,7 +43,7 @@
 
 ```powershell
 ssh instabox-evaluate-3 'tail -n 20 ~/ae/bench/results/fuzz-segment-start779893.log'
-wsl -d Ubuntu -- bash -lc 'tail -n 20 ~/ae/bench/results/fuzz-segment-start1100120.log'
+wsl -d Ubuntu -- bash -lc 'tail -n 20 ~/ae/bench/results/fuzz-segment-start1127538.log'
 Get-Content ../../ae/bench/results/2026-11-21-distributed-campaign/windows-baseline-start982506.log -Tail 20
 cargo test --workspace --locked
 ```
@@ -140,3 +140,5 @@ cargo test --workspace --locked
 - Direct field stores now use indexed target names. Next, route pointer-store targets from the statement tree while preserving unsafe checks and existing diagnostics. The 20:29 batch covered 21,260 successful seeds, with verified successors 779893 (evaluate-3 PID 1381435) and 838435 (ai PID 1516911).
 
 - Pointer-store target indexing passed the full corpus and 24 focused comparisons. Next, replace the remaining local statement dispatch for indexed output and jump nodes with shared statement kinds.
+
+- Ubuntu finished 27,418 successful seeds at 20:39. Its verified successor starts at 1127538 (guest PID 14, host PID 9564), with an exclusive ceiling of 1200000.

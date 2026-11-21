@@ -299,3 +299,6 @@
 - 2026-11-21 20:31 (+08:00): Direct field stores now use indexed assignment target names with the existing typed write checks. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 32 focused comparisons. Ubuntu passed 41 sanitizer and leak checks.
 
 - 2026-11-21 20:37 (+08:00): Raw-pointer stores now reuse the indexed pointer target. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 24 focused comparisons. Ubuntu passed 41 sanitizer and leak checks.
+
+
+- 2026-11-21 20:39 (+08:00): Ubuntu completed 27,418 contiguous seeds with zero differential or environmental failures. Verified the successor at 1127538.
