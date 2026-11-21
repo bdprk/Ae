@@ -204,3 +204,5 @@
 - 2026-11-21 12:01 (+08:00): The compiler and syntax statement parser now share local binding headers, including mutable flags and absolute name ranges. Scope checks and initializer typing stay at their existing positions. Windows and Ubuntu WSL each passed 482 workspace tests, and the frontend gate matched all 50 example C outputs and 646 CLI invocations on both.
 
 - 2026-11-21 12:10 (+08:00): Shared statement parsing now bounds recursive descent across blocks and else-if chains. The depth regression covers acceptance at 64 and a diagnostic at 65. Windows and Ubuntu WSL each passed 483 workspace tests plus byte parity on 50 example C outputs and 646 CLI fixture invocations.
+
+- 2026-11-21 12:15 (+08:00): The compiler now lowers shared break and continue nodes after the existing loop-scope check. Windows and Ubuntu WSL each passed 483 tests and the full frontend corpus with no byte differences. Four additional malformed jump programs matched Windows diagnostic output and exit status. evaluate-3 and ai finished with zero failures and resumed at the next seeds. The interrupted Ubuntu segment logged a contiguous 13,286-seed prefix and resumed at 929886.

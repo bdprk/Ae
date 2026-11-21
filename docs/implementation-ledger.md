@@ -518,6 +518,9 @@ Design rationale and rejected alternatives: `docs/adr/0211-add-remove-dependency
 | evaluate-2 completed | Seed 610700–622799, 12,100 seeds / 0 failures in 3,602.4 s over 3 jobs. The successor starts at 622800. |
 | eva completed | Seed 403000–409535, 6,536 seeds / 0 failures in 3,604.3 s over 3 jobs. The successor starts at 409536. |
 | evaluate-1 completed | Seed 504200–515798, 11,599 seeds / 0 failures in 3,602.3 s over 3 jobs. The successor starts at 515799. |
+| evaluate-3 completed | Seed 710351–722355, 12,005 seeds / 0 failures in 3,602.1 s over 3 jobs. The successor starts at 722356. |
+| ai completed | Seed 804000–808861, 4,862 seeds / 0 failures in 3,602.8 s over 2 jobs. The successor starts at 808862. |
+| Ubuntu resumed at 12:14 (+08:00) | The segment process ended without a summary after 13,286 contiguous verdicts (916600–929885), 0 differential failures and 0 environmental verdicts. The successor starts at 929886 and stops at 949999 to avoid the Windows range. |
 | Windows coverage replay | The 1,080 seeds from 951920 through 952999 run in a bounded replay alongside the disjoint 953000 relay. Outputs are under `bench/results/2026-11-21-distributed-campaign/`. |
 
 ## Fuzz campaign incident — 2026-11-19 (M2.13)
