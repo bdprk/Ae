@@ -292,3 +292,6 @@
 - 2026-11-21 20:18 (+08:00): Fixed-array declarations now lower indexed initializer elements in order with independent complexity budgets. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 36 focused comparisons including the element-limit boundary. Ubuntu passed 41 sanitizer and leak checks. All seven relay processes were verified live.
 
 - 2026-11-21 20:23 (+08:00): Indexed store targets now feed shared index and key operands to the typed write route. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 36 focused comparisons. Ubuntu passed 41 sanitizer and leak checks.
+
+
+- 2026-11-21 20:25 (+08:00): Four terminal segments covered 36,698 contiguous seeds with zero differential or environmental failures. Verified their successors on eva, evaluate-1, evaluate-2 and Windows.

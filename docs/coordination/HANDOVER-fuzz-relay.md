@@ -1,6 +1,6 @@
 # Handover — fuzz relay
 
-- Date: 2026-11-21 19:39 +08:00
+- Date: 2026-11-21 20:25 +08:00
 - Branch: `agent/fuzz-relay`
 - Worktree: the dedicated fuzz-relay worktree of this checkout
 - Area claim: docs
@@ -44,7 +44,7 @@
 ```powershell
 ssh instabox-evaluate-3 'tail -n 20 ~/ae/bench/results/fuzz-segment-start768241.log'
 wsl -d Ubuntu -- bash -lc 'tail -n 20 ~/ae/bench/results/fuzz-segment-start1100120.log'
-Get-Content ../../ae/bench/results/2026-11-21-distributed-campaign/windows-baseline-start975869.log -Tail 20
+Get-Content ../../ae/bench/results/2026-11-21-distributed-campaign/windows-baseline-start982506.log -Tail 20
 cargo test --workspace --locked
 ```
 
@@ -134,3 +134,5 @@ cargo test --workspace --locked
 - Fixed-array initializers passed full corpus and focused parity on both platforms. Next, consume indexed assignment targets and preserve the existing write checks. The three early remote lanes and the Windows lane should be checked for completion around 20:25.
 
 - Indexed store indices and keys passed 36 focused comparisons and the full byte gate on both platforms. Next, consume shared field target nodes for typed stores.
+
+- The 20:25 batch recorded 36,698 seeds and zero failures. Verified successor starts and PIDs: eva 442316 (3642392), evaluate-1 573904 (4049278), evaluate-2 682728 (2410459), and Windows 982506 (12116). Next terminal checks are evaluate-3 768241 (1026848) and ai 828827 (1219720) around 20:29.
