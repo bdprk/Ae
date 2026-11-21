@@ -705,7 +705,7 @@ impl<'a> Parser<'a> {
             }
             ExpressionKind::Atom(Kind::Ident(name)) => {
                 let (_, _, ty) = self.names.get(name)?;
-                if !matches!(ty, Type::Int | Type::F64 | Type::Bool) {
+                if !matches!(ty, Type::Int | Type::F64 | Type::Bool | Type::Closure(_)) {
                     return None;
                 }
                 self.lower_resolved_local(name, expression.range.start)

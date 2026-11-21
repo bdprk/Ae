@@ -234,3 +234,10 @@ R4.1 now places allocation APIs in std/alloc, compiler models in
 std/compiler, and hosted modules in std/std. The import checker covers
 all four ranks. Next frontend slice: the typed spawn callable and its
 capture-inference boundary.
+
+## Spawn callable (2026-11-22)
+
+Named closure references use shared expression lowering, including grouped
+references. The task fixture exercises a grouped closure with a captured
+value. Inline literals still use the compiler's capture inference. The next
+expression constructs to review are pointer casts and specializations.
