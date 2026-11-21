@@ -88,6 +88,8 @@ updates this ADR as slices land.
    tree construction safe before typed body lowering consumes it.
    The compiler also lowers shared `break` and `continue` nodes, after
    checking loop scope and before attaching ownership cleanup and targets.
+   Module assembly and the resolver can borrow the same lexer token stream.
+   The `emit-resolve` route uses this path for the entry module.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

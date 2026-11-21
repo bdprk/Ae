@@ -7,7 +7,9 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::module::{parse_module, Module};
+use ae_syntax::Token;
+
+use crate::module::{parse_module, parse_module_tokens, Module};
 use crate::resolve::Resolution;
 
 /// Load one module plus the transitive closure of its `use` targets, in
@@ -15,9 +17,15 @@ use crate::resolve::Resolution;
 /// visited set; the closure is capped at 64 files so a malformed project
 /// cannot walk the disk forever.
 pub fn load_module_transitive(path: &Path) -> Result<(Module, Vec<(String, Module)>), String> {
+    let (module, imports, _) = load_tokenized_module(path)?;
+    Ok((module, imports))
+}
+
+fn load_tokenized_module(path: &Path) -> Result<(Module, Vec<(String, Module)>, Vec<Token>), String> {
     let source = std::fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let file = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_else(|| path.display().to_string());
-    let module = parse_module(&file, &source).map_err(|diagnostic| diagnostic.to_string())?;
+    let tokens = ae_syntax::lex_diagnostic(&source).map_err(|diagnostic| diagnostic.to_string())?;
+    let module = parse_module_tokens(&file, &source, &tokens).map_err(|diagnostic| diagnostic.to_string())?;
     let mut visited: HashSet<PathBuf> = HashSet::new();
     if let Ok(canonical) = path.canonicalize() {
         visited.insert(canonical);
@@ -25,7 +33,7 @@ pub fn load_module_transitive(path: &Path) -> Result<(Module, Vec<(String, Modul
     let mut imports = Vec::new();
     let base = path.parent().map(|parent| parent.to_path_buf()).unwrap_or_default();
     load_headers(&module, &base, &mut visited, &mut imports, 0)?;
-    Ok((module, imports))
+    Ok((module, imports, tokens))
 }
 
 fn load_headers(
@@ -58,8 +66,8 @@ fn load_headers(
 /// Load and resolve in one call: the entry module plus everything its
 /// headers pull in, `pub` items of the imports visible under free names.
 pub fn load_and_resolve(path: &Path) -> Result<(Module, Resolution), String> {
-    let (module, imports) = load_module_transitive(path)?;
-    let resolution = crate::resolve::resolve_with_imports(&module, &imports);
+    let (module, imports, tokens) = load_tokenized_module(path)?;
+    let resolution = crate::resolve::resolve_with_tokens(&module, &imports, &tokens);
     Ok((module, resolution))
 }
 

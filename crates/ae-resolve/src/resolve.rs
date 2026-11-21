@@ -50,7 +50,18 @@ pub fn resolve(module: &Module) -> Resolution {
 /// of imported enums are visible too (patterns reach them); imported impl
 /// methods are not (dispatch is the type checker's business).
 pub fn resolve_with_imports(module: &Module, imports: &[(String, Module)]) -> Resolution {
-    let mut pass = Pass::new(module);
+    let tokens = ae_syntax::lex_diagnostic(&module.source)
+        .expect("parse_module already lexed this source cleanly");
+    resolve_with_tokens(module, imports, &tokens)
+}
+
+/// Resolve against the same token stream used to assemble the entry module.
+pub fn resolve_with_tokens(
+    module: &Module,
+    imports: &[(String, Module)],
+    tokens: &[Token],
+) -> Resolution {
+    let mut pass = Pass::new(module, tokens);
     pass.items();
     pass.seed_imports(imports);
     pass.spellings();
@@ -60,7 +71,7 @@ pub fn resolve_with_imports(module: &Module, imports: &[(String, Module)]) -> Re
 
 struct Pass<'m> {
     module: &'m Module,
-    tokens: Vec<Token>,
+    tokens: &'m [Token],
     defs: Vec<DefEntry>,
     /// Item name -> def id. First registration wins; a duplicate is a
     /// diagnostic, not a replacement. Impl methods stay out of this table:
@@ -80,9 +91,7 @@ struct Pass<'m> {
 }
 
 impl<'m> Pass<'m> {
-    fn new(module: &'m Module) -> Self {
-        let tokens = ae_syntax::lex_diagnostic(&module.source)
-            .expect("parse_module already lexed this source cleanly");
+    fn new(module: &'m Module, tokens: &'m [Token]) -> Self {
         Pass {
             module,
             tokens,
@@ -111,7 +120,7 @@ impl<'m> Pass<'m> {
     /// Declaration ranges start at `pub`/attribute markers, so the name is
     /// the first matching identifier inside the range.
     fn name_range(&self, name: &str, window: Range<usize>) -> Range<usize> {
-        for token in &self.tokens {
+        for token in self.tokens {
             if token.offset < window.start {
                 continue;
             }
@@ -323,7 +332,7 @@ impl<'m> Pass<'m> {
                             owner,
                             role: SpellingRole::Field,
                             name: field.name.clone(),
-                            spelled: classify(&self.tokens, &items, &params, None, field.ty.clone()),
+                            spelled: classify(self.tokens, &items, &params, None, field.ty.clone()),
                         });
                     }
                 }
@@ -336,7 +345,7 @@ impl<'m> Pass<'m> {
                                 owner,
                                 role: SpellingRole::VariantPayload,
                                 name: variant.name.clone(),
-                                spelled: classify(&self.tokens, &items, &params, None, payload.clone()),
+                                spelled: classify(self.tokens, &items, &params, None, payload.clone()),
                             });
                         }
                     }
@@ -370,7 +379,7 @@ impl<'m> Pass<'m> {
                         owner: fn_def,
                         role: SpellingRole::Parameter,
                         name: parameter.name.clone(),
-                        spelled: classify(&self.tokens, &items, &params, self_name, parameter.ty.clone()),
+                        spelled: classify(self.tokens, &items, &params, self_name, parameter.ty.clone()),
                     });
                 }
                 if let Some(returns) = returns {
@@ -378,7 +387,7 @@ impl<'m> Pass<'m> {
                         owner: fn_def,
                         role: SpellingRole::Return,
                         name: String::new(),
-                        spelled: classify(&self.tokens, &items, &params, self_name, returns.clone()),
+                        spelled: classify(self.tokens, &items, &params, self_name, returns.clone()),
                     });
                 }
             }
@@ -407,13 +416,13 @@ impl<'m> Pass<'m> {
             let declared_return = match &unit.declaration.kind {
                 DeclarationKind::Function { returns: Some(range), .. } if range.start != range.end => {
                     let lookup = |name: &str| self.items.get(name).copied();
-                    Some(classify(&self.tokens, &lookup, &type_params, self_name.as_deref(), range.clone()).spelling)
+                    Some(classify(self.tokens, &lookup, &type_params, self_name.as_deref(), range.clone()).spelling)
                 }
                 _ => None,
             };
             let mut walker = Walker {
                 module: self.module,
-                tokens: &self.tokens,
+                tokens: self.tokens,
                 items: &self.items,
                 variants: &self.variants,
                 methods: &self.methods,
@@ -444,12 +453,12 @@ impl<'m> Pass<'m> {
                         parameter.mutable
                     } else {
                         matches!(
-                            classify(&self.tokens, &|name: &str| self.items.get(name).copied(), &type_params, self_name.as_deref(), parameter.ty.clone()).spelling,
+                            classify(self.tokens, &|name: &str| self.items.get(name).copied(), &type_params, self_name.as_deref(), parameter.ty.clone()).spelling,
                             crate::TypeSpelling::Borrow { mutable: true, .. } | crate::TypeSpelling::Pointer { mutable: true, .. },
                         )
                     };
                     let inferred = if parameter.ty.start != parameter.ty.end {
-                        Some(classify(&self.tokens, &|name: &str| self.items.get(name).copied(), &type_params, self_name.as_deref(), parameter.ty.clone()).spelling)
+                        Some(classify(self.tokens, &|name: &str| self.items.get(name).copied(), &type_params, self_name.as_deref(), parameter.ty.clone()).spelling)
                     } else if parameter.name == "self" {
                         // A receiver's shape comes from the impl target:
                         // by-value owns it, `&self` borrows, `&mut self`

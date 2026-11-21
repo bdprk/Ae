@@ -35,19 +35,24 @@ pub struct Module {
 /// the result is absolute to `source`.
 pub fn parse_module(file: &str, source: &str) -> Result<Module, Diagnostic> {
     let tokens = ae_syntax::lex_diagnostic(source)?;
-    let headers = ae_syntax::module::parse_use_headers(file, source, &tokens)?;
-    let declarations = parse_declaration_tokens(file, source, &tokens, headers.body_start)?;
+    parse_module_tokens(file, source, &tokens)
+}
+
+/// Assemble a module from the lexer-produced tokens for `source`.
+pub fn parse_module_tokens(file: &str, source: &str, tokens: &[Token]) -> Result<Module, Diagnostic> {
+    let headers = ae_syntax::module::parse_use_headers(file, source, tokens)?;
+    let declarations = parse_declaration_tokens(file, source, tokens, headers.body_start)?;
     let mut functions = Vec::new();
     for index in 0..declarations.len() {
         let declaration = &declarations[index];
         match &declaration.kind {
             DeclarationKind::Function { .. } => {
-                let body = body_statements(file, source, &tokens, declaration)?;
+                let body = body_statements(file, source, tokens, declaration)?;
                 functions.push(FnUnit { declaration: declaration.clone(), impl_owner: None, body });
             }
             DeclarationKind::Impl { .. } => {
-                for method in impl_methods(file, source, &tokens, declaration)? {
-                    let body = body_statements(file, source, &tokens, &method)?;
+                for method in impl_methods(file, source, tokens, declaration)? {
+                    let body = body_statements(file, source, tokens, &method)?;
                     functions.push(FnUnit { declaration: method, impl_owner: Some(index), body });
                 }
             }
