@@ -102,6 +102,29 @@ pub fn parse_statement_tokens(
     Ok((statement, parser.pos))
 }
 
+/// The declaration portion of a local binding, before its initializer.
+pub struct BindingHeader<'a> {
+    pub name: &'a str,
+    pub name_range: Range<usize>,
+    pub mutable: bool,
+}
+
+/// Read a `let` or `var` header from the keyword token and stop before `=`.
+/// The compiler checks scope and writability before reading the initializer.
+pub fn parse_binding_header<'a>(
+    file: &str,
+    source: &str,
+    tokens: &'a [Token],
+    start: usize,
+) -> Result<BindingHeader<'a>, Diagnostic> {
+    let token = &tokens[start + 1];
+    Ok(BindingHeader {
+        name: crate::parse_identifier(file, source, token)?,
+        name_range: token.offset..token.end,
+        mutable: tokens[start].kind == Kind::Var,
+    })
+}
+
 struct Parser<'a> {
     file: &'a str,
     source: &'a str,
@@ -150,14 +173,14 @@ impl Parser<'_> {
         let start = self.current().offset;
         let kind = match self.current().kind.clone() {
             Kind::Let | Kind::Var => {
-                let mutable = self.current().kind == Kind::Var;
-                self.pos += 1;
-                let (name, name_range) = self.identifier()?;
+                let BindingHeader { name, name_range, mutable } =
+                    parse_binding_header(self.file, self.source, self.tokens, self.pos)?;
+                self.pos += 2;
                 self.take(Kind::Equal)?;
                 let (initializer, end) = parse_expression_tokens(self.file, self.source, self.tokens, self.pos, true)?;
                 self.pos = end;
                 self.take(Kind::Semi)?;
-                return Ok(Statement { kind: StatementKind::Binding { mutable, name, name_range, initializer }, range: start..self.tokens[self.pos - 1].end });
+                StatementKind::Binding { mutable, name: name.to_owned(), name_range, initializer }
             }
             Kind::Print => {
                 self.pos += 1;

@@ -423,9 +423,13 @@ impl<'a> Parser<'a> {
             self.mut_borrows.clear();
             match self.current().clone() {
                 Kind::Let | Kind::Var => {
-                    let mutable = *self.current() == Kind::Var; self.pos += 1;
-                    let binding_range = self.tokens[self.pos].offset..self.tokens[self.pos].end;
-                    let name = self.identifier()?;
+                    let header = ae_syntax::statement::parse_binding_header(
+                        &self.file, self.source, &self.tokens, self.pos,
+                    )?;
+                    let name = header.name.to_owned();
+                    let binding_range = header.name_range;
+                    let mutable = header.mutable;
+                    self.pos += 2;
                     if RESERVED.contains(&name.as_str()) { return Err(self.fail(&format!("'{name}' is a built-in name and cannot be a variable"))); }
                     if self.struct_names.contains_key(&name) { return Err(self.fail(&format!("'{name}' names a struct and cannot be a variable"))); }
                     if self.enum_names.contains_key(&name) { return Err(self.fail(&format!("'{name}' names an enum and cannot be a variable"))); }
