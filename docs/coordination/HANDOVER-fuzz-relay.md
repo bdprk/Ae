@@ -314,3 +314,9 @@ branches. Scalar loops and their exits remain a separate slice.
 The resolved body route now lowers while, break, and continue, including
 nested loops and the outside-loop diagnostic. Scalar assignment and range
 loops are still on the typed token route.
+
+## Resolved scalar assignments (2026-11-22)
+
+Scalar bodies now lower plain and compound assignment to resolved locals.
+Writable bindings and compound operand types retain the compiler's existing
+checks. Range loops remain the next control-flow slice.

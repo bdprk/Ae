@@ -41,12 +41,28 @@ fn scalar_body_expression(expression: &ae_syntax::expression::Expression, resolv
     }
 }
 
+fn compound_assignment_operator(operator: &Kind) -> Option<Kind> {
+    match operator {
+        Kind::PlusEqual => Some(Kind::Plus),
+        Kind::MinusEqual => Some(Kind::Minus),
+        Kind::StarEqual => Some(Kind::Star),
+        Kind::SlashEqual => Some(Kind::Slash),
+        Kind::PercentEqual => Some(Kind::Percent),
+        _ => None,
+    }
+}
+
 fn scalar_body_statement(statement: &ae_syntax::statement::Statement, resolved: &ResolvedExpressions) -> bool {
     use ae_syntax::statement::{ElseBranch, StatementKind};
     match &statement.kind {
         StatementKind::Binding { name_range, initializer, .. } => {
             resolved.scalar_definitions.contains_key(&name_range.start)
                 && scalar_body_expression(initializer, resolved)
+        }
+        StatementKind::Assign { target, value, .. } => {
+            matches!(target.kind, ae_syntax::expression::ExpressionKind::Atom(Kind::Ident(_)))
+                && resolved.scalar_writes.contains_key(&target.range.start)
+                && scalar_body_expression(value, resolved)
         }
         StatementKind::Return(value) => scalar_body_expression(value, resolved),
         StatementKind::If { condition, then_body, else_body } => {
@@ -500,6 +516,9 @@ impl<'a> Parser<'a> {
                             expressions.scalar_reads.insert(occurrence.range.start, definition.id);
                         }
                     }
+                    ae_resolve::Role::Write if definition.kind.is_local() => {
+                        expressions.scalar_writes.insert(occurrence.range.start, definition.id);
+                    }
                     ae_resolve::Role::Call if definition.kind == ae_resolve::DefKind::Function
                         && definition.owner.is_none() && definition.name == occurrence.name =>
                     {
@@ -675,6 +694,39 @@ impl<'a> Parser<'a> {
                 self.names.insert(name.clone(), (slot, *mutable, ty));
                 self.binding_ranges.insert(slot, name_range.clone());
                 Statement::Declare(slot, value)
+            }
+            StatementKind::Assign { target, operator, value } => {
+                let ae_syntax::expression::ExpressionKind::Atom(Kind::Ident(name)) = &target.kind else {
+                    unreachable!("scalar assignment eligibility");
+                };
+                let def = self.resolved_expressions().scalar_writes[&target.range.start];
+                let (slot, ty) = slots[&def];
+                if !self.names[name].1 {
+                    self.seek_scalar_offset(target.range.start);
+                    let diagnostic = self.fail(&format!("cannot assign to immutable variable '{name}'")).with_code("E0103");
+                    return Err(self.immutable_binding_error(diagnostic, slot));
+                }
+                self.seek_scalar_offset(target.range.end);
+                let compound = compound_assignment_operator(operator);
+                if let Some(op) = &compound {
+                    if ty != Type::Int && !(ty == Type::F64 && *op != Kind::Percent) {
+                        return Err(self.fail(&format!("compound assignment is not supported for type '{}'", ty.name())));
+                    }
+                }
+                self.seek_scalar_offset(value.range.start);
+                let (line, column) = self.position();
+                let (rhs, rhs_ty) = self.lower_scalar_body_expression(value, slots)?;
+                self.seek_scalar_offset(statement.range.end);
+                if rhs_ty != ty {
+                    return Err(self.fail(&format!("cannot assign a {} value to {} variable '{name}'", rhs_ty.name(), ty.name())));
+                }
+                let value = if let Some(op) = compound {
+                    let lhs = Expr::Variable(slot, ty, line, column);
+                    Expr::Binary(Box::new(lhs), op, Box::new(rhs), line, column, ty)
+                } else {
+                    rhs
+                };
+                Statement::Assign(slot, value, false)
             }
             StatementKind::Return(value) => {
                 let (value, ty) = self.lower_scalar_body_expression(value, slots)?;
@@ -1898,14 +1950,7 @@ let (rhs, rhs_ty) = match self.lower_shared_value(None, false) {
                         if self.is_borrowed(id) {
                             self.deferred_write_conflicts.push((id, name_offset, name.clone(), "assign to", None));
                         }
-                        let compound_op = match *self.current() {
-                            Kind::PlusEqual => Some(Kind::Plus),
-                            Kind::MinusEqual => Some(Kind::Minus),
-                            Kind::StarEqual => Some(Kind::Star),
-                            Kind::SlashEqual => Some(Kind::Slash),
-                            Kind::PercentEqual => Some(Kind::Percent),
-                            _ => None,
-                        };
+                        let compound_op = compound_assignment_operator(self.current());
                         if let Some(op) = compound_op {
                             let allowed = matches!(ty, Type::Int)
                                 || (matches!(ty, Type::F64) && op != Kind::Percent)
@@ -2440,7 +2485,7 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn scalar() -> bool { let local = (2 + 3) * 4; return local == 20; } fn mismatch() -> i64 { return true; } fn branches() -> i64 { if false { let same = 1; return same; } else if true { let same = 2; return same; } else { let same = 3; return same; } } fn loops() -> i64 { while true { while false { continue; } break; } return 7; } fn bad_loop() -> i64 { continue; return 0; } fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; task_spawn(ex, || -> i64 { return 0; }); let closure = |x: i64| -> bool { return x == 0; }; }";
+        let source = "fn scalar() -> bool { let local = (2 + 3) * 4; return local == 20; } fn mismatch() -> i64 { return true; } fn branches() -> i64 { if false { let same = 1; return same; } else if true { let same = 2; return same; } else { let same = 3; return same; } } fn loops() -> i64 { while true { while false { continue; } break; } return 7; } fn bad_loop() -> i64 { continue; return 0; } fn countdown() -> i64 { var n = 4; n = 2; while n > 0 { n -= 1; } return n; } fn frozen() -> i64 { let n = 1; n = 2; return n; } fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; task_spawn(ex, || -> i64 { return 0; }); let closure = |x: i64| -> bool { return x == 0; }; }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
         let call_token = tokens.iter().position(|token| token.offset == source.find("print(compute").unwrap()).unwrap();
@@ -2492,6 +2537,21 @@ mod tests {
         let error = parser.lower_resolved_scalar_body().expect("resolved loop error").err().unwrap();
         assert_eq!(error.message, "'continue' outside of a loop");
         assert_eq!(parser.loop_depth, 0);
+
+        parser.seek_scalar_offset(source.find("{ var n = 4").unwrap());
+        let body = parser.lower_resolved_scalar_body().expect("resolved assignments").unwrap();
+        let [Statement::Declare(slot, _), Statement::Assign(plain, Expr::Number(2), false), Statement::While(_, loop_body), Statement::Return(Expr::Variable(read, Type::Int, ..), _)] = body.as_slice() else {
+            panic!("expected scalar assignments");
+        };
+        assert_eq!(slot, plain);
+        assert_eq!(slot, read);
+        assert!(matches!(loop_body.as_slice(), [Statement::Assign(compound, Expr::Binary(_, Kind::Minus, _, _, _, Type::Int), false)] if compound == slot));
+
+        parser.seek_scalar_offset(source.find("{ let n = 1").unwrap());
+        let error = parser.lower_resolved_scalar_body().expect("resolved immutable assignment").err().unwrap();
+        assert_eq!(error.message, "cannot assign to immutable variable 'n'");
+        assert_eq!(error.secondary.len(), 1);
+        parser.names.remove("n");
 
         for prefix in [
             "choose[",
