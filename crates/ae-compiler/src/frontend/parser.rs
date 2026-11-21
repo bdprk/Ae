@@ -412,21 +412,30 @@ impl<'a> Parser<'a> {
         let base = *self.loop_scopes.last().unwrap_or(&0);
         self.scopes[base.min(self.scopes.len())..].iter().flatten().filter(|(_, ty)| ty.owned()).map(|&(id, ty)| (id, ty)).collect()
     }
-    fn resolved_local_reads(&mut self) -> &HashMap<usize, std::ops::Range<usize>> {
-        self.resolved_local_reads.get_or_insert_with(|| {
+    fn resolved_expressions(&mut self) -> &ResolvedExpressions {
+        self.resolved_expressions.get_or_insert_with(|| {
+            let mut expressions = ResolvedExpressions::default();
             let Ok(module) = ae_resolve::module::parse_module_tokens(&self.file, self.source, &self.tokens) else {
-                return HashMap::new();
+                return expressions;
             };
             let resolution = ae_resolve::resolve::resolve_with_tokens(&module, &[], &self.tokens);
-            resolution.functions.iter()
-                .flat_map(|function| &function.occurrences)
-                .filter(|occurrence| occurrence.role == ae_resolve::Role::Read)
-                .filter_map(|occurrence| {
-                    let definition = resolution.defs.get(occurrence.target?.0 as usize)?;
-                    definition.kind.is_local()
-                        .then(|| (occurrence.range.start, definition.range.clone()))
-                })
-                .collect()
+            for occurrence in resolution.functions.iter().flat_map(|function| &function.occurrences) {
+                let Some(definition) = occurrence.target.and_then(|id| resolution.defs.get(id.0 as usize)) else {
+                    continue;
+                };
+                match occurrence.role {
+                    ae_resolve::Role::Read if definition.kind.is_local() => {
+                        expressions.local_reads.insert(occurrence.range.start, definition.range.clone());
+                    }
+                    ae_resolve::Role::Call if definition.kind == ae_resolve::DefKind::Function
+                        && definition.owner.is_none() && definition.name == occurrence.name =>
+                    {
+                        expressions.direct_calls.insert(occurrence.range.start);
+                    }
+                    _ => {}
+                }
+            }
+            expressions
         })
     }
 
@@ -435,7 +444,7 @@ impl<'a> Parser<'a> {
         if self.moved.contains(&id) || self.shadow_ok || !self.subst.is_empty() {
             return None;
         }
-        let definition = self.resolved_local_reads().get(&offset)?.clone();
+        let definition = self.resolved_expressions().local_reads.get(&offset)?.clone();
         // Match the resolver's source definition to the active compiler slot.
         if self.binding_ranges.get(&id)? != &definition {
             return None;
@@ -476,6 +485,34 @@ impl<'a> Parser<'a> {
                 self.lower_resolved_local(&name, expression.range.start)
             }
             ExpressionKind::Group(inner) => self.lower_shared_expression(*inner, remaining, nodes_left),
+            ExpressionKind::Call { callee, arguments } => {
+                let ExpressionKind::Atom(Kind::Ident(name)) = callee.kind else {
+                    return None;
+                };
+                if self.names.contains_key(&name) || RESERVED.contains(&name.as_str())
+                    || !self.resolved_expressions().direct_calls.contains(&callee.range.start)
+                {
+                    return None;
+                }
+                let signature = self.functions.get(&name)?;
+                if signature.file != self.file || signature.extern_c || is_unsafe_fn(signature.id)
+                    || arguments.len() != signature.params.len() || arguments.len() > 64
+                    || !signature.params.iter().all(|ty| matches!(ty, Type::Int | Type::Bool | Type::F64))
+                    || !matches!(signature.ret, Type::Int | Type::Bool | Type::F64 | Type::String)
+                {
+                    return None;
+                }
+                let (id, params, ret) = (signature.id, signature.params.clone(), signature.ret);
+                let mut args = Vec::with_capacity(arguments.len());
+                for (argument, expected) in arguments.into_iter().zip(params) {
+                    let (value, actual) = self.lower_shared_expression(argument, remaining, nodes_left)?;
+                    if actual != expected {
+                        return None;
+                    }
+                    args.push(Argument::Value(value));
+                }
+                Some((Expr::Call(id, args, ret), ret))
+            }
             ExpressionKind::Prefix { operator, operand } => {
                 let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < expression.range.start))?;
                 let position = (token.line, token.column);
@@ -1484,14 +1521,19 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn main() { let flag = true; let value = flag; if flag {} print(flag); }";
+        let source = "fn compute(x: i64) -> i64 { return x; } fn main() { let flag = true; let value = flag; if flag {} print(flag); print(compute(2)); }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
+        let call_token = tokens.iter().rposition(|token| token.kind == Kind::Print).unwrap();
         let condition_token = tokens.iter().position(|token| token.kind == Kind::If).unwrap() + 1;
         let initializer = source.find("flag;").unwrap();
         let initializer_token = tokens.iter().position(|token| token.offset == initializer).unwrap();
         let binding = source.find("flag").unwrap();
         let mut functions = SharedFunctions::default();
+        functions.insert("compute".into(), Signature {
+            id: 9, params: vec![Type::Int], ret: Type::Int, file: "case.ae".into(),
+            public: false, extern_c: false,
+        });
         let mut structs = Vec::new();
         let mut struct_names = HashMap::new();
         let mut enums = Vec::new();
@@ -1547,5 +1589,15 @@ mod tests {
             Ok(_) => panic!("nested scalar exceeded the expression budget"),
         };
         assert_eq!(error.message, "expression complexity limit exceeded (128)");
+
+        parser.pos = call_token;
+        assert!(matches!(
+            parser.lower_output_from_syntax(),
+            Some(Statement::Print(Printed::Expr(Expr::Call(9, _, Type::Int)))),
+        ));
+        parser.pos = call_token;
+        parser.functions.get_mut("compute").unwrap().extern_c = true;
+        assert!(parser.lower_output_from_syntax().is_none());
+        assert_eq!(parser.pos, call_token);
     }
 }
