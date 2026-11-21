@@ -521,7 +521,8 @@ Design rationale and rejected alternatives: `docs/adr/0211-add-remove-dependency
 | evaluate-3 completed | Seed 710351–722355, 12,005 seeds / 0 failures in 3,602.1 s over 3 jobs. The successor starts at 722356. |
 | ai completed | Seed 804000–808861, 4,862 seeds / 0 failures in 3,602.8 s over 2 jobs. The successor starts at 808862. |
 | Ubuntu resumed at 12:14 (+08:00) | The segment process ended without a summary after 13,286 contiguous verdicts (916600–929885), 0 differential failures and 0 environmental verdicts. The successor starts at 929886 and stops at 949999 to avoid the Windows range. |
-| Windows coverage replay | The 1,080 seeds from 951920 through 952999 run in a bounded replay alongside the disjoint 953000 relay. Outputs are under `bench/results/2026-11-21-distributed-campaign/`. |
+| Windows coverage replay completed | The bounded replay covered all 1,080 seeds from 951920 through 952999 with 0 differential failures and 0 environmental verdicts in 1,613.9 s over 2 jobs. The 953000 relay continued in parallel. |
+| Seed ceilings | `diff_fuzz.py --stop-before <seed>` now caps both count and duration runs. A one-hour run can stop at the next lane's start without submitting an overlapping seed. |
 
 ## Fuzz campaign incident — 2026-11-19 (M2.13)
 

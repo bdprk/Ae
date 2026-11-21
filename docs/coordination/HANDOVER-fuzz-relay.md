@@ -1,6 +1,6 @@
 # Handover — fuzz relay
 
-- Date: 2026-11-21 12:14 +08:00
+- Date: 2026-11-21 12:25 +08:00
 - Branch: `agent/fuzz-relay`
 - Worktree: the dedicated fuzz-relay worktree of this checkout
 - Area claim: docs
@@ -14,6 +14,8 @@
 - Continued evaluate-3 at 722356 and ai at 808862 after their zero-failure terminal summaries.
 - Resumed Ubuntu at 929886 from the last contiguous verdict. The successor is capped at 949999.
 - Bounded statement-tree nesting and switched loop jumps to shared statement nodes before attaching ownership cleanup and loop targets.
+- The bounded Windows replay completed all 1,080 missing seeds with zero failures. The 953000 segment continues.
+- Module assembly and resolution now share the entry token stream in `emit-resolve`. The same entry points accept the compiler's existing token slice.
 
 ## What is half-done
 
@@ -35,13 +37,14 @@ cargo test --workspace --locked
 - See the November 21 distributed regression campaign entry for lane starts and initial counts.
 - Windows and Ubuntu WSL each passed 482 workspace tests and matched the pre-method compiler byte for byte on 50 generated C examples and 646 CLI invocations.
 - Both platforms passed 483 workspace tests and byte parity on the same corpus after the statement depth and loop-jump changes.
+- Both platforms passed the same suite and corpus after token-stream reuse. Windows also matched the previous resolver's output on eight `emit-resolve` inputs, including a module with imports.
 - Ubuntu generated C passed 41 sanitizer/leak cases with zero leaked blocks.
 
 ## Risks and blockers
 
 - Multiple lanes replay seed ranges. Terminal summaries establish completion and elapsed time.
 - Ubuntu is the validation distribution. The default docker-desktop distribution fails to mount its VHD.
-- The original Windows log was replaced while its producer was live. Use the earlier checkpoint and the new log to reconcile coverage. A bounded Windows replay is covering 951920 through 952999.
+- The original Windows log was replaced while its producer was live. Use the earlier checkpoint and the completed bounded replay to reconcile coverage.
 
 ## Files touched
 
