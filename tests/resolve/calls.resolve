@@ -1,0 +1,43 @@
+resolve calls.ae
+use headers: none
+items:
+#0 function apply @3..8
+#1 function bump @114..118
+#2 function main @212..216
+types:
+#0 apply:
+  16..19 parameter value -> i64
+  24..27 return-> i64
+#1 bump:
+  128..136 parameter pointer -> *mut i64
+  141..144 return-> i64
+#0 apply:
+  51..54 closure-parameter x -> i64
+  59..62 closure-return-> i64
+locals in #0 apply:
+#3 parameter value @9..14 owner=#0 = i64
+#4 closure-parameter x @48..49 owner=#0 = i64
+#5 binding double @38..44 owner=#0 = fn(i64) -> i64
+occurrences in #0 apply:
+  72..73 read x -> #4
+  93..99 call double -> #5
+  100..105 read value -> #3
+locals in #1 bump:
+#6 parameter pointer @119..126 owner=#1 = *mut i64
+occurrences in #1 bump:
+  169..176 deref-write pointer -> #6
+locals in #2 main:
+#7 binding value @229..234 owner=#2 mutable = i64
+#8 binding after @248..253 owner=#2 = i64
+#9 binding numbers @352..359 owner=#2 mutable = vec[i64]
+occurrences in #2 main:
+  256..260 call bump -> #1
+  266..271 borrow value -> #7
+  296..301 read value -> #7
+  314..319 read after -> #8
+  332..337 call apply -> #0
+  377..381 call push -> external
+  382..389 read numbers -> #9
+  405..408 call len -> external
+  409..416 read numbers -> #9
+diagnostics: none

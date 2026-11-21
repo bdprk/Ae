@@ -1,0 +1,39 @@
+// Return-path shapes: r1-r5 probes. accepted paths (if/else both, full
+// match arms, unsafe block, return-at-end) stay silent; the bare `while
+// true` form and the bare fall-off reject with the compiler's text.
+enum Opt[T] { Some(T), None }
+
+fn both_branches(flag: bool) -> i64 {
+    if flag {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+fn full_match(v: Opt[i64]) -> i64 {
+    match v {
+        Opt::Some(x) => { return x; }
+        Opt::None => { return 2; }
+    }
+}
+
+fn unsafe_return() -> i64 {
+    unsafe {
+        return 1;
+    }
+}
+
+fn while_true() -> i64 {
+    while true {
+        return 1;
+    }
+}
+
+fn bare_fall() -> i64 {
+    let x = 1;
+}
+
+fn main() {
+    print(both_branches(true));
+}

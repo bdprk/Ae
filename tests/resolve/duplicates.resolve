@@ -1,0 +1,42 @@
+resolve duplicates.ae
+use headers: none
+items:
+#0 function helper @215..221
+#1 function helper @248..254
+#2 function take @282..286
+#3 function main @337..341
+types:
+#0 helper:
+  227..230 return-> i64
+#1 helper:
+  260..263 return-> i64
+#2 take:
+  294..298 parameter value -> & i64
+  303..306 return-> i64
+locals in #0 helper:
+  none
+occurrences in #0 helper:
+  none
+locals in #1 helper:
+  none
+occurrences in #1 helper:
+  none
+locals in #2 take:
+#4 parameter value @287..292 owner=#2 = & i64
+occurrences in #2 take:
+  320..325 read value -> #4
+locals in #3 main:
+#5 binding item @354..358 owner=#3 = i64
+#6 binding item @372..376 owner=#3 = i64
+occurrences in #3 main:
+  392..396 read item -> #5
+  403..410 write missing -> unresolved
+  421..428 deref-write nowhere -> external
+  444..448 call take -> #2
+  450..455 borrow ghost -> unresolved
+diagnostics:
+  duplicates.ae:5:4: duplicate top-level name 'helper'
+  duplicates.ae:13:9: duplicate variable 'item'
+  duplicates.ae:15:5: unknown variable 'missing'
+  duplicates.ae:16:6: unknown variable 'nowhere'
+  duplicates.ae:17:17: unknown variable 'ghost'

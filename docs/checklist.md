@@ -1,0 +1,280 @@
+# ae master checklist
+
+Generated from `docs/implementation-ledger.md` by `scripts/gen_checklist.py` (R5.1): do not edit by hand. Item bodies, evidence links and progress notes
+live in the ledger; this file mirrors only the checkbox state and titles.
+
+126 of 190 items done.
+
+## Start here
+
+- [x] B01: At the project root run git rev-parse HEAD and git status -sb. Save the revision and local changes with the baseline.
+- [x] B02: Record rustc -Vv, cargo -V, the configured C compiler version and OS/architecture for each host.
+- [x] B03: Run cargo test --workspace on Windows. Record exit status and names of failing tests.
+- [x] B04: Repeat on Linux at the same revision. Label host-specific differences separately.
+- [x] B05: Run cargo run -- check examples/hello.ae and cargo run -- run examples/hello.ae. Capture diagnostics, bytes printed and process exit.
+- [x] B06: Run cargo run -- emit-c examples/hello.ae. Identify generated entry point, runtime calls and linker inputs.
+- [x] B07: Use examples/option_propagate.ae to trace the successful and early-return paths. Name the component responsible for disposing of each owned local.
+- [x] B08: Trace a parser diagnostic from crates/ae-syntax or the active legacy parser to the CLI. Record the actual caller to distinguish extracted code from active code.
+- [x] B09: Inspect scripts/compare_emit_c.py, scripts/snapshots.py and scripts/fmt_acceptance.py. Record their supported invocation and which baseline fixture each covers.
+- [x] B10: Publish the baseline matrix with revision, command, target, expected, observed and reproduction path. Assign discrepancies before routing new code through the CLI.
+
+## M0.1 Source fidelity
+
+- [x] M0.1.01: **Index files.** Load two different main.ae files and resolve each diagnostic to its own path.
+- [x] M0.1.02: **normalize revision IDs.** Edit one file twice and reject spans retained from the first revision. (Completed with M6.2.01/M6.2.02: document version checking in editor session state.)
+- [x] M0.1.03: **map byte spans.** Select the exact UTF-8 bytes for a token after a non-ASCII character.
+- [x] M0.1.04: **render tabs and multibyte text.** Underline a bad token following a tab and a wide character against a pinned display policy.
+- [x] M0.1.05: **pin JSON diagnostics.** Parse check --json output and assert path, range and stable error identifier.
+
+## M0.2 Parser migration
+
+- [x] M0.2.01: **Inventory grammar.** See [the active parser grammar inventory](architecture/grammar-inventory.md) for witnesses and documented gaps.
+- [x] M0.2.02: **port literals.** The active compiler consumes expression literal atoms from `ae_syntax::literal::parse_literal`. Escape spelling and byte range agree with the standalone `parse_operator_expression` for eight spellings (plain, the four escapes, a non-ASCII string, and the empty string); `ae run` prints exactly the expected decoded bytes; and the reported `line:column` is pinned as a character count even when a multibyte literal earlier on the line makes it differ from the byte column. Rejected literals (`E0002`/`E0003`/`E0004`) report the same code and byte range through `check --json`. Evidence: [Verified 2026-11-19 — M0.2.02 literals](#verified-2026-11-19--m0202-literals-dual-platform).
+- [x] M0.2.03: **expressions.** The syntax crate parses the full expression grammar surface of the [inventory](architecture/grammar-inventory.md) §5 with byte ranges: operator tiers (shared `operator.rs` table), literals, groups, calls/index/field/qualified names, specializations and bracketed call targets, struct and vector literals, address and pointer casts, borrow arguments, propagation, prefix operators — and, since 2026-11-19, closure literals (`|name: Type| -> Ret { body }` and the `||` shorthand) whose parameter types and return stay byte ranges re-resolved by the compiler, plus `Self` struct/qualified forms (which lex as plain identifiers and ride the existing paths). Tree tests pin negation/multiplication grouping, postfix chains, and closure headers; execution tests run the same literals through the compiler (`standalone_postfix_expression_matches_compiler_execution`, `standalone_closure_headers_match_compiler_execution`). Capture inference, name resolution, and type restrictions remain the active compiler's semantic layer; wiring the compiler's expression statements onto the shared entry points is M0.2.08 route-switch work. Evidence: [Verified 2026-11-19 — M0.2.03 expressions](#verified-2026-11-19--m0203-expressions-dual-platform).
+- [x] M0.2.04: **patterns.** The standalone syntax parser records nested variant payloads in source order and locates malformed bindings, and the active compiler now reads arm patterns through the same grammar (`ae_syntax::pattern::parse_pattern_tokens`), so a malformed pattern reports the same code and byte range through `check --json` as through the standalone parser. The grammar surface accepts `Enum::Variant(...)` with nested or empty payload lists; the declaration decides the shape — count mismatches, payloads on payload-less variants, nested payload patterns ("pattern payloads must be plain names"), reserved and duplicate binding names, and exhaustiveness remain compiler-side rejections, each naming the variant with a positioned span. Nested payload binding stays future work governed by spec/patterns.md (M1.9) and is rejected with a pinned diagnostic today. Evidence: [Verified 2026-11-19 — M0.2.04 patterns](#verified-2026-11-19--m0204-patterns-windows-linux-via-ci).
+- [x] M0.2.05: **declarations.** A shared fixture compares function and generic struct byte boundaries across the standalone syntax parser and the active compiler. It checks parameter, return, and field spellings and compiles and runs the source. The standalone parser retains function bodies as ranges and does not yet cover every declaration kind.
+- [x] M0.2.06: **modules.** The active loader uses ae-syntax to parse import headers. Running `examples/modules/main.ae` resolves declarations from both imported modules and prints `3 entries, 6 words`. The import integration tests cover recovery, cycles, and canonicalized duplicate paths.
+- [x] M0.2.07: **recover after bad token.** The standalone declaration parser recovers from a missing parameter delimiter, reports the opening brace's byte range, and returns the two following valid declarations. A repeated-error test verifies the 32-diagnostic cap. The active `check --json` route also recovers multiple declaration errors from the module token stream when it agrees with the compiler's first diagnostic. The integration test checks the byte ranges of two missing parameter delimiters.
+- [ ] M0.2.08: **switch CLI route.** Windows differential evidence compares the pre-extraction CLI (`c2dd173`) with `de1c81b` using `python scripts/compare_emit_c.py --baseline <before> --candidate <after> --cli-corpus`. All 50 generated C examples and all 310 diagnostic and debug/release fixture invocations matched byte for byte, including exit status for the CLI fixtures. Build both checkouts with identical runtime C line endings. At revision `1eb68db`, the active compiler uses syntax declarations for trait registration, function body boundaries, and skipping registered declarations in the body pass. A fresh comparison against `c2dd173` again matched all 50 generated C examples and all 310 CLI fixture invocations. The Windows gate also passed at `7868821` after parameter, field, and variant syntax metadata were wired into the compiler and declaration recovery was added to JSON check. Full route parity and removal of the old parser remain pending. At revision `28a91e3`, the full-corpus comparison was re-run against the last byte-verified baseline `7868821` (baseline binary built from a throwaway worktree; candidate at HEAD): the behavioral CLI corpus agreed on 311 of 312 invocations — the one difference is the intentional `pattern_nested_payload_rejected` diagnostic added by M0.2.04 (baseline rejects with the old generic message, candidate with the new specific one; both exit 1). Emitted C differs only by CRLF checkout endings plus the two documented M2.4 runtime blocks from `095149c` (the `AE_PTR_READ`/`AE_PTR_WRITE` macro preamble and the single-block `ae_args` cache with its `atexit` release): the union of changed lines across all 50 examples contains nothing else, so the parser migration through the patterns and closure grammar slices introduced no semantic-tree drift. Raw comparison verdicts are reproducible with `python scripts/compare_emit_c.py --baseline <exe> --candidate <exe> --cli-corpus`.
+
+## M1.1 Resolution
+
+- [x] M1.1.01: **Intern symbols.** Intern repeated spellings to one symbol while retaining separate occurrence spans. (behavioral contract verified: repeated spellings resolve consistently and keep per-occurrence spans; the interner is not a separable stage, name resolution works on strings)
+- [x] M1.1.02: **allocate definition IDs.** Assign distinct IDs to same-named items in different modules. (by-design unobservable: same-named items across modules are rejected as collisions (spec/modules.md), so the specified outcome is the rejection; interned per-item ids exist internally)
+- [x] M1.1.03: **collect declarations.** Resolve a call to a later declaration and reject duplicate definitions. (verified this pass: a call to a function declared later compiles; the second `fn later` → `duplicate function 'later'`; table row M1.1.03 names the two regression tests)
+- [x] M1.1.04: **resolve imports.** Resolve a renamed import and flag two imports binding the same local name. (no renamed-import syntax exists (parse error); the renaming mechanism the spec defines is package aliases (use "@alias"), and the collision analog (two files exporting one name) is rejected)
+- [x] M1.1.05: **detect cycles.** Render the closed dependency path for a three-module cycle.
+- [x] M1.1.06: **resolve locals and shadowing.** Resolve an inner binding to itself and restore the outer binding on exit. (verified for the designed shape: sibling blocks reuse names, block-scoped bindings restore the outer name; nested-scope shadowing is by design a duplicate-variable error (spec/modules.md))
+
+## M1.2 Types
+
+- [x] M1.2.01: **Intern types.** Canonicalize repeated vector types while keeping different element types distinct. (table row M1.2.01: one layout per argument list for generic enums, `vec[1,2]` where `vec[f64]` is expected → `argument 1 to 'take' must be vec[f64]`)
+- [x] M1.2.02: **infer locals.** Infer a local from its initializer and point at an incompatible reassignment. (table row M1.2.02: `cannot assign a string value to i64 variable 'n'`)
+- [x] M1.2.03: **unify calls.** Bind repeated parameters consistently and reject conflicting argument types. (table row M1.2.03: `first[i64]("x", 1)` → `argument 1 to 'first' must be i64`)
+- [x] M1.2.04: **occurs check.** Reject an equation requiring a finite type to contain itself. (realized at the design level: generics have no inference (spec/generics.md), self-containing types are impossible (declaration bodies cannot see their own name), instantiation cycles close deterministically, and a 256-type budget bounds growing chains)
+- [x] M1.2.05: **type return paths.** Diagnose the branch that returns an incompatible value. (re-probed this pass: `fn pick(flag: bool) -> i64 { if flag { return 1; } else { return "x"; } }` → `return type must be i64` at the string branch)
+- [x] M1.2.06: **reject unconstrained variables.** Require an annotation when an empty constructor leaves its element type unknown. (implemented as outright rejection: locals carry no type annotations in this dialect, so an empty constructor leaving the element type unknown is rejected, not annotated)
+
+## M1.3 Generics
+
+- [x] M1.3.01: **Bind parameters.** Keep a nested type parameter distinct from an outer one with the same spelling. (re-probed this pass: `Box[i64] { inner: Inner[string] { .. } }` → `field 'inner' must be struct #0`, so the two `T`s stay distinct)
+- [x] M1.3.02: **collect obligations.** List the required operations of a bounded generic call. (table row M1.3.02: `add[bool](true, false)` → `type argument 'bool' for 'add' does not satisfy 'Add'; that constraint allows i64, string, f64`; missing impl → `no impl of trait 'Area' for 'string'`)
+- [x] M1.3.03: **check generic body.** Reject an unused generic function that invokes an operation absent from its bounds. (constraint-bound half verified: unused generic body rejected for operators outside its bounds, ADR-40. The trait-method half is governed by ADR-0047, which deliberately defers declaration-site pre-checking of trait calls - instantiation-site reporting is more accurate via 'required by', and overriding the deferral needs the evidence ADR-47 asks for. The M1.3 gate's 'even when unused' therefore holds for the bounds the spec gives declaration-site power over.)
+- [x] M1.3.04: **test overlap.** Reject two applicable implementations and identify both declarations. (overlap in the blanket sense is impossible (impl Area for T rejected by design); the achievable overlap, an exact duplicate (trait, type) pair, is diagnosed naming both declarations)
+- [x] M1.3.05: **canonicalize instances.** Emit one instance for two call sites using the same concrete arguments. (verified twice: `emit-c` of three calls with one argument list plus one call with another emits one function per list (table row M1.3.05, fixture m13/ci.ae); `identical_concrete_arguments_share_one_instance` counts the emitted `ae_t<N>_release` helpers — 1 for two `Box[i64]` sites, 2 once a `Box[string]` site joins)
+- [x] M1.3.06: **limit recursion.** Reject repeated instantiations and over-budget nested layouts with the ordered instantiation trace.
+
+## M1.4 Patterns and closures
+
+- [x] M1.4.01: **Lower destructuring.** Bind fields from a nested variant once in declaration order. (one-level destructuring verified in declaration order; nested patterns do not exist in the language (spec/patterns.md, M1.9 future work))
+- [x] M1.4.02: **check exhaustiveness.** Report a concrete uncovered variant and detect a redundant catch-all arm. (missing variant is named in the diagnostic; a redundant catch-all is N/A because the language has no wildcard by design (spec/patterns.md hard rule 1) - the analog, duplicate-arm detection, is verified)
+- [x] M1.4.03: **classify captures.** Distinguish read, write and move captures in separate fixtures. (read: `closure_captures_vector_and_index_expression` and the run suite call a borrowing closure twice; write: the UI snapshot `closure_mutate_capture` rejects mutation with one diagnostic; move: `concatenation_keeps_a_capture_borrowed_and_returning_it_moves` distinguishes the two — concatenation copies, so the closure stays a borrow and the outer value survives, while returning the capture itself makes the second call E0102)
+- [x] M1.4.04: **infer closure environment.** Inspect environment fields and reject a returned closure borrowing a dead local once loan checks land. (subsumed: the zero-storage closure design rejects returning any closure, so a returned closure borrowing a dead local can never escape its frame)
+- [x] M1.4.05: **lower invocation.** Call a closure twice when permitted and reject a second call after consuming a move-only capture. (verified: borrow captures allow repeated calls, value captures are diagnosed on the second call (E0102); `concatenation_keeps_a_capture_borrowed_and_returning_it_moves` pins both sides. Correction 2026-11-19: spec/closures.md, ADR-0188 and docs/current-language.md used `return note + "!"` as the move example, but string `+` copies (spec/generics.md), so that body stays a borrow; those three documents now use `return note;`, which really moves)
+
+## M2.1 MIR skeleton
+
+- [x] M2.1.01: **Build places.** Represent local, field and dereference projections separately in a MIR dump. (`MirPlace::{Temp, Var, Field, Deref}` in mir.rs; `emit_mir_decomposes_statements_into_bindings` prints temps apart from the locals they came from; `mir_branch_observes_writes_through_raw_pointers` shows a deref projection as its own place)
+- [x] M2.1.02: **assign temporaries.** Lower two effectful operands and confirm left-to-right evaluation. (ordered walk: `a_view_read_after_a_mut_call_in_one_statement_is_a_conflict` vs `..._before_..._is_allowed`, so the same statement keeps operand order; `emit_mir_keeps_short_circuit_rhs_inside_the_lazy_operand` pins the lazy operand's temporaries)
+- [x] M2.1.03: **create block terminators.** Reject a basic block with a missing or duplicate terminator. (structural: `MirBlock` holds exactly one `terminator` field, so missing/duplicate cannot be constructed; `rejects_terminators_with_wrong_operand_types` covers the malformed-terminator case)
+- [x] M2.1.04: **lower branches.** Execute both arms and compare the merged value against the C baseline. (`mir_backend_matches_tree_backend_on_matches_and_counted_loops` compares the interpreter and the C backend byte for byte; `mir_interpreter_agrees_on_result_enums_with_the_compiled_backends` covers both-variant arms)
+- [x] M2.1.05: **loops.** Check continue and break from nested loops target the correct blocks. (`mir_backend_matches_tree_backend_on_matches_and_counted_loops`: the expected trace states `nested continue lands on the inner step, break leaves the inner loop` and the backend comparison enforces it)
+- [x] M2.1.06: **early exits.** Trace return and error propagation around an owned local. (`mir_drop_elision_thins_propagate_error_path_releases` and `mir_drop_elision_removes_releases_of_moved_slots` trace the `?`/return paths around owned locals)
+- [x] M2.1.07: **validate graph.** Feed an invalid successor and ill-typed assignment to the verifier and reject both. (`validate` runs on every lowering (mir.rs:31); validation_tests reject a wrong destination type, a temporary used before its definition, and wrong terminator operand types)
+
+## M2.2 Ownership
+
+- [x] M2.2.01: **Track initialized places.** Reject a read before initialization and permit it after assignment. (structural: a `let` must carry an initializer — `let x: i64;` → `expected Equal, found Colon` — so a read before initialization cannot be written in the first place)
+- [x] M2.2.02: **join at branches.** After a move on one branch reject use at the merge point. (`ownership_join_field_move_and_overwrite_release_are_enforced`: a move inside `if true { .. }` makes the merge-point read `cannot use 's' because it was moved`)
+- [x] M2.2.03: **iterate loops to fixed point.** Reject a second-iteration read of a value consumed on the first iteration. (`moving_an_outer_value_inside_a_loop_is_rejected` covers while/for shapes and the re-initialize escape with exit code and message assertions)
+- [x] M2.2.04: **handle partial moves.** Move one field and allow reading a disjoint initialized field under the specified rules. (designed-out and documented in `docs/resource-model.md`: struct fields and vector elements can never be moved out; `ownership_join_field_move_and_overwrite_release_are_enforced` pins `cannot move a field out of a struct`. Per-field drop flags are not needed while fields cannot move)
+- [x] M2.2.05: **elaborate drop flags.** Count destructor calls on overwrite, partial move, early return and ordinary exit. (overwrite: emit-tree prints `v0 = "y" @ 3:9 (releases old)` and exactly one `release v0: string` at exit — pinned by `ownership_join_field_move_and_overwrite_release_are_enforced`; partial move cannot arise (M2.2.04); early return and ordinary exit are the drop-elaboration fixtures of ADR-0204)
+
+## M2.3 Loans
+
+- [x] M2.3.01: **Generate loans.** Attach each loan to its originating place and creation span. (every loan diagnostic names the borrowed place and the offending use: `cannot move 's' while a view binding of it may still be read`, `cannot mutate 'd' while a view binding of it may still be read` — ui fixtures borrow_move_during_view / borrow_mut_call_during_cursor)
+- [x] M2.3.02: **compute liveness.** Permit mutation after the last shared use and reject it before that use. (rejected before: borrow_write_during_view, borrow_mut_arg_during_view; allowed after: run fixtures borrow_write_after_last_use, borrow_move_after_last_use, borrow_mut_call_after_last_use)
+- [x] M2.3.03: **compare projections.** Distinguish disjoint struct fields and conservatively handle unknown indices. (`field_granularity_borrows_freeze_their_own_field_only`: a view of `p.name` blocks writing `p.name` but not `p.note`; ui fixture borrow_element_write covers the conservative element/index case)
+- [x] M2.3.04: **reject conflicting accesses.** Reject owner movement while a subsequently used view remains live. (ui fixtures borrow_move_during_view, borrow_mut_call_in_branch, borrow_mut_call_in_loop, borrow_mut_call_read_after_in_statement)
+- [x] M2.3.05: **model reborrows.** Suspend parent exclusive access while a child reborrow remains live. (token cursor holds a view loan: a `&mut` call during the cursor is rejected (borrow_mut_call_during_cursor) and accepted once the cursor's region ends (run fixture borrow_mut_call_after_cursor))
+- [x] M2.3.06: **validate escaping references.** Reject returning a view of local storage and accept a return tied to a valid input. (ui fixture borrow_view_escape rejects assigning a view out of the loop scope; `generic_borrow_parameters_resolve_at_each_call_site` pins a `&T` parameter's view being returned and a concrete argument with no such borrow being rejected)
+
+## M2.4 Unsafe boundary
+
+- [x] M2.4.01: **Inventory pointer primitives.** List each raw operation in the C runtime with its caller and owner. (docs/architecture/raw-pointer-inventory.md: every language-level operation with its AST node, emitted C and guarding check, plus the runtime entry points that receive pointers and who releases them)
+- [x] M2.4.02: **specify alignment and provenance.** Specify permitted origin, extent and alignment for one typed pointer read. (spec/unsafe.md 2.4: origin, extent, alignment and initialization/aliasing as four conditions; breaking any is UB, safe code cannot reach a violation because `&owned as *const T` is rejected, and nothing checks alignment at runtime)
+- [x] M2.4.03: **isolate runtime calls.** Move one pointer operation behind a reviewed interface and compare generated behavior. (every unchecked read, expression write and `*p = v` store now emits `AE_PTR_READ` / `AE_PTR_WRITE`, two documented macros in runtime.c; `raw_pointer_access_goes_through_the_reviewed_macros` pins the emission and the run, and both binaries (e6610a3 vs this revision) produced identical stdout/stderr/exit over all 109 `tests/run` programs)
+- [x] M2.4.04: **audit safe wrappers.** For each safe constructor show which check enforces length, alignment and lifetime. (raw-pointer-inventory.md section 3: slice_view and the token cursor trap on bad bounds/UTF-8 and rely on the NLL loan for lifetime; `&v as *const T` inherits extent 1 and natural alignment but is refused for owned types; `#[repr(C)]` layout queries are constants)
+- [x] M2.4.05: **run sanitizer corpus.** Exercise empty, boundary-sized and repeatedly freed-owner paths in supervised test fixtures. (`scripts/verify_generated_c.py --sanitize` on Linux: 41 programs, ASan+UBSan, exit 0; `--leak` on Windows: 41 programs, exit 0. The leak mode surfaced a real retention in the Windows argv cache: `ae_args` kept the UTF-16-to-UTF-8 pointer array and one block per argument forever. The cache now converts into a single text block and releases both blocks from an `atexit` handler, so an args-reading program ends at the 2-block baseline)
+
+## M3.1 Library layers
+
+- [x] M3.1.01: **Build core without allocator.** Link a scalar program without allocator symbols and inspect its imports.
+- [x] M3.1.02: **add allocator trait.** Inject an allocator that fails on request number two and observe the documented outcome. (the interface is `ae_allocator { alloc, resize, release }` + `ae_set_allocator`, C-only by ADR-0016; the CLI-reachable injection is `AE_ALLOC_LIMIT` (cumulative bytes), and `allocation_failure_reports_the_operation_location` pins the fatal `out of memory` with the operation's line, a generous budget passing, and a malformed value being ignored)
+- [x] M3.1.03: **owned buffer.** Check empty capacity, growth overflow and exactly one release. (`library_layers_handle_growth_utf8_boundaries_and_map_resize`: a one-element vector grows to 41 through repeated push with every element intact, and emit-tree shows exactly one `release v0: vec`; the cumulative-byte budget trap is the overflow path)
+- [x] M3.1.04: **vector.** Push beyond capacity, verify elements, and reject a live view across growth. (same test: 41 elements sum to 1561; `vector_growth_during_iteration_is_rejected` rejects `push` while the iteration loan is live)
+- [x] M3.1.05: **string.** Reject invalid UTF-8 input and preserve valid multibyte boundaries. (boundaries: `utf8_len("héllo世界") == 7` vs `len == 12`, `slice(text, 0, 1)` copies `h`, and `slice(text, 0, 2)` traps with `string index splits a UTF-8 character` — all pinned by the same test. Recorded gap: `try_read_file` does not validate the bytes it returns, so invalid UTF-8 enters a `string` through a file; strings are byte containers whose UTF-8 invariant is enforced at slice and print boundaries. Closing it needs a decision on the binary-read path, not a silent change)
+- [x] M3.1.06: **map.** Insert colliding keys, remove one and retrieve the other after resizing. (same test: 100 keys force several resizes, removing `k50` leaves `len == 99` with `k50` gone and `k99` present; linear probing keeps a deleted slot probing — ADR-57)
+- [x] M3.1.07: **iterator adapters.** Compare allocations and calls in a map/filter loop with a manual loop. (designed-out: the language has no iterator adapters — `for x in v` is a statement and filtering is an `if` inside it, so there is no second spelling to compare. The builtin surface that would be an adapter elsewhere (`sort`, `contains`, `split`, `join`) is lazy-free and allocation-comparable through the leak suite)
+
+## M3.2 Hosted library
+
+- [x] M3.2.01: **Define byte streams.** Use a scripted reader that returns short chunks and then EOF. (implemented per [ADR-0221](adr/0221-byte-streams-and-buffered-readers.md): `reader_new(data, chunk_size, buf_cap)` / `reader_read(r, max_bytes)` / `reader_eof(r)` behind the pruned `ae_reader` unit; `tests/run/byte_streams.ae` reads `"abcdefg"` in 3-byte short chunks `"abc"`, `"def"`, `"g"`, then `""` + `reader_eof == true`; compiled + `--interp` parity pinned by `byte_streams_and_buffered_readers_agree_across_backends`; single-platform verified on Windows x86-64)
+- [x] M3.2.02: **buffered readers.** Read a line spanning two buffers and preserve the following byte. (implemented per [ADR-0221](adr/0221-byte-streams-and-buffered-readers.md): `reader_read_line(r)` refills an internal `buf_cap`-byte buffer across multiple refills and preserves bytes after `\n`; `tests/run/byte_streams.ae` reads a 10-byte line across 4-byte buffers and preserves `'Z'` for the next `reader_read(r, 1)`; compiled + `--interp` parity pinned; single-platform verified on Windows x86-64)
+- [x] M3.2.03: **files.** Copy a file containing NUL bytes and handle partial writes. (`hosted_files_preserve_bytes_and_processes_recover_status`: a file of `a\0b\0c` is read, written back and compared byte for byte; the write returns the byte count. Partial writes are handled inside `try_write_file`'s loop, which the whole-file API cannot force from ae)
+- [x] M3.2.04: **path encoding.** Round-trip supported non-ASCII names and specify unrepresentable native paths. (same test: a file named `中文 名.txt` — non-ASCII plus a space — is opened by name and its 6 bytes are returned; unrepresentable native paths surface as the `Err` arm of the typed results rather than a panic)
+- [x] M3.2.05: **clocks.** Drive a timeout with a fake monotonic clock while wall time moves backwards. (implemented per [ADR-0219](adr/0219-controlled-monotonic-clock-and-timers.md): `clock_new()`, `clock_now(clk)`, `clock_advance(clk, delta)` behind the pruned `ae_clock` unit; strictly monotonic with negative-delta trap; L3 in `tests/run/timers_clock.ae` drives a task timeout via controlled clock; compiled + `--interp` parity pinned by `controlled_clock_and_timers_agree_across_backends`; single-platform verified on Windows x86-64)
+- [x] M3.2.06: **processes.** Pass an argument containing spaces and recover child exit status. (`run_command_reports_status_and_output` covers a failing spawn and a zero exit; `hosted_files_preserve_bytes_and_processes_recover_status` adds a two-word argument that reaches the child intact and a child that exits 7, whose status the parent reads back)
+- [x] M3.2.07: **typed errors.** Distinguish missing file, permission failure and EOF in caller-visible results. (missing file → `ReadResult::Err` carrying the OS text, matched by `contains(reason, "No such file")`; EOF → `Ok` with length 0, so the two are distinguishable without inspecting platform strings. Permission failure is not exercised: making one portable needs a chmod/channel-state fixture, recorded as future work)
+
+## M3.3 Packages
+
+- [x] M3.3.01: **Parse manifest.** Report a malformed dependency at its manifest location.
+- [x] M3.3.02: **path dependencies.** Resolve a sibling package relative to its manifest from a different working directory.
+- [x] M3.3.03: **version constraints.** Check inclusive and exclusive endpoints with pinned version fixtures.
+- [x] M3.3.04: **solve graph.** Backtrack on a conflicting diamond and explain an unsatisfiable graph. (Path-graph form: two copies of one package are rejected naming both manifests; MVS version backtracking is not applicable while every dependency is a pinned path.)
+- [x] M3.3.05: **lock hashes.** Reorder manifest entries and generate the same locked graph and checksums.
+- [x] M3.3.06: **offline build.** Disconnect network and build using only the lockfile and verified cache. (Path dependencies only; no registry fetch exists yet.)
+- [ ] M3.3.07: **verify downloaded content.** Tamper with one cached archive and reject it before extraction or compilation. (Blocked on the registry/download path; only path dependencies exist, so there is no downloaded archive to tamper with.)
+
+## M4.1 Threads
+
+- [x] M4.1.01: **Specify transfer and sharing bounds.** Reject sending a nontransferable capture and sharing a nonshareable value. (the owned-only boundary is enforced by the spawn surface: borrow captures, arrays, cursors, and pointer/closure-typed captures are rejected at the call site — `thread_boundaries_reject_nontransferable_shapes` pins five rejections and `tests/ui/spawn_borrow_capture_rejected.ae` pins the rendered diagnostic; ground rules in [ADR-0214](adr/0214-threaded-execution-ground-rules.md); decisions 1–2 implemented at `2fa7b15`: `ae_thread_spawn`/`join` behind one spelling (C11 `thrd_*` on Linux, self-declared Win32 entries placed after the `windows.h` include point so the declarations merge), allocator budget/total/ready as C11 atomics with charge-and-rollback, pruned as the `ae_thread` unit (non-threaded programs carry no thread symbols); `scripts/thread_harness.c` drives eight OS threads through the primitives and asserts the cumulative-ask counter lands on the exact deterministic total — dual platform (Windows + evaluate-3, logs in `bench/results/2026-11-20-linux-threads/`). The language surface landed with this slice: `spawn`/`wait` — the blocking call is `wait` because `join` is the string-vector builtin — with capture transfer and the handle rules pinned by `threads_spawn_wait_and_move_captures` (compiled + interpreter agreement, T1/T7/T8) plus the rejection matrix T2–T6)
+- [x] M4.1.02: **scope join.** Join a borrowed child on success and on early scope exit. (implemented per [ADR-0215](adr/0215-scoped-borrow-captures.md): the spawn arm defers borrow captures to a CFG escape proof — every path from the spawn must reach a `wait` of the handle before any exit; unjoined paths reject with the positioned diagnostic, joined paths accept with the borrowed variables frozen like views to scope end (conservative and sound). Evidence: `scoped_borrow_captures_join_before_the_region_ends` (a joined read, a loop-spawned handle joined in-iteration, two unjoined-branch rejections), the upgraded diagnostic pinned at `tests/ui/spawn_borrow_capture_rejected.ae`, and the frozen-write rejection from the M2.5 view rules. Dual platform: Windows + evaluate-3 Linux, logs in `bench/results/2026-11-20-linux-scope-join/`)
+- [x] M4.1.03: **mutex guards.** Release the guard on all exits and reject references outliving it. (implemented per [ADR-0216](adr/0216-shared-ownership-and-locks.md) slice 2 at `db132c6`: `mutex` copy-semantics OS mutex handle + owned `guard` unlocking at scope exit through `Frees`/`release_var` + compile-time live-guard check on `shared_set`; compiled + interpreter agreement pinned by `tests/run/mutex_guard.ae` and adversarial UI fixtures `tests/ui/mutex_*.ae`; single-platform verified on Windows x86-64)
+- [x] M4.1.04: **atomics.** Check permitted orderings per operation and model a release/acquire handoff. (implemented per spec/concurrency.md §8: copy-semantics `atomic` handles over process-lifetime i64 cells; every operation is C11 seq_cst — the store in one thread and the load in another after `wait` is the modeled handoff; spawn captures share the cell because copying the handle shares the pointer. The builtin names say `cell_*` (`cell_new/load/store/add/cas`) because `std/core/atomic.ae` — the self-hosted M1.4 model — owns the `atomic_` prefix. Evidence: `atomics_share_one_cell_across_threads` (compiled + interpreter agreement: two threads × five adds of ten lose no update — the final load is exactly 100, the summed old values are the deterministic pre-sequence 450, the store-then-read handoff yields 7, and an aliased handle reaches the same cell) plus the fuzzer kind-22 shape (two shared-cell threads per program, 80 seeds across two ranges). Runtime: the `ae_atomic` unit pairs with the thread unit’s pruning; a non-threaded program carries no atomic symbols. Dual platform: Windows + evaluate-3 Linux, logs in `bench/results/2026-11-20-linux-atomics/`)
+- [x] M4.1.05: **shared owner.** Race last-owner releases and count exactly one payload destruction. (implemented per [ADR-0216](adr/0216-shared-ownership-and-locks.md) slice 1 at `033c997`: `shared[T]` copy-semantics handles over process-lifetime boxes + `shared_get` + spawn-capture sharing + no handle towers; compiled + interpreter agreement pinned by `tests/run/shared_box.ae` and adversarial UI fixtures `tests/ui/shared_*.ae`; single-platform verified on Windows x86-64)
+- [x] M4.1.06: **panic propagation.** Propagate a child failure after joining siblings according to the scope policy. ([ADR-0217](adr/0217-thread-failure-propagation.md): a spawned body's `ae_fail` records `{message, line, column}` on its handle and ends only that thread; `ae_thread_join` reports after the join completed — the same `ae:<line>:<column>: <message>` stderr line and exit status 1 an immediate abort produced — so siblings joined first run to completion. The order of waits is the policy (no runtime scope object joins on the program's behalf); a failure nobody waits for is latched and reported by an `atexit` hook the thread unit installs on the first spawn; the main thread still aborts immediately. The interpreter stores a spawned body's trap and re-raises it at `wait`, so both backends fail at the same program point. Evidence: `tests/run/thread_failure.ae` (snapshot, exit 1: sibling output survives, then `ae:7:61: division by zero`, and the trailing statement never runs) and `a_failed_child_surfaces_at_its_wait_after_the_sibling_joined` (stdout, status, stderr prefix, `--interp` parity). Spec: `spec/concurrency.md` §12 + T10–T14. Dual platform: Windows x86-64 and evaluate-2 Linux x86-64, 14+314+3+44+2+58=435 green on both, sanitize 41/41, leak 41/41, fuzz 40 seeds 0 failures; logs in `bench/results/2026-11-20-linux-thread-failure/`)
+
+## M4.2 Tasks
+
+- [x] M4.2.01: **Single worker queue.** Replay three ready tasks under a deterministic FIFO executor. (implemented per [ADR-0218](adr/0218-task-executor-and-cooperative-yield.md): `exec_new()`, `task_spawn(ex, || -> i64 { ... })`, `exec_run(ex) -> i64` behind the pruned `ae_exec` unit; K1 in `tests/run/tasks_fifo.ae` replays three ready tasks in exact FIFO order `k1:1, k1:2, k1:3` and returns `3`; compiled + `--interp` parity pinned by `tasks_fifo_yield_and_reclaim_agree_across_backends`; single-platform verified on Windows x86-64)
+- [x] M4.2.02: **stack lifecycle.** Create and reclaim many stacks and verify bounded retained memory. (implemented in `ae_exec_run`: Win32 `DeleteFiber` + `ae_free(ctx)` + `free(node)` on every completion on Windows, `thrd_join` + destroy + free on POSIX; K3 in `tests/run/tasks_fifo.ae` spawns and reclaims 200 tasks with bounded memory; single-platform verified on Windows x86-64)
+- [x] M4.2.03: **yield.** Suspend and resume with live locals intact and no duplicate execution. (implemented via `task_yield()` — Win32 `SwitchToFiber` on Windows, C11 `mtx_t`/`cnd_t` baton on POSIX, explicit frame stack in `interp.rs`; K2 in `tests/run/tasks_fifo.ae` interleaves two yielding loops with live locals intact `0, 10, 1, 11, 2, 12`; compiled + `--interp` parity pinned; single-platform verified on Windows x86-64)
+- [x] M4.2.04: **scope join.** Leave a task scope with unfinished children and verify the join contract. (implemented per [ADR-0220](adr/0220-task-scope-cancellation-and-work-stealing.md): owned `task_scope` via `scope_new()`/`scope_spawn(sc, f)` automatically drains all unfinished child tasks via `ae_scope_release` on normal exit and early `return`; verified in `tests/run/tasks_advanced.ae` and `task_scope_cancel_and_work_stealing_agree_across_backends`; single-platform verified on Windows x86-64)
+- [x] M4.2.05: **cancellation points.** Cancel before park, during park and after completion with one terminal outcome. (implemented per [ADR-0220](adr/0220-task-scope-cancellation-and-work-stealing.md): copy-semantics atomic `cancel` token via `cancel_new()`/`cancel_trigger`/`cancel_complete`/`cancel_is_set` racing atomically for one terminal outcome; verified before park, during cooperative park, and after completion in `tests/run/tasks_advanced.ae`; single-platform verified on Windows x86-64)
+- [x] M4.2.06: **timer.** Trigger equal deadlines and cancellation through a controlled clock. (implemented per [ADR-0219](adr/0219-controlled-monotonic-clock-and-timers.md): `timer_new(clk, delay)`, `timer_ready(t)`, `timer_cancel(t)`; L1–L3 in `tests/run/timers_clock.ae` verify equal deadlines firing together, pre- vs post-deadline cancellation, and task-driven timeout; compiled + `--interp` parity pinned by `controlled_clock_and_timers_agree_across_backends`; single-platform verified on Windows x86-64)
+- [x] M4.2.07: **multiworker stealing.** Steal work under contention and verify each task completes exactly once. (implemented per [ADR-0220](adr/0220-task-scope-cancellation-and-work-stealing.md): `pool_new(workers)`/`pool_spawn(p, f)`/`pool_join(p)` with per-worker queues and round-robin cross-queue work stealing; 4-worker pool executes 100 tasks with exact atomic count `100` in `tests/run/tasks_advanced.ae`; compiled + `--interp` parity pinned; single-platform verified on Windows x86-64)
+
+## M4.3 Channels
+
+- [x] M4.3.01: **Rendezvous.** Exchange one move-only payload over capacity zero and record one receiver. (implemented in `ae_chan` runtime unit + `chan_new(0)`/`chan_send`/`chan_recv`, `spec/concurrency.md` §10, pinned by `tests/run/channels.ae`; single-platform verified on Windows x86-64)
+- [x] M4.3.02: **bounded buffer.** Fill a capacity-one channel and resume the next sender only after a receive. (implemented in `ae_chan` ring buffer, pinned by `tests/run/channels.ae`; single-platform verified on Windows x86-64)
+- [x] M4.3.03: **close.** Close with buffered values and specify the final receive outcome. (implemented in `chan_close`, FIFO drain then `0` on empty closed channel, pinned by `tests/run/channels.ae`; single-platform verified on Windows x86-64)
+- [x] M4.3.04: **blocked sender wakeup.** Close while a sender is parked and return ownership or drop exactly as specified. (`ae_chan_close` broadcasts to `not_full` and `not_empty`; parked senders wake and return `false`; single-platform verified on Windows x86-64)
+- [x] M4.3.05: **receiver cancellation.** Cancel a parked receiver and deliver the next value to another receiver. (`spec/concurrency.md` §11: cancellation is a channel that only ever closes. `ae_chan_select` now ranks a closed arm above an arm that merely holds a value — a buffered element or a parked rendezvous slot — so a receiver that sees the cancel arm returns without consuming and the value stays for the next receiver; among two closed arms the earlier one wins, which keeps C5’s “both ready, choose once” contract. A receiver parked in the poll loop is released by the close within ~1 ms and no waiter registry exists, so a waiter cannot outlive a cancellation. The MIR interpreter ranks closed arms the same way. Evidence: `tests/run/chan_cancel.ae` (buffered value under a cancel arm listed second, a rendezvous sender parked with its slot, a parked receiver released by another thread) and `cancelled_receivers_leave_the_value_for_the_next_receiver` (compiled and `--interp` print identical bytes). Dual platform: Windows x86-64 and evaluate-2 Linux x86-64 (14+313+3+44+2+58=434 green on both, sanitize 41/41, leak 41/41, fuzz 40 seeds 0 failures; logs in `bench/results/2026-11-20-linux-chan-cancel/`))
+- [x] M4.3.06: **select registration and loser cleanup.** Make two arms ready together, choose once and unregister all losing waiters. (implemented via `chan_select(c1, c2)` and `chan_try_send(ch, val)` in `ae_chan` + `interp.rs`, pinned by `tests/run/chan_select.ae` and `tests/ui/chan_select_non_chan.ae`; single-platform verified on Windows x86-64)
+
+## M4.4 Network
+
+- [ ] M4.4.01: **Define readiness/completion adapter.** Model pending, completion, cancellation and late completion with a fake I/O backend. (The deterministic adapter covers pending, completion and cancellation. Late completion still needs an independent completion source and a retention oracle.)
+- [ ] M4.4.02: **Linux epoll.** Drain nonblocking reads through would-block and rearm interest correctly. (The adapter models rearming over in-memory buffers. Native Linux readiness and socket tests are pending.)
+- [ ] M4.4.03: **Windows IOCP.** Keep submitted buffers alive until final completion even after cancellation. (The adapter models cancellation in memory. Native Windows submission, completion and buffer retirement are pending.)
+- [ ] M4.4.04: **partial I/O.** Split a frame across reads and force writes to complete in fragments. (The in-memory fixture exercises chunking and fragmentation. Native partial reads and writes are pending.)
+- [ ] M4.4.05: **deadlines.** Race a deadline against completion and publish one outcome. (A deadline and completion race with a single terminal outcome still needs end-to-end verification.)
+- [ ] M4.4.06: **blocking-call pool.** Saturate the pool and show a timer task can still run. (The network slice has no test saturating blocking workers while a timer progresses.)
+- [ ] M4.4.07: **backpressure.** Throttle a slow peer and verify bounded queued bytes and eventual recovery. (The fixture covers bounded in-memory buffering. Slow-peer recovery over a socket is pending.)
+
+## M5.1 Native debug
+
+- [ ] M5.1.01: **Freeze layout API.** Pin size, alignment and field offsets for scalar, struct and enum per target.
+- [ ] M5.1.02: **lower scalars.** Compare signed, unsigned and floating boundary operations with the reference path.
+- [ ] M5.1.03: **calls.** Exercise a call with enough arguments to spill beyond register arguments.
+- [ ] M5.1.04: **aggregates.** Pass and return a mixed-layout struct and check every field.
+- [ ] M5.1.05: **drops.** Inspect code for one destructor on normal and early exits.
+- [ ] M5.1.06: **relocations.** Reference a symbol across two object files and resolve it after linking.
+- [ ] M5.1.07: **link executable.** Launch an executable on each supported host and compare exit and output.
+- [ ] M5.1.08: **emit debug spans.** Set a breakpoint at a source line and inspect its location after stepping.
+
+## M5.2 Release
+
+- [ ] M5.2.01: **Lower MIR to LLVM.** Lower one checked MIR operation family at a time against reference outputs.
+- [ ] M5.2.02: **validate IR.** Run the IR verifier on each function and inject one malformed fixture.
+- [ ] M5.2.03: **implement ABI attributes from proven facts.** Trace each emitted alias or alignment attribute to a checker guarantee.
+- [ ] M5.2.04: **optimize.** Compile the same edge-case corpus at multiple optimization levels.
+- [ ] M5.2.05: **compare outputs.** Compare status, bytes and destructor traces across C, debug and release backends.
+- [ ] M5.2.06: **measure size and speed.** Archive raw timings, allocation counts, stripped sizes and tool versions per workload.
+
+## M5.3 Incremental
+
+- [x] M5.3.01: **Stable query keys.** Keep query identity stable across unrelated edits and distinct across targets. (frontend_cache unit tests: `key_ignores_unit_order` for stability, `different_compiler_identity_invalidates` and `entry_for_another_root_is_not_served` for distinctness; the key is the source-unit digest list plus the tool identity)
+- [ ] M5.3.02: **dependency recording.** Capture direct dependencies for a function referring to an imported type. (not yet: the cache is keyed per compilation unit set, not per query — a function referring to an imported type invalidates the whole unit set. Per-function dependency edges arrive with the query-based engine)
+- [ ] M5.3.03: **fingerprints.** Change a public field and show that its interface fingerprint changes. (not yet: there is no interface fingerprint; a public field edit changes the unit digest and therefore the whole key. Introducing fingerprints is part of the same query-engine slice as M5.3.02)
+- [x] M5.3.04: **invalidation.** Change a private body and compare recomputed queries with a clean build. (`changed_unit_invalidates` and `missing_unit_invalidates` in frontend_cache; end to end, `build_cache_serves_identical_executables_and_rebuilds_on_corruption` proves a cached build produces the same executable as a clean one)
+- [x] M5.3.05: **atomic cache writes.** Interrupt a cache write and run two writers against one key. (`store` stages both files under a per-process name and renames C before the entry, so a crash between the renames leaves a pair the digest check rejects; `concurrent_cache_writers_leave_one_usable_entry` runs two builds against one cache directory and then a third that reuses the survivor)
+- [x] M5.3.06: **corruption recovery.** Truncate an entry and rebuild only affected work with clean-build-equivalent output. (`damaged_c_invalidates` truncates the C and the next lookup misses; `build_cache_serves_identical_executables_and_rebuilds_on_corruption` compares the rebuilt executable with the clean one)
+
+## M6.1 Everyday CLI
+
+- [x] M6.1.01: **Unify project discovery.** Run from package root and nested directory and resolve the same manifest.
+- [x] M6.1.02: **check.** Check an invalid program with no emitted executable and stable diagnostics.
+- [x] M6.1.03: **build.** Build offline from lockfile and locate artifact by target and profile.
+- [x] M6.1.04: **run.** Pass arguments after the separator and propagate child exit status.
+- [x] M6.1.05: **test discovery.** Discover tests deterministically and return failure for a failing assertion.
+- [x] M6.1.06: **fmt idempotence.** Format twice and compare bytes, including comments and recovered trivia where supported.
+- [x] M6.1.07: **doc tests.** Compile fenced runnable examples and attribute failures to document lines.
+- [x] M6.1.08: **consistent exit codes.** Pin stdout, stderr and exit codes for usage, compile and program failures.
+
+## M6.2 Editor
+
+- [ ] M6.2.01: **Synchronize edits.** Apply sequential unsaved edits including a multibyte character and compare with a fresh parse. (Full-text edits and UTF-16 positions are implemented. Compare unsaved project snapshots against the compiler through imports.)
+- [ ] M6.2.02: **publish diagnostics.** Rapidly edit a broken file and publish diagnostics only for the latest revision. (Versioned diagnostics, stale edit rejection and close clearing are covered. Project-aware diagnostic queries and in-flight revision filtering are pending.)
+- [ ] M6.2.03: **hover.** Hover a shadowed name and show its local type and declaration. (Hover uses text and a built-in signature table. Resolve bindings and types through the compiler.)
+- [ ] M6.2.04: **definition.** Jump through an import to the precise definition span. (Definition searches the open document by spelling. Resolve the use to its declaration through the project module graph.)
+- [ ] M6.2.05: **completion.** Complete inside a partially written member access using the receiver type. (Completion collects fields by scanning text. Resolve the receiver type and verify the large-project latency target.)
+- [ ] M6.2.06: **rename across modules.** Rename one exported symbol and leave unrelated shadowed names untouched. (Rename matches spellings in one document. Derive edits from resolved references and verify shadowing and imports.)
+- [ ] M6.2.07: **cancel stale queries.** Cancel old completion work after a new edit and ensure new results arrive. (The synchronous loop handles cancellation messages before later requests. Cancellation of in-flight queries needs a scheduler and revision check.)
+
+## M7.1 Interop
+
+- [ ] M7.1.01: **Header subset.** Accept a supported C declaration and report unsupported bitfields precisely.
+- [ ] M7.1.02: **bindings.** Compare generated binding size and offsets against a compiled C probe.
+- [ ] M7.1.03: **ownership annotations.** Round-trip owned and borrowed buffers and check release responsibility.
+- [ ] M7.1.04: **callbacks.** Register a callback, invoke it, unregister it and verify its environment lifetime.
+- [ ] M7.1.05: **shared library export.** Call an exported function from a separately compiled C host on both platforms.
+- [ ] M7.1.06: **Python buffer bridge.** Share a strided buffer with Python, pin its owner and verify release after last view.
+
+## M7.2 Bootstrap
+
+- [ ] M7.2.01: **Port lexer.** Compare token streams from Rust and ae lexers on the baseline corpus.
+- [ ] M7.2.02: **parser.** Compare normalized parse trees and error recovery spans.
+- [ ] M7.2.03: **resolver.** Compare binding graphs on imports and nested scopes.
+- [ ] M7.2.04: **checker.** Compare accepted and rejected programs including diagnostic locations.
+- [ ] M7.2.05: **MIR.** Compare normalized control flow, loans and drop decisions.
+- [ ] M7.2.06: **codegen driver.** Build and run the same sample using both compiler drivers.
+- [ ] M7.2.07: **compile stage 1.** Build the ae compiler with the pinned Rust seed and record its hash.
+- [ ] M7.2.08: **stage 2.** Use stage 1 to build stage 2 in a clean directory and run conformance.
+- [ ] M7.2.09: **stage 3.** Use stage 2 to build stage 3, compare normalized artifacts and investigate differences.
+
+## M8.1 Compatibility
+
+- [ ] M8.1.01: **Freeze observable rules.** Map every frozen public behavior to a versioned conformance case.
+- [ ] M8.1.02: **edition policy.** Compile an old-edition package consumed by a new-edition package.
+- [ ] M8.1.03: **deprecated syntax diagnostics.** Emit a location, replacement and removal policy for one deprecated feature.
+- [ ] M8.1.04: **migration tool.** Apply migration twice and verify the second run produces no changes.
+- [ ] M8.1.05: **run old package corpus.** Rebuild pinned downstream packages and compare outputs with saved baselines.
+
+## M8.2 Release
+
+- [ ] M8.2.01: **Build on clean hosts.** Install from scratch on each release host and build a sample without developer environment leakage.
+- [ ] M8.2.02: **verify artifacts.** Verify manifest, signatures and hashes before running extracted tools.
+- [ ] M8.2.03: **exercise rollback.** Install the previous release after the candidate and rebuild its locked project.
+- [ ] M8.2.04: **publish support windows.** Give each platform a support owner, end date and update channel.
+- [ ] M8.2.05: **validate real deployments.** Record CLI, web service and proxy deployment versions, observation periods and incident outcomes.
+
+## Architecture realignment track (ADR-0224)
+
+- [x] R0.1: Full Windows baseline at `994463d` (451 passing) committed with …
+- [x] R0.2: Checklist/ledger synced; M4.4.*/M6.2.* reopened; ADR-0222 amended.
+- [x] R1.1: Intrinsic surface frozen: `docs/architecture/intrinsic-allowlist.txt` …
+- [x] R2.1: `adapter_*` / `stream_*` demoted to `std/test/fake_io.ae`; ported …
+- [x] R2.2: Fake `clock_*` demoted to `std/test/fake_clock.ae` over `cell_*`; …
+- [x] R2.3: `reader_*` migrated to `std/io/reader.ae` over string primitives; …
+- [x] R2.4a: `cancel_*` and `timer_*` migrated to `std/sync/cancel.ae` and …
+- [ ] R2.4: Migrate `cancel_*`, `pool_*`, `exec_*`, `timer_*` and `shared_*` …
+- [ ] R3a: M0.2.08: route the CLI through the `ae-syntax` AST; differential …
+- [ ] R3b: Resolver pass: DefId per item/local over the AST (HIR-lite), …
+- [ ] R3c: Type checker over the resolved tree emitting the existing typed …
+- [ ] R3d: Rebase LSP hover/definition/rename/completion on R3b/R3c; re-verify …
+- [ ] R4.1: Split `std/core` into `std/core` (no alloc/OS), `std/alloc`, …
+- [ ] R5.1: Generate the master checklist from this ledger; CI checks that a …

@@ -71,6 +71,10 @@ pub fn next_top_level_trait(tokens: &[Token], mut cursor: usize) -> Option<usize
     None
 }
 
+/// One `name: Type` in a parameter list or struct body. The type stays a
+/// byte range: the shared grammar records the spelling, the compiler
+/// resolves it. A receiver spelled bare (`self`, `&self`, `&mut self`) has
+/// no spelling after the name, so its `ty` is an empty range.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TypedName {
     pub name: String,
@@ -127,20 +131,20 @@ pub fn type_bound_tokens(tokens: &[Token], mut index: usize) -> impl Iterator<It
     })
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TypeParameter {
     pub name: String,
     pub bounds: Vec<String>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EnumVariant {
     pub name: String,
     pub payload: Vec<Range<usize>>,
     pub range: Range<usize>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DeclarationKind {
     Function {
         parameters: Vec<TypedName>,
@@ -154,7 +158,7 @@ pub enum DeclarationKind {
     Impl { target: Option<Range<usize>> },
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum DeclarationAttribute {
     ReprC,
     NoMangle,
@@ -212,12 +216,15 @@ pub fn parse_extern_function_prefix<'a>(
     Ok((abi, parser.pos))
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Declaration {
     pub attribute: Option<DeclarationAttribute>,
     pub name: String,
     pub type_parameters: Vec<TypeParameter>,
     pub kind: DeclarationKind,
+    /// Whether the declaration was spelled `pub`. The grammar only records
+    /// the flag; visibility is the compiler's decision.
+    pub public: bool,
     pub range: Range<usize>,
     pub body: Option<Range<usize>>,
 }
@@ -424,11 +431,64 @@ impl<'a> DeclarationParser<'a> {
             && matches!(self.tokens.get(self.pos + 1).map(|token| &token.kind), Some(Kind::Colon))
     }
 
+    /// The receiver spellings of an impl method: `self`, `&self`, `&mut
+    /// self`. None of them carries a type spelling — the impl target types
+    /// the receiver — so `TypedName::ty` stays an empty range. A leading
+    /// `&` can only start a receiver here (a borrowed parameter is written
+    /// `name: &Type`), which mirrors the compiler's own parameter rule
+    /// (ADR-0184); `self: Type` rewinds into the plain typed-parameter
+    /// path, where the compiler owns the rejection.
+    fn receiver(&mut self) -> Result<Option<TypedName>, Diagnostic> {
+        const RECEIVER_HINT: &str =
+            "write '&self' or '&mut self' to borrow the receiver; any other borrowed parameter is written 'name: &Type' or 'name: &mut Type'";
+        if self.consume(Kind::Amp) {
+            let mutable = self.consume(Kind::Mut);
+            let token = self.current();
+            let Kind::Ident(name) = &token.kind else {
+                return Err(self.error(RECEIVER_HINT));
+            };
+            if name != "self" {
+                return Err(self.error(RECEIVER_HINT));
+            }
+            let (name_range, end) = (token.offset..token.end, token.end);
+            self.pos += 1;
+            return Ok(Some(TypedName {
+                name: "self".to_owned(),
+                name_range,
+                mutable,
+                ty: end..end,
+            }));
+        }
+        let token = self.current();
+        if let Kind::Ident(name) = &token.kind {
+            if name == "self" && !matches!(self.tokens.get(self.pos + 1).map(|next| &next.kind), Some(Kind::Colon)) {
+                let (name_range, end) = (token.offset..token.end, token.end);
+                self.pos += 1;
+                return Ok(Some(TypedName {
+                    name: "self".to_owned(),
+                    name_range,
+                    mutable: false,
+                    ty: end..end,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
     fn typed_names(&mut self, close: Kind, fields: bool) -> Result<Vec<TypedName>, Diagnostic> {
         let mut names = Vec::new();
         while self.current().kind != close {
             if !fields && names.len() >= MAX_FUNCTION_PARAMETERS {
                 return Err(self.error(&format!("function parameter limit exceeded ({MAX_FUNCTION_PARAMETERS})")));
+            }
+            if !fields && names.is_empty() {
+                if let Some(receiver) = self.receiver()? {
+                    names.push(receiver);
+                    if self.consume(Kind::Comma) {
+                        continue;
+                    }
+                    break;
+                }
             }
             let mutable = !fields && self.consume(Kind::Var);
             let token = self.current();
@@ -535,9 +595,12 @@ impl<'a> DeclarationParser<'a> {
 
     fn declaration(&mut self) -> Result<Declaration, Diagnostic> {
         let start = self.current().offset;
-        if matches!(&self.current().kind, Kind::Ident(name) if name == "pub") {
+        let public = if matches!(&self.current().kind, Kind::Ident(name) if name == "pub") {
             self.pos += 1;
-        }
+            true
+        } else {
+            false
+        };
         let attribute = self.attribute()?;
         match attribute {
             Some(DeclarationAttribute::ReprC) if self.current().kind != Kind::Struct => {
@@ -636,7 +699,7 @@ impl<'a> DeclarationParser<'a> {
                 }
                 self.pos += 1;
                 let end = self.tokens[self.pos - 1].end;
-                return Ok(Declaration { attribute, name, type_parameters, kind: function, range: start..end, body: None });
+                return Ok(Declaration { attribute, public, name, type_parameters, kind: function, range: start..end, body: None });
             }
             let body_start = self.opaque_body()?;
             (function, body_start)
@@ -666,7 +729,7 @@ impl<'a> DeclarationParser<'a> {
             (DeclarationKind::Struct { fields }, body_start)
         };
         let end = self.tokens[self.pos - 1].end;
-        Ok(Declaration { attribute, name, type_parameters, kind, range: start..end, body: Some(body_start..end) })
+        Ok(Declaration { attribute, public, name, type_parameters, kind, range: start..end, body: Some(body_start..end) })
     }
 }
 

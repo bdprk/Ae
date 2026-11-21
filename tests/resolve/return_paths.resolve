@@ -1,0 +1,58 @@
+resolve return_paths.ae
+use headers: none
+items:
+#0 enum Opt @219..222
+#1 variant Some @228..235 owner=#0
+#2 variant None @237..241 owner=#0
+#3 function both_branches @248..261
+#4 function full_match @358..368
+#5 function unsafe_return @490..503
+#6 function while_true @558..568
+#7 function bare_fall @627..636
+#8 function main @669..673
+types:
+#0 Opt:
+  233..234 variant-payload Some -> T
+#3 both_branches:
+  268..272 parameter flag -> bool
+  277..280 return-> i64
+#4 full_match:
+  372..380 parameter v -> #0[i64]
+  385..388 return-> i64
+#5 unsafe_return:
+  509..512 return-> i64
+#6 while_true:
+  574..577 return-> i64
+#7 bare_fall:
+  642..645 return-> i64
+locals in #3 both_branches:
+#9 parameter flag @262..266 owner=#3 = bool
+occurrences in #3 both_branches:
+  290..294 read flag -> #9
+locals in #4 full_match:
+#10 parameter v @369..370 owner=#4 = #0[i64]
+#11 pattern-binding x @423..424 owner=#4 = i64
+occurrences in #4 full_match:
+  401..402 read v -> #10
+  418..422 read Some -> #1
+  438..439 read x -> #11
+  456..460 read None -> #2
+locals in #5 unsafe_return:
+  none
+occurrences in #5 unsafe_return:
+  none
+locals in #6 while_true:
+  none
+occurrences in #6 while_true:
+  none
+locals in #7 bare_fall:
+#12 binding x @656..657 owner=#7 = i64
+occurrences in #7 bare_fall:
+  none
+locals in #8 main:
+  none
+occurrences in #8 main:
+  688..701 call both_branches -> #3
+diagnostics:
+  return_paths.ae:31:2: function may exit without returning a value
+  return_paths.ae:35:2: function may exit without returning a value

@@ -6,7 +6,7 @@ mod package;
 mod render;
 mod frontend_cache;
 
-const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae check --render [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae init [directory]\n       ae doc [--test] [source.ae|project]\n       ae explain <E0000>\n       ae add <path>\n       ae remove <name>\n       ae update [project]\n       ae lsp\n       ae version";
+const USAGE: &str = "usage: ae <check|emit-c|emit-tree|emit-cfg|emit-mir|emit-resolve> [source.ae|project]\n       ae check --json [source.ae|project]\n       ae check --render [source.ae|project]\n       ae fmt <source.ae>\n       ae test [source.ae|project] [filter] [--interp]\n       ae run [source.ae|project] [--release|--interp] [-- <program args>]\n       ae build [source.ae|project] -o <output> [--debug]\n       ae cache [dir|clear|stats]\n       ae deps [source.ae|project]\n       ae new <directory>\n       ae init [directory]\n       ae doc [--test] [source.ae|project]\n       ae explain <E0000>\n       ae add <path>\n       ae remove <name>\n       ae update [project]\n       ae lsp\n       ae version";
 
 /// A toolchain failure with the exit code it maps to. Usage errors exit 2 and
 /// everything else exits 1, so a script can tell "you called it wrong" from
@@ -370,8 +370,8 @@ fn cache_command(subcommand: Option<&OsString>) -> Result<u8, String> {
 fn run(args: Vec<OsString>) -> Result<u8, Failure> {
     if args.is_empty() { return Err(Failure::usage(USAGE)); }
     let cmd = args[0].to_str().ok_or(Failure::usage("command must be UTF-8"))?.to_owned();
-    const COMMANDS: [&str; 20] = [
-        "check", "emit-c", "emit-tree", "emit-cfg", "emit-mir", "run", "build", "test",
+    const COMMANDS: [&str; 21] = [
+        "check", "emit-c", "emit-tree", "emit-cfg", "emit-mir", "emit-resolve", "run", "build", "test",
         "fmt", "cache", "new", "init", "update", "deps", "version", "doc", "explain",
         "add", "remove", "lsp",
     ];
@@ -581,7 +581,7 @@ fn run(args: Vec<OsString>) -> Result<u8, Failure> {
     let mut args = args;
     let first = args.get(1).and_then(|arg| arg.to_str());
     let implicit_project = match cmd.as_str() {
-        "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" => args.len() == 1,
+        "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" | "emit-resolve" => args.len() == 1,
         "run" => args.len() == 1 || matches!(first, Some("--release" | "--debug" | "--interp" | "--")),
         "build" => first == Some("-o"),
         _ => false,
@@ -634,10 +634,10 @@ fn run(args: Vec<OsString>) -> Result<u8, Failure> {
         _ => level.unwrap_or(false),
     };
     let output = match cmd.as_str() {
-        "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" | "run" if args.len() == 2 => None,
+        "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" | "emit-resolve" | "run" if args.len() == 2 => None,
         "run" if level.is_some() => None,
         "build" if (args.len() == 4 || level.is_some()) && args[2] == "-o" => Some(PathBuf::from(&args[3])),
-        "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" | "run" | "build" => return Err(Failure::usage(USAGE)),
+        "check" | "emit-c" | "emit-tree" | "emit-cfg" | "emit-mir" | "emit-resolve" | "run" | "build" => return Err(Failure::usage(USAGE)),
         _ => return Err(Failure::usage(format!("unknown command: {cmd}\n{USAGE}"))),
     };
     let package::PackageEntry { path: input, imports, lock } = package::entry_path(Path::new(&args[1]))?;
@@ -747,6 +747,18 @@ fn run_source(
     lock: Option<package::PackageLock>,
 ) -> Result<u8, String> {
     let started = Instant::now();
+    if cmd == "emit-resolve" {
+        // The resolution dump is its own pipeline stage over the shared
+        // grammar (ADR-0224 R3b): it never touches the frontend or its
+        // cache, so a fresh pass is the only honest source. Single-file
+        // resolution for now — `use` headers are listed, not followed.
+        // `use` headers are followed (transitively, cycle-guarded): the
+        // imports' `pub` items become visible, so a program's names resolve
+        // the way the compiler sees them.
+        let (module, resolution) = ae_resolve::load_and_resolve(input).map_err(|e| format!("{}: {e}", input.display()))?;
+        print!("{}", ae_resolve::dump(&module, &resolution));
+        return Ok(0);
+    }
     if cmd == "emit-mir" {
         let mir = frontend::mir_path(input)?;
         print!("{mir}");

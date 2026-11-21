@@ -7,12 +7,21 @@ name = "ae"
 version = "0.1.1"
 dependencies = [
  "ae-compiler",
+ "ae-resolve",
  "ae-syntax",
  "toml",
 ]
 
 [[package]]
 name = "ae-compiler"
+version = "0.1.1"
+dependencies = [
+ "ae-span",
+ "ae-syntax",
+]
+
+[[package]]
+name = "ae-resolve"
 version = "0.1.1"
 dependencies = [
  "ae-span",

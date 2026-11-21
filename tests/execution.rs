@@ -8572,3 +8572,72 @@ fn fake_io_std_module_agrees_across_backends() {
     let expected = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run/fake_io.stdout")).unwrap().replace("\r\n", "\n");
     assert_eq!(c_out, expected);
 }
+
+/// R3b differential gate: the resolver's name model must agree with the
+/// compiler on every accepted program. Three claims, checked per file:
+/// the shared grammar parses what the compiler accepts, the resolver finds
+/// no duplicate-variable or unknown-target diagnostics, and every write
+/// target or borrow argument names a live local. Programs the compiler
+/// rejects stay out of the gate — the resolver keeps dumping those.
+#[test]
+fn resolver_agrees_with_the_compiler_on_accepted_programs() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut checked = 0usize;
+    let mut failures = Vec::new();
+    for dir in ["tests/run", "examples"] {
+        let mut stack = vec![root.join(dir)];
+        while let Some(path) = stack.pop() {
+            let Ok(entries) = fs::read_dir(&path) else { continue };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    stack.push(path);
+                    continue;
+                }
+                if path.extension().is_none_or(|ext| ext != "ae") {
+                    continue;
+                }
+                let label = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+                let source = fs::read_to_string(&path).unwrap_or_default();
+                // Only programs the compiler itself accepts belong in this gate.
+                let verdict = Command::new(env!("CARGO_BIN_EXE_ae")).arg("check").arg(&path).output().unwrap();
+                if !verdict.status.success() {
+                    continue;
+                }
+                // Imports are followed the way the CLI does: the imports'
+                // pub items become visible, so an accepted multi-file
+                // program resolves without unknowns.
+                let resolution = match ae_resolve::load_and_resolve(&path) {
+                    Ok((_, resolution)) => resolution,
+                    Err(error) => {
+                        failures.push(format!("{label}: the resolver cannot process an accepted program: {error}"));
+                        continue;
+                    }
+                };
+                let _ = &source;
+                for diagnostic in &resolution.diagnostics {
+                    failures.push(format!("{label}: {}", diagnostic.message));
+                }
+                for function in &resolution.functions {
+                    for occurrence in &function.occurrences {
+                        if matches!(occurrence.role, ae_resolve::Role::Write | ae_resolve::Role::Borrow) && occurrence.target.is_none() {
+                            failures.push(format!("{label}: write or borrow of '{}' resolves to nothing", occurrence.name));
+                        }
+                    }
+                }
+                // ADR-0228: every type spelling of an accepted program
+                // classifies — an unknown name would mean the compiler
+                // accepted a type the resolver cannot see (an imported
+                // type, or a drift bug).
+                for entry in &resolution.spellings {
+                    if entry.spelled.spelling.is_unknown() {
+                        failures.push(format!("{label}: type spelling of '{}' is unknown", entry.name));
+                    }
+                }
+                checked += 1;
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+    assert!(checked > 100, "expected a large resolution corpus, checked {checked}");
+}

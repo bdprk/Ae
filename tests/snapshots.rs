@@ -119,3 +119,24 @@ fn run_snapshots() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
+
+/// `tests/resolve/*.ae` — `ae emit-resolve`; expected dump in `*.resolve`.
+/// The resolver is its own pipeline stage (ADR-0224 R3b), so unlike the ui
+/// family a case may carry diagnostics inside its dump: the comparison is
+/// stdout only, and stderr must stay empty.
+#[test]
+fn resolve_snapshots() {
+    let mut failures = Vec::new();
+    for case in cases("resolve") {
+        let out = Command::new(env!("CARGO_BIN_EXE_ae")).arg("emit-resolve").arg(&case).output().unwrap();
+        if !out.status.success() {
+            failures.push(format!("{}: emit-resolve failed: {}", case.display(), String::from_utf8_lossy(&out.stderr)));
+            continue;
+        }
+        if !out.stderr.is_empty() {
+            failures.push(format!("{}: emit-resolve wrote stderr: {}", case.display(), String::from_utf8_lossy(&out.stderr)));
+        }
+        compare(&case, "resolve", &normalise(&out.stdout, case.parent().unwrap()), &mut failures, bless());
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n\n"));
+}

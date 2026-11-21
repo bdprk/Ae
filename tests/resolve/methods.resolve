@@ -1,0 +1,65 @@
+resolve methods.ae
+use headers: none
+items:
+#0 struct Doc @7..10
+#1 impl Doc @48..51
+#2 function rename @61..67 owner=#1
+#3 function static_name @168..179 owner=#1
+#4 enum Shape @230..235
+#5 variant Circle @242..253 owner=#4
+#6 variant Box @259..270 owner=#4
+#7 function area @278..282
+#8 function main @449..453
+types:
+#0 Doc:
+  19..25 field name -> string
+  33..39 field note -> string
+#4 Shape:
+  249..252 variant-payload Circle -> i64
+  263..269 variant-payload Box -> string
+#2 rename:
+  83..89 parameter to -> string
+  94..97 return-> i64
+#3 static_name:
+  185..191 return-> string
+#7 area:
+  290..295 parameter shape -> #4
+  300..303 return-> i64
+locals in #2 rename:
+#9 parameter self @73..77 owner=#2 mutable = &mut  #0
+#10 parameter to @79..81 owner=#2 = string
+occurrences in #2 rename:
+  108..112 write self -> #9
+  120..122 read to -> #10
+  139..142 call len -> external
+  143..147 read self -> #9
+locals in #3 static_name:
+  none
+occurrences in #3 static_name:
+  none
+locals in #7 area:
+#11 parameter shape @283..288 owner=#7 = #4
+#12 pattern-binding radius @346..352 owner=#7 = i64
+#13 pattern-binding label @404..409 owner=#7 = string
+occurrences in #7 area:
+  316..321 read shape -> #11
+  339..345 read Circle -> #5
+  366..372 read radius -> #12
+  375..381 read radius -> #12
+  400..403 read Box -> #6
+  423..426 call len -> external
+  427..432 read label -> #13
+locals in #8 main:
+#14 binding d @466..467 owner=#8 mutable = #0
+occurrences in #8 main:
+  470..473 construct Doc -> #0
+  517..518 call d -> #14
+  546..549 qualifier Doc -> #0
+  551..562 call static_name -> #3
+  577..581 call area -> #7
+  582..587 qualifier Shape -> #4
+  589..595 call Circle -> #5
+  612..616 call area -> #7
+  617..622 qualifier Shape -> #4
+  624..627 call Box -> #6
+diagnostics: none

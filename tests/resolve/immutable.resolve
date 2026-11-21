@@ -1,0 +1,59 @@
+resolve immutable.ae
+use headers: none
+items:
+#0 struct S @158..159
+#1 impl S @177..178
+#2 function peek @188..192 owner=#1
+#3 function replace @245..252 owner=#1
+#4 function by_value @336..344
+#5 function rebind @395..401
+#6 function main @450..454
+types:
+#0 S:
+  165..168 field a -> i64
+#2 peek:
+  203..206 return-> i64
+#3 replace:
+  267..270 parameter v -> i64
+  275..278 return-> i64
+#4 by_value:
+  348..349 parameter s -> #0
+  354..357 return-> i64
+#5 rebind:
+  405..408 parameter x -> i64
+  413..416 return-> i64
+locals in #2 peek:
+#7 parameter self @194..198 owner=#2 = & #0
+occurrences in #2 peek:
+  224..228 read self -> #7
+locals in #3 replace:
+#8 parameter self @258..262 owner=#3 mutable = &mut  #0
+#9 parameter v @264..265 owner=#3 = i64
+occurrences in #3 replace:
+  289..293 write self -> #8
+  298..299 read v -> #9
+  316..320 read self -> #8
+locals in #4 by_value:
+#10 parameter s @345..346 owner=#4 = #0
+occurrences in #4 by_value:
+  364..365 write s -> #10
+  384..385 read s -> #10
+locals in #5 rebind:
+#11 parameter x @402..403 owner=#5 = i64
+occurrences in #5 rebind:
+  423..424 write x -> #11
+  441..442 read x -> #11
+locals in #6 main:
+#12 binding x @467..468 owner=#6 = i64
+#13 binding s @493..494 owner=#6 = #0
+occurrences in #6 main:
+  478..479 write x -> #12
+  497..498 construct S -> #0
+  513..514 write s -> #13
+  532..533 read x -> #12
+  546..547 call s -> #13
+diagnostics:
+  immutable.ae:16:5: cannot assign to immutable variable 's'
+  immutable.ae:21:5: cannot assign to immutable variable 'x'
+  immutable.ae:27:5: cannot assign to immutable variable 'x'
+  immutable.ae:29:5: cannot assign to immutable variable 's'
