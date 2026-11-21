@@ -172,6 +172,9 @@ updates this ADR as slices land.
    Bindings and effect statements use the indexed propagation node to
    lower the operand before its question mark. The existing typed route
    checks the result shape and emits early returns and cleanup.
+   For loops use indexed vector or token-cursor bindings and range
+   operands. The typed loop machinery still owns evaluation order,
+   borrow lifetime, jump targets, and cleanup.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

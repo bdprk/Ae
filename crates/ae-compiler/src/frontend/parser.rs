@@ -941,6 +941,26 @@ impl<'a> Parser<'a> {
         Some(value)
     }
 
+    fn lower_shared_iterable(&mut self) -> Option<(Expr, Type)> {
+        use ae_syntax::expression::ExpressionKind;
+
+        let offset = self.tokens.get(self.pos)?.offset;
+        let root = self.resolved_expressions().values.get(&offset).cloned()?;
+        let ExpressionKind::Atom(Kind::Ident(name)) = &root.kind else {
+            return None;
+        };
+        let end = self.tokens.partition_point(|token| token.offset < root.range.end);
+        if self.tokens.get(end)?.kind != Kind::LBrace || name == "Self" || self.struct_names.contains_key(name) {
+            return None;
+        }
+        let value = self.lower_resolved_local(name, offset)?;
+        if !matches!(value.1, Type::Tokens | Type::Vec | Type::VecRef | Type::VecF | Type::VecFRef | Type::StrVec | Type::StrVecRef) {
+            return None;
+        }
+        self.pos = end;
+        Some(value)
+    }
+
     fn condition(&mut self) -> Result<Expr, ae_span::Diagnostic> {
         let (condition, ty) = match self.lower_shared_value(Some(Kind::LBrace), false) {
             Some(value) => value,
@@ -1545,7 +1565,10 @@ impl<'a> Parser<'a> {
                     if RESERVED.contains(&var_name.as_str()) { return Err(self.fail(&format!("'{var_name}' is a built-in name and cannot be a loop variable"))); }
                     if self.names.contains_key(&var_name) { return Err(self.duplicate_binding_error(&var_name)); }
                     self.take(Kind::In)?;
-                    let (first, first_ty) = self.expression(0, false)?;
+                    let (first, first_ty) = match self.lower_shared_iterable() {
+                        Some(value) => value,
+                        None => self.expression(0, false)?,
+                    };
                     if first_ty == Type::Tokens {
                         // `for token in cursor` streams the tokens as read-only
                         // views: no vector, no per-token allocation, and the
@@ -1631,7 +1654,10 @@ impl<'a> Parser<'a> {
                     }
                     if first_ty != Type::Int { return Err(self.fail("range bounds must be i64")); }
                     self.take(Kind::DotDot)?;
-                    let (end, end_ty) = self.expression(0, false)?;
+                    let (end, end_ty) = match self.lower_shared_value(Some(Kind::LBrace), false) {
+                        Some(value) => value,
+                        None => self.expression(0, false)?,
+                    };
                     if end_ty != Type::Int { return Err(self.fail("range bounds must be i64")); }
                     if self.loop_depth >= 64 { return Err(self.fail("loop nesting limit exceeded (64)")); }
                     let (line, col) = self.position();
