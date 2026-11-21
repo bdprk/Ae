@@ -129,6 +129,11 @@ updates this ADR as slices land.
    temporaries or resolved locals. Moves and their deferred view conflicts
    are committed only after the containing expression lowers successfully.
    The existing last-use pass adjudicates the conflicts.
+   Numeric vector literals also lower from the expression tree. The
+   element types select the existing integer or floating vector form,
+   and an empty literal defaults to the integer form. The compiler
+   charges the enclosing expression budget and retains typed diagnostics
+   for unsupported elements or output types.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

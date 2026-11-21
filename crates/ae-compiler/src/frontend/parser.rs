@@ -498,6 +498,27 @@ impl<'a> Parser<'a> {
                 }
                 self.lower_resolved_local(name, expression.range.start)
             }
+            ExpressionKind::Vector(elements) => {
+                let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < expression.range.start))?;
+                let (line, column) = (token.line, token.column);
+                let mut vector_type = None;
+                let mut values = Vec::new();
+                for element in elements {
+                    let (value, element_type) = self.lower_shared_expression(element, remaining, nodes_left, pending_moves)?;
+                    let ty = match element_type {
+                        Type::Int => Type::Vec,
+                        Type::F64 => Type::VecF,
+                        _ => return None,
+                    };
+                    if vector_type.is_some_and(|previous| previous != ty) {
+                        return None;
+                    }
+                    vector_type = Some(ty);
+                    values.push(value);
+                }
+                let ty = vector_type.unwrap_or(Type::Vec);
+                Some((Expr::VecLit(values, ty, line, column), ty))
+            }
             ExpressionKind::Group(inner) => self.lower_shared_expression(inner, remaining, nodes_left, pending_moves),
             ExpressionKind::Call { callee, arguments } => {
                 let ExpressionKind::Atom(Kind::Ident(name)) = &callee.kind else {
@@ -688,7 +709,10 @@ impl<'a> Parser<'a> {
             match &argument.kind {
                 ExpressionKind::Atom(Kind::Text(value)) => Statement::Print(Printed::Text(value.clone())),
                 _ => {
-                    let (value, _) = self.lower_shared_expression(&argument, 64, &mut nodes_left, &mut pending_moves)?;
+                    let (value, ty) = self.lower_shared_expression(&argument, 64, &mut nodes_left, &mut pending_moves)?;
+                    if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView) {
+                        return None;
+                    }
                     Statement::Print(Printed::Expr(value))
                 }
             }
@@ -1584,7 +1608,7 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; let value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); }";
+        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; let value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
         let call_token = tokens.iter().position(|token| token.offset == source.find("print(compute").unwrap()).unwrap();
@@ -1686,5 +1710,17 @@ mod tests {
         assert!(parser.moved.contains(&8));
         let offset = source.find("print(consume(text").unwrap() + "print(consume(".len();
         assert_eq!(parser.deferred_write_conflicts, vec![(8, offset, "text".into(), "move", None)]);
+
+        let vector_offset = source.find("vec[1.0").unwrap();
+        parser.pos = parser.tokens.partition_point(|token| token.offset < vector_offset);
+        assert!(matches!(
+            parser.lower_shared_value(Some(Kind::Semi), true),
+            Some((Expr::VecLit(values, Type::VecF, _, _), Type::VecF)) if values.len() == 2
+        ));
+        let print_offset = source.find("print(vec[1])").unwrap();
+        parser.pos = parser.tokens.partition_point(|token| token.offset < print_offset);
+        let print = parser.pos;
+        assert!(parser.lower_output_from_syntax().is_none());
+        assert_eq!(parser.pos, print);
     }
 }
