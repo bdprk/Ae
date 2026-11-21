@@ -187,6 +187,9 @@ updates this ADR as slices land.
    Raw pointer stores reuse the pointer name from the shared statement.
    The typed route still enforces the unsafe scope, the pointee type,
    and the ownership restriction.
+   Output and loop jumps select their lowering from the indexed
+   statement kinds. Output operands still share the expression index,
+   and loop diagnostics and cleanup retain their existing behavior.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

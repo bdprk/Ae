@@ -663,6 +663,14 @@ type SharedFunctions = HashMap<String, Signature>;
 #[derive(Clone, Copy, PartialEq)]
 enum BorrowKind { View, Container }
 
+#[derive(Clone, Copy)]
+enum IndexedStatement {
+    Print(usize),
+    Assert(usize),
+    Break,
+    Continue,
+}
+
 #[derive(Default)]
 struct ResolvedExpressions {
     local_bindings: HashMap<usize, std::ops::Range<usize>>,
@@ -670,7 +678,7 @@ struct ResolvedExpressions {
     struct_constructors: HashSet<usize>,
     enum_variants: HashSet<usize>,
     values: HashMap<usize, Rc<ae_syntax::expression::Expression>>,
-    statement_ends: HashMap<usize, usize>,
+    statements: HashMap<usize, (IndexedStatement, usize)>,
     pointer_store_names: HashMap<usize, String>,
     match_patterns: HashMap<usize, ae_syntax::pattern::Pattern>,
 }

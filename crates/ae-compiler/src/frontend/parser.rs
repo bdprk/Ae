@@ -466,7 +466,17 @@ impl<'a> Parser<'a> {
                 .flat_map(|body| body.iter());
             for statement in function_statements.chain(closure_statements) {
                 ae_syntax::statement::visit_statements(statement, &mut |statement| {
-                    expressions.statement_ends.insert(statement.range.start, statement.range.end);
+                    use ae_syntax::statement::StatementKind;
+                    let kind = match &statement.kind {
+                        StatementKind::Print(argument) => Some(IndexedStatement::Print(argument.range.start)),
+                        StatementKind::Assert(argument) => Some(IndexedStatement::Assert(argument.range.start)),
+                        StatementKind::Break => Some(IndexedStatement::Break),
+                        StatementKind::Continue => Some(IndexedStatement::Continue),
+                        _ => None,
+                    };
+                    if let Some(kind) = kind {
+                        expressions.statements.insert(statement.range.start, (kind, statement.range.end));
+                    }
                     if let ae_syntax::statement::StatementKind::PointerStore { pointer, pointer_range, .. } = &statement.kind {
                         expressions.pointer_store_names.insert(pointer_range.start, pointer.clone());
                     }
@@ -1029,36 +1039,39 @@ impl<'a> Parser<'a> {
         self.identifier()
     }
 
-    fn resolved_statement_end(&mut self) -> Option<usize> {
+    fn indexed_statement(&self) -> Option<(IndexedStatement, usize)> {
         let start = self.tokens.get(self.pos)?.offset;
-        let end = *self.resolved_expressions().statement_ends.get(&start)?;
-        Some(self.tokens.partition_point(|token| token.offset < end))
+        let &(kind, end) = self.resolved_expressions().statements.get(&start)?;
+        Some((kind, self.tokens.partition_point(|token| token.offset < end)))
     }
 
     fn lower_output_from_syntax(&mut self) -> Option<Statement> {
         use ae_syntax::expression::ExpressionKind;
 
-        let [keyword, open, argument, ..] = &self.tokens[self.pos..] else {
+        let [_, open, argument, ..] = &self.tokens[self.pos..] else {
             return None;
         };
         if open.kind != Kind::LParen || !Self::shared_expression_start(&argument.kind) {
             return None;
         }
-        let print = keyword.kind == Kind::Print;
-        let offset = argument.offset;
-        let (argument, end) = if let Some(end) = self.resolved_statement_end() {
+        let (print, argument, end) = if let Some((kind, end)) = self.indexed_statement() {
+            let (print, offset) = match kind {
+                IndexedStatement::Print(offset) => (true, offset),
+                IndexedStatement::Assert(offset) => (false, offset),
+                _ => return None,
+            };
             let argument = self.resolved_expressions().values.get(&offset).cloned()?;
-            (argument, end)
+            (print, argument, end)
         } else {
             use ae_syntax::statement::{parse_statement_tokens, StatementKind};
 
-            // Keep the local grammar path when module resolution could not index the statement.
             let (statement, end) = parse_statement_tokens(&self.file, self.source, &self.tokens, self.pos).ok()?;
-            let argument = match statement.kind {
-                StatementKind::Print(value) | StatementKind::Assert(value) => value,
-                _ => unreachable!("output statement syntax"),
+            let (print, argument) = match statement.kind {
+                StatementKind::Print(value) => (true, value),
+                StatementKind::Assert(value) => (false, value),
+                _ => return None,
             };
-            (Rc::new(argument), end)
+            (print, Rc::new(argument), end)
         };
 
         // Commit argument effects and advance the cursor only after the entire
@@ -1755,15 +1768,20 @@ impl<'a> Parser<'a> {
                 Kind::Break | Kind::Continue => {
                     let keyword = if *self.current() == Kind::Break { "break" } else { "continue" };
                     if self.loop_depth == 0 { return Err(self.fail(&format!("'{keyword}' outside of a loop"))); }
-                    self.pos = match self.resolved_statement_end() {
-                        Some(end) => end,
-                        None => ae_syntax::statement::parse_statement_tokens(
-                            &self.file, self.source, &self.tokens, self.pos,
-                        )?.1,
+                    let (is_break, end) = match self.indexed_statement() {
+                        Some((IndexedStatement::Break, end)) => (true, end),
+                        Some((IndexedStatement::Continue, end)) => (false, end),
+                        _ => {
+                            let (statement, end) = ae_syntax::statement::parse_statement_tokens(
+                                &self.file, self.source, &self.tokens, self.pos,
+                            )?;
+                            (matches!(statement.kind, ae_syntax::statement::StatementKind::Break), end)
+                        }
                     };
+                    self.pos = end;
                     let owned = self.loop_local_owned();
                     if !owned.is_empty() { result.push(Statement::Frees(owned)); }
-                    result.push(if keyword == "break" {
+                    result.push(if is_break {
                         Statement::Break
                     } else {
                         Statement::Continue(self.loop_labels.last().copied().flatten())
