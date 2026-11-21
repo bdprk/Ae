@@ -166,6 +166,11 @@ Per-construct locations (for the next slices):
   FieldStore ×6, Star (pointer store) ×1
 - compound assignment: PercentEqual ×2; plain Assign ×2
 - containers and builtins: Array ×1, VecPop ×3, MapPut ×2, Sort ×1
-- control flow tail: condition ×1, Exit ×2, Return ×1, For ×2,
+- control flow tail: condition ×1, Return ×1, For ×2,
   Assert ×1, Print ×1, match_statement ×1
 - Declare ×1
+
+Relay continuation (2026-11-21, the takeover agent): the `exit` builtin's
+argument now lowers through `lower_shared_value` with an RParen boundary
+(Windows 484/0, WSL2 484/0) — the Exit ×2 entry above is resolved, leaving
+34 sites.
