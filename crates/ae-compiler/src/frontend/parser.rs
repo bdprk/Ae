@@ -1543,7 +1543,10 @@ impl<'a> Parser<'a> {
                                 }
                                 self.pos += 1;
                                 let (line, col) = self.position();
-                                let (rhs, rhs_ty) = self.expression(0, false)?;
+let (rhs, rhs_ty) = match self.lower_shared_value(None, false) {
+    Some(pair) => pair,
+    None => self.expression(0, false)?,
+};
                                 self.take(Kind::Semi)?;
                                 if rhs_ty != fty {
                                     return Err(self.fail(&format!("field '{}' must be {}", fname, fty.name())));
