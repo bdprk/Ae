@@ -308,3 +308,9 @@ scoped bindings are the next body-level slice.
 The resolved body route lowers if, else if, and else. Branch-local slots
 leave scope at the end of their branch, allowing the same name in sibling
 branches. Scalar loops and their exits remain a separate slice.
+
+## Resolved scalar while loops (2026-11-22)
+
+The resolved body route now lowers while, break, and continue, including
+nested loops and the outside-loop diagnostic. Scalar assignment and range
+loops are still on the typed token route.

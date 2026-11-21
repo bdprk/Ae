@@ -58,6 +58,11 @@ fn scalar_body_statement(statement: &ae_syntax::statement::Statement, resolved: 
                     None => true,
                 }
         }
+        StatementKind::While { condition, body } => {
+            scalar_body_expression(condition, resolved)
+                && body.iter().all(|statement| scalar_body_statement(statement, resolved))
+        }
+        StatementKind::Break | StatementKind::Continue => true,
         _ => false,
     }
 }
@@ -680,11 +685,7 @@ impl<'a> Parser<'a> {
                 Statement::Return(value, Vec::new())
             }
             StatementKind::If { condition, then_body, else_body } => {
-                let (value, ty) = self.lower_scalar_body_expression(condition, slots)?;
-                self.seek_scalar_offset(condition.range.end);
-                if ty != Type::Bool {
-                    return Err(self.fail("condition must be a boolean expression").with_code("E0205"));
-                }
+                let value = self.lower_scalar_condition(condition, slots)?;
                 let yes = self.lower_scalar_statements(then_body, slots)?;
                 let no = if let Some(branch) = else_body {
                     self.pos += 1;
@@ -697,10 +698,42 @@ impl<'a> Parser<'a> {
                 };
                 Statement::If(value, yes, no)
             }
+            StatementKind::While { condition, body } => {
+                let condition = self.lower_scalar_condition(condition, slots)?;
+                if self.loop_depth >= 64 {
+                    return Err(self.fail("loop nesting limit exceeded (64)"));
+                }
+                self.loop_depth += 1;
+                let lowered = self.lower_scalar_statements(body, slots);
+                self.loop_depth -= 1;
+                Statement::While(condition, lowered?)
+            }
+            StatementKind::Break | StatementKind::Continue => {
+                let is_break = matches!(statement.kind, StatementKind::Break);
+                if self.loop_depth == 0 {
+                    self.seek_scalar_offset(statement.range.start);
+                    let keyword = if is_break { "break" } else { "continue" };
+                    return Err(self.fail(&format!("'{keyword}' outside of a loop")));
+                }
+                if is_break { Statement::Break } else { Statement::Continue(None) }
+            }
             _ => unreachable!("scalar body eligibility"),
         };
         self.seek_scalar_offset(statement.range.end);
         Ok(lowered)
+    }
+
+    fn lower_scalar_condition(
+        &mut self,
+        condition: &ae_syntax::expression::Expression,
+        slots: &HashMap<ae_resolve::DefId, (usize, Type)>,
+    ) -> Result<Expr, ae_span::Diagnostic> {
+        let (value, ty) = self.lower_scalar_body_expression(condition, slots)?;
+        self.seek_scalar_offset(condition.range.end);
+        if ty != Type::Bool {
+            return Err(self.fail("condition must be a boolean expression").with_code("E0205"));
+        }
+        Ok(value)
     }
 
     fn seek_scalar_offset(&mut self, offset: usize) {
@@ -2407,7 +2440,7 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn scalar() -> bool { let local = (2 + 3) * 4; return local == 20; } fn mismatch() -> i64 { return true; } fn branches() -> i64 { if false { let same = 1; return same; } else if true { let same = 2; return same; } else { let same = 3; return same; } } fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; task_spawn(ex, || -> i64 { return 0; }); let closure = |x: i64| -> bool { return x == 0; }; }";
+        let source = "fn scalar() -> bool { let local = (2 + 3) * 4; return local == 20; } fn mismatch() -> i64 { return true; } fn branches() -> i64 { if false { let same = 1; return same; } else if true { let same = 2; return same; } else { let same = 3; return same; } } fn loops() -> i64 { while true { while false { continue; } break; } return 7; } fn bad_loop() -> i64 { continue; return 0; } fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; task_spawn(ex, || -> i64 { return 0; }); let closure = |x: i64| -> bool { return x == 0; }; }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
         let call_token = tokens.iter().position(|token| token.offset == source.find("print(compute").unwrap()).unwrap();
@@ -2445,6 +2478,20 @@ mod tests {
         for (index, body) in [yes, other_yes, other_no].into_iter().enumerate() {
             assert!(matches!(body.as_slice(), [Statement::Declare(slot, _), Statement::Return(Expr::Variable(read, Type::Int, ..), _)] if *slot == index + 1 && slot == read));
         }
+
+        parser.seek_scalar_offset(source.find("{ while true").unwrap());
+        let loops = parser.lower_resolved_scalar_body().expect("resolved loops").unwrap();
+        let [Statement::While(_, outer), Statement::Return(Expr::Number(7), _)] = loops.as_slice() else {
+            panic!("expected loop and return");
+        };
+        let [Statement::While(_, inner), Statement::Break] = outer.as_slice() else {
+            panic!("expected nested loop and break");
+        };
+        assert!(matches!(inner.as_slice(), [Statement::Continue(None)]));
+        parser.seek_scalar_offset(source.find("{ continue; return").unwrap());
+        let error = parser.lower_resolved_scalar_body().expect("resolved loop error").err().unwrap();
+        assert_eq!(error.message, "'continue' outside of a loop");
+        assert_eq!(parser.loop_depth, 0);
 
         for prefix in [
             "choose[",
