@@ -334,13 +334,7 @@ impl Parser<'_> {
                 self.pos += 1;
                 let power = prefix_binding_power(&operator).expect("prefix operator");
                 let (operand, ty) = self.expression(power, false)?;
-                if operator == Kind::Minus {
-                    if !matches!(ty, Type::Int | Type::F64) { return Err(self.fail("unary '-' requires an i64 or f64 operand").with_code("E0203")); }
-                    (Expr::Neg(Box::new(operand), line, column), ty)
-                } else {
-                    if ty != Type::Bool { return Err(self.fail("'!' requires a boolean operand")); }
-                    (Expr::Not(Box::new(operand)), Type::Bool)
-                }
+                self.lower_prefix(operator, (operand, ty), (line, column))?
             }
             // A borrow expression exists only to be cast (M2.12 slice 2):
             // `&expr as *const T` takes the address of addressable storage.
@@ -1800,7 +1794,31 @@ impl Parser<'_> {
         self.plus_operand_depth += 1;
         let parsed = self.expression(right_power, op == Kind::Plus);
         self.plus_operand_depth -= 1;
-        let (rhs, rhs_ty) = parsed?;
+        self.lower_infix(lhs, op, parsed?, (line, column))
+    }
+
+    pub(super) fn lower_prefix(
+        &self,
+        operator: Kind,
+        (operand, ty): (Expr, Type),
+        (line, column): (usize, usize),
+    ) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        if operator == Kind::Minus {
+            if !matches!(ty, Type::Int | Type::F64) { return Err(self.fail("unary '-' requires an i64 or f64 operand").with_code("E0203")); }
+            Ok((Expr::Neg(Box::new(operand), line, column), ty))
+        } else {
+            if ty != Type::Bool { return Err(self.fail("'!' requires a boolean operand")); }
+            Ok((Expr::Not(Box::new(operand)), Type::Bool))
+        }
+    }
+
+    pub(super) fn lower_infix(
+        &mut self,
+        lhs: (Expr, Type),
+        op: Kind,
+        (rhs, rhs_ty): (Expr, Type),
+        (line, column): (usize, usize),
+    ) -> Result<(Expr, Type), ae_span::Diagnostic> {
         let (lhs_expr, lhs_ty) = lhs;
         let ty = match op {
             Kind::And | Kind::Or => {

@@ -90,9 +90,11 @@ updates this ADR as slices land.
    checking loop scope and before attaching ownership cleanup and targets.
    Module assembly and the resolver can borrow the same lexer token stream.
    The `emit-resolve` route uses this path for the entry module.
-   Literal-only `print` and boolean-literal `assert` now lower from shared
-   statement and expression nodes. Other arguments still use typed
-   expression parsing.
+   `print` and `assert` lower scalar constant expressions from shared
+   statement and expression nodes, including grouped and operator
+   expressions. Both paths share operator typing. Arguments with local
+   references and ownership-sensitive values still use typed expression
+   parsing.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

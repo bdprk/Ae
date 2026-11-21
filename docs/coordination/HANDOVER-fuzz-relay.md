@@ -1,6 +1,6 @@
 # Handover — fuzz relay
 
-- Date: 2026-11-21 12:31 +08:00
+- Date: 2026-11-21 12:38 +08:00
 - Branch: `agent/fuzz-relay`
 - Worktree: the dedicated fuzz-relay worktree of this checkout
 - Area claim: docs
@@ -17,6 +17,7 @@
 - The bounded Windows replay completed all 1,080 missing seeds with zero failures. The 953000 segment continues.
 - Module assembly and resolution now share the entry token stream in `emit-resolve`. The same entry points accept the compiler's existing token slice.
 - Literal `print` statements and boolean-literal `assert` statements now lower from shared statement and expression nodes.
+- Extended shared lowering to scalar operator trees, using the existing prefix and infix type checks.
 
 ## What is half-done
 
@@ -40,6 +41,7 @@ cargo test --workspace --locked
 - Both platforms passed 483 workspace tests and byte parity on the same corpus after the statement depth and loop-jump changes.
 - Both platforms passed the same suite and corpus after token-stream reuse. Windows also matched the previous resolver's output on eight `emit-resolve` inputs, including a module with imports.
 - Both platforms passed 483 tests and the full frontend corpus after literal statement lowering. Windows also matched six focused inputs covering supported literals and malformed statements.
+- Scalar operator lowering passed 483 tests and the full corpus on Windows and Ubuntu. Windows also matched 27 focused invocations, and the Ubuntu candidate passed a 40-seed differential smoke run.
 - Ubuntu generated C passed 41 sanitizer/leak cases with zero leaked blocks.
 
 ## Risks and blockers

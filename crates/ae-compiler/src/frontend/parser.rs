@@ -412,46 +412,78 @@ impl<'a> Parser<'a> {
         let base = *self.loop_scopes.last().unwrap_or(&0);
         self.scopes[base.min(self.scopes.len())..].iter().flatten().filter(|(_, ty)| ty.owned()).map(|&(id, ty)| (id, ty)).collect()
     }
-    fn lower_literal_output(&mut self) -> Result<Option<Statement>, ae_span::Diagnostic> {
+    fn lower_scalar_expression(
+        &mut self,
+        expression: ae_syntax::expression::Expression,
+        remaining: usize,
+    ) -> Option<(Expr, Type)> {
+        use ae_syntax::expression::ExpressionKind;
+
+        let remaining = remaining.checked_sub(1)?;
+        match expression.kind {
+            ExpressionKind::Atom(Kind::Number(value)) => Some((Expr::Number(value), Type::Int)),
+            ExpressionKind::Atom(Kind::Float(value)) => Some((Expr::FloatLit(value), Type::F64)),
+            ExpressionKind::Atom(Kind::True) => Some((Expr::BoolLit(true), Type::Bool)),
+            ExpressionKind::Atom(Kind::False) => Some((Expr::BoolLit(false), Type::Bool)),
+            ExpressionKind::Group(inner) => self.lower_scalar_expression(*inner, remaining),
+            ExpressionKind::Prefix { operator, operand } => {
+                let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < expression.range.start))?;
+                let position = (token.line, token.column);
+                let operand = self.lower_scalar_expression(*operand, remaining)?;
+                self.lower_prefix(operator, operand, position).ok()
+            }
+            ExpressionKind::Binary { left, operator, right } => {
+                let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < left.range.end))?;
+                if token.kind != operator {
+                    return None;
+                }
+                let position = (token.line, token.column);
+                let left = self.lower_scalar_expression(*left, remaining)?;
+                let right = self.lower_scalar_expression(*right, remaining)?;
+                self.lower_infix(left, operator, right, position).ok()
+            }
+            _ => None,
+        }
+    }
+
+    fn lower_output_from_syntax(&mut self) -> Option<Statement> {
         use ae_syntax::expression::ExpressionKind;
         use ae_syntax::statement::{parse_statement_tokens, StatementKind};
 
-        let [keyword, open, argument, close, ..] = &self.tokens[self.pos..] else {
-            return Ok(None);
+        let [_, open, argument, ..] = &self.tokens[self.pos..] else {
+            return None;
         };
-        if open.kind != Kind::LParen || close.kind != Kind::RParen {
-            return Ok(None);
-        }
-        let supported = match keyword.kind {
-            Kind::Print => matches!(argument.kind, Kind::Number(_) | Kind::Float(_) | Kind::True | Kind::False | Kind::Text(_)),
-            Kind::Assert => matches!(argument.kind, Kind::True | Kind::False),
-            _ => false,
-        };
-        if !supported {
-            return Ok(None);
+        if open.kind != Kind::LParen
+            || !(matches!(argument.kind, Kind::Number(_) | Kind::Float(_) | Kind::True | Kind::False |
+                Kind::Text(_) | Kind::LParen)
+                || ae_syntax::operator::prefix_binding_power(&argument.kind).is_some())
+        {
+            return None;
         }
 
-        let (statement, end) = parse_statement_tokens(&self.file, self.source, &self.tokens, self.pos)?;
-        let (line, column) = self.position();
+        // Scalar nodes do not change move or borrow state. Leave the cursor
+        // at the statement start until the entire tree lowers successfully,
+        // so unsupported arguments and errors take the existing path.
+        let (statement, end) = parse_statement_tokens(&self.file, self.source, &self.tokens, self.pos).ok()?;
+        let lowered = match statement.kind {
+            StatementKind::Print(argument) => match argument.kind {
+                ExpressionKind::Atom(Kind::Text(value)) => Statement::Print(Printed::Text(value)),
+                _ => {
+                    let (value, _) = self.lower_scalar_expression(argument, 64)?;
+                    Statement::Print(Printed::Expr(value))
+                }
+            },
+            StatementKind::Assert(argument) => {
+                let (condition, Type::Bool) = self.lower_scalar_expression(argument, 64)? else {
+                    return None;
+                };
+                let (line, column) = self.position();
+                Statement::Assert(condition, line, column)
+            }
+            _ => unreachable!("output statement syntax"),
+        };
         self.pos = end;
-        let (argument, assertion) = match statement.kind {
-            StatementKind::Print(argument) => (argument, false),
-            StatementKind::Assert(argument) => (argument, true),
-            _ => unreachable!("literal output statement"),
-        };
-        let value = match argument.kind {
-            ExpressionKind::Atom(Kind::Number(value)) => Expr::Number(value),
-            ExpressionKind::Atom(Kind::Float(value)) => Expr::FloatLit(value),
-            ExpressionKind::Atom(Kind::True) => Expr::BoolLit(true),
-            ExpressionKind::Atom(Kind::False) => Expr::BoolLit(false),
-            ExpressionKind::Atom(Kind::Text(value)) => return Ok(Some(Statement::Print(Printed::Text(value)))),
-            _ => unreachable!("literal output argument"),
-        };
-        Ok(Some(if assertion {
-            Statement::Assert(value, line, column)
-        } else {
-            Statement::Print(Printed::Expr(value))
-        }))
+        Some(lowered)
     }
 
     pub(super) fn block_inner(&mut self) -> Result<Vec<Statement>, ae_span::Diagnostic> {
@@ -1115,7 +1147,7 @@ impl<'a> Parser<'a> {
                     });
                 }
                 Kind::Assert => {
-                    if let Some(statement) = self.lower_literal_output()? {
+                    if let Some(statement) = self.lower_output_from_syntax() {
                         result.push(statement);
                         continue;
                     }
@@ -1127,7 +1159,7 @@ impl<'a> Parser<'a> {
                     result.push(Statement::Assert(condition, line, col));
                 }
                 Kind::Print => {
-                    if let Some(statement) = self.lower_literal_output()? {
+                    if let Some(statement) = self.lower_output_from_syntax() {
                         result.push(statement);
                         continue;
                     }
