@@ -1,6 +1,12 @@
 //! Parser and single-pass semantic checker: tokens to typed statements.
 use super::*;
 
+#[derive(Default)]
+struct SharedExpressionEffects {
+    moves: Vec<(usize, Option<usize>)>,
+    call_borrows: Vec<usize>,
+}
+
 /// The remedy attached to a use-after-move diagnostic. The move is not tracked
 /// to a byte range, so this names both available fixes instead of pointing at a
 /// site that may not exist.
@@ -479,7 +485,7 @@ impl<'a> Parser<'a> {
         expression: &ae_syntax::expression::Expression,
         remaining: usize,
         nodes_left: &mut usize,
-        pending_moves: &mut Vec<(usize, Option<usize>)>,
+        effects: &mut SharedExpressionEffects,
     ) -> Option<(Expr, Type)> {
         use ae_syntax::expression::ExpressionKind;
 
@@ -513,7 +519,7 @@ impl<'a> Parser<'a> {
                 let (Expr::Variable(slot, _, _, _), ty) = self.lower_resolved_local(name, base.range.start)? else {
                     return None;
                 };
-                if pending_moves.iter().any(|&(moved, _)| moved == slot) {
+                if effects.moves.iter().any(|&(moved, _)| moved == slot) {
                     return None;
                 }
                 let bracket = self.tokens.get(self.tokens.partition_point(|token| token.offset < base.range.end))?;
@@ -521,7 +527,7 @@ impl<'a> Parser<'a> {
                     return None;
                 }
                 let (line, column) = (bracket.line, bracket.column);
-                let (index, Type::Int) = self.lower_shared_expression(index, remaining, nodes_left, pending_moves)? else {
+                let (index, Type::Int) = self.lower_shared_expression(index, remaining, nodes_left, effects)? else {
                     return None;
                 };
                 let index = Box::new(index);
@@ -541,7 +547,7 @@ impl<'a> Parser<'a> {
                 let mut vector_type = None;
                 let mut values = Vec::new();
                 for element in elements {
-                    let (value, element_type) = self.lower_shared_expression(element, remaining, nodes_left, pending_moves)?;
+                    let (value, element_type) = self.lower_shared_expression(element, remaining, nodes_left, effects)?;
                     let ty = match element_type {
                         Type::Int => Type::Vec,
                         Type::F64 => Type::VecF,
@@ -556,7 +562,7 @@ impl<'a> Parser<'a> {
                 let ty = vector_type.unwrap_or(Type::Vec);
                 Some((Expr::VecLit(values, ty, line, column), ty))
             }
-            ExpressionKind::Group(inner) => self.lower_shared_expression(inner, remaining, nodes_left, pending_moves),
+            ExpressionKind::Group(inner) => self.lower_shared_expression(inner, remaining, nodes_left, effects),
             ExpressionKind::Call { callee, arguments } => {
                 let ExpressionKind::Atom(Kind::Ident(name)) = &callee.kind else {
                     return None;
@@ -571,7 +577,7 @@ impl<'a> Parser<'a> {
                     || arguments.len() != signature.params.len() || arguments.len() > 64
                     || !signature.params.iter().all(|ty| {
                         matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView
-                            | Type::Vec | Type::VecF | Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_))
+                            | Type::Vec | Type::VecF | Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_) | Type::StructRef(_))
                     })
                     || !matches!(signature.ret, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::VecF)
                 {
@@ -580,18 +586,29 @@ impl<'a> Parser<'a> {
                 let (id, params, ret) = (signature.id, signature.params.clone(), signature.ret);
                 let mut args = Vec::with_capacity(arguments.len());
                 for (argument, expected) in arguments.iter().zip(params) {
-                    if matches!(expected, Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_)) {
+                    if matches!(expected, Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_) | Type::StructRef(_)) {
                         let ExpressionKind::BorrowArgument { name, name_range, mutable: false } = &argument.kind else {
                             return None;
                         };
                         let (Expr::Variable(slot, ..), actual) = self.lower_resolved_local(name, name_range.start)? else {
                             return None;
                         };
-                        if pending_moves.iter().any(|&(moved, _)| moved == slot) {
+                        if effects.moves.iter().any(|&(moved, _)| moved == slot) {
                             return None;
                         }
                         let address = match (expected, actual) {
                             (expected, actual) if expected == actual => false,
+                            (Type::StructRef(wanted), Type::Struct(actual_id) | Type::StructMut(actual_id))
+                                if wanted == actual_id =>
+                            {
+                                if self.mut_borrows.iter().any(|&(borrowed, _)| borrowed == slot) {
+                                    return None;
+                                }
+                                if !self.is_borrowed(slot) && !effects.call_borrows.contains(&slot) {
+                                    effects.call_borrows.push(slot);
+                                }
+                                matches!(actual, Type::Struct(_))
+                            }
                             (Type::VecRef, Type::Vec) | (Type::VecFRef, Type::VecF)
                             | (Type::StrVecRef, Type::StrVec) => true,
                             _ => return None,
@@ -605,19 +622,19 @@ impl<'a> Parser<'a> {
                             *nodes_left = nodes_left.checked_sub(1)?;
                             let (value, ty) = self.lower_resolved_local(name, argument.range.start)?;
                             let Expr::Variable(slot, ..) = value else { unreachable!("resolved local") };
-                            if pending_moves.iter().any(|&(moved, _)| moved == slot) {
+                            if effects.moves.iter().any(|&(moved, _)| moved == slot) {
                                 return None;
                             }
                             if expected == ty && ty.owned() {
                                 let defer = self.variable_move_needs_deferral(slot)?;
-                                pending_moves.push((slot, defer.then_some(argument.range.start)));
+                                effects.moves.push((slot, defer.then_some(argument.range.start)));
                             }
                             (value, ty)
                         } else {
-                            self.lower_shared_expression(argument, remaining, nodes_left, pending_moves)?
+                            self.lower_shared_expression(argument, remaining, nodes_left, effects)?
                         }
                     } else {
-                        self.lower_shared_expression(argument, remaining, nodes_left, pending_moves)?
+                        self.lower_shared_expression(argument, remaining, nodes_left, effects)?
                     };
                     args.push(match (expected, value) {
                         (Type::StrView, (value, Type::String | Type::StrView)) => Argument::View(value),
@@ -630,7 +647,7 @@ impl<'a> Parser<'a> {
             ExpressionKind::Prefix { operator, operand } => {
                 let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < expression.range.start))?;
                 let position = (token.line, token.column);
-                let operand = self.lower_shared_expression(operand, remaining, nodes_left, pending_moves)?;
+                let operand = self.lower_shared_expression(operand, remaining, nodes_left, effects)?;
                 self.lower_prefix(operator.clone(), operand, position).ok()
             }
             ExpressionKind::Binary { left, operator, right } => {
@@ -639,16 +656,17 @@ impl<'a> Parser<'a> {
                     return None;
                 }
                 let position = (token.line, token.column);
-                let left = self.lower_shared_expression(left, remaining, nodes_left, pending_moves)?;
-                let right = self.lower_shared_expression(right, remaining, nodes_left, pending_moves)?;
+                let left = self.lower_shared_expression(left, remaining, nodes_left, effects)?;
+                let right = self.lower_shared_expression(right, remaining, nodes_left, effects)?;
                 self.lower_infix(left, operator.clone(), right, position).ok()
             }
             _ => None,
         }
     }
 
-    fn commit_shared_moves(&mut self, pending_moves: Vec<(usize, Option<usize>)>) {
-        for (slot, conflict_offset) in pending_moves {
+    fn commit_shared_effects(&mut self, effects: SharedExpressionEffects) {
+        self.call_borrows.extend(effects.call_borrows.into_iter().map(|slot| (slot, self.scopes.len())));
+        for (slot, conflict_offset) in effects.moves {
             if let Some(offset) = conflict_offset {
                 self.record_deferred_move(slot, offset);
             }
@@ -686,7 +704,7 @@ impl<'a> Parser<'a> {
             (64, 128)
         };
         let mut nodes_left = budget;
-        let mut pending_moves = Vec::new();
+        let mut effects = SharedExpressionEffects::default();
         let value = match &expression.kind {
             ae_syntax::expression::ExpressionKind::Atom(Kind::Ident(name))
                 if self.names.get(name).is_some_and(|(_, _, ty)| ty.owned()) =>
@@ -705,9 +723,9 @@ impl<'a> Parser<'a> {
                 }
                 value
             }
-            _ => self.lower_shared_expression(&expression, depth, &mut nodes_left, &mut pending_moves)?,
+            _ => self.lower_shared_expression(&expression, depth, &mut nodes_left, &mut effects)?,
         };
-        self.commit_shared_moves(pending_moves);
+        self.commit_shared_effects(effects);
         if boundary.is_none() {
             self.expression_nodes += budget - nodes_left;
         }
@@ -758,15 +776,15 @@ impl<'a> Parser<'a> {
             (Rc::new(argument), end)
         };
 
-        // Commit argument moves and advance the cursor only after the entire
+        // Commit argument effects and advance the cursor only after the entire
         // statement lowers successfully.
         let mut nodes_left = 128;
-        let mut pending_moves = Vec::new();
+        let mut effects = SharedExpressionEffects::default();
         let lowered = if print {
             match &argument.kind {
                 ExpressionKind::Atom(Kind::Text(value)) => Statement::Print(Printed::Text(value.clone())),
                 _ => {
-                    let (value, ty) = self.lower_shared_expression(&argument, 64, &mut nodes_left, &mut pending_moves)?;
+                    let (value, ty) = self.lower_shared_expression(&argument, 64, &mut nodes_left, &mut effects)?;
                     if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView) {
                         return None;
                     }
@@ -774,14 +792,14 @@ impl<'a> Parser<'a> {
                 }
             }
         } else {
-            let (condition, Type::Bool) = self.lower_shared_expression(&argument, 64, &mut nodes_left, &mut pending_moves)? else {
+            let (condition, Type::Bool) = self.lower_shared_expression(&argument, 64, &mut nodes_left, &mut effects)? else {
                 return None;
             };
             let (line, column) = self.position();
             Statement::Assert(condition, line, column)
         };
         self.pos = end;
-        self.commit_shared_moves(pending_moves);
+        self.commit_shared_effects(effects);
         Some(lowered)
     }
 
