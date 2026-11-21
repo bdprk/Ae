@@ -112,8 +112,11 @@ updates this ADR as slices land.
    existing complexity limit, including across successive call arguments.
    String literals and literal-only string expressions also use shared
    lowering. The compiler preserves literal locations and applies its
-   existing concatenation and comparison rules. Reads and moves of owned
-   variables continue through the typed path.
+   existing concatenation and comparison rules. Bare owned local reads
+   also lower through resolver definitions. A by-value context uses the
+   same immediate and deferred borrow checks as the typed parser before
+   marking the slot moved. Compound expressions with owned local
+   operands continue through the typed path.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

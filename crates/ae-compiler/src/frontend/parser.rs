@@ -430,6 +430,20 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn lower_resolved_local(&mut self, name: &str, offset: usize) -> Option<(Expr, Type)> {
+        let (id, _, ty) = *self.names.get(name)?;
+        if self.moved.contains(&id) || self.shadow_ok || !self.subst.is_empty() {
+            return None;
+        }
+        let definition = self.resolved_local_reads().get(&offset)?.clone();
+        // Match the resolver's source definition to the active compiler slot.
+        if self.binding_ranges.get(&id)? != &definition {
+            return None;
+        }
+        let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < offset))?;
+        Some((Expr::Variable(id, ty, token.line, token.column), ty))
+    }
+
     fn lower_shared_expression(
         &mut self,
         expression: ae_syntax::expression::Expression,
@@ -455,21 +469,11 @@ impl<'a> Parser<'a> {
                 Some((Expr::StrLit(value, token.line, token.column), Type::String))
             }
             ExpressionKind::Atom(Kind::Ident(name)) => {
-                let (id, _, ty) = *self.names.get(&name)?;
-                if !matches!(ty, Type::Int | Type::F64 | Type::Bool) || self.moved.contains(&id)
-                    || self.shadow_ok || !self.subst.is_empty()
-                {
+                let (_, _, ty) = self.names.get(&name)?;
+                if !matches!(ty, Type::Int | Type::F64 | Type::Bool) {
                     return None;
                 }
-                let offset = expression.range.start;
-                let definition = self.resolved_local_reads().get(&offset)?.clone();
-                // Resolver DefIds identify source definitions. Verify the
-                // active compiler slot belongs to the same declaration.
-                if self.binding_ranges.get(&id)? != &definition {
-                    return None;
-                }
-                let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < offset))?;
-                Some((Expr::Variable(id, ty, token.line, token.column), ty))
+                self.lower_resolved_local(&name, expression.range.start)
             }
             ExpressionKind::Group(inner) => self.lower_shared_expression(*inner, remaining, nodes_left),
             ExpressionKind::Prefix { operator, operand } => {
@@ -498,7 +502,7 @@ impl<'a> Parser<'a> {
             || ae_syntax::operator::prefix_binding_power(kind).is_some()
     }
 
-    pub(super) fn lower_shared_value(&mut self, boundary: Option<Kind>) -> Option<(Expr, Type)> {
+    pub(super) fn lower_shared_value(&mut self, boundary: Option<Kind>, moving: bool) -> Option<(Expr, Type)> {
         if !Self::shared_expression_start(self.current()) {
             return None;
         }
@@ -525,7 +529,26 @@ impl<'a> Parser<'a> {
             (64, 128)
         };
         let mut nodes_left = budget;
-        let value = self.lower_shared_expression(expression, depth, &mut nodes_left)?;
+        let value = match &expression.kind {
+            ae_syntax::expression::ExpressionKind::Atom(Kind::Ident(name))
+                if self.names.get(name).is_some_and(|(_, _, ty)| ty.owned()) =>
+            {
+                nodes_left = nodes_left.checked_sub(1)?;
+                let value = self.lower_resolved_local(name, expression.range.start)?;
+                if moving {
+                    let Expr::Variable(id, ..) = &value.0 else { unreachable!("resolved local") };
+                    let start = self.pos;
+                    self.pos = end;
+                    if self.check_variable_move(*id).is_err() {
+                        self.pos = start;
+                        return None;
+                    }
+                    self.moved.insert(*id);
+                }
+                value
+            }
+            _ => self.lower_shared_expression(expression, depth, &mut nodes_left)?,
+        };
         if boundary.is_none() {
             self.expression_nodes += budget - nodes_left;
         }
@@ -534,7 +557,7 @@ impl<'a> Parser<'a> {
     }
 
     fn condition(&mut self) -> Result<Expr, ae_span::Diagnostic> {
-        let (condition, ty) = match self.lower_shared_value(Some(Kind::LBrace)) {
+        let (condition, ty) = match self.lower_shared_value(Some(Kind::LBrace), false) {
             Some(value) => value,
             None => self.expression(0, false)?,
         };
@@ -1488,12 +1511,12 @@ mod tests {
         assert_eq!(*parser.current(), Kind::Semi);
 
         parser.pos = print_token + 2;
-        assert!(parser.lower_shared_value(Some(Kind::Semi)).is_none());
+        assert!(parser.lower_shared_value(Some(Kind::Semi), false).is_none());
         assert_eq!(parser.pos, print_token + 2);
 
         parser.pos = condition_token;
         assert!(matches!(
-            parser.lower_shared_value(Some(Kind::LBrace)),
+            parser.lower_shared_value(Some(Kind::LBrace), false),
             Some((Expr::Variable(7, Type::Bool, _, _), Type::Bool)),
         ));
         assert_eq!(*parser.current(), Kind::LBrace);
