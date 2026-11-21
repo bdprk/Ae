@@ -8503,7 +8503,7 @@ fn tasks_fifo_yield_and_reclaim_agree_across_backends() {
 
 #[test]
 fn fake_clock_and_timers_agree_across_backends() {
-    // ADR-0224 R2.2: the fake clock lives in std/test/fake_clock.ae; equal
+    // ADR-0224 R2.2: the fake clock lives in std/std/test/fake_clock.ae; equal
     // deadlines, pre/post-deadline cancellation, and task-driven timeout must
     // match byte-for-byte between compiled C and --interp (pinned to the
     // former builtin implementation's output).
@@ -8572,7 +8572,7 @@ fn byte_streams_and_buffered_readers_agree_across_backends() {
 #[test]
 fn fake_io_std_module_agrees_across_backends() {
     // ADR-0224 R2.1: the in-memory readiness/completion model lives in
-    // std/test/fake_io.ae and agrees byte-for-byte across backends.
+    // std/std/test/fake_io.ae and agrees byte-for-byte across backends.
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run/fake_io.ae");
     let compiled = Command::new(env!("CARGO_BIN_EXE_ae"))
         .args(["run", fixture.to_str().unwrap()])

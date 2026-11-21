@@ -226,3 +226,11 @@ The frontier is the type-checker boundary (R3c): the remaining kinds each
 need type-level machinery the resolver does not have. The ladder resumes
 here in the next session, one kind per slice with the dual-platform gates.
 
+
+
+## Standard library layering (2026-11-22)
+
+R4.1 now places allocation APIs in std/alloc, compiler models in
+std/compiler, and hosted modules in std/std. The import checker covers
+all four ranks. Next frontend slice: the typed spawn callable and its
+capture-inference boundary.

@@ -614,19 +614,19 @@ M5.1 and M6.2 pauses until R2 and R3a land.
 - [x] R0.2. Checklist/ledger synced; M4.4.*/M6.2.* reopened; ADR-0222 amended.
 - [x] R1.1. Intrinsic surface frozen: `docs/architecture/intrinsic-allowlist.txt`
   + `tests/intrinsic_freeze.rs`; the set may only shrink.
-- [x] R2.1. `adapter_*` / `stream_*` demoted to `std/test/fake_io.ae`; ported
+- [x] R2.1. `adapter_*` / `stream_*` demoted to `std/std/test/fake_io.ae`; ported
   fixture; compiler surface deleted. Evidence: commit `e944876` (2026-11-20,
   453 passing on Windows).
-- [x] R2.2. Fake `clock_*` demoted to `std/test/fake_clock.ae` over `cell_*`;
+- [x] R2.2. Fake `clock_*` demoted to `std/std/test/fake_clock.ae` over `cell_*`;
   timers take the current time as a plain value; `Type::Clock` deleted; two
   latent backend bugs fixed (MIR typed `AtomicNew` as Int; `c_return` had no
   atomic arm). Evidence: commit `29d2e2e` (453 passing on Windows; 453 on
   Linux x86-64 WSL2 Ubuntu 22.04, gcc, cargo 1.100).
-- [x] R2.3. `reader_*` migrated to `std/io/reader.ae` over string primitives;
+- [x] R2.3. `reader_*` migrated to `std/std/io/reader.ae` over string primitives;
   `Type::Reader` deleted; byte-for-byte pinned on both backends and all emit
   modes. Evidence: commit `5f6fc76` (453 passing on Windows).
-- [x] R2.4a. `cancel_*` and `timer_*` migrated to `std/sync/cancel.ae` and
-  `std/task/timer.ae` over `cell_*`; all seven builtins (`cancel_new`,
+- [x] R2.4a. `cancel_*` and `timer_*` migrated to `std/std/sync/cancel.ae` and
+  `std/std/task/timer.ae` over `cell_*`; all seven builtins (`cancel_new`,
   `cancel_trigger`, `cancel_complete`, `cancel_is_set`, `timer_new`,
   `timer_ready`, `timer_cancel`) left the compiler surface (allowlist, RESERVED,
   parse arms, codegen, MIR, interp, `runtime.c`, LSP). A timer is now an
@@ -725,23 +725,14 @@ M5.1 and M6.2 pauses until R2 and R3a land.
   lowering over the resolved statements and DefIds.
 - [ ] R3d. Rebase LSP hover/definition/rename/completion on R3b/R3c; re-verify
   M6.2.*.
-- [ ] R4.1. Split `std/core` into `std/core` (no alloc/OS), `std/alloc`,
-  `std/std`, `std/compiler`; layering test rejects upward imports.
-  **Progress:** enforcement exists before the split
-  (scripts/std_layering.py, unit tests in `scripts/test_std_layering.py`,
-  wired into CI through the script unittest discovery): every `use` header
-  in `std/**` must resolve, and `std/core/**` imports only `std/core/**` —
-  verified green over the current 261 files. Classification draft
-  (2026-11-21): 240 files use no hosted builtin and are core-eligible; 21
-  files reference the hosted surface (`bytes`/`exit`/`cell_*`/io/task
-  families — the list needs an allowlist review before the move: `bytes`
-  and `cell_*` may be pure enough for core, and that decision belongs to
-  the split slice). The split itself (directory
-  (`scripts/std_layering.py`, unit tests in `scripts/test_std_layering.py`,
-  wired into CI through the script unittest discovery): every `use` header
-  in `std/**` must resolve, and `std/core/**` imports only `std/core/**` —
-  verified green over the current 261 files. The split itself (directory
-  moves + layer ranks for alloc/compiler) remains.
+- [x] R4.1. Split the standard library into `std/core` (no allocation or OS),
+  `std/alloc`, `std/compiler`, and `std/std`. The 261 modules
+  are distributed across core (115), allocation (7),
+  compiler (126), and hosted (13). The import checker rejects
+  missing targets, imports outside the standard library, and upward
+  dependencies. `bytes` allocates a vector, and `cell_new` allocates process
+  storage. Hosted wrappers for atomic cells and timers live in `std/std`.
+  Pure record models and arithmetic remain eligible for core.
 - [ ] R5.1. Generate the master checklist from this ledger; CI checks that a
   commit title's item IDs are flipped in that commit. **Progress:** the
   generator exists (`scripts/gen_checklist.py` -> `docs/checklist.md`,

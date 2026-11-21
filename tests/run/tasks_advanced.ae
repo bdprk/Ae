@@ -1,5 +1,5 @@
 // ADR-0224 R2.4: cancellation tokens are ae source in std/sync.
-use "../../std/sync/cancel.ae";
+use "../../std/std/sync/cancel.ae";
 
 fn early_return_scope(c: atomic) -> i64 {
     let sc = scope_new();
