@@ -1004,6 +1004,28 @@ impl<'a> Parser<'a> {
         Ok(condition)
     }
 
+    fn store_field_name(&mut self, target_offset: usize) -> Result<String, ae_span::Diagnostic> {
+        use ae_syntax::expression::ExpressionKind;
+
+        self.take(Kind::Dot)?;
+        if let Some(root) = self.resolved_expressions().values.get(&target_offset) {
+            let field = match &root.kind {
+                ExpressionKind::Index { base, .. } => base.as_ref(),
+                _ => root.as_ref(),
+            };
+            if let ExpressionKind::Field { base, name } = &field.kind {
+                if matches!(base.kind, ExpressionKind::Atom(Kind::Ident(_)))
+                    && matches!(self.current(), Kind::Ident(token_name) if token_name == name)
+                {
+                    let name = name.clone();
+                    self.pos += 1;
+                    return Ok(name);
+                }
+            }
+        }
+        self.identifier()
+    }
+
     fn resolved_statement_end(&mut self) -> Option<usize> {
         let start = self.tokens.get(self.pos)?.offset;
         let end = *self.resolved_expressions().statement_ends.get(&start)?;
@@ -1346,8 +1368,7 @@ impl<'a> Parser<'a> {
                         // before storing, which needs a dedicated statement —
                         // rejected for now rather than guessed at.
                         if *self.current() == Kind::Dot {
-                            self.take(Kind::Dot)?;
-                            let fname = self.identifier()?;
+                            let fname = self.store_field_name(name_offset)?;
                             let fty = {
                                 let def = self.structs[sid].clone();
                                 let fidx = def.fields.iter().position(|(n, _)| *n == fname)
@@ -1370,8 +1391,7 @@ impl<'a> Parser<'a> {
                         return Err(self.fail(&format!("cannot assign to '{name}' itself through a '&mut' borrow; write its fields instead")));
                     } else if let Type::Struct(sid) = ty {
                         if *self.current() == Kind::Dot {
-                            self.take(Kind::Dot)?;
-                            let fname = self.identifier()?;
+                            let fname = self.store_field_name(name_offset)?;
                             let fty = {
                                 let def = self.structs[sid].clone();
                                 let fidx = def.fields.iter().position(|(n, _)| *n == fname)
