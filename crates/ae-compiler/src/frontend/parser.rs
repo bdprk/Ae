@@ -453,6 +453,9 @@ impl<'a> Parser<'a> {
                     {
                         expressions.struct_constructors.insert(occurrence.range.start);
                     }
+                    _ if definition.kind == ae_resolve::DefKind::Variant => {
+                        expressions.enum_variants.insert(occurrence.range.start);
+                    }
                     _ => {}
                 }
             }
@@ -578,6 +581,50 @@ impl<'a> Parser<'a> {
         self.lower_shared_expression(expression, remaining, nodes_left, effects)
     }
 
+    fn lower_shared_variant(
+        &mut self,
+        target: &ae_syntax::expression::Expression,
+        arguments: &[ae_syntax::expression::Expression],
+        remaining: usize,
+        nodes_left: &mut usize,
+        effects: &mut SharedExpressionEffects,
+    ) -> Option<(Expr, Type)> {
+        use ae_syntax::expression::ExpressionKind;
+
+        let ExpressionKind::Qualified { base, name: variant } = &target.kind else {
+            return None;
+        };
+        let ExpressionKind::Atom(Kind::Ident(name)) = &base.kind else {
+            return None;
+        };
+        let member = self.tokens.partition_point(|token| token.offset < target.range.end).checked_sub(1)?;
+        let offset = self.tokens[member].offset;
+        if !self.resolved_expressions().enum_variants.contains(&offset) {
+            return None;
+        }
+        let &eid = self.enum_names.get(name)?;
+        let def = self.enums.get(eid)?;
+        self.require_public("enum", def.name, &def.file, def.public).ok()?;
+        let (variant_id, (_, payload)) = def.variants.iter().enumerate().find(|(_, (name, _))| name == variant)?;
+        if arguments.len() != payload.len() {
+            return None;
+        }
+        let (enum_name, payload) = (def.name, payload.clone());
+        let mut values = Vec::with_capacity(payload.len());
+        for (argument, expected) in arguments.iter().zip(payload) {
+            let (value, actual) = if expected == Type::String {
+                self.lower_shared_argument(argument, expected, remaining, nodes_left, effects)?
+            } else {
+                self.lower_shared_expression(argument, remaining, nodes_left, effects)?
+            };
+            if expected != actual {
+                return None;
+            }
+            values.push(value);
+        }
+        Some((Expr::EnumLit(enum_name, eid, variant_id, values), Type::Enum(enum_name, eid)))
+    }
+
     fn lower_shared_expression(
         &mut self,
         expression: &ae_syntax::expression::Expression,
@@ -697,7 +744,19 @@ impl<'a> Parser<'a> {
                 Some((Expr::VecLit(values, ty, line, column), ty))
             }
             ExpressionKind::Group(inner) => self.lower_shared_expression(inner, remaining, nodes_left, effects),
+            ExpressionKind::Qualified { .. } => {
+                self.lower_shared_variant(expression, &[], remaining, nodes_left, effects)
+            }
             ExpressionKind::Call { callee, arguments } => {
+                if matches!(callee.kind, ExpressionKind::Qualified { .. }) {
+                    if let Some(last) = arguments.last() {
+                        let next = self.tokens.partition_point(|token| token.offset < last.range.end);
+                        if self.tokens.get(next)?.kind != Kind::RParen {
+                            return None;
+                        }
+                    }
+                    return self.lower_shared_variant(callee, arguments, remaining, nodes_left, effects);
+                }
                 let ExpressionKind::Atom(Kind::Ident(name)) = &callee.kind else {
                     return None;
                 };

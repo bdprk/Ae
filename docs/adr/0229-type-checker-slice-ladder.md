@@ -161,6 +161,9 @@ updates this ADR as slices land.
    Read-only string fields also lower in print, string comparison,
    concatenation, and string-view argument positions. By-value contexts
    retain the compiler's owned-field move diagnostics.
+   Qualified concrete enum constructors also use resolver variant
+   targets. Unit and payload variants use the same layout and preserve
+   string payload moves and the original arity and type diagnostics.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

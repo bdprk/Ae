@@ -278,3 +278,5 @@
 - 2026-11-21 19:39 (+08:00): Scalar struct field reads now lower from shared postfix trees, including nested fields and borrowed receivers. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 frontend CLI comparisons, and 32 focused comparisons. Ubuntu passed the sanitizer and leak checks.
 
 - 2026-11-21 19:44 (+08:00): Shared lowering now handles string field reads in print, comparisons, concatenation, and string-view arguments. Owned-field move diagnostics remain unchanged. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 36 focused comparisons. Ubuntu passed 41 sanitizer and leak checks. All seven relay processes were verified live.
+
+- 2026-11-21 19:49 (+08:00): Shared lowering now consumes resolved unit and payload enum constructors, preserving string moves and payload diagnostics. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 36 focused comparisons. Ubuntu passed 41 sanitizer and leak checks. All seven relay processes were verified live.

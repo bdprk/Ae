@@ -668,6 +668,7 @@ struct ResolvedExpressions {
     local_bindings: HashMap<usize, std::ops::Range<usize>>,
     direct_calls: HashSet<usize>,
     struct_constructors: HashSet<usize>,
+    enum_variants: HashSet<usize>,
     values: HashMap<usize, Rc<ae_syntax::expression::Expression>>,
     statement_ends: HashMap<usize, usize>,
 }
