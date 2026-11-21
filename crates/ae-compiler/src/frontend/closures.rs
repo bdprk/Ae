@@ -247,8 +247,13 @@ impl Parser<'_> {
             self.names.insert(name.clone(), (var_id, true, *ty));
             params.push((var_id, *ty));
         }
-        // The 8-parameter limit counts the visible parameters only: the
-        // capture slots are hidden plumbing, not part of the call signature.
+        let shared = self.shared_closure_header();
+        let header = shared.as_deref().and_then(|expression| match &expression.kind {
+            ae_syntax::expression::ExpressionKind::Closure { params, return_type, .. } => {
+                Some((params.as_slice(), return_type.start))
+            }
+            _ => None,
+        });
         if *self.current() == Kind::Or {
             // `||`: the empty parameter list. The arrow sits beside it.
             self.pos += 2;
@@ -256,8 +261,15 @@ impl Parser<'_> {
             self.pos += 1;
             loop {
                 if params.len() >= 16 { return Err(self.fail("closure parameter limit exceeded (16)")); }
-                let binding_range = self.tokens[self.pos].offset..self.tokens[self.pos].end;
-                let param = self.identifier()?;
+                let shared_param = header.and_then(|(visible, _)| visible.get(params.len() - captures.len()))
+                    .filter(|param| self.tokens[self.pos].offset == param.name_range.start);
+                let (param, binding_range) = if let Some(param) = shared_param {
+                    self.pos += 1;
+                    (param.name.clone(), param.name_range.clone())
+                } else {
+                    let binding_range = self.tokens[self.pos].offset..self.tokens[self.pos].end;
+                    (self.identifier()?, binding_range)
+                };
                 if self.names.contains_key(&param) {
                     if self.shadow_ok {
                         self.names.remove(&param);
@@ -266,7 +278,11 @@ impl Parser<'_> {
                     }
                 }
                 if RESERVED.contains(&param.as_str()) { return Err(self.fail(&format!("'{param}' is a built-in name and cannot be a closure parameter"))); }
-                self.take(Kind::Colon)?;
+                if shared_param.is_some_and(|param| self.tokens[self.pos + 1].offset == param.ty.start) {
+                    self.pos += 1;
+                } else {
+                    self.take(Kind::Colon)?;
+                }
                 let ty = self.callable_parameter_type()?;
                 let var_id = self.next_var; self.next_var += 1;
                 self.names.insert(param, (var_id, matches!(ty, Type::StructMut(_)), ty));
@@ -275,8 +291,15 @@ impl Parser<'_> {
                 if *self.current() != Kind::Comma { break; }
                 self.pos += 1;
             }
-            self.take(Kind::Pipe)?;
-            self.take(Kind::Arrow)?;
+            if header.is_some_and(|(_, return_start)| {
+                *self.current() == Kind::Pipe
+                    && self.tokens.get(self.pos + 2).is_some_and(|token| token.offset == return_start)
+            }) {
+                self.pos += 2;
+            } else {
+                self.take(Kind::Pipe)?;
+                self.take(Kind::Arrow)?;
+            }
         }
         let ret = self.return_annotation()?;
         // A closure may not return a borrow: the hidden capture parameters

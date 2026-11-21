@@ -474,6 +474,9 @@ impl<'a> Parser<'a> {
             expressions.pointer_cast_targets.extend(resolution.functions.iter().flat_map(|function| {
                 function.pointer_cast_targets.iter().map(|(&offset, &mutable)| (offset, mutable))
             }));
+            expressions.closure_headers.extend(resolution.functions.iter().flat_map(|function| {
+                function.closure_headers.iter().map(|(&offset, header)| (offset, header.clone()))
+            }));
             let function_statements = module.functions.iter()
                 .filter_map(|function| function.body.as_ref()).flatten();
             let closure_statements = resolution.functions.iter()
@@ -537,6 +540,11 @@ impl<'a> Parser<'a> {
     pub(super) fn shared_pointer_cast_qualifier(&self) -> Option<bool> {
         let offset = self.tokens.get(self.pos + 2)?.offset;
         self.resolved_expressions().pointer_cast_targets.get(&offset).copied()
+    }
+
+    pub(super) fn shared_closure_header(&self) -> Option<std::sync::Arc<ae_syntax::expression::Expression>> {
+        let offset = self.tokens.get(self.pos)?.offset;
+        self.resolved_expressions().closure_headers.get(&offset).cloned()
     }
 
     fn lower_resolved_local(&mut self, name: &str, offset: usize) -> Option<(Expr, Type)> {
@@ -2199,7 +2207,7 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; }";
+        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; task_spawn(ex, || -> i64 { return 0; }); let closure = |x: i64| -> bool { return x == 0; }; }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
         let call_token = tokens.iter().position(|token| token.offset == source.find("print(compute").unwrap()).unwrap();
@@ -2239,6 +2247,22 @@ mod tests {
         assert_eq!(parser.shared_pointer_cast_qualifier(), Some(false));
         assert_eq!(parser.pointer_cast_pointee(None).unwrap(), (false, Type::Shared(intern_shared(Type::Int))));
         assert_eq!(*parser.current(), Kind::Semi);
+
+        for (prefix, expected) in [("|| -> i64", "i64"), ("|x: i64|", "bool")] {
+            let offset = source.find(prefix).unwrap();
+            parser.pos = parser.tokens.partition_point(|token| token.offset < offset);
+            let header = parser.shared_closure_header().unwrap();
+            let ae_syntax::expression::ExpressionKind::Closure { params, return_type, .. } = &header.kind else {
+                unreachable!("closure header index");
+            };
+            assert_eq!(&source[return_type.clone()], expected);
+            if expected == "bool" {
+                assert_eq!(params[0].name, "x");
+                assert_eq!(&source[params[0].ty.clone()], "i64");
+            } else {
+                assert!(params.is_empty());
+            }
+        }
 
         parser.names.insert("flag".into(), (7, false, Type::Bool));
         parser.binding_ranges.insert(7, binding..binding + 4);

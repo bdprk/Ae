@@ -282,3 +282,10 @@ The typed cast path consumes the shared pointer qualifier for compound
 and named pointees. It resolves each pointee once at the active cursor,
 where generic layout instantiation and diagnostics preserve their order.
 Inline closure header consumption is the next frontend slice.
+
+## Inline closure headers (2026-11-22)
+
+The closure compiler consumes the shared parameter names, binding spans,
+and signature boundaries, including headers of closures passed to spawn.
+Capture discovery and typed body lowering still run in the compiler.
+The M0.2.08 closure audit still needs to account for typed body parsing.

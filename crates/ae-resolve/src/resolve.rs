@@ -43,6 +43,8 @@ pub struct FnOccurrences {
     pub specialization_arguments: HashMap<usize, Arc<[Range<usize>]>>,
     /// The pointer qualifier for each cast, keyed by the pointee type offset.
     pub pointer_cast_targets: HashMap<usize, bool>,
+    /// Closure syntax keyed by the opening pipe token offset.
+    pub closure_headers: HashMap<usize, Arc<Expression>>,
 }
 
 pub fn resolve(module: &Module) -> Resolution {
@@ -449,6 +451,7 @@ impl<'m> Pass<'m> {
                 closure_bodies: Vec::new(),
                 specialization_arguments: HashMap::new(),
                 pointer_cast_targets: HashMap::new(),
+                closure_headers: HashMap::new(),
                 diagnostics: Vec::new(),
             };
             if let DeclarationKind::Function { parameters, .. } = &unit.declaration.kind {
@@ -518,11 +521,11 @@ impl<'m> Pass<'m> {
                     }
                 }
             }
-            let Walker { locals, occurrences, spellings, diagnostics, closure_bodies, specialization_arguments, pointer_cast_targets, .. } = walker;
+            let Walker { locals, occurrences, spellings, diagnostics, closure_bodies, specialization_arguments, pointer_cast_targets, closure_headers, .. } = walker;
             self.defs.extend(locals);
             self.spellings.extend(spellings);
             self.diagnostics.extend(diagnostics);
-            self.functions.push(FnOccurrences { function: index, function_def, occurrences, closure_bodies, specialization_arguments, pointer_cast_targets });
+            self.functions.push(FnOccurrences { function: index, function_def, occurrences, closure_bodies, specialization_arguments, pointer_cast_targets, closure_headers });
         }
     }
 }
@@ -577,6 +580,7 @@ struct Walker<'w> {
     closure_bodies: Vec<Arc<[Statement]>>,
     specialization_arguments: HashMap<usize, Arc<[Range<usize>]>>,
     pointer_cast_targets: HashMap<usize, bool>,
+    closure_headers: HashMap<usize, Arc<Expression>>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1425,6 +1429,7 @@ impl Walker<'_> {
                 self.qualified_member(base_target, name, role, expression.range.clone(), base.range.end)
             }
             ExpressionKind::Closure { params, body, return_type } => {
+                self.closure_headers.insert(expression.range.start, Arc::new(expression.clone()));
                 self.closure(params, body, return_type);
                 None
             }
