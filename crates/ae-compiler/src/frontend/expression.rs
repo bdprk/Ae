@@ -296,6 +296,54 @@ impl Parser<'_> {
             .unwrap_or_else(|| { self.generics.threads.push(ret); self.generics.threads.len() - 1 })
     }
 
+    fn generic_call_type_arguments(&mut self, name_offset: usize) -> Result<Vec<Type>, ae_span::Diagnostic> {
+        let shared = self.shared_call_type_arguments(name_offset);
+        self.pos += 1;
+        let mut arguments = Vec::new();
+        if let Some(ranges) = shared {
+            // Use the shared argument boundaries while the compiler resolves types.
+            // If a type ends earlier in the typed grammar, finish at that cursor
+            // with the same delimiter and diagnostics as the token path.
+            for (index, range) in ranges.iter().enumerate() {
+                if self.tokens[self.pos].offset != range.start {
+                    break;
+                }
+                arguments.push(self.generic_call_type_argument(index)?);
+                let last = index + 1 == ranges.len();
+                let delimiter = if last { Kind::RBracket } else { Kind::Comma };
+                if self.tokens[self.pos - 1].end == range.end && *self.current() == delimiter {
+                    self.pos += 1;
+                    if last {
+                        return Ok(arguments);
+                    }
+                    continue;
+                }
+                if *self.current() != Kind::Comma {
+                    self.take(Kind::RBracket)?;
+                    return Ok(arguments);
+                }
+                self.pos += 1;
+                break;
+            }
+        }
+        loop {
+            arguments.push(self.generic_call_type_argument(arguments.len())?);
+            if *self.current() != Kind::Comma {
+                break;
+            }
+            self.pos += 1;
+        }
+        self.take(Kind::RBracket)?;
+        Ok(arguments)
+    }
+
+    fn generic_call_type_argument(&mut self, count: usize) -> Result<Type, ae_span::Diagnostic> {
+        if count >= 8 {
+            return Err(self.fail("type argument limit exceeded (8)"));
+        }
+        self.named_type()
+    }
+
     pub(super) fn expression(&mut self, min: u8, moving: bool) -> Result<(Expr, Type), ae_span::Diagnostic> {
         if self.expression_depth == 0 {
             self.expression_nodes = 0;
@@ -1374,24 +1422,7 @@ impl Parser<'_> {
                     if *self.current() != Kind::LBracket {
                         return Err(self.error_at(name_offset, &format!("'{name}' is a generic function; write its type arguments, e.g. {name}[i64](...)")));
                     }
-                    self.pos += 1;
-                    let type_args = ae_syntax::parse_comma_list(
-                        self,
-                        |parser, count| {
-                            if count >= 8 {
-                                return Err(parser.fail("type argument limit exceeded (8)"));
-                            }
-                            parser.named_type()
-                        },
-                        |parser| {
-                            if *parser.current() != Kind::Comma {
-                                return false;
-                            }
-                            parser.pos += 1;
-                            true
-                        },
-                    )?;
-                    self.take(Kind::RBracket)?;
+                    let type_args = self.generic_call_type_arguments(name_offset)?;
                     let (id, types, ret) = self.instantiate_fn(gid, type_args, name_offset)?;
                     let args = self.call_arguments(&name, &types)?;
                     (Expr::Call(id, args, ret), ret)

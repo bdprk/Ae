@@ -255,3 +255,10 @@ Shared lowering handles address casts of scalar locals with the resolver
 binding span. Writable addresses require a mutable slot. Mismatched or
 non-scalar types and invalid borrows retain the typed parser diagnostics.
 Generic specialization and compound pointee types remain open.
+
+## Generic function calls (2026-11-22)
+
+The compiler uses shared type argument ranges for bracketed generic
+function calls, including nested calls. It resolves each type and
+instantiates the function with the existing compiler machinery. Generic
+struct and enum specializations remain on the typed path.

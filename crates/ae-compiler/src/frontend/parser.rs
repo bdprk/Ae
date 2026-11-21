@@ -468,6 +468,9 @@ impl<'a> Parser<'a> {
                     _ => {}
                 }
             }
+            expressions.bracketed_calls.extend(resolution.functions.iter().flat_map(|function| {
+                function.bracketed_calls.iter().map(|(&offset, arguments)| (offset, arguments.clone()))
+            }));
             let function_statements = module.functions.iter()
                 .filter_map(|function| function.body.as_ref()).flatten();
             let closure_statements = resolution.functions.iter()
@@ -522,6 +525,10 @@ impl<'a> Parser<'a> {
             }
             expressions
         })
+    }
+
+    pub(super) fn shared_call_type_arguments(&self, offset: usize) -> Option<std::sync::Arc<[std::ops::Range<usize>]>> {
+        self.resolved_expressions().bracketed_calls.get(&offset).cloned()
     }
 
     fn lower_resolved_local(&mut self, name: &str, offset: usize) -> Option<(Expr, Type)> {
@@ -2184,7 +2191,7 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; }";
+        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
         let call_token = tokens.iter().position(|token| token.offset == source.find("print(compute").unwrap()).unwrap();
@@ -2206,6 +2213,11 @@ mod tests {
             "case.ae", source, tokens, &mut functions, &mut structs,
             &mut struct_names, &mut enums, &mut enum_names, &mut generics,
         );
+        let target = source.find("choose[").unwrap();
+        let ranges = parser.shared_call_type_arguments(target).unwrap();
+        let spellings: Vec<_> = ranges.iter().map(|range| &source[range.clone()]).collect();
+        assert_eq!(spellings, ["i64", "vec[f64]"]);
+
         parser.names.insert("flag".into(), (7, false, Type::Bool));
         parser.binding_ranges.insert(7, binding..binding + 4);
         parser.pos = initializer_token;

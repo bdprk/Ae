@@ -39,6 +39,8 @@ pub struct FnOccurrences {
     pub occurrences: Vec<Occurrence>,
     /// Successfully parsed closure bodies reached during name resolution.
     pub closure_bodies: Vec<Arc<[Statement]>>,
+    /// Type argument ranges for bracketed call targets, keyed by base-name offset.
+    pub bracketed_calls: HashMap<usize, Arc<[Range<usize>]>>,
 }
 
 pub fn resolve(module: &Module) -> Resolution {
@@ -443,6 +445,7 @@ impl<'m> Pass<'m> {
                 blocks: vec![Vec::new()],
                 occurrences: Vec::new(),
                 closure_bodies: Vec::new(),
+                bracketed_calls: HashMap::new(),
                 diagnostics: Vec::new(),
             };
             if let DeclarationKind::Function { parameters, .. } = &unit.declaration.kind {
@@ -512,11 +515,11 @@ impl<'m> Pass<'m> {
                     }
                 }
             }
-            let Walker { locals, occurrences, spellings, diagnostics, closure_bodies, .. } = walker;
+            let Walker { locals, occurrences, spellings, diagnostics, closure_bodies, bracketed_calls, .. } = walker;
             self.defs.extend(locals);
             self.spellings.extend(spellings);
             self.diagnostics.extend(diagnostics);
-            self.functions.push(FnOccurrences { function: index, function_def, occurrences, closure_bodies });
+            self.functions.push(FnOccurrences { function: index, function_def, occurrences, closure_bodies, bracketed_calls });
         }
     }
 }
@@ -569,6 +572,7 @@ struct Walker<'w> {
     blocks: Vec<Vec<String>>,
     occurrences: Vec<Occurrence>,
     closure_bodies: Vec<Arc<[Statement]>>,
+    bracketed_calls: HashMap<usize, Arc<[Range<usize>]>>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1403,7 +1407,8 @@ impl Walker<'_> {
                 }
                 base_target
             }
-            ExpressionKind::BracketedCallTarget { base, .. } => {
+            ExpressionKind::BracketedCallTarget { base, arguments } => {
+                self.bracketed_calls.insert(base.range.start, arguments.as_slice().into());
                 self.expr(base, role)
             }
             ExpressionKind::Qualified { base, name } => {
