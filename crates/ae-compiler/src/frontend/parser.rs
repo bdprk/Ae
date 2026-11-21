@@ -498,6 +498,35 @@ impl<'a> Parser<'a> {
                 }
                 self.lower_resolved_local(name, expression.range.start)
             }
+            ExpressionKind::Index { base, index } => {
+                let ExpressionKind::Atom(Kind::Ident(name)) = &base.kind else {
+                    return None;
+                };
+                let (Expr::Variable(slot, _, _, _), ty) = self.lower_resolved_local(name, base.range.start)? else {
+                    return None;
+                };
+                if pending_moves.iter().any(|&(moved, _)| moved == slot) {
+                    return None;
+                }
+                let bracket = self.tokens.get(self.tokens.partition_point(|token| token.offset < base.range.end))?;
+                if bracket.kind != Kind::LBracket {
+                    return None;
+                }
+                let (line, column) = (bracket.line, bracket.column);
+                let (index, Type::Int) = self.lower_shared_expression(index, remaining, nodes_left, pending_moves)? else {
+                    return None;
+                };
+                let index = Box::new(index);
+                match ty {
+                    Type::Array(len) => Some((Expr::Index(slot, len, index, line, column), Type::Int)),
+                    Type::Vec | Type::VecRef | Type::VecF | Type::VecFRef => {
+                        let borrowed = matches!(ty, Type::VecRef | Type::VecFRef);
+                        let element = if matches!(ty, Type::VecF | Type::VecFRef) { Type::F64 } else { Type::Int };
+                        Some((Expr::VecIndex(slot, index, line, column, borrowed, element), element))
+                    }
+                    _ => None,
+                }
+            }
             ExpressionKind::Vector(elements) => {
                 let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < expression.range.start))?;
                 let (line, column) = (token.line, token.column);
@@ -1608,7 +1637,7 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; let value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); }";
+        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; let value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
         let call_token = tokens.iter().position(|token| token.offset == source.find("print(compute").unwrap()).unwrap();
@@ -1722,5 +1751,15 @@ mod tests {
         let print = parser.pos;
         assert!(parser.lower_output_from_syntax().is_none());
         assert_eq!(parser.pos, print);
+
+        let binding = source.find("let v =").unwrap() + 4;
+        parser.names.insert("v".into(), (11, false, Type::VecF));
+        parser.binding_ranges.insert(11, binding..binding + 1);
+        let index_print = source.find("print(v[0])").unwrap();
+        parser.pos = parser.tokens.partition_point(|token| token.offset < index_print);
+        assert!(matches!(
+            parser.lower_output_from_syntax(),
+            Some(Statement::Print(Printed::Expr(Expr::VecIndex(11, _, 1, _, false, Type::F64))))
+        ));
     }
 }

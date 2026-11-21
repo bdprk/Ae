@@ -134,6 +134,9 @@ updates this ADR as slices land.
    and an empty literal defaults to the integer form. The compiler
    charges the enclosing expression budget and retains typed diagnostics
    for unsupported elements or output types.
+   Numeric array and vector index reads lower through the resolved base
+   binding. The compiler retains integer index typing, the original
+   bracket position, and the borrowed-vector flag.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 
