@@ -1058,10 +1058,19 @@ impl<'a> Parser<'a> {
                 Kind::Break | Kind::Continue => {
                     let keyword = if *self.current() == Kind::Break { "break" } else { "continue" };
                     if self.loop_depth == 0 { return Err(self.fail(&format!("'{keyword}' outside of a loop"))); }
-                    self.pos += 1; self.take(Kind::Semi)?;
+                    use ae_syntax::statement::{parse_statement_tokens, StatementKind};
+
+                    let (statement, end) = parse_statement_tokens(
+                        &self.file, self.source, &self.tokens, self.pos,
+                    )?;
+                    self.pos = end;
                     let owned = self.loop_local_owned();
                     if !owned.is_empty() { result.push(Statement::Frees(owned)); }
-                    result.push(if keyword == "break" { Statement::Break } else { Statement::Continue(self.loop_labels.last().copied().flatten()) });
+                    result.push(match statement.kind {
+                        StatementKind::Break => Statement::Break,
+                        StatementKind::Continue => Statement::Continue(self.loop_labels.last().copied().flatten()),
+                        _ => unreachable!("loop jump syntax"),
+                    });
                 }
                 Kind::Assert => {
                     let (line, col) = self.position();

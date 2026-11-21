@@ -86,6 +86,8 @@ updates this ADR as slices land.
    Standalone statement parsing caps recursive descent at 64 statements
    across nested blocks and else-if chains. Its depth check keeps syntax
    tree construction safe before typed body lowering consumes it.
+   The compiler also lowers shared `break` and `continue` nodes, after
+   checking loop scope and before attaching ownership cleanup and targets.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 
