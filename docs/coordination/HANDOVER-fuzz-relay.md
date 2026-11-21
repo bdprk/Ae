@@ -118,3 +118,5 @@ cargo test --workspace --locked
 - Shared lowering now handles named struct constructors. Both platforms passed the full corpus and 36 focused comparisons. Next, consume field access nodes and preserve the compiler field path semantics. The Ubuntu relay remains bounded at 1100000.
 
 - Scalar field reads now lower from shared postfix trees. Next, handle read-only owned-field expressions while preserving the original move diagnostics. Ubuntu reached its ceiling with 7,156 additional successful seeds and resumed at 1100120 (guest PID 14, host PID 26140), stopping before 1200000.
+
+- Shared string field reads passed the full corpus and 36 focused comparisons on both platforms. Next, consume resolved enum constructor nodes. The seven active relay PIDs were verified live.

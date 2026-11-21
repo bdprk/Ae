@@ -158,6 +158,9 @@ updates this ADR as slices land.
    compiler resolves each field against its typed receiver, including
    nested fields and shared or mutable references. Moves from owned
    fields retain the typed parser's context-sensitive checks.
+   Read-only string fields also lower in print, string comparison,
+   concatenation, and string-view argument positions. By-value contexts
+   retain the compiler's owned-field move diagnostics.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

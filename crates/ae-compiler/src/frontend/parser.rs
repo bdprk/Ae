@@ -518,7 +518,11 @@ impl<'a> Parser<'a> {
                 return Some((value, ty));
             }
         }
-        self.lower_shared_expression(argument, remaining, nodes_left, effects)
+        if expected == Type::StrView {
+            self.lower_shared_read(argument, remaining, nodes_left, effects)
+        } else {
+            self.lower_shared_expression(argument, remaining, nodes_left, effects)
+        }
     }
 
     fn lower_shared_field(
@@ -555,6 +559,23 @@ impl<'a> Parser<'a> {
         };
         let (_, ty) = self.structs.get(sid)?.fields.iter().find(|(field, _)| field == name)?;
         Some((Expr::Field(Box::new(value), name.clone(), *ty), *ty))
+    }
+
+    fn lower_shared_read(
+        &mut self,
+        expression: &ae_syntax::expression::Expression,
+        remaining: usize,
+        nodes_left: &mut usize,
+        effects: &mut SharedExpressionEffects,
+    ) -> Option<(Expr, Type)> {
+        use ae_syntax::expression::ExpressionKind;
+
+        if matches!(expression.kind, ExpressionKind::Field { .. }) {
+            let (value, ty) = self.lower_shared_field(expression, remaining, nodes_left, effects)?;
+            return matches!(ty, Type::Int | Type::F64 | Type::Bool | Type::String | Type::StrView)
+                .then_some((value, ty));
+        }
+        self.lower_shared_expression(expression, remaining, nodes_left, effects)
     }
 
     fn lower_shared_expression(
@@ -772,8 +793,13 @@ impl<'a> Parser<'a> {
                     return None;
                 }
                 let position = (token.line, token.column);
-                let left = self.lower_shared_expression(left, remaining, nodes_left, effects)?;
-                let right = self.lower_shared_expression(right, remaining, nodes_left, effects)?;
+                let lower_operand = if matches!(operator, Kind::Plus | Kind::EqEq | Kind::NotEq) {
+                    Self::lower_shared_read
+                } else {
+                    Self::lower_shared_expression
+                };
+                let left = lower_operand(self, left, remaining, nodes_left, effects)?;
+                let right = lower_operand(self, right, remaining, nodes_left, effects)?;
                 self.lower_infix(left, operator.clone(), right, position).ok()
             }
             _ => None,
@@ -897,7 +923,7 @@ impl<'a> Parser<'a> {
             match &argument.kind {
                 ExpressionKind::Atom(Kind::Text(value)) => Statement::Print(Printed::Text(value.clone())),
                 _ => {
-                    let (value, ty) = self.lower_shared_expression(&argument, 64, &mut nodes_left, &mut effects)?;
+                    let (value, ty) = self.lower_shared_read(&argument, 64, &mut nodes_left, &mut effects)?;
                     if !matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView) {
                         return None;
                     }
