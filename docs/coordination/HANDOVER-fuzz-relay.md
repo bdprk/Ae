@@ -326,3 +326,9 @@ checks. Range loops remain the next control-flow slice.
 The scalar body route lowers i64 ranges, declares bounds in evaluation
 order, and uses the existing range-loop continue label. The loop binding
 is scoped to its body. Iterable collection loops remain open.
+
+## Resolved scalar print and assert (2026-11-22)
+
+The resolved body route lowers scalar print operands and boolean assertions.
+Assertion nodes keep the keyword's source position and type errors keep the
+existing operand-end diagnostic. The next slice can widen body entry to main.

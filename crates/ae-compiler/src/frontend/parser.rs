@@ -64,7 +64,9 @@ fn scalar_body_statement(statement: &ae_syntax::statement::Statement, resolved: 
                 && resolved.scalar_writes.contains_key(&target.range.start)
                 && scalar_body_expression(value, resolved)
         }
-        StatementKind::Return(value) => scalar_body_expression(value, resolved),
+        StatementKind::Return(value) | StatementKind::Print(value) | StatementKind::Assert(value) => {
+            scalar_body_expression(value, resolved)
+        }
         StatementKind::If { condition, then_body, else_body } => {
             scalar_body_expression(condition, resolved)
                 && then_body.iter().all(|statement| scalar_body_statement(statement, resolved))
@@ -737,6 +739,20 @@ impl<'a> Parser<'a> {
                     rhs
                 };
                 Statement::Assign(slot, value, false)
+            }
+            StatementKind::Print(argument) => {
+                let (value, _) = self.lower_scalar_body_expression(argument, slots)?;
+                Statement::Print(Printed::Expr(value))
+            }
+            StatementKind::Assert(argument) => {
+                self.seek_scalar_offset(statement.range.start);
+                let (line, column) = self.position();
+                let (condition, ty) = self.lower_scalar_body_expression(argument, slots)?;
+                if ty != Type::Bool {
+                    self.seek_scalar_offset(argument.range.end);
+                    return Err(self.fail("assert requires a boolean condition"));
+                }
+                Statement::Assert(condition, line, column)
             }
             StatementKind::Return(value) => {
                 let (value, ty) = self.lower_scalar_body_expression(value, slots)?;
@@ -2563,9 +2579,9 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn scalar() -> bool { let local = (2 + 3) * 4; return local == 20; } fn mismatch() -> i64 { return true; } fn branches() -> i64 { if false { let same = 1; return same; } else if true { let same = 2; return same; } else { let same = 3; return same; } } fn loops() -> i64 { while true { while false { continue; } break; } return 7; } fn bad_loop() -> i64 { continue; return 0; } fn ranges() -> i64 { for i in 2..5 { while false { continue; } if i == 3 { continue; } } let i = 7; return i; } fn bad_range() -> i64 { for j in false..5 {} return 0; } fn countdown() -> i64 { var n = 4; n = 2; while n > 0 { n -= 1; } return n; } fn frozen() -> i64 { let n = 1; n = 2; return n; } fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; task_spawn(ex, || -> i64 { return 0; }); let closure = |x: i64| -> bool { return x == 0; }; }";
+        let source = "fn scalar() -> bool { let local = (2 + 3) * 4; return local == 20; } fn mismatch() -> i64 { return true; } fn branches() -> i64 { if false { let same = 1; return same; } else if true { let same = 2; return same; } else { let same = 3; return same; } } fn loops() -> i64 { while true { while false { continue; } break; } return 7; } fn bad_loop() -> i64 { continue; return 0; } fn ranges() -> i64 { for i in 2..5 { while false { continue; } if i == 3 { continue; } } let i = 7; return i; } fn bad_range() -> i64 { for j in false..5 {} return 0; } fn countdown() -> i64 { var n = 4; n = 2; while n > 0 { n -= 1; } return n; } fn frozen() -> i64 { let n = 1; n = 2; return n; } fn output() -> i64 { print(2); assert(2 == 2); return 0; } fn bad_assert() -> i64 { assert(5); return 0; } fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; task_spawn(ex, || -> i64 { return 0; }); let closure = |x: i64| -> bool { return x == 0; }; }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
-        let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
+        let print_token = tokens.partition_point(|token| token.offset < source.find("print(flag)").unwrap());
         let call_token = tokens.iter().position(|token| token.offset == source.find("print(compute").unwrap()).unwrap();
         let condition_token = tokens.partition_point(|token| token.offset < source.find("if flag").unwrap() + 3);
         let initializer = source.find("flag;").unwrap();
@@ -2649,6 +2665,17 @@ mod tests {
         assert_eq!(error.message, "cannot assign to immutable variable 'n'");
         assert_eq!(error.secondary.len(), 1);
         parser.names.remove("n");
+
+        parser.seek_scalar_offset(source.find("{ print(2);").unwrap());
+        let body = parser.lower_resolved_scalar_body().expect("resolved output").unwrap();
+        let [Statement::Print(Printed::Expr(Expr::Number(2))), Statement::Assert(Expr::Binary(_, Kind::EqEq, _, _, _, Type::Bool), 1, column), Statement::Return(Expr::Number(0), _)] = body.as_slice() else {
+            panic!("expected print, assert, and return");
+        };
+        assert_eq!(*column, source.find("assert(2 == 2)").unwrap() + 1);
+        parser.seek_scalar_offset(source.find("{ assert(5)").unwrap());
+        let error = parser.lower_resolved_scalar_body().expect("resolved assert error").err().unwrap();
+        assert_eq!(error.message, "assert requires a boolean condition");
+        assert_eq!(*parser.current(), Kind::RParen);
 
         for prefix in [
             "choose[",
