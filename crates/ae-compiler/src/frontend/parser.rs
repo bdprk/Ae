@@ -1368,7 +1368,10 @@ impl<'a> Parser<'a> {
                         result.push(Statement::MapPut(MapPlace::Var(id, map_kind_of(ty)), key, value, line, col));
                     } else if let Type::Array(len) = ty {
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
-                        let (index, index_ty) = self.expression(0, false)?;
+                        let (index, index_ty) = match self.lower_shared_value(Some(Kind::RBracket), false) {
+                            Some(pair) => pair,
+                            None => self.expression(0, false)?,
+                        };
                         if index_ty != Type::Int { return Err(self.fail("array index must be an integer").with_code("E0201")); }
                         self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
                         let (value, value_ty) = match self.lower_shared_value(None, false) {
