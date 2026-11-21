@@ -146,3 +146,27 @@ cargo test --workspace --locked
 - Output and loop jumps now select their lowering from shared statement kinds. Both platforms passed the full byte gate and 32 focused comparisons. Next, index shared let and var binding metadata for statement lowering.
 
 - Indexed let and var headers passed full corpus parity and 32 focused comparisons. Next, use the shared for statement metadata for loop binding and iteration dispatch.
+
+
+## Remaining unshared expression sites (audit 2026-11-21, relay continuation)
+
+`parser.rs` still parses 36 expressions with `self.expression(0, …)` outside
+the shared tree, by construct:
+
+- concurrency statements: TaskYield ×2, PoolSpawn ×1, ChanClose ×2
+- stores: Store ×2, StrVecStore ×2, VecStore ×1, FieldStore ×6, Star (pointer
+  store) ×1 — the indexed store-target slices landed, these are the VALUE
+  sides
+- compound assignment: PercentEqual ×2; plain Assign ×2
+- containers and builtins: Array ×1, VecPop ×3, MapPut ×2, Sort ×1
+- control flow tail: condition ×1, Exit ×2, Return ×1, For ×2, Assert ×1,
+  Print ×1, match_statement ×1
+- Declare ×1
+
+The 41 `lower_shared_*` helpers are the consumption infrastructure; each
+remaining site converts by routing through the resolver index the way the
+landed slices did (one construct per slice, byte-parity gate + focused
+comparisons on both platforms). The audit came from
+`grep -n "self.expression(0" crates/ae-compiler/src/frontend/parser.rs`
+with nearest-statement context attribution.
+
