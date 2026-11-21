@@ -163,8 +163,9 @@ this site count.
 Per-construct locations (for the next slices):
 - concurrency statements: TaskYield ×2, PoolSpawn ×1, ChanClose ×2 — the
   chan_close handle now lowers through the shared route (relay continuation)
-- stores (value sides): Store ×2, StrVecStore ×2, VecStore ×1,
-  FieldStore ×6, Star (pointer store) ×1
+- stores (value sides): Store ×2, StrVecStore ×1, VecStore ×1 routed
+  (2026-11-21 relay); remaining: FieldStore ×6, Star (pointer store) ×1,
+  StrVecStore ×1
 - compound assignment: PercentEqual ×2; plain Assign ×2
 - containers and builtins: Array ×1, VecPop ×3, MapPut ×2, Sort ×1
 - control flow tail: condition ×1, Return ×1, For ×2,
