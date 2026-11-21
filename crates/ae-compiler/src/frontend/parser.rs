@@ -888,11 +888,16 @@ impl<'a> Parser<'a> {
             return None;
         }
         let offset = self.tokens.get(self.pos)?.offset;
-        let expression = self.resolved_expressions().values.get(&offset).cloned()?;
+        let root = self.resolved_expressions().values.get(&offset).cloned()?;
+        let expression = match (boundary.as_ref(), &root.kind) {
+            (Some(Kind::Question), ae_syntax::expression::ExpressionKind::Propagate(operand)) => operand.as_ref(),
+            (Some(Kind::Question), _) => return None,
+            _ => root.as_ref(),
+        };
         let end = self.tokens.partition_point(|token| token.offset < expression.range.end);
         let next = &self.tokens.get(end)?.kind;
-        // Stop only at delimiters on which both parsers agree. Propagation
-        // and type-dependent postfix syntax stay with the typed parser.
+        // Leave the delimiter for the surrounding typed statement.
+        // A propagation request lowers only the operand before '?'.
         let complete = match boundary.as_ref() {
             Some(expected) => next == expected,
             None => matches!(next, Kind::Semi | Kind::Comma | Kind::RParen | Kind::RBracket | Kind::DotDot),
@@ -926,7 +931,7 @@ impl<'a> Parser<'a> {
                 }
                 value
             }
-            _ => self.lower_shared_expression(&expression, depth, &mut nodes_left, &mut effects)?,
+            _ => self.lower_shared_expression(expression, depth, &mut nodes_left, &mut effects)?,
         };
         self.commit_shared_effects(effects);
         if boundary.is_none() {
@@ -1057,7 +1062,10 @@ impl<'a> Parser<'a> {
                         let len = values.len(); (Statement::Array(id, values), Type::Array(len))
                     } else {
                         // The typed initializer consumes string values.
-                        let (value, ty) = self.expression(0, true)?;
+                        let (value, ty) = match self.lower_shared_value(Some(Kind::Question), true) {
+                            Some(value) => value,
+                            None => self.expression(0, true)?,
+                        };
                         // `let x = call()?;` binds the Ok payload and returns the
                         // error to the caller instead of continuing.
                         if *self.current() == Kind::Question {
@@ -1185,7 +1193,10 @@ impl<'a> Parser<'a> {
                     if !self.names.contains_key(&name) {
                         // A call used only for its effect. The value must be
                         // propagated with '?', so a failure is never dropped.
-                        let (value, ty) = self.expression(0, true)?;
+                        let (value, ty) = match self.lower_shared_value(Some(Kind::Question), true) {
+                            Some(value) => value,
+                            None => self.expression(0, true)?,
+                        };
                         if *self.current() != Kind::Question {
                             return Err(self.fail("a statement that only calls a function must end with '?' to propagate its result"));
                         }

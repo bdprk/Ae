@@ -126,3 +126,5 @@ cargo test --workspace --locked
 - Enum value calls passed the full byte gate and 32 focused comparisons on both platforms. Next, connect shared lowering at the match-subject boundary while preserving pattern ownership.
 
 - Match subjects and arm patterns now reuse the shared index. The full byte gate and 36 focused comparisons passed on both platforms. Next, feed trailing propagation nodes into the typed propagation route.
+
+- Shared propagation passed the full corpus and 36 focused comparisons. Next, consume indexed for-loop operand nodes while preserving iteration mode and ownership.

@@ -169,6 +169,9 @@ updates this ADR as slices land.
    Match statements use indexed enum binding subjects and cached arm
    patterns. The compiler still binds payload slots, checks exhaustiveness,
    and enforces the subject's container borrow.
+   Bindings and effect statements use the indexed propagation node to
+   lower the operand before its question mark. The existing typed route
+   checks the result shape and emits early returns and cleanup.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 
