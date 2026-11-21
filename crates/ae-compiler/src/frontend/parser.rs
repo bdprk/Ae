@@ -570,16 +570,16 @@ impl<'a> Parser<'a> {
                 if signature.file != self.file || signature.extern_c || is_unsafe_fn(signature.id)
                     || arguments.len() != signature.params.len() || arguments.len() > 64
                     || !signature.params.iter().all(|ty| {
-                        matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView)
+                        matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView | Type::Vec | Type::VecF)
                     })
-                    || !matches!(signature.ret, Type::Int | Type::Bool | Type::F64 | Type::String)
+                    || !matches!(signature.ret, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::VecF)
                 {
                     return None;
                 }
                 let (id, params, ret) = (signature.id, signature.params.clone(), signature.ret);
                 let mut args = Vec::with_capacity(arguments.len());
                 for (argument, expected) in arguments.iter().zip(params) {
-                    let value = if matches!(expected, Type::String | Type::StrView) {
+                    let value = if expected.owned() || expected == Type::StrView {
                         if let ExpressionKind::Atom(Kind::Ident(name)) = &argument.kind {
                             remaining.checked_sub(1)?;
                             *nodes_left = nodes_left.checked_sub(1)?;
@@ -588,7 +588,7 @@ impl<'a> Parser<'a> {
                             if pending_moves.iter().any(|&(moved, _)| moved == slot) {
                                 return None;
                             }
-                            if expected == Type::String && ty == Type::String {
+                            if expected == ty && ty.owned() {
                                 let defer = self.variable_move_needs_deferral(slot)?;
                                 pending_moves.push((slot, defer.then_some(argument.range.start)));
                             }

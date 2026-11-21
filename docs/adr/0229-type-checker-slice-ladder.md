@@ -124,9 +124,9 @@ updates this ADR as slices land.
    operands continue through the typed path.
    Safe direct calls in the same module also lower through resolver
    definitions when arguments match the signature and the result is
-   scalar or string. The shared route handles scalar arguments, owned
-   string temporaries, owned string locals, and string views backed by
-   temporaries or resolved locals. Moves and their deferred view conflicts
+   scalar, string, or a numeric vector. The shared route handles scalar
+   arguments, owned string and numeric vector temporaries or locals, and
+   string views backed by temporaries or resolved locals. Moves and their deferred view conflicts
    are committed only after the containing expression lowers successfully.
    The existing last-use pass adjudicates the conflicts.
    Numeric vector literals also lower from the expression tree. The
