@@ -83,6 +83,9 @@ updates this ADR as slices land.
    The compiler now consumes shared impl method parameter declarations and
    the local binding header used to construct `let`/`var` statement nodes.
    The body pass still assigns local slots and types the initializers.
+   Standalone statement parsing caps recursive descent at 64 statements
+   across nested blocks and else-if chains. Its depth check keeps syntax
+   tree construction safe before typed body lowering consumes it.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

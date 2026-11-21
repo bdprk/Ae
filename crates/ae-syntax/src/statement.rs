@@ -68,22 +68,14 @@ pub struct MatchArm {
 
 /// Parse `{ statement* }` starting at the `{` token.
 pub fn parse_block(file: &str, source: &str, tokens: &[Token], start: usize) -> Result<(Vec<Statement>, usize), Diagnostic> {
-    let mut parser = Parser { file, source, tokens, pos: start };
-    if parser.current().kind != Kind::LBrace {
-        return Err(parser.error(&format!("expected LBrace, found {:?}", parser.current().kind)).with_code("E0010"));
-    }
-    parser.pos += 1;
-    let body = parser.statements()?;
-    if parser.current().kind != Kind::RBrace {
-        return Err(parser.error("expected '}' to close the block").with_code("E0010"));
-    }
-    parser.pos += 1;
+    let mut parser = Parser { file, source, tokens, pos: start, statement_depth: 0 };
+    let body = parser.block()?;
     Ok((body, parser.pos))
 }
 
 /// Parse the statements of a function body whose `{` has already been consumed.
 pub fn parse_statements_until_close(file: &str, source: &str, tokens: &[Token], start: usize) -> Result<(Vec<Statement>, usize), Diagnostic> {
-    let mut parser = Parser { file, source, tokens, pos: start };
+    let mut parser = Parser { file, source, tokens, pos: start, statement_depth: 0 };
     let body = parser.statements()?;
     Ok((body, parser.pos))
 }
@@ -97,7 +89,7 @@ pub fn parse_statement_tokens(
     tokens: &[Token],
     start: usize,
 ) -> Result<(Statement, usize), Diagnostic> {
-    let mut parser = Parser { file, source, tokens, pos: start };
+    let mut parser = Parser { file, source, tokens, pos: start, statement_depth: 0 };
     let statement = parser.statement()?;
     Ok((statement, parser.pos))
 }
@@ -130,6 +122,7 @@ struct Parser<'a> {
     source: &'a str,
     tokens: &'a [Token],
     pos: usize,
+    statement_depth: usize,
 }
 
 impl Parser<'_> {
@@ -161,6 +154,16 @@ impl Parser<'_> {
         Ok((value, range))
     }
 
+    fn block(&mut self) -> Result<Vec<Statement>, Diagnostic> {
+        self.take(Kind::LBrace)?;
+        let body = self.statements()?;
+        if self.current().kind != Kind::RBrace {
+            return Err(self.error("expected '}' to close the block").with_code("E0010"));
+        }
+        self.pos += 1;
+        Ok(body)
+    }
+
     fn statements(&mut self) -> Result<Vec<Statement>, Diagnostic> {
         let mut body = Vec::new();
         while !matches!(self.current().kind, Kind::RBrace | Kind::Eof) {
@@ -170,23 +173,81 @@ impl Parser<'_> {
     }
 
     fn statement(&mut self) -> Result<Statement, Diagnostic> {
+        if self.statement_depth >= 64 {
+            return Err(self.error("statement nesting limit exceeded (64)"));
+        }
+        self.statement_depth += 1;
+        let result = self.statement_inner();
+        self.statement_depth -= 1;
+        result
+    }
+
+    fn expression(&mut self, propagate: bool, allow_struct: bool) -> Result<Expression, Diagnostic> {
+        let parse = if allow_struct { parse_expression_tokens } else { parse_expression_tokens_no_struct };
+        let (value, end) = parse(self.file, self.source, self.tokens, self.pos, propagate)?;
+        self.pos = end;
+        Ok(value)
+    }
+
+    fn statement_inner(&mut self) -> Result<Statement, Diagnostic> {
         let start = self.current().offset;
         let kind = match self.current().kind.clone() {
+            Kind::If => {
+                let (condition, then_body, else_body) = self.if_chain()?;
+                StatementKind::If { condition, then_body, else_body }
+            }
+            Kind::While => {
+                self.pos += 1;
+                let condition = self.expression(false, false)?;
+                let body = self.block()?;
+                StatementKind::While { condition, body }
+            }
+            Kind::For => {
+                self.pos += 1;
+                let (binding, binding_range) = self.identifier()?;
+                self.take(Kind::In)?;
+                let first = self.expression(false, false)?;
+                if self.current().kind == Kind::DotDot {
+                    self.pos += 1;
+                    // The range end sits in the same condition-like position:
+                    // the `{` after it opens the loop body.
+                    let last = self.expression(false, false)?;
+                    let body = self.block()?;
+                    StatementKind::ForRange { binding, binding_range, start: first, end: last, body }
+                } else {
+                    let body = self.block()?;
+                    StatementKind::ForIn { binding, binding_range, iterable: first, body }
+                }
+            }
+            Kind::Match => {
+                let (subject, arms) = self.match_statement()?;
+                StatementKind::Match { subject, arms }
+            }
+            Kind::Unsafe => {
+                self.pos += 1;
+                let body = self.block()?;
+                StatementKind::Unsafe(body)
+            }
+            _ => self.simple_statement()?,
+        };
+        Ok(Statement { kind, range: start..self.tokens[self.pos - 1].end })
+    }
+
+    fn simple_statement(&mut self) -> Result<StatementKind, Diagnostic> {
+        Ok(match self.current().kind {
             Kind::Let | Kind::Var => {
                 let BindingHeader { name, name_range, mutable } =
                     parse_binding_header(self.file, self.source, self.tokens, self.pos)?;
                 self.pos += 2;
                 self.take(Kind::Equal)?;
-                let (initializer, end) = parse_expression_tokens(self.file, self.source, self.tokens, self.pos, true)?;
-                self.pos = end;
+                let initializer = self.expression(true, true)?;
                 self.take(Kind::Semi)?;
                 StatementKind::Binding { mutable, name: name.to_owned(), name_range, initializer }
             }
             Kind::Print => {
                 self.pos += 1;
                 self.take(Kind::LParen)?;
-                let (value, end) = parse_expression_tokens(self.file, self.source, self.tokens, self.pos, false)?;
-                self.pos = end;
+                let value = self.expression(false, true)?;
                 self.take(Kind::RParen)?;
                 self.take(Kind::Semi)?;
                 StatementKind::Print(value)
@@ -194,55 +255,16 @@ impl Parser<'_> {
             Kind::Assert => {
                 self.pos += 1;
                 self.take(Kind::LParen)?;
-                let (value, end) = parse_expression_tokens(self.file, self.source, self.tokens, self.pos, false)?;
-                self.pos = end;
+                let value = self.expression(false, true)?;
                 self.take(Kind::RParen)?;
                 self.take(Kind::Semi)?;
                 StatementKind::Assert(value)
             }
             Kind::Return => {
                 self.pos += 1;
-                let (value, end) = parse_expression_tokens(self.file, self.source, self.tokens, self.pos, true)?;
-                self.pos = end;
+                let value = self.expression(true, true)?;
                 self.take(Kind::Semi)?;
                 StatementKind::Return(value)
-            }
-            Kind::If => {
-                let (condition, then_body, else_body) = self.if_chain()?;
-                StatementKind::If { condition, then_body, else_body }
-            }
-            Kind::While => {
-                self.pos += 1;
-                let (condition, end) = parse_expression_tokens_no_struct(self.file, self.source, self.tokens, self.pos, false)?;
-                self.pos = end;
-                let (body, end) = parse_block(self.file, self.source, self.tokens, self.pos)?;
-                self.pos = end;
-                StatementKind::While { condition, body }
-            }
-            Kind::For => {
-                self.pos += 1;
-                let (binding, binding_range) = self.identifier()?;
-                self.take(Kind::In)?;
-                let (first, end) = parse_expression_tokens_no_struct(self.file, self.source, self.tokens, self.pos, false)?;
-                self.pos = end;
-                if self.current().kind == Kind::DotDot {
-                    self.pos += 1;
-                    // The range end sits in the same condition-like position:
-                    // the `{` after it opens the loop body.
-                    let (last, end) = parse_expression_tokens_no_struct(self.file, self.source, self.tokens, self.pos, false)?;
-                    self.pos = end;
-                    let (body, end) = parse_block(self.file, self.source, self.tokens, self.pos)?;
-                    self.pos = end;
-                    StatementKind::ForRange { binding, binding_range, start: first, end: last, body }
-                } else {
-                    let (body, end) = parse_block(self.file, self.source, self.tokens, self.pos)?;
-                    self.pos = end;
-                    StatementKind::ForIn { binding, binding_range, iterable: first, body }
-                }
-            }
-            Kind::Match => {
-                let (subject, arms) = self.match_statement()?;
-                StatementKind::Match { subject, arms }
             }
             Kind::Break => {
                 self.pos += 1;
@@ -254,32 +276,23 @@ impl Parser<'_> {
                 self.take(Kind::Semi)?;
                 StatementKind::Continue
             }
-            Kind::Unsafe => {
-                self.pos += 1;
-                let (body, end) = parse_block(self.file, self.source, self.tokens, self.pos)?;
-                self.pos = end;
-                StatementKind::Unsafe(body)
-            }
             Kind::Star => {
                 self.pos += 1;
                 let (pointer, pointer_range) = self.identifier()?;
                 self.take(Kind::Equal)?;
-                let (value, end) = parse_expression_tokens(self.file, self.source, self.tokens, self.pos, false)?;
-                self.pos = end;
+                let value = self.expression(false, true)?;
                 self.take(Kind::Semi)?;
-                return Ok(Statement { kind: StatementKind::PointerStore { pointer, pointer_range, value }, range: start..self.tokens[self.pos - 1].end });
+                StatementKind::PointerStore { pointer, pointer_range, value }
             }
             _ => {
-                let (value, end) = parse_expression_tokens(self.file, self.source, self.tokens, self.pos, true)?;
-                self.pos = end;
+                let value = self.expression(true, true)?;
                 // A compound or plain assignment: the target was parsed as an
                 // expression so `name[i]`, `name.field` and `name` share one
                 // grammar; the resolver checks writability.
                 if matches!(self.current().kind, Kind::Equal | Kind::PlusEqual | Kind::MinusEqual | Kind::StarEqual | Kind::SlashEqual | Kind::PercentEqual) {
                     let operator = self.current().kind.clone();
                     self.pos += 1;
-                    let (rhs, end) = parse_expression_tokens(self.file, self.source, self.tokens, self.pos, false)?;
-                    self.pos = end;
+                    let rhs = self.expression(false, true)?;
                     self.take(Kind::Semi)?;
                     StatementKind::Assign { target: value, operator, value: rhs }
                 } else {
@@ -288,27 +301,19 @@ impl Parser<'_> {
                     StatementKind::Expr { value, propagates }
                 }
             }
-        };
-        Ok(Statement { kind, range: start..self.tokens[self.pos - 1].end })
+        })
     }
 
     fn if_chain(&mut self) -> Result<(Expression, Vec<Statement>, Option<ElseBranch>), Diagnostic> {
         self.take(Kind::If)?;
-        let (condition, end) = parse_expression_tokens_no_struct(self.file, self.source, self.tokens, self.pos, false)?;
-        self.pos = end;
-        let (then_body, end) = parse_block(self.file, self.source, self.tokens, self.pos)?;
-        self.pos = end;
+        let condition = self.expression(false, false)?;
+        let then_body = self.block()?;
         let else_body = if self.current().kind == Kind::Else {
             self.pos += 1;
             if self.current().kind == Kind::If {
-                let start = self.current().offset;
-                let (condition, then_body, else_body) = self.if_chain()?;
-                let range = start..self.tokens[self.pos - 1].end;
-                Some(ElseBranch::If(Box::new(Statement { kind: StatementKind::If { condition, then_body, else_body }, range })))
+                Some(ElseBranch::If(Box::new(self.statement()?)))
             } else {
-                let (body, end) = parse_block(self.file, self.source, self.tokens, self.pos)?;
-                self.pos = end;
-                Some(ElseBranch::Block(body))
+                Some(ElseBranch::Block(self.block()?))
             }
         } else {
             None
@@ -318,8 +323,7 @@ impl Parser<'_> {
 
     fn match_statement(&mut self) -> Result<(Expression, Vec<MatchArm>), Diagnostic> {
         self.take(Kind::Match)?;
-        let (subject, end) = parse_expression_tokens_no_struct(self.file, self.source, self.tokens, self.pos, false)?;
-        self.pos = end;
+        let subject = self.expression(false, false)?;
         self.take(Kind::LBrace)?;
         let mut arms = Vec::new();
         while self.current().kind != Kind::RBrace {
@@ -327,8 +331,7 @@ impl Parser<'_> {
             let (pattern, end) = crate::pattern::parse_pattern_tokens(self.file, self.source, self.tokens, self.pos)?;
             self.pos = end;
             self.take(Kind::FatArrow)?;
-            let (body, end) = parse_block(self.file, self.source, self.tokens, self.pos)?;
-            self.pos = end;
+            let body = self.block()?;
             arms.push(MatchArm { pattern, body, range: start..self.tokens[self.pos - 1].end });
         }
         self.take(Kind::RBrace)?;
@@ -408,6 +411,26 @@ impl StatementKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounds_nested_blocks_and_else_if_chains() {
+        for (allowed, excessive) in [
+            (
+                format!("{{ {}{} }}", "while true { ".repeat(64), "}".repeat(64)),
+                format!("{{ {}{} }}", "while true { ".repeat(65), "}".repeat(65)),
+            ),
+            (
+                format!("{{ if true {{}} {} }}", "else if true {} ".repeat(63)),
+                format!("{{ if true {{}} {} }}", "else if true {} ".repeat(64)),
+            ),
+        ] {
+            let allowed_tokens = crate::lex_diagnostic(&allowed).unwrap();
+            assert!(parse_block("case.ae", &allowed, &allowed_tokens, 0).is_ok());
+            let excessive_tokens = crate::lex_diagnostic(&excessive).unwrap();
+            let error = parse_block("case.ae", &excessive, &excessive_tokens, 0).unwrap_err();
+            assert_eq!(error.message, "statement nesting limit exceeded (64)");
+        }
+    }
 
     fn body(source: &str) -> Vec<Statement> {
         parse_body(&format!("{{ {source} }}"))
