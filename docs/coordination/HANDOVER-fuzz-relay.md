@@ -262,3 +262,9 @@ The compiler uses shared type argument ranges for bracketed generic
 function calls, including nested calls. It resolves each type and
 instantiates the function with the existing compiler machinery. Generic
 struct and enum specializations remain on the typed path.
+
+## Generic struct specializations (2026-11-22)
+
+Struct literals and associated calls reuse the shared specialization
+argument ranges. The compiler still specializes layouts and checks
+visibility. Generic enum expressions are the next consumer.

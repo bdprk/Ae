@@ -39,8 +39,8 @@ pub struct FnOccurrences {
     pub occurrences: Vec<Occurrence>,
     /// Successfully parsed closure bodies reached during name resolution.
     pub closure_bodies: Vec<Arc<[Statement]>>,
-    /// Type argument ranges for bracketed call targets, keyed by base-name offset.
-    pub bracketed_calls: HashMap<usize, Arc<[Range<usize>]>>,
+    /// Type argument ranges for expression specializations, keyed by base-name offset.
+    pub specialization_arguments: HashMap<usize, Arc<[Range<usize>]>>,
 }
 
 pub fn resolve(module: &Module) -> Resolution {
@@ -445,7 +445,7 @@ impl<'m> Pass<'m> {
                 blocks: vec![Vec::new()],
                 occurrences: Vec::new(),
                 closure_bodies: Vec::new(),
-                bracketed_calls: HashMap::new(),
+                specialization_arguments: HashMap::new(),
                 diagnostics: Vec::new(),
             };
             if let DeclarationKind::Function { parameters, .. } = &unit.declaration.kind {
@@ -515,11 +515,11 @@ impl<'m> Pass<'m> {
                     }
                 }
             }
-            let Walker { locals, occurrences, spellings, diagnostics, closure_bodies, bracketed_calls, .. } = walker;
+            let Walker { locals, occurrences, spellings, diagnostics, closure_bodies, specialization_arguments, .. } = walker;
             self.defs.extend(locals);
             self.spellings.extend(spellings);
             self.diagnostics.extend(diagnostics);
-            self.functions.push(FnOccurrences { function: index, function_def, occurrences, closure_bodies, bracketed_calls });
+            self.functions.push(FnOccurrences { function: index, function_def, occurrences, closure_bodies, specialization_arguments });
         }
     }
 }
@@ -572,7 +572,7 @@ struct Walker<'w> {
     blocks: Vec<Vec<String>>,
     occurrences: Vec<Occurrence>,
     closure_bodies: Vec<Arc<[Statement]>>,
-    bracketed_calls: HashMap<usize, Arc<[Range<usize>]>>,
+    specialization_arguments: HashMap<usize, Arc<[Range<usize>]>>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1400,7 +1400,8 @@ impl Walker<'_> {
             // `Name[Types]` behind a call or standalone: the grammar kept
             // the argument ranges precisely so the resolver could decide by
             // the base name (local index vs generic item).
-            ExpressionKind::Specialization { base, arguments, .. } => {
+            ExpressionKind::Specialization { base, arguments } => {
+                self.specialization_arguments.insert(base.range.start, arguments.as_slice().into());
                 let base_target = self.expr(base, role);
                 if let Some(def) = base_target {
                     self.type_argument_arity(def, arguments.len(), base.range.clone());
@@ -1408,7 +1409,7 @@ impl Walker<'_> {
                 base_target
             }
             ExpressionKind::BracketedCallTarget { base, arguments } => {
-                self.bracketed_calls.insert(base.range.start, arguments.as_slice().into());
+                self.specialization_arguments.insert(base.range.start, arguments.as_slice().into());
                 self.expr(base, role)
             }
             ExpressionKind::Qualified { base, name } => {

@@ -296,8 +296,12 @@ impl Parser<'_> {
             .unwrap_or_else(|| { self.generics.threads.push(ret); self.generics.threads.len() - 1 })
     }
 
-    fn generic_call_type_arguments(&mut self, name_offset: usize) -> Result<Vec<Type>, ae_span::Diagnostic> {
-        let shared = self.shared_call_type_arguments(name_offset);
+    fn specialization_type_arguments(
+        &mut self,
+        name_offset: usize,
+        parse_argument: impl Fn(&mut Self, usize) -> Result<Type, ae_span::Diagnostic>,
+    ) -> Result<Vec<Type>, ae_span::Diagnostic> {
+        let shared = self.shared_specialization_arguments(name_offset);
         self.pos += 1;
         let mut arguments = Vec::new();
         if let Some(ranges) = shared {
@@ -308,7 +312,7 @@ impl Parser<'_> {
                 if self.tokens[self.pos].offset != range.start {
                     break;
                 }
-                arguments.push(self.generic_call_type_argument(index)?);
+                arguments.push(parse_argument(self, index)?);
                 let last = index + 1 == ranges.len();
                 let delimiter = if last { Kind::RBracket } else { Kind::Comma };
                 if self.tokens[self.pos - 1].end == range.end && *self.current() == delimiter {
@@ -327,7 +331,7 @@ impl Parser<'_> {
             }
         }
         loop {
-            arguments.push(self.generic_call_type_argument(arguments.len())?);
+            arguments.push(parse_argument(self, arguments.len())?);
             if *self.current() != Kind::Comma {
                 break;
             }
@@ -620,9 +624,7 @@ impl Parser<'_> {
                     // Generic struct literal: the arguments pick the layout, so
                     // Pair[string, i64] and Pair[i64, i64] are different types.
                     let gid = self.generics.struct_names[&name];
-                    self.pos += 1;
-                    let args = self.read_type_arguments(Self::named_type)?;
-                    self.take(Kind::RBracket)?;
+                    let args = self.specialization_type_arguments(name_offset, |parser, _| parser.named_type())?;
                     let sid = self.instantiate_struct(gid, args, name_offset)?;
                     self.require_public("struct", &self.structs[sid].name.clone(), &self.structs[sid].file.clone(), self.structs[sid].public)?;
                     if *self.current() == Kind::ColonColon {
@@ -1422,7 +1424,7 @@ impl Parser<'_> {
                     if *self.current() != Kind::LBracket {
                         return Err(self.error_at(name_offset, &format!("'{name}' is a generic function; write its type arguments, e.g. {name}[i64](...)")));
                     }
-                    let type_args = self.generic_call_type_arguments(name_offset)?;
+                    let type_args = self.specialization_type_arguments(name_offset, Self::generic_call_type_argument)?;
                     let (id, types, ret) = self.instantiate_fn(gid, type_args, name_offset)?;
                     let args = self.call_arguments(&name, &types)?;
                     (Expr::Call(id, args, ret), ret)
