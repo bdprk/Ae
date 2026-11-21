@@ -471,6 +471,9 @@ impl<'a> Parser<'a> {
             expressions.specialization_arguments.extend(resolution.functions.iter().flat_map(|function| {
                 function.specialization_arguments.iter().map(|(&offset, arguments)| (offset, arguments.clone()))
             }));
+            expressions.pointer_cast_targets.extend(resolution.functions.iter().flat_map(|function| {
+                function.pointer_cast_targets.iter().map(|(&offset, &mutable)| (offset, mutable))
+            }));
             let function_statements = module.functions.iter()
                 .filter_map(|function| function.body.as_ref()).flatten();
             let closure_statements = resolution.functions.iter()
@@ -529,6 +532,11 @@ impl<'a> Parser<'a> {
 
     pub(super) fn shared_specialization_arguments(&self, offset: usize) -> Option<std::sync::Arc<[std::ops::Range<usize>]>> {
         self.resolved_expressions().specialization_arguments.get(&offset).cloned()
+    }
+
+    pub(super) fn shared_pointer_cast_qualifier(&self) -> Option<bool> {
+        let offset = self.tokens.get(self.pos + 2)?.offset;
+        self.resolved_expressions().pointer_cast_targets.get(&offset).copied()
     }
 
     fn lower_resolved_local(&mut self, name: &str, offset: usize) -> Option<(Expr, Type)> {
@@ -2191,7 +2199,7 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); }";
+        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
         let call_token = tokens.iter().position(|token| token.offset == source.find("print(compute").unwrap()).unwrap();
@@ -2225,6 +2233,12 @@ mod tests {
             let spellings: Vec<_> = ranges.iter().map(|range| &source[range.clone()]).collect();
             assert_eq!(spellings, ["i64", "vec[f64]"]);
         }
+
+        let target = source.find("*const shared").unwrap();
+        parser.pos = parser.tokens.partition_point(|token| token.offset < target);
+        assert_eq!(parser.shared_pointer_cast_qualifier(), Some(false));
+        assert_eq!(parser.pointer_cast_pointee(None).unwrap(), (false, Type::Shared(intern_shared(Type::Int))));
+        assert_eq!(*parser.current(), Kind::Semi);
 
         parser.names.insert("flag".into(), (7, false, Type::Bool));
         parser.binding_ranges.insert(7, binding..binding + 4);

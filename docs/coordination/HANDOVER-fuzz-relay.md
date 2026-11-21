@@ -275,3 +275,10 @@ Generic enum variants and associated calls reuse shared specialization
 argument ranges. The compiler retains type argument checks and enum layout
 instantiation. Compound pointee types and inline closure capture inference
 remain on the typed expression path.
+
+## Compound pointer cast targets (2026-11-22)
+
+The typed cast path consumes the shared pointer qualifier for compound
+and named pointees. It resolves each pointee once at the active cursor,
+where generic layout instantiation and diagnostics preserve their order.
+Inline closure header consumption is the next frontend slice.

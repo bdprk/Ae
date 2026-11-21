@@ -680,6 +680,7 @@ struct ResolvedExpressions {
     specialization_arguments: HashMap<usize, std::sync::Arc<[std::ops::Range<usize>]>>,
     struct_constructors: HashSet<usize>,
     enum_variants: HashSet<usize>,
+    pointer_cast_targets: HashMap<usize, bool>,
     values: HashMap<usize, Rc<ae_syntax::expression::Expression>>,
     statements: HashMap<usize, (IndexedStatement, usize)>,
     pointer_store_names: HashMap<usize, String>,

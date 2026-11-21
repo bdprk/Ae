@@ -425,14 +425,7 @@ impl Parser<'_> {
                     return Err(self.fail("a borrow expression must be cast to a pointer; write '&expr as *const T' or '&mut expr as *mut T'"));
                 }
                 self.pos += 1;
-                self.take(Kind::Star)?;
-                let pointee = if mutable_borrow {
-                    self.take(Kind::Mut)?;
-                    self.named_type()?
-                } else {
-                    self.take(Kind::Const)?;
-                    self.named_type()?
-                };
+                let (_, pointee) = self.pointer_cast_pointee(Some(mutable_borrow))?;
                 if pointee != ty {
                     return Err(self.fail(&format!("cannot cast &{} to *{}{}; reinterpret casts do not exist yet", ty.name(), if mutable_borrow { "mut " } else { "const " }, pointee.name())));
                 }
@@ -1508,8 +1501,7 @@ impl Parser<'_> {
             // cast form. The operand must already be a pointer — value
             // conversions are to_f64/to_i64's territory — and the retag keeps
             // the address, so it is safe by itself; what the new view enables
-            // is the caller's business, and the U11 owned-pointee guard
-            // applies to the RESULT exactly as it does at a declaration.
+            // is the caller's business.
             if *self.current() == Kind::As {
                 if !matches!(&lhs.1, Type::Ptr(_) | Type::PtrMut(_)) {
                     // Not a pointer: leave the `as` for the enclosing borrow
@@ -1520,23 +1512,11 @@ impl Parser<'_> {
                     // keep `lhs` intact for whatever follows the loop.)
                     break;
                 }
-                let as_offset = self.tokens[self.pos].offset;
-                let (base, base_ty) = lhs;
+                let (base, _) = lhs;
                 self.pos += 1;
-                let target = self.pointer_type()?;
-                if !matches!(base_ty, Type::Ptr(_) | Type::PtrMut(_)) {
-                    if let Type::Ptr(pid) | Type::PtrMut(pid) = &target {
-                        let pointee = super::ptr_pointee(*pid);
-                        if pointee.owned() {
-                            return Err(self.error_at(as_offset, "a pointer to an owned value is not supported yet; its borrow is not tracked, so safe code could dangle it by moving the value"));
-                        }
-                    }
-                }
-                let mutable = matches!(target, Type::PtrMut(_));
-                let pointee_id = match &target {
-                    Type::Ptr(id) | Type::PtrMut(id) => *id,
-                    _ => unreachable!("pointer_type returns a pointer"),
-                };
+                let (mutable, pointee) = self.pointer_cast_pointee(None)?;
+                let pointee_id = super::intern_pointee(pointee);
+                let target = if mutable { Type::PtrMut(pointee_id) } else { Type::Ptr(pointee_id) };
                 let (line, column) = self.position();
                 lhs = (Expr::PtrCast(Box::new(base), mutable, pointee_id, line, column), target);
                 continue;

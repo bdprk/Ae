@@ -41,6 +41,8 @@ pub struct FnOccurrences {
     pub closure_bodies: Vec<Arc<[Statement]>>,
     /// Type argument ranges for expression specializations, keyed by base-name offset.
     pub specialization_arguments: HashMap<usize, Arc<[Range<usize>]>>,
+    /// The pointer qualifier for each cast, keyed by the pointee type offset.
+    pub pointer_cast_targets: HashMap<usize, bool>,
 }
 
 pub fn resolve(module: &Module) -> Resolution {
@@ -446,6 +448,7 @@ impl<'m> Pass<'m> {
                 occurrences: Vec::new(),
                 closure_bodies: Vec::new(),
                 specialization_arguments: HashMap::new(),
+                pointer_cast_targets: HashMap::new(),
                 diagnostics: Vec::new(),
             };
             if let DeclarationKind::Function { parameters, .. } = &unit.declaration.kind {
@@ -515,11 +518,11 @@ impl<'m> Pass<'m> {
                     }
                 }
             }
-            let Walker { locals, occurrences, spellings, diagnostics, closure_bodies, specialization_arguments, .. } = walker;
+            let Walker { locals, occurrences, spellings, diagnostics, closure_bodies, specialization_arguments, pointer_cast_targets, .. } = walker;
             self.defs.extend(locals);
             self.spellings.extend(spellings);
             self.diagnostics.extend(diagnostics);
-            self.functions.push(FnOccurrences { function: index, function_def, occurrences, closure_bodies, specialization_arguments });
+            self.functions.push(FnOccurrences { function: index, function_def, occurrences, closure_bodies, specialization_arguments, pointer_cast_targets });
         }
     }
 }
@@ -573,6 +576,7 @@ struct Walker<'w> {
     occurrences: Vec<Occurrence>,
     closure_bodies: Vec<Arc<[Statement]>>,
     specialization_arguments: HashMap<usize, Arc<[Range<usize>]>>,
+    pointer_cast_targets: HashMap<usize, bool>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1328,7 +1332,8 @@ impl Walker<'_> {
             }
             ExpressionKind::Atom(_) => None,
             ExpressionKind::Group(inner) | ExpressionKind::Propagate(inner) => self.expr(inner, role),
-            ExpressionKind::AddressCast { binding, binding_range, mutable, .. } => {
+            ExpressionKind::AddressCast { binding, binding_range, mutable, pointee } => {
+                self.pointer_cast_targets.insert(pointee.start, *mutable);
                 let range = binding_range.clone();
                 let mutable = *mutable;
                 let target = self.occurrence(binding, range.clone(), Role::Borrow, Lookup::LocalOnly);
@@ -1337,7 +1342,10 @@ impl Walker<'_> {
                 }
                 None
             }
-            ExpressionKind::PointerCast { base, .. } => self.expr(base, role),
+            ExpressionKind::PointerCast { base, mutable, pointee } => {
+                self.pointer_cast_targets.insert(pointee.start, *mutable);
+                self.expr(base, role)
+            }
             ExpressionKind::BorrowArgument { name, name_range, mutable, .. } => {
                 let mutable = *mutable;
                 let target = self.occurrence(name, name_range.clone(), Role::Borrow, Lookup::LocalOnly);

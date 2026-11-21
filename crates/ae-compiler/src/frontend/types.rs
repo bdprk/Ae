@@ -615,14 +615,34 @@ impl Parser<'_> {
     // address (ADR-0207), so the declaration check stays the C-ABI shape
     // test — the pointee's ownership is the deref-side's problem (U11).
     pub(super) fn pointer_type(&mut self) -> Result<Type, ae_span::Diagnostic> {
-        self.take(Kind::Star)?;
-        let mutable = ae_syntax::declaration::pointer_mutability(
-            &self.file, self.source, &self.tokens[self.pos],
-        )?;
-        self.pos += 1;
-        let pointee = self.named_type()?;
+        let (mutable, pointee) = self.pointer_pointee(None)?;
         let id = super::intern_pointee(pointee);
         Ok(if mutable { Type::PtrMut(id) } else { Type::Ptr(id) })
+    }
+
+    pub(super) fn pointer_cast_pointee(&mut self, required: Option<bool>) -> Result<(bool, Type), ae_span::Diagnostic> {
+        if let Some(mutable) = self.shared_pointer_cast_qualifier() {
+            if required.is_none() || required == Some(mutable) {
+                self.pos += 2;
+                return Ok((mutable, self.named_type()?));
+            }
+        }
+        self.pointer_pointee(required)
+    }
+
+    fn pointer_pointee(&mut self, required: Option<bool>) -> Result<(bool, Type), ae_span::Diagnostic> {
+        self.take(Kind::Star)?;
+        let mutable = if let Some(required) = required {
+            self.take(if required { Kind::Mut } else { Kind::Const })?;
+            required
+        } else {
+            let mutable = ae_syntax::declaration::pointer_mutability(
+                &self.file, self.source, &self.tokens[self.pos],
+            )?;
+            self.pos += 1;
+            mutable
+        };
+        Ok((mutable, self.named_type()?))
     }
 
     // Arrays are borrowed read-only; strings and scalars pass by value.
