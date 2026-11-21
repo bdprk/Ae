@@ -196,3 +196,5 @@
 
 - 2026-11-21 11:00 R4.1 分类草案：std 261 文件扫描——240 个零宿主内建调用（core-eligible），21 个引用宿主面（bytes/exit/cell_*/io/task 族；bytes 与 cell_* 是否纯到可入 core 留给拆分切片裁决）。已记入台账 R4.1 进度。同日确认接力模式：下一 AI 直接在主树工作（仓库根目录；入口 = docs/HANDOFF-20261121.md → AGENT_PROGRESS 停点交接 → 台账）。
 
+
+- 2026-11-21 11:12 (+08:00): M2.13 relay observed 57,351 distinct seed verdicts, 0 differential failures and 0 environmental verdicts in the seven original logs. Verified new output on evaluate-3 (710351), ai (804000) and Ubuntu WSL (916140). Three fleet relays and the corrected Windows one-hour process were already running. Initial logs lacked terminal summaries at collection. See the distributed regression campaign ledger for per-lane coverage.
