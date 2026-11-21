@@ -152,7 +152,7 @@ mod tests {
         resolve(&module)
     }
 
-    fn spelled_spelling(resolution: &crate::resolve::Resolution, entry: &crate::SpellingEntry) -> String {
+    fn spelled_spelling(entry: &crate::SpellingEntry) -> String {
         entry.spelled.spelling.describe()
     }
 
@@ -245,7 +245,7 @@ mod tests {
             .find(|entry| entry.role == crate::SpellingRole::ClosureParameter)
             .expect("the closure parameter's spelling is classified");
         assert_eq!(spelling.name, "x");
-        assert_eq!(spelled_spelling(&resolution, spelling), "i64");
+        assert_eq!(spelled_spelling(spelling), "i64");
         assert_eq!(
             occurrences.iter().filter(|occurrence| occurrence.name == "value" && occurrence.target == Some(value)).count(),
             1,

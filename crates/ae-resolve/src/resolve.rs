@@ -965,7 +965,7 @@ impl Walker<'_> {
     /// A `&mut binding` / `&mut binding as *mut T` needs a `var` binding:
     /// the compiler's `cannot take a mutable pointer to an immutable
     /// binding; declare it with 'var'` (probe b1).
-    fn mutable_borrow_gate(&mut self, target: Option<DefId>, name: &str, range: Range<usize>) {
+    fn mutable_borrow_gate(&mut self, target: Option<DefId>, range: Range<usize>) {
         let Some(def) = target.and_then(|id| self.defs_local(id)) else {
             return;
         };
@@ -1334,7 +1334,7 @@ impl Walker<'_> {
                 let mutable = *mutable;
                 let target = self.occurrence(binding, range.clone(), Role::Borrow, Lookup::LocalOnly);
                 if mutable {
-                    self.mutable_borrow_gate(target, binding, range);
+                    self.mutable_borrow_gate(target, range);
                 }
                 None
             }
@@ -1343,7 +1343,7 @@ impl Walker<'_> {
                 let mutable = *mutable;
                 let target = self.occurrence(name, name_range.clone(), Role::Borrow, Lookup::LocalOnly);
                 if mutable {
-                    self.mutable_borrow_gate(target, name, name_range.clone());
+                    self.mutable_borrow_gate(target, name_range.clone());
                 }
                 None
             }

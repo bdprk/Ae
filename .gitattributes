@@ -1,5 +1,6 @@
 # Preserve byte offsets in cross-platform JSON diagnostic fixtures.
 tests/ui-json/*.ae text eol=lf
+tests/resolve/*.ae text eol=lf
 
 # Shell scripts run on Linux hosts and must keep LF endings.
 *.sh text eol=lf
