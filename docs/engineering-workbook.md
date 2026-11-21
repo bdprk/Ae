@@ -109,6 +109,24 @@ For iterator fusion, generic dispatch, closures, Result propagation and borrowed
 
 Maintain compile-fail suites for aliasing and lifetime rules, interpreter/codegen differential suites, deterministic scheduler interleavings and runtime sanitizer jobs. Minimize failures into versioned regressions. Treat proofs of individual invariants, empirical test results and unchecked assumptions as separate evidence. A backend optimization using alias metadata needs a documented derivation from checked MIR.
 
+### Byte-parity gate for frontend changes (M0.2.08)
+
+Any change to the frontend or the shared grammar must prove it changed no
+generated C and no diagnostic:
+
+```bash
+python scripts/ab_gate.py --baseline <last-good-rev>
+```
+
+The script builds the baseline in a scratch worktree, builds the current
+tree, and runs `compare_emit_c.py --frontend-corpus` — 50 example entry
+points plus 646 CLI fixture invocations, comparing exit codes and both
+streams. Line endings are normalized: a baseline built in a CRLF checkout
+and a candidate in an LF checkout differ on every line without a semantic
+change (the first gate run reported 50+122 false diffs before the
+normalization landed). The gate passed at `798e394` for the 17-slice
+shared-tree sweep: no generated C and no diagnostic changed.
+
 ## Long-term maintenance and sequencing
 
 The critical path is baseline → typed bodies → checked MIR → sound runtime boundaries → concurrent hosted programs. Package resolution and diagnostic tooling can progress alongside MIR work. Begin a second backend after the MIR corpus can expose divergence. Keep each prior compiler path available until the replacement passes production-entry tests. Prioritize the CLI as the first daily-use program, a service as the second and a native library embedded in another language as the third.
