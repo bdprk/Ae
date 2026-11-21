@@ -248,3 +248,5 @@
 
 
 - 2026-11-21 15:27 (+08:00): Reconciled seven terminal fuzz segments covering 78,348 distinct continuous seeds with zero differential or environmental failures. Started each successor from its next seed. Windows and Ubuntu retain separate exclusive ceilings and the original compiler binaries. The Windows probe that selected another binary is excluded from the ledger totals.
+
+- 2026-11-21 15:33 (+08:00): Name resolution now retains parsed closure statements and the compiler indexes them alongside function-body nodes. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 frontend CLI invocations, and 12 focused closure fixture comparisons. Ubuntu passed 41 sanitizer and leak checks. All seven fuzz relays were verified live.

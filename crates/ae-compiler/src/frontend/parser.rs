@@ -435,7 +435,12 @@ impl<'a> Parser<'a> {
                     _ => {}
                 }
             }
-            for statement in module.functions.iter().filter_map(|function| function.body.as_ref()).flatten() {
+            let function_statements = module.functions.iter()
+                .filter_map(|function| function.body.as_ref()).flatten();
+            let closure_statements = resolution.functions.iter()
+                .flat_map(|function| function.closure_bodies.iter())
+                .flat_map(|body| body.iter());
+            for statement in function_statements.chain(closure_statements) {
                 ae_syntax::statement::visit_statements(statement, &mut |statement| {
                     expressions.statement_ends.insert(statement.range.start, statement.range.end);
                     for expression in statement.expressions() {
@@ -666,7 +671,7 @@ impl<'a> Parser<'a> {
         } else {
             use ae_syntax::statement::{parse_statement_tokens, StatementKind};
 
-            // Closure bodies are still opaque in the module statement tree.
+            // Keep the local grammar path when module resolution could not index the statement.
             let (statement, end) = parse_statement_tokens(&self.file, self.source, &self.tokens, self.pos).ok()?;
             let argument = match statement.kind {
                 StatementKind::Print(value) | StatementKind::Assert(value) => value,

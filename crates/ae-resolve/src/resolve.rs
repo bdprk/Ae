@@ -2,6 +2,7 @@
 //! recording. Scope rules mirror the compiler's frontend so the differential
 //! corpus (compiler-accepted programs) resolves without diagnostics.
 
+use std::sync::Arc;
 use std::collections::HashMap;
 use std::ops::Range;
 
@@ -36,6 +37,8 @@ pub struct FnOccurrences {
     /// The function's own def id (locals name it as their owner).
     pub function_def: DefId,
     pub occurrences: Vec<Occurrence>,
+    /// Successfully parsed closure bodies reached during name resolution.
+    pub closure_bodies: Vec<Arc<[Statement]>>,
 }
 
 pub fn resolve(module: &Module) -> Resolution {
@@ -439,6 +442,7 @@ impl<'m> Pass<'m> {
                 live: HashMap::new(),
                 blocks: vec![Vec::new()],
                 occurrences: Vec::new(),
+                closure_bodies: Vec::new(),
                 diagnostics: Vec::new(),
             };
             if let DeclarationKind::Function { parameters, .. } = &unit.declaration.kind {
@@ -508,11 +512,11 @@ impl<'m> Pass<'m> {
                     }
                 }
             }
-            let Walker { locals, occurrences, spellings, diagnostics, .. } = walker;
+            let Walker { locals, occurrences, spellings, diagnostics, closure_bodies, .. } = walker;
             self.defs.extend(locals);
             self.spellings.extend(spellings);
             self.diagnostics.extend(diagnostics);
-            self.functions.push(FnOccurrences { function: index, function_def, occurrences });
+            self.functions.push(FnOccurrences { function: index, function_def, occurrences, closure_bodies });
         }
     }
 }
@@ -564,6 +568,7 @@ struct Walker<'w> {
     live: HashMap<String, DefId>,
     blocks: Vec<Vec<String>>,
     occurrences: Vec<Occurrence>,
+    closure_bodies: Vec<Arc<[Statement]>>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -1495,6 +1500,7 @@ impl Walker<'_> {
                     for statement in &statements {
                         self.statement(statement);
                     }
+                    self.closure_bodies.push(statements.into());
                 }
                 // The grammar accepted the literal's header; a body that does
                 // not parse stays opaque rather than inventing diagnostics.

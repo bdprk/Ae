@@ -92,9 +92,10 @@ updates this ADR as slices land.
    Module assembly and the resolver can borrow the same lexer token stream.
    The `emit-resolve` route uses this path for the entry module.
    `print` and `assert` use the resolver statement's end and indexed
-   argument nodes, including grouped and operator expressions. Opaque
-   closure bodies retain local shared statement parsing. Both paths share
-   operator typing. Scalar local reads can use a resolver `DefId` when its
+   argument nodes, including grouped and operator expressions. The
+   resolver retains closure statement trees parsed during its name walk,
+   so the same index covers closure bodies. Statements absent from the
+   index retain local parsing. Both paths share operator typing. Scalar local reads can use a resolver `DefId` when its
    definition range matches the active
    compiler slot. Ownership-sensitive expressions and unresolved reads
    still use typed expression parsing.
