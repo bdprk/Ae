@@ -212,3 +212,5 @@
 - 2026-11-21 12:31 (+08:00): Literal print statements and boolean-literal assert statements now lower from shared nodes. Windows and Ubuntu WSL each passed 483 workspace tests, 50 example C outputs and 646 CLI fixture comparisons. Six focused Windows literal cases also matched the baseline, including malformed semicolon and assert-type cases. Ubuntu generated C passed all 41 sanitizer/leak cases.
 
 - 2026-11-21 12:38 (+08:00): Shared output statements now lower scalar constant operator trees, including groups, through the compiler's existing prefix and infix type rules. Windows and Ubuntu each passed 483 workspace tests and matched 50 generated C examples and 646 CLI invocations. Windows also matched 27 focused C, MIR, and diagnostic invocations. Ubuntu candidate fuzz smoke passed all 40 seeds.
+
+- 2026-11-21 12:40 (+08:00): The Windows 953000 fuzz segment completed all 4,969 seeds through 957968 with zero differential or environmental verdicts. The new one-hour segment began at 957969 and produced verdicts.

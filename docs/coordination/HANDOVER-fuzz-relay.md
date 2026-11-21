@@ -1,6 +1,6 @@
 # Handover — fuzz relay
 
-- Date: 2026-11-21 12:38 +08:00
+- Date: 2026-11-21 12:40 +08:00
 - Branch: `agent/fuzz-relay`
 - Worktree: the dedicated fuzz-relay worktree of this checkout
 - Area claim: docs
@@ -14,7 +14,7 @@
 - Continued evaluate-3 at 722356 and ai at 808862 after their zero-failure terminal summaries.
 - Resumed Ubuntu at 929886 from the last contiguous verdict. The successor is capped at 949999.
 - Bounded statement-tree nesting and switched loop jumps to shared statement nodes before attaching ownership cleanup and loop targets.
-- The bounded Windows replay completed all 1,080 missing seeds with zero failures. The 953000 segment continues.
+- The Windows replay completed all 1,080 missing seeds. The 953000 segment then completed 4,969 seeds with zero failures and continued at 957969.
 - Module assembly and resolution now share the entry token stream in `emit-resolve`. The same entry points accept the compiler's existing token slice.
 - Literal `print` statements and boolean-literal `assert` statements now lower from shared statement and expression nodes.
 - Extended shared lowering to scalar operator trees, using the existing prefix and infix type checks.
