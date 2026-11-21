@@ -332,3 +332,9 @@ is scoped to its body. Iterable collection loops remain open.
 The resolved body route lowers scalar print operands and boolean assertions.
 Assertion nodes keep the keyword's source position and type errors keep the
 existing operand-end diagnostic. The next slice can widen body entry to main.
+
+## Resolved scalar main bodies (2026-11-22)
+
+Eligible main bodies now use the same resolved body entry as scalar
+functions. Main still rejects explicit return statements at the keyword.
+Direct scalar function calls are the next body-level expression slice.
