@@ -412,8 +412,16 @@ impl<'a> Parser<'a> {
         let base = *self.loop_scopes.last().unwrap_or(&0);
         self.scopes[base.min(self.scopes.len())..].iter().flatten().filter(|(_, ty)| ty.owned()).map(|&(id, ty)| (id, ty)).collect()
     }
-    fn resolved_expressions(&mut self) -> &ResolvedExpressions {
-        self.resolved_expressions.get_or_insert_with(|| {
+    pub(super) fn expression_index_for(&self, file: &str, tokens: &Rc<Vec<Token>>) -> Rc<OnceCell<ResolvedExpressions>> {
+        if self.file == file && Rc::ptr_eq(&self.tokens, tokens) {
+            Rc::clone(&self.resolved_expressions)
+        } else {
+            Rc::default()
+        }
+    }
+
+    fn resolved_expressions(&self) -> &ResolvedExpressions {
+        self.resolved_expressions.get_or_init(|| {
             let mut expressions = ResolvedExpressions::default();
             let Ok(module) = ae_resolve::module::parse_module_tokens(&self.file, self.source, &self.tokens) else {
                 return expressions;
@@ -457,9 +465,9 @@ impl<'a> Parser<'a> {
         if self.moved.contains(&id) || self.shadow_ok || !self.subst.is_empty() {
             return None;
         }
-        let definition = self.resolved_expressions().local_reads.get(&offset)?.clone();
+        let definition = self.resolved_expressions().local_reads.get(&offset)?;
         // Match the resolver's source definition to the active compiler slot.
-        if self.binding_ranges.get(&id)? != &definition {
+        if self.binding_ranges.get(&id)? != definition {
             return None;
         }
         let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < offset))?;

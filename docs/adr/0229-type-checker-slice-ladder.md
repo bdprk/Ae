@@ -137,6 +137,9 @@ updates this ADR as slices land.
    Numeric array and vector index reads lower through the resolved base
    binding. The compiler retains integer index typing, the original
    bracket position, and the borrowed-vector flag.
+   Closure subparsers and local generic instantiations share the
+   module's lazy expression index when they use the same token stream.
+   Instantiations from another source retain a separate index.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 
