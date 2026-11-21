@@ -503,6 +503,14 @@ Host: Windows 11 x86-64 (`rustc 1.99.1`, `cargo 1.99.1`, gcc 16.2.0 MinGW-W64 UC
 
 Design rationale and rejected alternatives: `docs/adr/0211-add-remove-dependency-commands.md`.
 
+## Distributed regression campaign — 2026-11-21 (M2.13, post-R3b/R3c grammar fixes)
+
+| Event | Evidence |
+|---|---|
+| 7-lane campaign launch | 5 InstaBox boxes + WSL2 + Windows run one-hour `diff_fuzz.py --duration 3600` segments with disjoint ranges (400k/500k/600k/700k/800k/900k/950k), jobs scaled to load (3 on the idle boxes, 2 where the fleet's own fuzzers run). The regression purpose: the 400k-800k corpus re-runs against the current compiler — 481-test state with the two grammar fixes and the R3b/R3c checker — instead of the 425-test state the fleet originally covered. |
+| Deployment | Working state bc238a5 + 24 uncommitted paths (tar SHA-256 prefix `14595af216ec34bf`) via scp+tar to `~/ae` on all five boxes; evaluate-2 and evaluate-3 passed `cargo test --workspace --locked` 481/0 (gcc 14.2 Debian) and `verify_generated_c.py --sanitize` 41/0 each — 4 compiler environments total with the WSL gcc 11.4 and Windows MinGW-W64 16.2 legs. |
+| Throughput at T+6 min | evaluate-2 +2624, evaluate-3 +2236, eva +1737, evaluate-1 +2032, ai +695, WSL +1779 seeds — ~32 seeds/s combined, zero failures. Segment logs: `~/ae/bench/results/fuzz-segment-start<seed>.log` per box. |
+
 ## Fuzz campaign incident — 2026-11-19 (M2.13)
 
 | Event | Evidence |
@@ -594,12 +602,78 @@ M5.1 and M6.2 pauses until R2 and R3a land.
   non-propagating call (3291 statements). The compiler still builds the typed
   tree; routing through the shared AST is the remaining step.
 - [ ] R3b. Resolver pass: DefId per item/local over the AST (HIR-lite),
-  resolution dumps as UI snapshots.
+  resolution dumps as UI snapshots. **Progress:** the pass exists
+  (`crates/ae-resolve`, ADR-0227): `parse_module` assembles declarations plus
+  per-function statement trees, expanding impl bodies by re-parsing their
+  token span (trait bodies stay opaque); the pass registers items, variants
+  and impl methods in a flat def table and walks each function with the
+  compiler's scope model (flat live names, per-block removal, no shadowing
+  while live). `ae emit-resolve` prints the deterministic dump; snapshot
+  family `tests/resolve/` pins it, and the differential gate
+  `resolver_agrees_with_the_compiler_on_accepted_programs` proves every
+  compiler-accepted program resolves with zero diagnostics and every
+  write/borrow target on a live local. The shared grammar learned the
+  receiver spellings `self`/`&self`/`&mut self` (empty type range) to make
+  impl methods parsable. Qualified members resolve
+  in expression position: `Enum::Variant` to its variant def, `Type::method`
+  to an inherent impl's method def. Closure bodies resolve too:
+  the parser re-enters a closure's brace-balanced body with the shared
+  statement grammar inside a nested scope, binding its parameters as
+  `ClosureParameter` locals. Honest gaps left for later slices: imports
+  listed not followed, receiver method names need the receiver's type (R3c),
+  prelude/builtin surface `external`, single-file scope. The type checker
+  (R3c) consumes `Resolution` next.
 - [ ] R3c. Type checker over the resolved tree emitting the existing typed
-  Expr; MIR/codegen untouched; stable type dumps.
+  Expr; MIR/codegen untouched; stable type dumps. **Progress:** step 1
+  landed (ADR-0228): the resolver classifies every declarative type spelling
+  (primitives, handles, composites, pointers, borrows, fn values, module
+  items, generic instances, type parameters, the compiler's prelude types)
+  into a `types:` dump section, and follows `use` headers transitively so
+  imported `pub` items are visible — which pulled std/core into the gate
+  corpus and caught two shared-grammar bugs (specialization-vs-index
+  fallback, `no_struct` clobber after infix tails). Gate: every
+  compiler-accepted program now classifies with zero unknown spellings —
+  closure parameters and closure return spellings included — and the gate
+  enforces the compiler's two-level writability model (rebinding needs
+  `var`; writes through a binding need `var` or a `&mut` / `*mut` type),
+  emitting the compiler's `cannot assign to immutable variable` text.
+  Binding types landed (ADR-0229 slice 1): parameters from spellings and
+  receiver flavours, `let`/`var` from a bounded inference subset
+  (literals, copies, module-fn calls, vector/struct/closure literals),
+  rendered as `= <shape>` / `= deferred` in the dump; expression inference
+  (ADR-0229 slice 2) covers same-primitive arithmetic, comparisons, logic,
+  unary operators, field/index reads through struct defs and receiver
+  borrows, pointer casts and generic instantiations. Call arity and type
+  arity are enforced at name level with the compiler's diagnostic texts
+  (ADR-0229 slice 3), and slice 4 adds the control-flow checks — conditions
+  must be boolean, returned shapes must agree with the declaration, and
+  matches must cover every variant with instantiated names, and the
+  missing-return-path analysis is in: a `return` anywhere decides, `if`
+  needs both branches, a `match` needs every arm, `unsafe` recurses, and a
+  `while` never guarantees — matching the compiler's five return-path
+  probes with the diagnostic on the closing brace (ADR-0229 slice 4).
+  Unsafe gating (pointer statement calls, `unsafe fn` and `extern "C"`
+  calls → E0701 outside `unsafe`) and struct-literal field validation
+  (unknown/duplicate/missing fields) are enforced at name level too, and
+  pattern payloads plus for-in bindings carry substituted types
+  (ADR-0229 slices 3-4, complete at name level).
+  Next: the checker that consumes the resolved tree.
 - [ ] R3d. Rebase LSP hover/definition/rename/completion on R3b/R3c; re-verify
   M6.2.*.
 - [ ] R4.1. Split `std/core` into `std/core` (no alloc/OS), `std/alloc`,
   `std/std`, `std/compiler`; layering test rejects upward imports.
+  **Progress:** enforcement exists before the split
+  (`scripts/std_layering.py`, unit tests in `scripts/test_std_layering.py`,
+  wired into CI through the script unittest discovery): every `use` header
+  in `std/**` must resolve, and `std/core/**` imports only `std/core/**` —
+  verified green over the current 261 files. The split itself (directory
+  moves + layer ranks for alloc/compiler) remains.
 - [ ] R5.1. Generate the master checklist from this ledger; CI checks that a
-  commit title's item IDs are flipped in that commit.
+  commit title's item IDs are flipped in that commit. **Progress:** the
+  generator exists (`scripts/gen_checklist.py` -> `docs/checklist.md`,
+  regenerated and diff-checked in CI), with unit tests in
+  `scripts/test_gen_checklist.py`; `scripts/check_commit_ids.py` enforces
+  locally that a commit title claiming item IDs edits the ledger in the
+  same commit (range default `@{u}..HEAD`, `--base` for anything else).
+  Remaining: history-level CI wiring once the workflow fetches full
+  history, and flipping the item in this commit.

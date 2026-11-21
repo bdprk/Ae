@@ -33,6 +33,7 @@ DIR/seed_N.ae — the regression corpus for future compiler changes.
 """
 
 import argparse
+import json
 import os
 import re
 import time
@@ -43,7 +44,32 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-EXE = ROOT / "target" / "debug" / ("ae.exe" if os.name == "nt" else "ae")
+
+
+def find_executable() -> Path:
+    """The binary lives in cargo's configured target directory.
+
+    `.cargo/config.toml` points `[build] target-dir` outside the checkout, so
+    the legacy in-tree `target/debug` path only exists on checkouts that
+    predate it. `cargo metadata` reports the resolved directory, which keeps
+    the script honest on both layouts.
+    """
+    name = "ae.exe" if os.name == "nt" else "ae"
+    legacy = ROOT / "target" / "debug" / name
+    if legacy.exists():
+        return legacy
+    try:
+        metadata = subprocess.run(
+            ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+            capture_output=True, text=True, check=True, cwd=ROOT,
+        )
+        target_directory = json.loads(metadata.stdout)["target_directory"]
+        return Path(target_directory) / "debug" / name
+    except (OSError, ValueError, KeyError):
+        return legacy
+
+
+EXE = find_executable()
 
 
 class Gen:

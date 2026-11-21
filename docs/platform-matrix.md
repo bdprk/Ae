@@ -1,3 +1,7 @@
+2026-11-21 WSL2 leg established: a full-history clone (`bc238a5`, WSL2 Ubuntu 22.04, rustc 1.100.0, gcc 11.4.0, 16 threads) with the Windows working-tree state applied on top via patch + tar (the 24 uncommitted paths of the R3b/R3c checker work — def table resolver, spelling classifier, writability, control-flow checks, unsafe gating, R5.1/R4.1 tooling). `cargo test --workspace --locked` passed with identical counts to Windows (481, 0 failed, 1.93 s for the execution suite vs 10 s on Windows), `verify_generated_c.py --sanitize` 41/41, differential fuzzing 40 seeds / 0 failures at 15.02 seeds/s (2.7x the Windows rate), `std_layering.py` and `check_commit_ids.py` agree. The clone lives in the WSL-native filesystem (`~/ae`, not `/mnt/d`) with the bdprk identity configured locally; the Windows checkout remains the source of truth and nothing was committed or pushed from WSL. The leg is repeatable with one command: `python scripts/wsl_sync.py` re-syncs the Windows working state and re-runs the Linux gates, archiving raw outputs under `bench/results/<timestamp>-wsl2/`.
+
+2026-11-21 distributed differential fuzzing: the five InstaBox machines (eva, evaluate-1, evaluate-2, evaluate-3, ai — 4C/7G each) plus WSL2 plus Windows run one-hour `diff_fuzz.py --duration 3600` segments with disjoint seed ranges (400k/500k/600k/700k/800k/900k/950k), the established M2.13 segment pattern; the working state (bc238a5 + 24 uncommitted paths, tar SHA-256 prefix `14595af216ec34bf`) was deployed via scp+tar, and evaluate-2 plus evaluate-3 each passed `cargo test --workspace --locked` 481/0 before the segments started. Caveat as before: the sanitizer script's example corpus is not a proof of all unsafe code.
+
 # Platform Support Matrix
 
 Status definitions: Verified = Native execution of all tests and generated C verification passed; Restricted = Partially passed; Unverified = No native evidence.
@@ -10,7 +14,8 @@ Status definitions: Verified = Native execution of all tests and generated C ver
 |---|---|---|---|---|---|
 | Windows | x86-64 | Verified | 2026-11-15 (cargo test all green incl. the W0702 registry fix, verify_generated_c 41/41) | MinGW-W64 GCC 16.2.0 (UCRT) | TBD (Tested on Windows 10.0.26300) |
 | Linux | x86-64 | Verified | 2026-11-15 (InstaBox evaluate-2 server run: cargo test 295 green, snapshots 3/3, differential 25547 seeds 0 failures) | GCC 14.2.0 (Debian 13) | TBD (Tested on Debian 13, Kernel 6.18.60) |
-| Linux (Sanitizer) | x86-64 | Verified | 2026-11-15 (evaluate-2: `verify_generated_c.py --sanitize --leak` 41/41, leak blocks=0) | GCC `-fsanitize=address,undefined` | Same as above |
+| Linux (Sanitizer) | x86-64 | Verified | 2026-11-15 (evaluate-2: `verify_generated_c.py --sanitize --leak` 41/41, leak blocks=0); 2026-11-21 (WSL2: `--sanitize` 41/41) | GCC `-fsanitize=address,undefined` | Same as above |
+| Linux (WSL2) | x86-64 | Verified | 2026-11-21 (cargo test 481 green identical to Windows, sanitize 41/41, fuzz 40 seeds 0 failures at 15.02 seeds/s) | GCC 11.4.0 (Ubuntu 22.04) | TBD (Tested on WSL2 Ubuntu 22.04) |
 | macOS / ARM64 / Cross-compile | — | Unverified (Not in initial commitments) | — | — | — |
 
 ## Verification Contents

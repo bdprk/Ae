@@ -1,0 +1,30 @@
+resolve locals.ae
+use headers: none
+items:
+#0 function total @3..8
+#1 function main @235..239
+types:
+#0 total:
+  16..19 parameter items -> i64
+  28..31 parameter bonus -> i64
+  36..39 return-> i64
+locals in #0 total:
+#2 parameter items @9..14 owner=#0 = i64
+#3 parameter bonus @21..26 owner=#0 = i64
+#4 binding sum @50..53 owner=#0 mutable = i64
+#5 binding label @101..106 owner=#0 = string
+#6 binding label @152..157 owner=#0 = string
+#7 for-binding i @177..178 owner=#0 = i64
+occurrences in #0 total:
+  56..61 read items -> #2
+  64..69 read bonus -> #3
+  78..81 read sum -> #4
+  130..135 read label -> #5
+  197..200 write sum -> #4
+  204..205 read i -> #7
+  224..227 read sum -> #4
+locals in #1 main:
+  none
+occurrences in #1 main:
+  254..259 call total -> #0
+diagnostics: none

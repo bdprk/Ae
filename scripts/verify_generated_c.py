@@ -7,6 +7,7 @@ end with exactly the allocation count of a trivial program, i.e. only the C
 runtime's own retained buffers.
 """
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -17,12 +18,34 @@ ROOT = Path(__file__).resolve().parent.parent
 LEAKCHECK = ROOT / "scripts" / "leakcheck.c"
 TRIVIAL = "fn main() { print(1); }"
 
+def find_executable() -> Path:
+    """The binary lives in cargo's configured target directory.
+
+    `.cargo/config.toml` points `[build] target-dir` outside the checkout, so
+    the legacy in-tree `target/debug` path only exists on checkouts that
+    predate it. `cargo metadata` reports the resolved directory, which keeps
+    the script honest on both layouts.
+    """
+    name = "ae.exe" if os.name == "nt" else "ae"
+    legacy = ROOT / "target" / "debug" / name
+    if legacy.exists():
+        return legacy
+    try:
+        metadata = subprocess.run(
+            ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+            capture_output=True, text=True, check=True, cwd=ROOT,
+        )
+        target_directory = json.loads(metadata.stdout)["target_directory"]
+        return Path(target_directory) / "debug" / name
+    except (OSError, ValueError, KeyError):
+        return legacy
+
 def run():
     parser = argparse.ArgumentParser()
     parser.add_argument("--sanitize", action="store_true")
     parser.add_argument("--leak", action="store_true")
     options = parser.parse_args()
-    executable = ROOT / "target" / "debug" / ("ae.exe" if os.name == "nt" else "ae")
+    executable = find_executable()
     cc = os.environ.get("AE_CC", "gcc")
     cases = [
         ("vectors.ae", b"5\n55\n154\n0", True),

@@ -7,7 +7,7 @@
 1. `tests/run/enum_generic_impls.ae` 语义与借用规则一致（修复 value receiver move 问题，如单独绑定或克隆/重新构造），使测试套件中所有 207 个 execution 测试全部通过。
 2. `cargo test` 0 失败，全绿通过。
 3. `agent-failure-log/2026-11-13.md` 记录本次排查原因与教训。
-4. 依据规则 1，将修复与更新 commit 并 push 到 GitHub 远端 `origin/master`。
+4. 依据规则 1，将修复与更新 commit 并 push 到 GitHub 远端（2026-11-21 起为 bdprk 账号 `origin/main`；此前历史日志中的 `origin/master` 指当时的主账号分支，不改写）。
 
 ## Checklist
 - [x] 1. 修复 `tests/run/enum_generic_impls.ae` 中 string payload 枚举 receiver move 冲突并清理 `declarations.rs` 调试打印
@@ -34,6 +34,8 @@
 - [x] 22. L1 move 放宽（§3.3）：move 也延迟裁定（verb 区分文案）；裁定目标 = 写点 ∪ move 效果；walk_statement 的 Declare/Assign/Return 臂改 walk_moving_expr 修复 recorder 长期漏记；borrow_move_after_last_use 翻转 run 允许例 + borrow_move_during_view 拒绝例
 - [x] 23. M0.2.04 模式迁移收口：match 臂模式改走共享文法 `ae_syntax::pattern::parse_pattern_tokens`（文法面接受嵌套/空载荷列表），声明形状检查留在编译器侧（计数不匹配、无载荷变体带载荷、嵌套载荷 `pattern payloads must be plain names`、保留名、重复绑定、穷尽性），畸形模式经 `check --json` 与独立解析器 code/字节区间一致；嵌套绑定仍按 spec/patterns.md 归 M1.9 未来工作
 - [x] 24. M0.2.03 表达式文法收口：ae-syntax 补上闭包字面量（`|name: Type| -> Ret { body }` 与 `||` 简写）——参数名/类型拼写/返回类型为字节区间（共享 ty() 扫描器，逗号/竖线/花括号停止、括号配平），体为含花括号区间（brace_body_end）；Self 结构体/限定名按 Ident 原子走既有路径。拒绝与编译器逐字一致（缺箭头/尾逗号/缺类型冒号/16 参数上限），新增 standalone_closure_headers_match_compiler_execution 执行差分；编译器闭包路径不动（双探针捕获推断保留）。M0.2.03 勾选，M0.2.08 换路仍开放
+
+- [x] 25. R3b 解析器落地（ADR-0227）：新 crate `crates/ae-resolve` —— `parse_module` 组装声明 + 逐函数语句树（impl 体按 token 区间重解析展开为方法；trait 体保持不透明），平坦 def 表（item/variant/impl 方法/局部各一 DefId，局部排在 item 之后按创建序编号），作用域模型镜像编译器前端（活名扁平表 + 按块移除，存活期重叠即 E0104，非遮蔽）；写目标/借用实参必须是活局部（E0101），值位置未命中记 external。`ae emit-resolve` 输出确定性 dump；`tests/resolve/` 快照族（locals/methods/calls/duplicates）钉格式与诊断文案；差分门 `resolver_agrees_with_the_compiler_on_accepted_programs` 证明全部编译器接受程序零解析诊断、写/借用目标全部落在活局部。共享文法补接收者拼写 `self`/`&self`/`&mut self`（空类型区间，`self: T` 退回普通路径交编译器拒绝）。限定成员在表达式位可解析（`Enum::Variant` → variant def、`Type::method` → 固有 impl 的方法 def，成员名区间从 qualifier 到表达式末尾的 token 中扫出；trait impl 的方法仍走类型分派不进表）。闭包体可解析：解析器用共享语句文法重入闭包的花括号配平体，在嵌套作用域内绑定 `ClosureParameter` 局部（体随块消亡，捕获语义留 R3c）。诚实的留白：import 只列不跟、接收者方法名需类型信息（R3c）、prelude/内建记 external、单文件范围。`cargo test --workspace --locked` 474 项全绿（14+322+2+11+4+44+8+2+67，含新门与快照族），全部改动仅在工作区未提交（用户要求本地优先）。
 
 ## 日志
 - 2026-11-13 15:57 初始化 AGENT_PROGRESS.md，定位到 4 个失败的 execution 测试均由 enum_generic_impls.ae 的 receiver move 引起。
@@ -155,4 +157,38 @@
 
 - 2026-11-21 03:20 R3a 语句层落地 + 双差分门（Windows 463 绿）：ae-syntax 新增 statement 模块（let/var 绑定、普通与复合赋值含 name[i]/name.field 目标、*p 写入、print/assert/return、if/else-if/else、while、for-in/for-range、match 复用共享 pattern、break/continue、unsafe、带传播标记的效果调用），visit_expressions 统一遍历。移植中抓到一条真实文法规则：条件/可迭代位置的 `{` 开的是语句体而不是结构体字面量（`if x > best { .. }`、`for x in values { .. }`、`if !is_dir { .. }`），且该规则要穿过前缀运算符与二元右操作数、在括号内解除——否则 `a {` 被当成结构体并吞掉整个块。expression 解析器新增位置性 no_struct 模式。双门：全语料 300 个函数体都解析到闭合花括号；编译器接受程序里的 3291 条语句逐条切在 token 边界且不出现非传播调用。编译器仍建类型树，换路是下一步。
 
-- 2026-11-21 03:35 **停点交接**（用户要求收尾）。本次会话推进：R2.4a（cancel_*/timer_* 降级到 std/sync + std/task，453 绿）→ ADR-0226（pool_*/exec_*/shared_* 裁定为语言能力阻塞，逐项探针取证）→ R3a 语句层（ae-syntax::statement + 两个差分门，463 绿）。全部已推送，HEAD 与 origin/main 一致（75ad43b）。**下一步（按路线，不要跳）**：(1) R3a 收口——把编译器 block_inner 的类型化建树改为消费 ae_syntax::statement 的树，需要先补 R3b 的 DefId 解析层，否则表达式仍要靠编译器自己的类型信息；(2) R2.4 剩余项的解锁点是用户类型 Copy 语义（章程 §2.3 已列为 1.0 前必答），做完再回来迁 shared_*，然后才是 exec_*/pool_*（还需函数值可入聚合 + 调度原语下沉）；(3) R4.1 std 分层与 R5.1 台账生成脚本仍未动。当前无红：cargo test --workspace 14+321+3+11+44+2+67=462 项全过（最后一次全量运行），工作树干净。
+- 2026-11-21 03:35 **停点交接**（上一会话收尾，本条保留为历史）。本次会话推进：R2.4a（cancel_*/timer_* 降级到 std/sync + std/task，453 绿）→ ADR-0226（pool_*/exec_*/shared_* 裁定为语言能力阻塞，逐项探针取证）→ R3a 语句层（ae-syntax::statement + 两个差分门，463 绿）。
+- 2026-11-21 02:20 **停点交接（本会话持续推进中，用户要求全部改动留在工作区，未提交未推送）**。HEAD 0083348，工作树未提交路径：新 crate `crates/ae-resolve`（R3b + R3c 第一步，ADR-0227/0228）+ `ae emit-resolve` CLI + `tests/resolve` 快照族 + 执行差分门 + 共享文法修复（接收者拼写、特化/索引回退、no_struct 贯穿、Declaration 记录 pub）+ 例检脚本 cargo-metadata 二进制定位。全绿证据：`cargo test --workspace --locked` 475（14+322+2+11+4+44+9+2+67）、0 警告、verify_generated_c 41/0、diff_fuzz 40/0。会话内完成：R3b 主体 → R3b.2 限定成员 → R3b.3 闭包体 → R3c 第一步（类型拼写分类 + import 跟随）。**下一步（按路线，不要跳）**：(1) R3c 第二步按 ADR-0229 梯子推进——切片 1-4 已落地（绑定类型/表达式推断/参数数/控制流检查，checker 开始拒绝），切片 4 余项（缺失返回路径）已落地，下一片=切片 5 前端切换（语料字节级一致，M0.2.08 随之关闭）；(2) R3b/R3c 留白：接收者方法名（需类型）、import 与 loader 的可见性对齐；(3) R2.4 解锁点仍是用户类型 Copy 语义；(4) R4.1 执法先行已落地（层级测试 + std 全树绿，拆分本身待做）；R5.1 已落地（生成器 + CI 防过期 + 提交纪律检查器，余项=CI 历史接线）。git 恢复后按 bdprk 账号提交推送（SSH 通道已验证：git@github-bdprk → Hi bdprk!，origin=bdprk/Ae，pre-commit/pre-push 守卫已装）。
+
+- 2026-11-21 03:35 **停点交接**（上一会话收尾，保留为历史）。本次会话推进：R2.4a（cancel_*/timer_* 降级到 std/sync + std/task，453 绿）→ ADR-0226（pool_*/exec_*/shared_* 裁定为语言能力阻塞，逐项探针取证）→ R3a 语句层（ae-syntax::statement + 两个差分门，463 绿）。全部已推送，HEAD 与 origin/main 一致（75ad43b）。**下一步（按路线，不要跳）**：(1) R3a 收口——把编译器 block_inner 的类型化建树改为消费 ae_syntax::statement 的树，需要先补 R3b 的 DefId 解析层，否则表达式仍要靠编译器自己的类型信息；(2) R2.4 剩余项的解锁点是用户类型 Copy 语义（章程 §2.3 已列为 1.0 前必答），做完再回来迁 shared_*，然后才是 exec_*/pool_*（还需函数值可入聚合 + 调度原语下沉）；(3) R4.1 std 分层与 R5.1 台账生成脚本仍未动。当前无红：cargo test --workspace 14+321+3+11+44+2+67=462 项全过（最后一次全量运行），工作树干净。
+
+- 2026-11-21 01:25 R3b（ADR-0227）完成：ae-resolve crate + `ae emit-resolve` + `tests/resolve` 快照族 + 执行差分门，全量 473 绿（Windows 单平台）。途中修正两处设计：局部 DefId 的 base 原来在循环外取值导致每个函数都从同一编号开始（改为每函数取 defs.len()）；dump 的未命中标签按角色区分（写/借用 = unresolved 对应 E0101，值位置 = external 对应 prelude/内建/import 面）。共享文法补接收者拼写（`self`/`&self`/`&mut self`），`tests/run/enum_methods.ae` 由解析失败变为全量解析。本会话按用户指示全部改动留在工作区不提交不推送；bdprk 账号通道已验证（git@github-bdprk SSH：Hi bdprk!，origin=bdprk/Ae，远端零待推）。
+
+- 2026-11-21 02:15 R3b 收尾例检（本会话三项切片 R3b/R3b.2/R3b.3 之后的例行证据）：`scripts/verify_generated_c.py` 41 PASS / 0 FAIL，`scripts/diff_fuzz.py` 40 seeds / 0 failures（8 jobs, 5.06 seeds/s）。途中修复两脚本对旧树内 `target/debug` 的硬编码——`.cargo/config.toml` 的 target-dir 已外移，两脚本现经 `cargo metadata` 解析二进制位置（教训入 failure-log）。全量 `cargo test --workspace --locked` 474 绿、0 警告。HEAD 仍在 0083348（全部改动仅在工作区，未提交未推送——用户指示本地优先）。
+
+- 2026-11-21 03:30 R3c 第一步落地（ADR-0228）：类型拼写分类器（crates/ae-resolve/src/types.rs，全拼写面：原语/句柄/复合/指针/借用/fn 值/模块 item/泛型实例/类型参数/编译器 prelude 类型）+ 拼写表 + dump `types:` 节 + **import 跟随**（imports.rs：use 头相对路径传递解析、规范路径环守卫、64 文件上限；imports 的 pub item 在自由名下可见，DefEntry.imported 标记；ae-syntax Declaration 记录 pub）。差分门扩展：编译器接受程序的所有拼写零 unknown——门把 std/core 拉进语料当场抓到两个共享文法真 bug：(1) `name[expr] {` 把索引值误判为泛型字面量（特化臂现在对非类型拼写回退 index）；(2) expression() 返回时无条件 clobber no_struct，`&&`/`||` 条件的兄弟中缀失去条件位（尾部改为恢复入口值）。两个 bug 都在 R3a 门语料之外、std/core 里各有一例。全量 475 绿（14+322+2+11+4+44+9+2+67）、0 警告，verify_generated_c 41/0，diff_fuzz 40/0。诚实留白：闭包参数拼写未分类、trait 体不透明、泛型 bound 经复查非文法缺口（语言只允许 trait 名 bound，编译器同样拒绝；判断失误已入 failure-log 03:45 条）、实例化/可见性/借用 flavor 归 R3c checker。
+
+- 2026-11-21 03:55 R3c 第一步收口：闭包参数与闭包返回拼写分类（SpellingRole::ClosureParameter/ClosureReturn，walker 按外围函数的类型参数与 impl 目标分类），分类留白清零。快照重铸（calls.resolve 出现 closure-parameter/closure-return 行）、9 个 resolver 单测更新。全量 475 绿、0 警告。
+
+- 2026-11-21 04:10 R5.1 落地（台账→主清单）：`scripts/gen_checklist.py` 从 implementation-ledger 生成 `docs/checklist.md`（190 项、126 完成，分节镜像，确定输出），CI（test.yml）新增"Master checklist is current"步骤（生成后 git diff --exit-code 防手改/过期）；`scripts/test_gen_checklist.py` 6 个单测（解析/确定性/分节/ID 模式/防过期）进 CI 的 unittest 发现；`scripts/check_commit_ids.py` 本地执行 R5.1 的提交纪律——标题带台账 ID 的提交必须同提交改台账（默认范围 @{u}..HEAD，--base 可查历史；实测 HEAD~10 抓到 4 个历史违规：R3a/R2.4a 等标题带 ID 未同提交记台账，作为前向约束留证）。R5.1 记录进度并留 CI 历史接线为余项。
+
+- 2026-11-21 04:25 解析器可变性强制落地（R3c 预备）：写目标两级模型——重绑（赋值根名）需 `var`，穿透写（字段/下标基名）需 `var` 或 `&mut T`/`*mut T` 参数或 `&mut self` 接收者（探针 w1-w9 逐例取证：按值 self 字段写、普通参数重绑/穿透、&self 接收者全拒绝；&mut 参数/接收者、var 绑定接受）；`*p = v` 拆为 deref-write 角色（穿透指针不检查指针绑定自身可变性）。诊断文案与编译器逐字一致（cannot assign to immutable variable，无 code）。差分门在全部接受程序上零误报；快照族新增 immutable.ae（4 条诊断钉格式）；resolver 第 10 个单测钉两级模型。全量 476 绿、0 警告。
+
+- 2026-11-21 04:40 R4.1 执法先行切片落地：`scripts/std_layering.py` + 单测（`scripts/test_std_layering.py`，经 CI 的 unittest 发现自动接线）。规则今天即真实生效——std 全树 261 文件：每个 use 头必须解析到存在文件、`std/core/**` 只准导入 `std/core/**`（io/sync/task/test 均为宿主层，core 向上即违规）；R4.1 拆分引入 alloc/compiler 层后该模块补层 ranks 即可（方向比较已写好）。实测当前树 0 违规（core 同目录相对导入、宿主目录零 use 头）。台账 R4.1 记进度。
+
+- 2026-11-21 05:10 R3c 切片 1（ADR-0229 梯子）落地：绑定类型推断有界子集——参数按拼写（接收者按 flavor：按值=Named 目标、&self=Borrow、&mut self=Borrow mut），let/var 从初始化器推断（字面量 i64/f64/string/bool、绑定拷贝、模块函数调用=返回拼写、vec 字面量=首元素、结构体字面量=Named、闭包字面量=fn(params) -> ret 形状、Propagate/Group 穿透），for-range=i64；其余诚实 deferred。DefEntry.inferred 承载，dump locals 行渲染 `= <shape>` / `= deferred`（快照重铸）。resolver 第 11 个单测钉子集行为；全量 477 绿、0 警告；脚本 20 OK。ADR-0229 已按落地情况修正（原独立 Type 模型切片并入绑定类型切片）。
+
+- 2026-11-21 05:30 R3c 切片 2（ADR-0229 梯子）落地：infer_initializer 升级为通用 infer_expression——同原语算术（语言不混算）、比较/逻辑=bool、一元 !/-、字段读（经结构体 def 与接收者借用找字段拼写）、索引读（vec 元素/map 值）、指针转换（AddressCast/PointerCast 的 pointee 拼写）、泛型实例值（`Option[i64]::Some(3)` = `Option[i64]`）；Ident 读改走活名表（推断发生在遍历时，活表即编译器单趟所见）。快照重铸；resolver 11 单测（含切片 2 十五例钉子）；全量 477 绿、0 警告。
+
+- 2026-11-21 05:50 R3c 切片 3（ADR-0229 梯子）落地：两级参数数核对——值参数（调用解析到模块函数 → 形参数 vs 实参数，文案与编译器逐字一致 `function 'add' expects 2 arguments, got 1`）与类型参数（特化解析到模块 item → 类型参数数 vs 类型实参数，`'Pair' takes 2 type argument(s), found 3`）。接收者方法调用（Field callee）与 prelude 类型诚实留白；导入函数参与核对但永不与本地名冲突。差分门在全部接受程序上零误报；resolver 第 12 个单测钉两种文案。全量 477 绿、0 警告。
+
+- 2026-11-21 06:05 R3c 切片 4（ADR-0229 梯子）落地：语句与控制流检查开始拒绝——if/while 条件须 bool（`condition must be a boolean expression`）、返回形状须与声明一致（`return type must be string`）、match 须穷尽（`match is not exhaustive: 'Opt[i64]::None' is not handled`，泛型枚举带实例化参数文本）；deferred 形状保持沉默（不误报）。快照族新增 control_flow.ae（4 条诊断钉文案与位置）；resolver 第 13 个单测钉正反例。余项：缺失返回路径（`function may exit without returning a value`）需 CFG 分析，记入下一片。全量 479 绿、0 警告。
+
+- 2026-11-21 06:20 R3c 切片 4 余项落地：缺失返回路径分析（CFG-lite）——`return` 出现在语句列任意位置即决（其后不可达）、if 需两臂、match 需全臂、unsafe 递归、while 永不保证（编译器连 `while true` 都拒绝，探针 r2）；诊断落点与编译器一致（函数体闭括号）。快照族新增 return_paths.ae（r1-r5 形状：accepted 全静默、`while true` 与裸落出各 1 条 `function may exit without returning a value`）。全量 479 绿、0 警告。
+
+- 2026-11-21 09:15 WSL2 验证腿建立（用户确认混合策略）：全历史克隆到 WSL 原生文件系统（~/ae，bc238a5，rustc 1.100.0 / gcc 11.4.0 / 16 线程），Windows 工作区未提交状态经补丁+打包精确迁移（24 路径，CRLF 噪声用 git apply 天然规避）；bdprk 身份配置在克隆本地。首轮 Linux 全量：cargo test 481 绿与 Windows 逐数一致（执行套件 1.93s vs Windows 10s）、verify_generated_c --sanitize 41/0、fuzz 40 seeds 0 failures（15.02 seeds/s，Windows 的 2.7 倍）、层级与提交纪律检查一致。已写入 platform-matrix（新行 Linux (WSL2) + 2026-11-21 follow-up）。Windows 树仍是唯一真相源：WSL 未提交未推送；后续 milestone 后 `python scripts/wsl_sync.py` 一次完成同步+双平台验证。
+
+- 2026-11-21 09:20 混合策略工具化：`scripts/wsl_sync.py`——一条命令完成 Windows 工作区→WSL 克隆的精确迁移（tracked diff + `git ls-files --others --exclude-standard` 打包，`git checkout -- .` 先清 CRLF 噪声）并跑完整 Linux 门（cargo build/test、verify_generated_c --sanitize --leak、fuzz 40 seeds、std 层级、提交纪律），原始输出归档 `bench/results/<timestamp>-wsl2/`（符合仓库证据惯例）。首轮实测：481 绿（13 测试二进制汇总）、sanitize+leak 全过、fuzz 16 seeds/s、层级与纪律一致。`--leak` 分配计数扫描（Windows 基线 2 块 vs Linux 0 块）自本日起本地可用。
+
+- 2026-11-21 09:40 InstaBox 5 台全部投入（用户指令：最大化利用）：5/5 SSH 证书续签（24h），工作树状态（bc238a5 + 24 未提交路径 tar 包 14595af216ec34bf）部署至 ~/ae；evaluate-2 与 evaluate-3 全量 481 绿（Linux 第三、四台验证），node/evaluate-1/ai 构建完成。分布式差分 fuzz 战役启动（M2.13 段模式，--duration 3600）：eva start=400000 jobs=2、evaluate-1 start=500000 jobs=2、evaluate-2 start=600000 jobs=3、evaluate-3 start=700000 jobs=3、ai start=800000 jobs=2（繁忙机按并行会话负载降额），加 WSL start=900000 jobs=8 与 Windows start=950000 jobs=8 —— 7 路并行、种子区间互不重叠。5 盒启动 ~2.5 分钟合计 ~39 seeds/s，全域预计 30 万+ seeds/小时。结果日志在各盒 ~/ae/bench/results/fuzz-segment-start<seed>.log，1 小时段满自动停并出汇总。
+

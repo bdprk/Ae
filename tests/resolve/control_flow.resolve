@@ -1,0 +1,51 @@
+resolve control_flow.ae
+use headers: none
+items:
+#0 enum Opt @276..279
+#1 variant Some @285..292 owner=#0
+#2 variant None @294..298 owner=#0
+#3 function wrong_condition @305..320
+#4 function wrong_while @387..398
+#5 function wrong_return @473..485
+#6 function missing_arm @520..531
+#7 function main @618..622
+types:
+#0 Opt:
+  290..291 variant-payload Some -> T
+#3 wrong_condition:
+  326..329 return-> i64
+#4 wrong_while:
+  404..407 return-> i64
+#5 wrong_return:
+  491..497 return-> string
+#6 missing_arm:
+  535..543 parameter v -> #0[i64]
+  548..551 return-> i64
+locals in #3 wrong_condition:
+  none
+occurrences in #3 wrong_condition:
+  none
+locals in #4 wrong_while:
+  none
+occurrences in #4 wrong_while:
+  none
+locals in #5 wrong_return:
+  none
+occurrences in #5 wrong_return:
+  none
+locals in #6 missing_arm:
+#8 parameter v @532..533 owner=#6 = #0[i64]
+#9 pattern-binding x @586..587 owner=#6 = i64
+occurrences in #6 missing_arm:
+  564..565 read v -> #8
+  581..585 read Some -> #1
+  601..602 read x -> #9
+locals in #7 main:
+  none
+occurrences in #7 main:
+  637..652 call wrong_condition -> #3
+diagnostics:
+  control_flow.ae:8:8: condition must be a boolean expression
+  control_flow.ae:15:11: condition must be a boolean expression
+  control_flow.ae:22:5: return type must be string
+  control_flow.ae:26:11: match is not exhaustive: 'Opt[i64]::None' is not handled

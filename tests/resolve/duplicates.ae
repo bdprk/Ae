@@ -1,0 +1,18 @@
+// The compiler rejects this program; emit-resolve still dumps it, so the
+// snapshot pins the resolver's diagnostics (E0104 duplicates, E0101 unknown
+// write targets and borrows) alongside its classifications.
+fn helper() -> i64 { return 1; }
+fn helper() -> i64 { return 2; }
+
+fn take(value: &i64) -> i64 {
+    return value + 1;
+}
+
+fn main() {
+    let item = 1;
+    let item = 2;
+    print(item);
+    missing = 3;
+    *nowhere = 4;
+    print(take(&ghost));
+}

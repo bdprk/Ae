@@ -281,7 +281,11 @@ impl Parser<'_> {
                     kind: ExpressionKind::Binary { left: Box::new(left), operator, right: Box::new(right) },
                 })
             });
-        self.no_struct = false;
+        // The tail's right operands each consumed their own copy of the
+        // flag; a sibling operator that follows (`b > 0 && a > x - b {`)
+        // still sits in the same condition position, so the entry value —
+        // not `false` — is what the caller's continuation must see.
+        self.no_struct = no_struct;
         combined
     }
     // The caller consumed the opener (a `|` with parameters, or the `||`
@@ -444,11 +448,24 @@ impl Parser<'_> {
                     let start = self.cursor - 1;
                     let end = crate::declaration::skip_type_parameter_list(self.tokens, start);
                     if self.tokens.get(end).is_some_and(|token| matches!(token.kind, Kind::ColonColon | Kind::LBrace)) {
-                        let (arguments, _) = crate::declaration::expression_type_arguments(
+                        // `Name[...] ::` / `Name[...] {` is a generic
+                        // instantiation (`Pair[string, i64] { ... }`,
+                        // `Option[i64]::Some`) — unless the bracket contents
+                        // are not a type argument list, in which case this
+                        // was an index whose value a brace follows
+                        // (`if arr[i + 1] {`). Names are the only authority
+                        // here, and the grammar has none, so a non-type
+                        // spelling falls back to indexing and the caller
+                        // owns the brace (ADR-0228's grammar survey).
+                        match crate::declaration::expression_type_arguments(
                             self.file, self.source, self.tokens, start,
-                        )?;
-                        self.cursor = end;
-                        ExpressionKind::Specialization { base: Box::new(base), arguments }
+                        ) {
+                            Ok((arguments, args_end)) => {
+                                self.cursor = args_end;
+                                ExpressionKind::Specialization { base: Box::new(base), arguments }
+                            }
+                            _ => self.index(base)?,
+                        }
                     } else if self.tokens.get(end).is_some_and(|token| token.kind == Kind::LParen) {
                         match crate::declaration::expression_type_arguments(
                             self.file, self.source, self.tokens, start,
@@ -828,3 +845,4 @@ mod tests {
         assert_eq!(error.primary.unwrap().span.range, 128..129);
     }
 }
+
