@@ -537,6 +537,8 @@ Design rationale and rejected alternatives: `docs/adr/0211-add-remove-dependency
 | Two terminal segments at 20:29 (+08:00) | evaluate-3 ran 768241–779892 (11,652) and ai ran 828827–838434 (9,608). All 21,260 seeds succeeded with zero differential or environmental failures. Verified successors at 779893 and 838435. |
 | Ubuntu terminal segment at 20:39 (+08:00) | All 27,418 seeds from 1100120 through 1127537 succeeded with zero differential or environmental failures in 3602.4 seconds. The verified successor starts at 1127538 and stops before 1200000. |
 
+| Completed-lane results (collected 12:30, chained 13:15) | evaluate-2 12100 seeds / 0, evaluate-1 11599 / 0, eva 6536 / 0 (full 3600s segments); evaluate-3, WSL and Windows were still running at collection with zero failures observed at every checkpoint (the WSL lane's final count was lost to a cleanup race — `git clean` removed its open log during the tree alignment). evaluate-3's own chainer then finished the 700000-range lane: **start722356 = 11895 seeds / 0 failures** (3.30 seeds/s) — the chain total for the lane is ~20k seeds / 0. `bench/results/2026-11-21-distributed-campaign/summary.json` holds the machine-readable record. |
+
 ## Fuzz campaign incident — 2026-11-19 (M2.13)
 
 | Event | Evidence |

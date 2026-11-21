@@ -17,5 +17,12 @@ benchmarks_real/*.exe
 benchmarks_real/*.pdb
 benchmarks_real/bench_*_mojo
 
+# live fuzz campaigns write here while they run; archive the finished
+# segment logs deliberately, so a running campaign never leaves the
+# worktree dirty
+bench/results/*/windows-*.log
+bench/results/*/windows-*.stderr.log
+bench/results/*/summary.json
+
 # local scratch space for repros and commit messages
 /work/

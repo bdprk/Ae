@@ -5,23 +5,19 @@ disk right now, not what is merged.
 
 ## Repository
 
-- `main` = `0083348` (CI green on Linux and Windows at that commit)
+- `main` is the integration branch; run `git log --oneline -1 main` for the
+  current tip. Do not trust a commit id written here.
 - Remote: the repository's `origin`
 - Branches: `main`, `feat/m1-type-system-expansion`, tag `v0.1.0`
 
-## Uncommitted work in the primary checkout
+## Current handoff
 
-**UPDATE 2026-11-21 09:55 (+08:00): superseded.** The interrupted agent
-finished and COMMITTED the work as `f704c7a` ("R3b R3c R5.1 R4.1: resolver
-crate, name-level checker, checklist tooling, std layering and WSL2
-verification leg"), pushed to `origin/main`, and left its own handoff at
-`docs/HANDOFF-20261121.md`. Do **not** restore the `refs/wip/20261121-084550`
-snapshot — it is older than the commit. The full handoff checklist lives in
-`docs/HANDOFF-20261121.md`; read that first.
+`docs/HANDOFF-20261121.md` is the live checklist; read it first. Everything
+below is the historical record of the 08:45 stop point, kept only so the
+shape of that work is still legible.
 
-Historical note (the state as of 08:45): the primary worktree had 27 dirty
-entries from an interrupted agent. They were coherent enough to be worth
-keeping; they were **not** committed at the time.
+The 27 dirty entries described here were all committed to `main` afterwards.
+Do not restore an older work-in-progress snapshot over the current tree.
 
 - New crate `crates/ae-resolve/` — resolver pass (ADR-0227), modules and
   imports, plus `src/dump.rs`.
@@ -39,10 +35,8 @@ keeping; they were **not** committed at the time.
   `scripts/verify_generated_c.py`, `tests/execution.rs`,
   `tests/snapshots.rs`, plus new `tests/resolve/` fixtures.
 
-Latest local snapshot of exactly this state:
-`refs/wip/20261121-084550` (`8bd8c1a`). Restore with
-`git restore --source=refs/wip/20261121-084550 --worktree -- .` after
-checking `git diff` first.
+The automatic checkpoint task still snapshots dirty worktrees into local
+`refs/wip/<timestamp>` refs; `git wip-list` shows the current ones.
 
 ## Next action
 
@@ -62,7 +56,8 @@ python scripts/verify_generated_c.py
 
 ## Known risks
 
-- `main` is dirty: do not `git add -A`, stage explicit paths only.
+- Several agents share this checkout: do not `git add -A`, stage explicit
+  paths only.
 - `crates/ae-resolve` is not yet a workspace member in the committed
   `Cargo.toml`; adding it changes build order and CI time.
 - ADR-0229 (type-checker slice ladder) is design only; no code yet.
