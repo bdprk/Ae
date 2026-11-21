@@ -65,8 +65,16 @@ def compare_cli_corpus(
                 failures += 1
                 continue
             before, after = results
+            # Line endings are a platform artefact, not compiler output: a
+            # baseline built in a CRLF checkout and a candidate in an LF
+            # checkout differ on every line without a semantic change. The
+            # platform matrix documents the same normalization for example
+            # comparisons, so apply it here too.
+            def normalized(stream: str, value: bytes) -> bytes:
+                return value.replace(b"\r\n", b"\n") if stream in ("stdout", "stderr") else value
+
             differences = [stream for stream in ("returncode", "stdout", "stderr")
-                           if getattr(before, stream) != getattr(after, stream)]
+                           if normalized(stream, getattr(before, stream)) != normalized(stream, getattr(after, stream))]
             if differences:
                 failures += 1
                 print(f"DIFF {label}: {', '.join(differences)} "
@@ -112,7 +120,10 @@ def main() -> int:
                 if result.returncode:
                     print(f"  {label}: {result.stderr.decode('utf-8', errors='replace').strip()}", file=sys.stderr)
             failures += 1
-        elif before.stdout != after.stdout:
+        elif before.stdout.replace(b"\r\n", b"\n") != after.stdout.replace(b"\r\n", b"\n"):
+            # Same CRLF normalization as the CLI comparison: a baseline
+            # built in a CRLF checkout and a candidate in an LF checkout
+            # differ on every line without a semantic change.
             print(f"DIFF {name}: baseline sha256={digest(before.stdout)}, candidate sha256={digest(after.stdout)}", file=sys.stderr)
             failures += 1
         else:

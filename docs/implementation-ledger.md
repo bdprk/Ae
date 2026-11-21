@@ -503,6 +503,15 @@ Host: Windows 11 x86-64 (`rustc 1.99.1`, `cargo 1.99.1`, gcc 16.2.0 MinGW-W64 UC
 
 Design rationale and rejected alternatives: `docs/adr/0211-add-remove-dependency-commands.md`.
 
+## Verified 2026-11-22 — M0.2.08 byte-parity gate (frontend switchover)
+
+| Check | Evidence |
+|---|---|
+| Baseline | `3e49e62` built in a scratch worktree (`_cache/ae/ab/base`, release, sha256 `f0b9544a…`). |
+| Candidate | `798e394`+ (main after the ptr-store slice, release, sha256 `aa6d6599…`). |
+| Frontend corpus | `compare_emit_c.py --frontend-corpus`: **50/50 example entry points** and **646/646 CLI fixture invocations** byte-identical (exit codes, stdout, stderr) after CRLF normalization — the normalization the platform matrix already mandates for example comparisons, now applied by the script itself (a baseline built in a CRLF checkout vs a candidate in an LF checkout differed on every line without any semantic change; the tool reported 50+122 false diffs before the fix). |
+| Result | The shared-tree consumption sweep (17 slices across statements, stores, reads and concurrent builtins) changed no generated C and no diagnostic on the whole corpus. M0.2.08's byte-parity condition holds at this revision. |
+
 ## Distributed regression campaign — 2026-11-21 (M2.13, post-R3b/R3c grammar fixes)
 
 | Event | Evidence |
