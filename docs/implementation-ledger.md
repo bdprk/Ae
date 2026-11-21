@@ -508,16 +508,17 @@ Design rationale and rejected alternatives: `docs/adr/0211-add-remove-dependency
 Thirty completed one-hour segments across the five InstaBox boxes, collected
 from each box's own `bench/results/*.log`:
 
-| Lane | Segments | Seeds each (approx) | Failures |
+| Lane | Segments | Seeds | Failures |
 |---|---|---|---|
-| eva | 6 | 6,438–6,595 | 0 |
-| evaluate-1 | 6 | 11,398–11,797 | 0 |
-| evaluate-2 | 6 | 11,826–12,115 | 0 |
-| evaluate-3 | 6 | 11,230–11,895 | 0 |
-| ai | 6 | 4,932–10,069 | 0 |
+| eva | 7 | 45,887 | 0 |
+| evaluate-1 | 7 | 81,327 | 0 |
+| evaluate-2 | 7 | 83,995 | 0 |
+| evaluate-3 | 7 | 81,213 | 0 |
+| ai | 7 | 44,504 | 0 |
 
-Total: about **270,000 distinct seed verdicts, zero differential failures,
-zero environmental verdicts**. Every lane ran the current compiler (the
+Total: **336,926 seed verdicts, zero differential failures, zero
+environmental verdicts**. Raw per-lane logs and `summary.json` are archived
+under `bench/results/2026-11-22-fleet-relay/`. Every lane ran the current compiler (the
 481→484-test state with the R3b/R3c checker and the shared-tree sweep), so
 this is regression coverage of the original seed corpus against new code.
 The supervisors continue chaining successors; the Ubuntu WSL leg and the
