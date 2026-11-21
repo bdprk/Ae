@@ -434,10 +434,16 @@ impl<'a> Parser<'a> {
         &mut self,
         expression: ae_syntax::expression::Expression,
         remaining: usize,
+        nodes_left: &mut usize,
     ) -> Option<(Expr, Type)> {
         use ae_syntax::expression::ExpressionKind;
 
         let remaining = remaining.checked_sub(1)?;
+        // The typed Pratt parser charges operands, groups and prefixes.
+        // An infix node adds no charge beyond its two operand walks.
+        if !matches!(expression.kind, ExpressionKind::Binary { .. }) {
+            *nodes_left = nodes_left.checked_sub(1)?;
+        }
         match expression.kind {
             ExpressionKind::Atom(Kind::Number(value)) => Some((Expr::Number(value), Type::Int)),
             ExpressionKind::Atom(Kind::Float(value)) => Some((Expr::FloatLit(value), Type::F64)),
@@ -460,11 +466,11 @@ impl<'a> Parser<'a> {
                 let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < offset))?;
                 Some((Expr::Variable(id, ty, token.line, token.column), ty))
             }
-            ExpressionKind::Group(inner) => self.lower_scalar_expression(*inner, remaining),
+            ExpressionKind::Group(inner) => self.lower_scalar_expression(*inner, remaining, nodes_left),
             ExpressionKind::Prefix { operator, operand } => {
                 let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < expression.range.start))?;
                 let position = (token.line, token.column);
-                let operand = self.lower_scalar_expression(*operand, remaining)?;
+                let operand = self.lower_scalar_expression(*operand, remaining, nodes_left)?;
                 self.lower_prefix(operator, operand, position).ok()
             }
             ExpressionKind::Binary { left, operator, right } => {
@@ -473,8 +479,8 @@ impl<'a> Parser<'a> {
                     return None;
                 }
                 let position = (token.line, token.column);
-                let left = self.lower_scalar_expression(*left, remaining)?;
-                let right = self.lower_scalar_expression(*right, remaining)?;
+                let left = self.lower_scalar_expression(*left, remaining, nodes_left)?;
+                let right = self.lower_scalar_expression(*right, remaining, nodes_left)?;
                 self.lower_infix(left, operator, right, position).ok()
             }
             _ => None,
@@ -500,14 +506,24 @@ impl<'a> Parser<'a> {
         let next = &self.tokens.get(end)?.kind;
         // Stop only at delimiters on which both parsers agree. Propagation
         // and type-dependent postfix syntax stay with the typed parser.
-        let complete = match boundary {
-            Some(expected) => *next == expected,
+        let complete = match boundary.as_ref() {
+            Some(expected) => next == expected,
             None => matches!(next, Kind::Semi | Kind::Comma | Kind::RParen | Kind::RBracket | Kind::DotDot),
         };
         if !complete {
             return None;
         }
-        let value = self.lower_scalar_expression(expression, 64)?;
+        let (depth, budget) = if boundary.is_none() {
+            (128usize.checked_sub(self.expression_depth)?.min(64),
+             128usize.checked_sub(self.expression_nodes)?)
+        } else {
+            (64, 128)
+        };
+        let mut nodes_left = budget;
+        let value = self.lower_scalar_expression(expression, depth, &mut nodes_left)?;
+        if boundary.is_none() {
+            self.expression_nodes += budget - nodes_left;
+        }
         self.pos = end;
         Some(value)
     }
@@ -540,16 +556,17 @@ impl<'a> Parser<'a> {
         // at the statement start until the entire tree lowers successfully,
         // so unsupported arguments and errors take the existing path.
         let (statement, end) = parse_statement_tokens(&self.file, self.source, &self.tokens, self.pos).ok()?;
+        let mut nodes_left = 128;
         let lowered = match statement.kind {
             StatementKind::Print(argument) => match argument.kind {
                 ExpressionKind::Atom(Kind::Text(value)) => Statement::Print(Printed::Text(value)),
                 _ => {
-                    let (value, _) = self.lower_scalar_expression(argument, 64)?;
+                    let (value, _) = self.lower_scalar_expression(argument, 64, &mut nodes_left)?;
                     Statement::Print(Printed::Expr(value))
                 }
             },
             StatementKind::Assert(argument) => {
-                let (condition, Type::Bool) = self.lower_scalar_expression(argument, 64)? else {
+                let (condition, Type::Bool) = self.lower_scalar_expression(argument, 64, &mut nodes_left)? else {
                     return None;
                 };
                 let (line, column) = self.position();
@@ -1488,5 +1505,21 @@ mod tests {
         parser.binding_ranges.insert(7, 0..4);
         assert!(parser.lower_output_from_syntax().is_none());
         assert_eq!(parser.pos, print_token);
+
+        parser.binding_ranges.insert(7, binding..binding + 4);
+        parser.pos = initializer_token;
+        parser.expression_depth = 1;
+        parser.expression_nodes = 127;
+        assert!(matches!(
+            parser.expression(0, false).unwrap(),
+            (Expr::Variable(7, Type::Bool, _, _), Type::Bool),
+        ));
+        assert_eq!(parser.expression_nodes, 128);
+        parser.pos = initializer_token;
+        let error = match parser.expression(0, false) {
+            Err(error) => error,
+            Ok(_) => panic!("nested scalar exceeded the expression budget"),
+        };
+        assert_eq!(error.message, "expression complexity limit exceeded (128)");
     }
 }

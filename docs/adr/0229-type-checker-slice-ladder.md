@@ -107,6 +107,9 @@ updates this ADR as slices land.
    at shared delimiters. This covers scalar assignment values, array
    store indexes and range starts through the same operator and
    definition checks.
+   Nested scalar expressions also lower from the shared tree. Operand,
+   group and prefix nodes count against the enclosing expression's
+   existing complexity limit, including across successive call arguments.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

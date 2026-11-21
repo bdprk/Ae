@@ -226,3 +226,5 @@
 - 2026-11-21 13:04 (+08:00): Ubuntu completed all 20,114 seeds through 949999 with zero differential failures and zero environmental verdicts. The same compiler resumed from 1000000 using a one-hour run with an exclusive ceiling of 1100000. Windows retains the range below 1000000.
 
 - 2026-11-21 13:10 (+08:00): The general expression entry now lowers outermost scalar trees at shared delimiters. Windows and Ubuntu passed 484 workspace tests and matched 50 example C outputs and 646 CLI invocations. Windows also matched 28 targeted invocations. Ubuntu candidate fuzz passed 40 seeds.
+
+- 2026-11-21 14:26 (+08:00): Nested scalar expressions now lower through the shared tree and charge the enclosing Pratt parser's budget. Windows and Ubuntu each passed 484 workspace tests and matched 50 C examples and 646 CLI invocations. Sixteen focused Windows comparisons pinned the 128-node success and 129-node diagnostic. Seven terminal fuzz segments reported 93,428 seeds and zero failures. Each successor is live and producing verdicts.

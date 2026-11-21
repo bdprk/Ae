@@ -1,6 +1,6 @@
 # Handover — fuzz relay
 
-- Date: 2026-11-21 13:10 +08:00
+- Date: 2026-11-21 14:26 +08:00
 - Branch: `agent/fuzz-relay`
 - Worktree: the dedicated fuzz-relay worktree of this checkout
 - Area claim: docs
@@ -22,6 +22,8 @@
 - Scalar binding initializers and return values now use shared expression nodes, including resolved local reads.
 - Scalar branch and loop conditions now use shared expression nodes and the existing boolean type check.
 - The general expression entry lowers outermost scalar expressions at semicolons, commas, closing parentheses, closing brackets and range separators.
+- Nested scalar lowering uses the enclosing expression budget. A call with 128 nodes succeeds and one with 129 retains the existing diagnostic.
+- All seven lanes were restarted from the next seeds after 93,428 seeds completed with zero differential failures. See the ledger for the ranges.
 - evaluate-2 resumed at 634915 after completing 12,115 seeds with zero failures.
 - eva resumed at 416112 after completing 6,576 seeds with zero failures.
 - evaluate-1 resumed at 527527 after completing 11,728 seeds with zero failures.
@@ -35,8 +37,8 @@
 ## Next step
 
 ```powershell
-ssh instabox-evaluate-3 'tail -n 20 ~/ae/bench/results/fuzz-segment-start722356.log'
-wsl -d Ubuntu -- bash -lc 'tail -n 20 ~/ae/bench/results/fuzz-segment-start1000000.log'
+ssh instabox-evaluate-3 'tail -n 20 ~/ae/bench/results/fuzz-segment-start734251.log'
+wsl -d Ubuntu -- bash -lc 'tail -n 20 ~/ae/bench/results/fuzz-segment-start1040072.log'
 cargo test --workspace --locked
 ```
 
@@ -53,6 +55,7 @@ cargo test --workspace --locked
 - Shared scalar initializers and returns passed 484 tests and the full corpus on both platforms. Windows matched 32 focused invocations, and Ubuntu candidate fuzz passed 40 seeds.
 - Shared scalar conditions passed the same 484 tests and corpus on both platforms, 28 focused Windows comparisons and 40 candidate fuzz seeds on Ubuntu.
 - The general expression route passed 484 tests and the same full corpus on both platforms. Windows matched 28 focused assignment, index, range, call and complexity comparisons. Ubuntu candidate fuzz passed 40 seeds.
+- Nested scalar lowering passed 484 tests and the full corpus on both platforms. Windows matched 16 focused invocations, including the 128- and 129-node cases.
 - Ubuntu generated C passed 41 sanitizer/leak cases with zero leaked blocks.
 
 ## Risks and blockers

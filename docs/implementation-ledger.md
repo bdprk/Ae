@@ -528,6 +528,7 @@ Design rationale and rejected alternatives: `docs/adr/0211-add-remove-dependency
 | Windows coverage replay completed | The bounded replay covered all 1,080 seeds from 951920 through 952999 with 0 differential failures and 0 environmental verdicts in 1,613.9 s over 2 jobs. The 953000 relay continued in parallel. |
 | Windows 953000 segment completed | All 4,969 seeds from 953000 through 957968 ran with 0 differential failures and 0 environmental verdicts in 3,611.7 s over 4 jobs. The successor starts at 957969. |
 | Seed ceilings | `diff_fuzz.py --stop-before <seed>` now caps both count and duration runs. A one-hour run can stop at the next lane's start without submitting an overlapping seed. |
+| Relaunched seven lanes at 14:24 (+08:00) | Seven terminal summaries reported 93,428 seeds and 0 differential failures. The ranges and next starts were eva 416112–422703 (6,592) → 422704, evaluate-1 527527–539087 (11,561) → 539088, evaluate-2 634915–646943 (12,029) → 646944, evaluate-3 722356–734250 (11,895) → 734251, ai 808862–813793 (4,932) → 813794, Windows 957969–964315 (6,347) → 964316, and Ubuntu 1000000–1040071 (40,072) → 1040072. Ubuntu retains the exclusive ceiling of 1100000. |
 
 ## Fuzz campaign incident — 2026-11-19 (M2.13)
 
