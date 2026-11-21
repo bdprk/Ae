@@ -2,9 +2,9 @@
 //! statement trees, all ranges absolute to the source.
 
 use ae_span::Diagnostic;
-use ae_syntax::declaration::{parse_declaration_tokens, Declaration, DeclarationKind};
+use ae_syntax::declaration::{parse_declaration_tokens, parse_impl_method_tokens, Declaration, DeclarationKind};
 use ae_syntax::statement::{parse_statements_until_close, Statement};
-use ae_syntax::{Kind, Token};
+use ae_syntax::Token;
 
 /// One function unit: a top-level `fn` or a method of an impl body. The
 /// declaration keeps parameters, return spelling and body range; `body`
@@ -79,28 +79,11 @@ fn body_statements(file: &str, source: &str, tokens: &[Token], declaration: &Dec
     Ok(Some(statements))
 }
 
-/// Expand an impl body into method declarations. The grammar keeps impl
-/// bodies opaque, but a body is exactly a sequence of top-level-shaped `fn`
-/// declarations, so the body's token span is re-parsed with the same
-/// declaration parser: the tokens' offsets are absolute, so every method
-/// range lands where the source has it.
+/// Expand the opaque impl body through the shared method-declaration parser.
 fn impl_methods(file: &str, source: &str, tokens: &[Token], declaration: &Declaration) -> Result<Vec<Declaration>, Diagnostic> {
     let Some(body) = declaration.body.clone() else {
         return Ok(Vec::new());
     };
-    let mut inner: Vec<Token> = tokens.iter()
-        .filter(|token| token.offset > body.start && token.end < body.end)
-        .cloned()
-        .collect();
-    if inner.is_empty() {
-        return Ok(Vec::new());
-    }
-    inner.push(eof_sentinel(source));
-    parse_declaration_tokens(file, source, &inner, 0)
-}
-
-/// The declaration parser loops until `Eof`; a body slice has none, so a
-/// sentinel at the source end closes the stream.
-fn eof_sentinel(source: &str) -> Token {
-    Token { kind: Kind::Eof, offset: source.len(), end: source.len(), line: 0, column: 0 }
+    let start = tokens.partition_point(|token| token.offset <= body.start);
+    parse_impl_method_tokens(file, source, tokens, start)
 }

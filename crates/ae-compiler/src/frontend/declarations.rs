@@ -833,8 +833,20 @@ impl Parser<'_> {
             return Err(self.fail(&format!("unknown type '{first}'")));
         };
         self.take(Kind::LBrace)?;
+        // The resolver and compiler share the method declaration tree. Keep
+        // the token route for syntax the shared grammar cannot recover yet.
+        let methods = ae_syntax::declaration::parse_impl_method_tokens(
+            &self.file, self.source, &self.tokens, self.pos,
+        ).unwrap_or_default();
+        let mut methods = methods.iter().peekable();
         while *self.current() != Kind::RBrace {
             if *self.current() == Kind::Eof { return Err(self.fail("expected '}' before end of file")); }
+            let start = self.tokens[self.pos].offset;
+            let parsed_parameters = methods.next_if(|method| method.range.start == start)
+                .and_then(|method| match &method.kind {
+                    DeclarationKind::Function { parameters, .. } => Some(parameters.as_slice()),
+                    _ => None,
+                });
             self.take_pub();
             self.take(Kind::Fn)?;
             let method = self.identifier()?;
@@ -846,7 +858,7 @@ impl Parser<'_> {
             self.receiver = inherent_type.as_ref()
                 .and_then(|type_name| self.generics.inherent.get(&format!("{type_name}#{method}")))
                 .and_then(|def| def.receiver);
-            let parsed = self.function_rest(false, id);
+            let parsed = self.function_rest_with_parameters(false, id, parsed_parameters);
             self.receiver = None;
             result.push(parsed?);
         }
@@ -973,7 +985,7 @@ impl Parser<'_> {
         parsed: Option<&TypedName>,
     ) -> Result<(String, bool, std::ops::Range<usize>), ae_span::Diagnostic> {
         if let Some(parameter) = parsed {
-            self.pos += 1 + usize::from(parameter.mutable);
+            self.advance_to_body_end(parameter.name_range.end);
             return Ok((parameter.name.clone(), parameter.mutable, parameter.name_range.clone()));
         }
         let mutable = *self.current() == Kind::Var;

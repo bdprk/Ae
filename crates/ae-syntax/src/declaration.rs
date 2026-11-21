@@ -253,6 +253,22 @@ pub fn parse_declaration_tokens(
     Ok(declarations)
 }
 
+/// Expand an impl body using the original tokens and their absolute ranges.
+/// The start index points just after the impl's opening brace.
+pub fn parse_impl_method_tokens(
+    file: &str,
+    source: &str,
+    tokens: &[Token],
+    start: usize,
+) -> Result<Vec<Declaration>, Diagnostic> {
+    let mut parser = DeclarationParser { file, source, tokens, pos: start };
+    let mut methods = Vec::new();
+    while parser.current().kind != Kind::RBrace {
+        methods.push(parser.declaration()?);
+    }
+    Ok(methods)
+}
+
 #[derive(Debug)]
 pub struct RecoveredDeclarations {
     pub declarations: Vec<Declaration>,
