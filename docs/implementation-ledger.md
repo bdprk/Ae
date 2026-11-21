@@ -663,6 +663,15 @@ M5.1 and M6.2 pauses until R2 and R3a land.
 - [ ] R4.1. Split `std/core` into `std/core` (no alloc/OS), `std/alloc`,
   `std/std`, `std/compiler`; layering test rejects upward imports.
   **Progress:** enforcement exists before the split
+  (scripts/std_layering.py, unit tests in `scripts/test_std_layering.py`,
+  wired into CI through the script unittest discovery): every `use` header
+  in `std/**` must resolve, and `std/core/**` imports only `std/core/**` —
+  verified green over the current 261 files. Classification draft
+  (2026-11-21): 240 files use no hosted builtin and are core-eligible; 21
+  files reference the hosted surface (`bytes`/`exit`/`cell_*`/io/task
+  families — the list needs an allowlist review before the move: `bytes`
+  and `cell_*` may be pure enough for core, and that decision belongs to
+  the split slice). The split itself (directory
   (`scripts/std_layering.py`, unit tests in `scripts/test_std_layering.py`,
   wired into CI through the script unittest discovery): every `use` header
   in `std/**` must resolve, and `std/core/**` imports only `std/core/**` —

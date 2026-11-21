@@ -194,3 +194,5 @@
 
 - 2026-11-21 10:40 推送机制升级（用户指令：每个小节点完成立即推，不要定时）：全局 post-commit 钩子（C:/Users/trevv/.config/git/hooks/post-commit）——每次提交后后台自动 push（有 upstream 才推、绝不 force、失败记 .git/autopush.log），覆盖本机全部仓库；`ae-autopush` 每 15 分钟计划任务保留为兜底（接住钩子失败与 amend/merge）。本提交即为钩子首验。
 
+- 2026-11-21 11:00 R4.1 分类草案：std 261 文件扫描——240 个零宿主内建调用（core-eligible），21 个引用宿主面（bytes/exit/cell_*/io/task 族；bytes 与 cell_* 是否纯到可入 core 留给拆分切片裁决）。已记入台账 R4.1 进度。同日确认接力模式：下一 AI 直接在主树工作（工作目录 D:/用户/trevv/桌面/projects-bdprk-副号/ae；入口 = docs/HANDOFF-20261121.md → AGENT_PROGRESS 停点交接 → 台账）。
+
