@@ -80,6 +80,8 @@ updates this ADR as slices land.
    <after> --frontend-corpus` with independently built binaries. The gate
    compares example C and MIR, run-fixture C and MIR, debug/release execution,
    and diagnostic fixtures.
+   The compiler now consumes shared impl method parameter declarations in
+   the body pass. It still assigns local slots and checks bodies itself.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

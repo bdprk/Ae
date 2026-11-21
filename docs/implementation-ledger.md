@@ -514,6 +514,11 @@ Design rationale and rejected alternatives: `docs/adr/0211-add-remove-dependency
 | Initial log coverage | eva 5,435 (400000–405434), evaluate-1 8,628 (500000–508627), evaluate-2 10,835 (600000–610834), evaluate-3 10,351 (700000–710350), ai 4,021 (800000–804021, one missing verdict), WSL 16,161 (900000–916162, two missing verdicts), Windows 1,920 (950000–951919, still running at collection). |
 | Relay at 11:12 (+08:00) | eva, evaluate-1 and evaluate-2 already had one-hour processes at 403000, 504200 and 610700. Started one-hour segments on evaluate-3 at 710351, ai at 804000 and Ubuntu WSL at 916140. The ai and WSL starts replay their partially logged tails. Windows continues its one-hour segment from 950000 after the duplicate 3600-hour driver was stopped. Count each seed once across overlapping segments. |
 | Relay recovery at 11:15 (+08:00) | The Ubuntu tool-owned process ended at seed 916624 without a summary. A separate hidden Windows process resumed Ubuntu from seed 916600; progress was independently verified in the Linux process table and log. |
+| Relay checkpoint at 11:41 (+08:00) | The logs readable at collection contained 90,776 distinct seed verdicts, with 0 differential failures and 0 environmental verdicts. The Windows log at the original path had been replaced; earlier observations remain recorded above. An independent Windows process resumed at 953000 and logs to `bench/results/2026-11-21-distributed-campaign/windows-relay-start953000.log`. |
+| evaluate-2 completed | Seed 610700–622799, 12,100 seeds / 0 failures in 3,602.4 s over 3 jobs. The successor starts at 622800. |
+| eva completed | Seed 403000–409535, 6,536 seeds / 0 failures in 3,604.3 s over 3 jobs. The successor starts at 409536. |
+| evaluate-1 completed | Seed 504200–515798, 11,599 seeds / 0 failures in 3,602.3 s over 3 jobs. The successor starts at 515799. |
+| Windows coverage replay | The 1,080 seeds from 951920 through 952999 run in a bounded replay alongside the disjoint 953000 relay. Outputs are under `bench/results/2026-11-21-distributed-campaign/`. |
 
 ## Fuzz campaign incident — 2026-11-19 (M2.13)
 
@@ -661,7 +666,13 @@ M5.1 and M6.2 pauses until R2 and R3a land.
   (unknown/duplicate/missing fields) are enforced at name level too, and
   pattern payloads plus for-in bindings carry substituted types
   (ADR-0229 slices 3-4, complete at name level).
-  Next: the checker that consumes the resolved tree.
+  Slice 5 is underway: the compiler's impl body pass consumes method
+  parameters from the same declaration tree as the resolver, including
+  receiver ranges. Windows and Ubuntu WSL each passed 482 workspace tests,
+  and the pre-change and candidate binaries matched on 50 C examples and
+  646 CLI fixture invocations on each platform. Ubuntu passed 41 generated-C
+  sanitizer/leak cases with zero leaked blocks. The next step is typed body
+  lowering over the resolved statements and DefIds.
 - [ ] R3d. Rebase LSP hover/definition/rename/completion on R3b/R3c; re-verify
   M6.2.*.
 - [ ] R4.1. Split `std/core` into `std/core` (no alloc/OS), `std/alloc`,

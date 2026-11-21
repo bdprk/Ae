@@ -198,3 +198,5 @@
 
 
 - 2026-11-21 11:12 (+08:00): M2.13 relay observed 57,351 distinct seed verdicts, 0 differential failures and 0 environmental verdicts in the seven original logs. Verified new output on evaluate-3 (710351), ai (804000) and Ubuntu WSL (916140). Three fleet relays and the corrected Windows one-hour process were already running. Initial logs lacked terminal summaries at collection. See the distributed regression campaign ledger for per-lane coverage.
+
+- 2026-11-21 11:52 (+08:00): The compiler now consumes shared impl method parameters in the body pass. Windows and Ubuntu WSL each passed 482 workspace tests and matched the pre-method compiler on all 50 example C outputs and 646 CLI invocations. Ubuntu generated C passed 41 sanitizer/leak cases with zero leaked blocks. Three fleet segments completed with zero failures and their successor segments produced output. Windows resumed with a new log and launched a bounded 1,080-seed coverage replay.
