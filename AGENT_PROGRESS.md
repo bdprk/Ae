@@ -304,3 +304,5 @@
 - 2026-11-21 20:39 (+08:00): Ubuntu completed 27,418 contiguous seeds with zero differential or environmental failures. Verified the successor at 1127538.
 
 - 2026-11-21 20:46 (+08:00): Indexed statement kinds now determine shared print, assert, break, and continue lowering. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 32 focused comparisons. Ubuntu passed 41 sanitizer and leak checks. All seven relay PIDs were verified live after retrying the SSH endpoint.
+
+- 2026-11-21 20:53 (+08:00): Let and var now consume indexed binding name ranges and mutability. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 32 focused comparisons. Ubuntu passed 41 sanitizer and leak checks. All seven fuzz processes were verified live.

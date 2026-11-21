@@ -190,6 +190,9 @@ updates this ADR as slices land.
    Output and loop jumps select their lowering from the indexed
    statement kinds. Output operands still share the expression index,
    and loop diagnostics and cleanup retain their existing behavior.
+   Let and var declarations use the indexed binding name span and
+   mutability. The existing scope and diagnostic checks still run at
+   the original token boundary.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

@@ -468,6 +468,11 @@ impl<'a> Parser<'a> {
                 ae_syntax::statement::visit_statements(statement, &mut |statement| {
                     use ae_syntax::statement::StatementKind;
                     let kind = match &statement.kind {
+                        StatementKind::Binding { name_range, mutable, .. } => Some(IndexedStatement::Binding {
+                            name_start: name_range.start,
+                            name_end: name_range.end,
+                            mutable: *mutable,
+                        }),
                         StatementKind::Print(argument) => Some(IndexedStatement::Print(argument.range.start)),
                         StatementKind::Assert(argument) => Some(IndexedStatement::Assert(argument.range.start)),
                         StatementKind::Break => Some(IndexedStatement::Break),
@@ -1045,6 +1050,19 @@ impl<'a> Parser<'a> {
         Some((kind, self.tokens.partition_point(|token| token.offset < end)))
     }
 
+    fn binding_header(&self) -> Result<ae_syntax::statement::BindingHeader<'_>, ae_span::Diagnostic> {
+        let offset = self.tokens[self.pos].offset;
+        if let Some(&(IndexedStatement::Binding { name_start, name_end, mutable }, _)) =
+            self.resolved_expressions().statements.get(&offset)
+        {
+            let name_range = name_start..name_end;
+            if let Some(name) = self.source.get(name_range.clone()) {
+                return Ok(ae_syntax::statement::BindingHeader { name, name_range, mutable });
+            }
+        }
+        ae_syntax::statement::parse_binding_header(&self.file, self.source, &self.tokens, self.pos)
+    }
+
     fn lower_output_from_syntax(&mut self) -> Option<Statement> {
         use ae_syntax::expression::ExpressionKind;
 
@@ -1112,9 +1130,7 @@ impl<'a> Parser<'a> {
             self.mut_borrows.clear();
             match self.current().clone() {
                 Kind::Let | Kind::Var => {
-                    let header = ae_syntax::statement::parse_binding_header(
-                        &self.file, self.source, &self.tokens, self.pos,
-                    )?;
+                    let header = self.binding_header()?;
                     let name = header.name.to_owned();
                     let binding_range = header.name_range;
                     let mutable = header.mutable;
