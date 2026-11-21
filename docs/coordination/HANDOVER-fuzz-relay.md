@@ -295,3 +295,10 @@ The M0.2.08 closure audit still needs to account for typed body parsing.
 [ADR-0230](../adr/0230-resolved-function-body-lowering.md) records the
 remaining token dispatch and selects complete primitive function bodies as
 the first typed lowering slice. R3c and M0.2.08 remain open.
+
+## Resolved scalar function bodies (2026-11-22)
+
+The compiler now selects complete flat bodies for primitive bindings and
+returns and lowers their references through DefId-to-slot mappings. The
+typed body route reports return mismatches directly. Control flow and
+scoped bindings are the next body-level slice.

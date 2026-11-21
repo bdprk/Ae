@@ -22,6 +22,37 @@ pub(super) fn moved_self_assignment_hint(diagnostic: ae_span::Diagnostic) -> ae_
     diagnostic.with_suggestion("This call consumes the value being assigned to; bind the result to a new name, or read its fields into locals first.")
 }
 
+fn scalar_type(ty: Type) -> bool {
+    matches!(ty, Type::Int | Type::F64 | Type::Bool)
+}
+
+fn scalar_body_expression(expression: &ae_syntax::expression::Expression, resolved: &ResolvedExpressions) -> bool {
+    use ae_syntax::expression::ExpressionKind;
+    match &expression.kind {
+        ExpressionKind::Atom(Kind::Ident(_)) => resolved.scalar_reads.contains_key(&expression.range.start),
+        ExpressionKind::Atom(Kind::Number(_) | Kind::Float(_) | Kind::True | Kind::False) => true,
+        ExpressionKind::Group(inner) | ExpressionKind::Prefix { operand: inner, .. } => {
+            scalar_body_expression(inner, resolved)
+        }
+        ExpressionKind::Binary { left, right, .. } => {
+            scalar_body_expression(left, resolved) && scalar_body_expression(right, resolved)
+        }
+        _ => false,
+    }
+}
+
+fn scalar_body_statement(statement: &ae_syntax::statement::Statement, resolved: &ResolvedExpressions) -> bool {
+    use ae_syntax::statement::StatementKind;
+    match &statement.kind {
+        StatementKind::Binding { name_range, initializer, .. } => {
+            resolved.scalar_definitions.contains_key(&name_range.start)
+                && scalar_body_expression(initializer, resolved)
+        }
+        StatementKind::Return(value) => scalar_body_expression(value, resolved),
+        _ => false,
+    }
+}
+
 impl<'a> Parser<'a> {
     pub(super) fn current(&self) -> &Kind { &self.tokens[self.pos].kind }
     pub(super) fn fail(&self, message: &str) -> ae_span::Diagnostic {
@@ -451,6 +482,9 @@ impl<'a> Parser<'a> {
                 match occurrence.role {
                     ae_resolve::Role::Read | ae_resolve::Role::Borrow if definition.kind.is_local() => {
                         expressions.local_bindings.insert(occurrence.range.start, definition.range.clone());
+                        if occurrence.role == ae_resolve::Role::Read {
+                            expressions.scalar_reads.insert(occurrence.range.start, definition.id);
+                        }
                     }
                     ae_resolve::Role::Call if definition.kind == ae_resolve::DefKind::Function
                         && definition.owner.is_none() && definition.name == occurrence.name =>
@@ -529,6 +563,20 @@ impl<'a> Parser<'a> {
                     }
                 });
             }
+            expressions.scalar_definitions.extend(resolution.defs.iter()
+                .filter(|definition| definition.kind.is_local())
+                .map(|definition| (definition.range.start, definition.id)));
+            for function in module.functions {
+                if function.impl_owner.is_some() || !function.declaration.type_parameters.is_empty() {
+                    continue;
+                }
+                let (Some(range), Some(body)) = (function.declaration.body, function.body) else {
+                    continue;
+                };
+                if body.iter().all(|statement| scalar_body_statement(statement, &expressions)) {
+                    expressions.scalar_bodies.insert(range.start, body.into());
+                }
+            }
             expressions
         })
     }
@@ -545,6 +593,125 @@ impl<'a> Parser<'a> {
     pub(super) fn shared_closure_header(&self) -> Option<std::sync::Arc<ae_syntax::expression::Expression>> {
         let offset = self.tokens.get(self.pos)?.offset;
         self.resolved_expressions().closure_headers.get(&offset).cloned()
+    }
+
+    pub(super) fn lower_resolved_scalar_body(&mut self) -> Option<Result<Vec<Statement>, ae_span::Diagnostic>> {
+        if self.in_main || !self.subst.is_empty() || self.receiver.is_some()
+            || !scalar_type(self.return_type) || !self.names.values().all(|&(_, _, ty)| scalar_type(ty))
+        {
+            return None;
+        }
+        let resolved = self.resolved_expressions();
+        let body = resolved.scalar_bodies.get(&self.tokens[self.pos].offset)?.clone();
+        let mut slots = HashMap::new();
+        for &(slot, _, ty) in self.names.values() {
+            let range = self.binding_ranges.get(&slot)?;
+            slots.insert(*resolved.scalar_definitions.get(&range.start)?, (slot, ty));
+        }
+        Some(self.lower_scalar_statements(&body, slots))
+    }
+
+    fn lower_scalar_statements(
+        &mut self,
+        body: &[ae_syntax::statement::Statement],
+        mut slots: HashMap<ae_resolve::DefId, (usize, Type)>,
+    ) -> Result<Vec<Statement>, ae_span::Diagnostic> {
+        use ae_syntax::statement::StatementKind;
+        let mut statements = Vec::with_capacity(body.len());
+        for statement in body {
+            match &statement.kind {
+                StatementKind::Binding { name, name_range, mutable, initializer } => {
+                    self.seek_scalar_offset(name_range.end);
+                    if RESERVED.contains(&name.as_str()) {
+                        return Err(self.fail(&format!("'{name}' is a built-in name and cannot be a variable")));
+                    }
+                    if self.struct_names.contains_key(name) {
+                        return Err(self.fail(&format!("'{name}' names a struct and cannot be a variable")));
+                    }
+                    if self.enum_names.contains_key(name) {
+                        return Err(self.fail(&format!("'{name}' names an enum and cannot be a variable")));
+                    }
+                    if self.names.contains_key(name) {
+                        return Err(self.duplicate_binding_error(name));
+                    }
+                    let (value, ty) = self.lower_scalar_body_expression(initializer, &slots)?;
+                    let slot = self.next_var;
+                    self.next_var += 1;
+                    let def = self.resolved_expressions().scalar_definitions[&name_range.start];
+                    slots.insert(def, (slot, ty));
+                    self.names.insert(name.clone(), (slot, *mutable, ty));
+                    self.binding_ranges.insert(slot, name_range.clone());
+                    statements.push(Statement::Declare(slot, value));
+                }
+                StatementKind::Return(value) => {
+                    let (value, ty) = self.lower_scalar_body_expression(value, &slots)?;
+                    self.seek_scalar_offset(statement.range.end);
+                    if ty != self.return_type {
+                        return Err(self.fail(&format!("return type must be {}", self.return_type.name())).with_code("E0204"));
+                    }
+                    statements.push(Statement::Return(value, Vec::new()));
+                }
+                _ => unreachable!("scalar body eligibility"),
+            }
+        }
+        for statement in body {
+            if let StatementKind::Binding { name, .. } = &statement.kind {
+                self.names.remove(name);
+            }
+        }
+        // The current declaration is indexed at its opening brace. A flat
+        // body has no nested closing brace between its last statement and end.
+        if let Some(last) = body.last() {
+            self.seek_scalar_offset(last.range.end);
+        } else {
+            self.pos += 1;
+        }
+        self.take(Kind::RBrace)?;
+        Ok(statements)
+    }
+
+    fn seek_scalar_offset(&mut self, offset: usize) {
+        self.pos = self.tokens.partition_point(|token| token.offset < offset);
+    }
+
+    fn lower_scalar_body_expression(
+        &mut self,
+        expression: &ae_syntax::expression::Expression,
+        slots: &HashMap<ae_resolve::DefId, (usize, Type)>,
+    ) -> Result<(Expr, Type), ae_span::Diagnostic> {
+        use ae_syntax::expression::ExpressionKind;
+        Ok(match &expression.kind {
+            ExpressionKind::Atom(Kind::Number(value)) => (Expr::Number(*value), Type::Int),
+            ExpressionKind::Atom(Kind::Float(value)) => (Expr::FloatLit(*value), Type::F64),
+            ExpressionKind::Atom(Kind::True) => (Expr::BoolLit(true), Type::Bool),
+            ExpressionKind::Atom(Kind::False) => (Expr::BoolLit(false), Type::Bool),
+            ExpressionKind::Atom(Kind::Ident(name)) => {
+                let def = self.resolved_expressions().scalar_reads[&expression.range.start];
+                let &(slot, ty) = slots.get(&def).ok_or_else(|| {
+                    self.error_at(expression.range.start, &format!("unknown variable '{name}'")).with_code("E0101")
+                })?;
+                self.seek_scalar_offset(expression.range.start);
+                let (line, column) = self.position();
+                (Expr::Variable(slot, ty, line, column), ty)
+            }
+            ExpressionKind::Group(inner) => self.lower_scalar_body_expression(inner, slots)?,
+            ExpressionKind::Prefix { operator, operand } => {
+                self.seek_scalar_offset(expression.range.start);
+                let position = self.position();
+                let operand = self.lower_scalar_body_expression(operand, slots)?;
+                self.seek_scalar_offset(expression.range.end);
+                self.lower_prefix(operator.clone(), operand, position)?
+            }
+            ExpressionKind::Binary { left, operator, right } => {
+                let lhs = self.lower_scalar_body_expression(left, slots)?;
+                self.seek_scalar_offset(left.range.end);
+                let position = self.position();
+                let rhs = self.lower_scalar_body_expression(right, slots)?;
+                self.seek_scalar_offset(expression.range.end);
+                self.lower_infix(lhs, operator.clone(), rhs, position)?
+            }
+            _ => unreachable!("scalar expression eligibility"),
+        })
     }
 
     fn lower_resolved_local(&mut self, name: &str, offset: usize) -> Option<(Expr, Type)> {
@@ -2207,7 +2374,7 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; task_spawn(ex, || -> i64 { return 0; }); let closure = |x: i64| -> bool { return x == 0; }; }";
+        let source = "fn scalar() -> bool { let local = (2 + 3) * 4; return local == 20; } fn mismatch() -> i64 { return true; } fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; task_spawn(ex, || -> i64 { return 0; }); let closure = |x: i64| -> bool { return x == 0; }; }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
         let call_token = tokens.iter().position(|token| token.offset == source.find("print(compute").unwrap()).unwrap();
@@ -2229,6 +2396,15 @@ mod tests {
             "case.ae", source, tokens, &mut functions, &mut structs,
             &mut struct_names, &mut enums, &mut enum_names, &mut generics,
         );
+        parser.return_type = Type::Bool;
+        parser.seek_scalar_offset(source.find("{ let local").unwrap());
+        let body = parser.lower_resolved_scalar_body().expect("resolved scalar route").unwrap();
+        assert!(matches!(body.as_slice(), [Statement::Declare(0, _), Statement::Return(Expr::Binary(_, Kind::EqEq, _, _, _, Type::Bool), _)]));
+        parser.return_type = Type::Int;
+        parser.seek_scalar_offset(source.find("{ return true").unwrap());
+        let mismatch = parser.lower_resolved_scalar_body().expect("resolved error route").err().unwrap();
+        assert_eq!(mismatch.message, "return type must be i64");
+
         for prefix in [
             "choose[",
             "Pair[i64, vec[f64]] {",

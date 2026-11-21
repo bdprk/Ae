@@ -1074,7 +1074,10 @@ impl Parser<'_> {
         // Parameter scope: lives for the whole body so return paths can
         // release owned parameters.
         self.scopes.push(params.iter().map(|&(var_id, ty)| (var_id, ty)).collect());
-        let body = self.block();
+        let body = match self.lower_resolved_scalar_body() {
+            Some(body) => body,
+            None => self.block(),
+        };
         let params_scope = self.scopes.pop().unwrap();
         let mut body = body?;
         let param_owned: Vec<(usize, Type)> = params_scope.iter().filter(|(_, ty)| ty.owned()).copied().collect();
