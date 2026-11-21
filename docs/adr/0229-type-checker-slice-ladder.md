@@ -222,6 +222,12 @@ updates this ADR as slices land.
   Context), taken 2026-11-21 at `0083348` (plus uncommitted R3b/R3c work).
 - Dual-platform verification: the slices landed and were re-run green on
   the WSL2 Linux leg of 2026-11-21 (same working state).
+- Relay continuation (2026-11-21 evening): the ladder advanced through the
+  statement-expression surfaces (for bindings, exit, chan_close, store
+  values, moving values, compound RHS, return values — all dual-platform
+  484/0 with byte parity) and reached the frontier documented in
+  `docs/coordination/HANDOVER-fuzz-relay.md` (the Shared-lowering frontier
+  section): the remaining kinds need R3c type machinery.
 - Existing gates this ladder plugs into:
   `resolver_agrees_with_the_compiler_on_accepted_programs`
   (`tests/execution.rs`), `tests/resolve` snapshots, `tests/ui` /
