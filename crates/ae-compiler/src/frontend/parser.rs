@@ -475,6 +475,12 @@ impl<'a> Parser<'a> {
                     for expression in statement.expressions() {
                         expressions.values.insert(expression.range.start, Rc::new(expression.clone()));
                     }
+                    if let ae_syntax::statement::StatementKind::Assign { target, .. } = &statement.kind {
+                        if let ae_syntax::expression::ExpressionKind::Index { index, .. } = &target.kind {
+                            // The typed store checks the base and operator, then lowers the index.
+                            expressions.values.insert(index.range.start, Rc::new(index.as_ref().clone()));
+                        }
+                    }
                 });
             }
             expressions

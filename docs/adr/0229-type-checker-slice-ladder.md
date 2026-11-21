@@ -178,6 +178,9 @@ updates this ADR as slices land.
    Fixed-array declarations consume indexed initializer elements in
    source order. Each element retains its own expression budget, and
    the typed route handles invalid lengths and element types.
+   Indexed stores also lower their index or key from the assignment
+   target tree. The typed store path checks mutability, borrowing, and
+   the expected index and value types.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 
