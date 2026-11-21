@@ -42,13 +42,22 @@ fn scalar_body_expression(expression: &ae_syntax::expression::Expression, resolv
 }
 
 fn scalar_body_statement(statement: &ae_syntax::statement::Statement, resolved: &ResolvedExpressions) -> bool {
-    use ae_syntax::statement::StatementKind;
+    use ae_syntax::statement::{ElseBranch, StatementKind};
     match &statement.kind {
         StatementKind::Binding { name_range, initializer, .. } => {
             resolved.scalar_definitions.contains_key(&name_range.start)
                 && scalar_body_expression(initializer, resolved)
         }
         StatementKind::Return(value) => scalar_body_expression(value, resolved),
+        StatementKind::If { condition, then_body, else_body } => {
+            scalar_body_expression(condition, resolved)
+                && then_body.iter().all(|statement| scalar_body_statement(statement, resolved))
+                && match else_body {
+                    Some(ElseBranch::Block(body)) => body.iter().all(|statement| scalar_body_statement(statement, resolved)),
+                    Some(ElseBranch::If(branch)) => scalar_body_statement(branch, resolved),
+                    None => true,
+                }
+        }
         _ => false,
     }
 }
@@ -608,66 +617,90 @@ impl<'a> Parser<'a> {
             let range = self.binding_ranges.get(&slot)?;
             slots.insert(*resolved.scalar_definitions.get(&range.start)?, (slot, ty));
         }
-        Some(self.lower_scalar_statements(&body, slots))
+        Some(self.lower_scalar_statements(&body, &mut slots))
     }
 
     fn lower_scalar_statements(
         &mut self,
         body: &[ae_syntax::statement::Statement],
-        mut slots: HashMap<ae_resolve::DefId, (usize, Type)>,
+        slots: &mut HashMap<ae_resolve::DefId, (usize, Type)>,
     ) -> Result<Vec<Statement>, ae_span::Diagnostic> {
         use ae_syntax::statement::StatementKind;
+        self.take(Kind::LBrace)?;
         let mut statements = Vec::with_capacity(body.len());
         for statement in body {
-            match &statement.kind {
-                StatementKind::Binding { name, name_range, mutable, initializer } => {
-                    self.seek_scalar_offset(name_range.end);
-                    if RESERVED.contains(&name.as_str()) {
-                        return Err(self.fail(&format!("'{name}' is a built-in name and cannot be a variable")));
-                    }
-                    if self.struct_names.contains_key(name) {
-                        return Err(self.fail(&format!("'{name}' names a struct and cannot be a variable")));
-                    }
-                    if self.enum_names.contains_key(name) {
-                        return Err(self.fail(&format!("'{name}' names an enum and cannot be a variable")));
-                    }
-                    if self.names.contains_key(name) {
-                        return Err(self.duplicate_binding_error(name));
-                    }
-                    let (value, ty) = self.lower_scalar_body_expression(initializer, &slots)?;
-                    let slot = self.next_var;
-                    self.next_var += 1;
-                    let def = self.resolved_expressions().scalar_definitions[&name_range.start];
-                    slots.insert(def, (slot, ty));
-                    self.names.insert(name.clone(), (slot, *mutable, ty));
-                    self.binding_ranges.insert(slot, name_range.clone());
-                    statements.push(Statement::Declare(slot, value));
-                }
-                StatementKind::Return(value) => {
-                    let (value, ty) = self.lower_scalar_body_expression(value, &slots)?;
-                    self.seek_scalar_offset(statement.range.end);
-                    if ty != self.return_type {
-                        return Err(self.fail(&format!("return type must be {}", self.return_type.name())).with_code("E0204"));
-                    }
-                    statements.push(Statement::Return(value, Vec::new()));
-                }
-                _ => unreachable!("scalar body eligibility"),
-            }
-        }
-        for statement in body {
-            if let StatementKind::Binding { name, .. } = &statement.kind {
-                self.names.remove(name);
-            }
-        }
-        // The current declaration is indexed at its opening brace. A flat
-        // body has no nested closing brace between its last statement and end.
-        if let Some(last) = body.last() {
-            self.seek_scalar_offset(last.range.end);
-        } else {
-            self.pos += 1;
+            statements.push(self.lower_scalar_statement(statement, slots)?);
         }
         self.take(Kind::RBrace)?;
+        for statement in body {
+            if let StatementKind::Binding { name, name_range, .. } = &statement.kind {
+                self.names.remove(name);
+                slots.remove(&self.resolved_expressions().scalar_definitions[&name_range.start]);
+            }
+        }
         Ok(statements)
+    }
+
+    fn lower_scalar_statement(
+        &mut self,
+        statement: &ae_syntax::statement::Statement,
+        slots: &mut HashMap<ae_resolve::DefId, (usize, Type)>,
+    ) -> Result<Statement, ae_span::Diagnostic> {
+        use ae_syntax::statement::{ElseBranch, StatementKind};
+        let lowered = match &statement.kind {
+            StatementKind::Binding { name, name_range, mutable, initializer } => {
+                self.seek_scalar_offset(name_range.end);
+                if RESERVED.contains(&name.as_str()) {
+                    return Err(self.fail(&format!("'{name}' is a built-in name and cannot be a variable")));
+                }
+                if self.struct_names.contains_key(name) {
+                    return Err(self.fail(&format!("'{name}' names a struct and cannot be a variable")));
+                }
+                if self.enum_names.contains_key(name) {
+                    return Err(self.fail(&format!("'{name}' names an enum and cannot be a variable")));
+                }
+                if self.names.contains_key(name) {
+                    return Err(self.duplicate_binding_error(name));
+                }
+                let (value, ty) = self.lower_scalar_body_expression(initializer, slots)?;
+                let slot = self.next_var;
+                self.next_var += 1;
+                let def = self.resolved_expressions().scalar_definitions[&name_range.start];
+                slots.insert(def, (slot, ty));
+                self.names.insert(name.clone(), (slot, *mutable, ty));
+                self.binding_ranges.insert(slot, name_range.clone());
+                Statement::Declare(slot, value)
+            }
+            StatementKind::Return(value) => {
+                let (value, ty) = self.lower_scalar_body_expression(value, slots)?;
+                self.seek_scalar_offset(statement.range.end);
+                if ty != self.return_type {
+                    return Err(self.fail(&format!("return type must be {}", self.return_type.name())).with_code("E0204"));
+                }
+                Statement::Return(value, Vec::new())
+            }
+            StatementKind::If { condition, then_body, else_body } => {
+                let (value, ty) = self.lower_scalar_body_expression(condition, slots)?;
+                self.seek_scalar_offset(condition.range.end);
+                if ty != Type::Bool {
+                    return Err(self.fail("condition must be a boolean expression").with_code("E0205"));
+                }
+                let yes = self.lower_scalar_statements(then_body, slots)?;
+                let no = if let Some(branch) = else_body {
+                    self.pos += 1;
+                    match branch {
+                        ElseBranch::Block(body) => self.lower_scalar_statements(body, slots)?,
+                        ElseBranch::If(statement) => vec![self.lower_scalar_statement(statement, slots)?],
+                    }
+                } else {
+                    Vec::new()
+                };
+                Statement::If(value, yes, no)
+            }
+            _ => unreachable!("scalar body eligibility"),
+        };
+        self.seek_scalar_offset(statement.range.end);
+        Ok(lowered)
     }
 
     fn seek_scalar_offset(&mut self, offset: usize) {
@@ -2374,11 +2407,11 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn scalar() -> bool { let local = (2 + 3) * 4; return local == 20; } fn mismatch() -> i64 { return true; } fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; task_spawn(ex, || -> i64 { return 0; }); let closure = |x: i64| -> bool { return x == 0; }; }";
+        let source = "fn scalar() -> bool { let local = (2 + 3) * 4; return local == 20; } fn mismatch() -> i64 { return true; } fn branches() -> i64 { if false { let same = 1; return same; } else if true { let same = 2; return same; } else { let same = 3; return same; } } fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; task_spawn(ex, || -> i64 { return 0; }); let closure = |x: i64| -> bool { return x == 0; }; }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
         let call_token = tokens.iter().position(|token| token.offset == source.find("print(compute").unwrap()).unwrap();
-        let condition_token = tokens.iter().position(|token| token.kind == Kind::If).unwrap() + 1;
+        let condition_token = tokens.partition_point(|token| token.offset < source.find("if flag").unwrap() + 3);
         let initializer = source.find("flag;").unwrap();
         let initializer_token = tokens.iter().position(|token| token.offset == initializer).unwrap();
         let binding = source.find("flag").unwrap();
@@ -2404,6 +2437,14 @@ mod tests {
         parser.seek_scalar_offset(source.find("{ return true").unwrap());
         let mismatch = parser.lower_resolved_scalar_body().expect("resolved error route").err().unwrap();
         assert_eq!(mismatch.message, "return type must be i64");
+
+        parser.seek_scalar_offset(source.find("{ if false").unwrap());
+        let branches = parser.lower_resolved_scalar_body().expect("resolved branches").unwrap();
+        let [Statement::If(_, yes, otherwise)] = branches.as_slice() else { panic!("expected if") };
+        let [Statement::If(_, other_yes, other_no)] = otherwise.as_slice() else { panic!("expected else if") };
+        for (index, body) in [yes, other_yes, other_no].into_iter().enumerate() {
+            assert!(matches!(body.as_slice(), [Statement::Declare(slot, _), Statement::Return(Expr::Variable(read, Type::Int, ..), _)] if *slot == index + 1 && slot == read));
+        }
 
         for prefix in [
             "choose[",

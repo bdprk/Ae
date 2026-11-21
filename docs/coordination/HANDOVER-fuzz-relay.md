@@ -302,3 +302,9 @@ The compiler now selects complete flat bodies for primitive bindings and
 returns and lowers their references through DefId-to-slot mappings. The
 typed body route reports return mismatches directly. Control flow and
 scoped bindings are the next body-level slice.
+
+## Resolved scalar conditional bodies (2026-11-22)
+
+The resolved body route lowers if, else if, and else. Branch-local slots
+leave scope at the end of their branch, allowing the same name in sibling
+branches. Scalar loops and their exits remain a separate slice.
