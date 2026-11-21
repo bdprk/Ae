@@ -3,8 +3,10 @@ use super::*;
 
 #[derive(Default)]
 struct SharedExpressionEffects {
-    moves: Vec<(usize, Option<usize>)>,
+    moves: Vec<usize>,
     call_borrows: Vec<usize>,
+    mut_borrows: Vec<usize>,
+    conflicts: Vec<(usize, usize, String, &'static str, Option<String>)>,
 }
 
 /// The remedy attached to a use-after-move diagnostic. The move is not tracked
@@ -519,7 +521,7 @@ impl<'a> Parser<'a> {
                 let (Expr::Variable(slot, _, _, _), ty) = self.lower_resolved_local(name, base.range.start)? else {
                     return None;
                 };
-                if effects.moves.iter().any(|&(moved, _)| moved == slot) {
+                if effects.moves.contains(&slot) {
                     return None;
                 }
                 let bracket = self.tokens.get(self.tokens.partition_point(|token| token.offset < base.range.end))?;
@@ -577,7 +579,7 @@ impl<'a> Parser<'a> {
                     || arguments.len() != signature.params.len() || arguments.len() > 64
                     || !signature.params.iter().all(|ty| {
                         matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView
-                            | Type::Vec | Type::VecF | Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_) | Type::StructRef(_))
+                            | Type::Vec | Type::VecF | Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_) | Type::StructRef(_) | Type::StructMut(_))
                     })
                     || !matches!(signature.ret, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::VecF)
                 {
@@ -586,27 +588,49 @@ impl<'a> Parser<'a> {
                 let (id, params, ret) = (signature.id, signature.params.clone(), signature.ret);
                 let mut args = Vec::with_capacity(arguments.len());
                 for (argument, expected) in arguments.iter().zip(params) {
-                    if matches!(expected, Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_) | Type::StructRef(_)) {
-                        let ExpressionKind::BorrowArgument { name, name_range, mutable: false } = &argument.kind else {
+                    if matches!(expected, Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_) | Type::StructRef(_) | Type::StructMut(_)) {
+                        let ExpressionKind::BorrowArgument { name, name_range, mutable } = &argument.kind else {
                             return None;
                         };
+                        if *mutable != matches!(expected, Type::StructMut(_)) {
+                            return None;
+                        }
                         let (Expr::Variable(slot, ..), actual) = self.lower_resolved_local(name, name_range.start)? else {
                             return None;
                         };
-                        if effects.moves.iter().any(|&(moved, _)| moved == slot) {
+                        if effects.moves.contains(&slot) {
                             return None;
                         }
                         let address = match (expected, actual) {
-                            (expected, actual) if expected == actual => false,
+                            (expected, actual) if expected == actual && !*mutable => false,
                             (Type::StructRef(wanted), Type::Struct(actual_id) | Type::StructMut(actual_id))
                                 if wanted == actual_id =>
                             {
-                                if self.mut_borrows.iter().any(|&(borrowed, _)| borrowed == slot) {
+                                if effects.mut_borrows.contains(&slot)
+                                    || self.mut_borrows.iter().any(|&(borrowed, _)| borrowed == slot)
+                                {
                                     return None;
                                 }
                                 if !self.is_borrowed(slot) && !effects.call_borrows.contains(&slot) {
                                     effects.call_borrows.push(slot);
                                 }
+                                matches!(actual, Type::Struct(_))
+                            }
+                            (Type::StructMut(wanted), Type::Struct(actual_id) | Type::StructMut(actual_id))
+                                if wanted == actual_id =>
+                            {
+                                if !self.names.get(name)?.1 || effects.call_borrows.contains(&slot)
+                                    || effects.mut_borrows.contains(&slot)
+                                {
+                                    return None;
+                                }
+                                if self.is_borrowed(slot) {
+                                    if !self.only_view_borrows_active(slot) {
+                                        return None;
+                                    }
+                                    effects.conflicts.push((slot, name_range.start, name.clone(), "mutate", None));
+                                }
+                                effects.mut_borrows.push(slot);
                                 matches!(actual, Type::Struct(_))
                             }
                             (Type::VecRef, Type::Vec) | (Type::VecFRef, Type::VecF)
@@ -622,12 +646,14 @@ impl<'a> Parser<'a> {
                             *nodes_left = nodes_left.checked_sub(1)?;
                             let (value, ty) = self.lower_resolved_local(name, argument.range.start)?;
                             let Expr::Variable(slot, ..) = value else { unreachable!("resolved local") };
-                            if effects.moves.iter().any(|&(moved, _)| moved == slot) {
+                            if effects.moves.contains(&slot) {
                                 return None;
                             }
                             if expected == ty && ty.owned() {
-                                let defer = self.variable_move_needs_deferral(slot)?;
-                                effects.moves.push((slot, defer.then_some(argument.range.start)));
+                                if self.variable_move_needs_deferral(slot)? {
+                                    effects.conflicts.push((slot, argument.range.start, name.clone(), "move", None));
+                                }
+                                effects.moves.push(slot);
                             }
                             (value, ty)
                         } else {
@@ -666,12 +692,9 @@ impl<'a> Parser<'a> {
 
     fn commit_shared_effects(&mut self, effects: SharedExpressionEffects) {
         self.call_borrows.extend(effects.call_borrows.into_iter().map(|slot| (slot, self.scopes.len())));
-        for (slot, conflict_offset) in effects.moves {
-            if let Some(offset) = conflict_offset {
-                self.record_deferred_move(slot, offset);
-            }
-            self.moved.insert(slot);
-        }
+        self.mut_borrows.extend(effects.mut_borrows.into_iter().map(|slot| (slot, self.scopes.len())));
+        self.deferred_write_conflicts.extend(effects.conflicts);
+        self.moved.extend(effects.moves);
     }
 
     fn shared_expression_start(kind: &Kind) -> bool {

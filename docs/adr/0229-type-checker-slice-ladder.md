@@ -144,9 +144,11 @@ updates this ADR as slices land.
    Owned vectors pass by address and borrowed containers forward their
    existing representation. The typed path supplies diagnostics for an
    invalid borrow shape, a moved slot, or a mismatched array length.
-   Read-only struct arguments stage their statement-scoped borrow
-   alongside moves. The compiler commits those effects only after
-   lowering succeeds. Existing shared references forward directly.
+   Struct arguments stage their shared or exclusive statement-scoped
+   borrow alongside moves. Deferred view conflicts retain argument
+   evaluation order, and the compiler commits the effects only after
+   lowering succeeds. Existing references forward without taking a
+   second address.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 
