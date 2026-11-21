@@ -176,3 +176,33 @@ Relay continuation (2026-11-21, the takeover agent): the `exit` builtin's
 argument now lowers through `lower_shared_value` with an RParen boundary
 (Windows 484/0, WSL2 484/0) — the Exit ×2 entry above is resolved, leaving
 34 sites.
+
+
+## Shared-lowering frontier (audited 2026-11-21 21:30)
+
+`lower_shared_expression` (parser.rs:670-910) covers: Atom (9 arms: literals,
+ident locals, prelude types), Group, Propagate (via lower_shared_value's
+boundary unwrap), Binary, Vector, Struct, Qualified, Index, Field, Call,
+BorrowArgument, Prefix (Bang/Minus), For (via lower_shared_iterable at the
+call sites), plus lower_shared_array for fixed arrays in the Declare arm.
+
+**Uncovered kinds** (each falls back to the typed parse today):
+1. `Propagate` nested inside larger expressions - the boundary unwrap only
+   handles the outermost propagate; nesting needs the compiler's Try
+   construction with the operand's error type.
+2. `AddressCast` / `PointerCast` - the cast construction needs the pointee
+   TYPE from the spelling: the compiler parses it with
+   `pointer_cast_target`/`named_type` on the cursor; the shared route is
+   structure-driven (cursor at the expression end), so the pointee parse
+   needs cursor repositioning into the pointee range - fiddly but bounded.
+   The ownership rule (owned-pointer rejection) and the untracked-borrow
+   semantics must be reproduced exactly.
+3. `Specialization` / `BracketedCallTarget` as standalone values - generic
+   instantiation needs the compiler's template machinery (M1.7) - stays
+   compiler-side until the type checker owns instantiation.
+4. `Closure` - deliberately opaque (capture inference is compiler-side).
+
+The frontier is the type-checker boundary (R3c): the remaining kinds each
+need type-level machinery the resolver does not have. The ladder resumes
+here in the next session, one kind per slice with the dual-platform gates.
+
