@@ -458,7 +458,7 @@ impl<'a> Parser<'a> {
         expression: ae_syntax::expression::Expression,
         remaining: usize,
         nodes_left: &mut usize,
-        pending_moves: &mut Vec<usize>,
+        pending_moves: &mut Vec<(usize, Option<usize>)>,
     ) -> Option<(Expr, Type)> {
         use ae_syntax::expression::ExpressionKind;
 
@@ -514,14 +514,12 @@ impl<'a> Parser<'a> {
                             *nodes_left = nodes_left.checked_sub(1)?;
                             let (value, ty) = self.lower_resolved_local(name, argument.range.start)?;
                             let Expr::Variable(slot, ..) = value else { unreachable!("resolved local") };
-                            if pending_moves.contains(&slot) {
+                            if pending_moves.iter().any(|&(moved, _)| moved == slot) {
                                 return None;
                             }
                             if expected == Type::String && ty == Type::String {
-                                if self.is_borrowed(slot) {
-                                    return None;
-                                }
-                                pending_moves.push(slot);
+                                let defer = self.variable_move_needs_deferral(slot)?;
+                                pending_moves.push((slot, defer.then_some(argument.range.start)));
                             }
                             (value, ty)
                         } else {
@@ -555,6 +553,15 @@ impl<'a> Parser<'a> {
                 self.lower_infix(left, operator, right, position).ok()
             }
             _ => None,
+        }
+    }
+
+    fn commit_shared_moves(&mut self, pending_moves: Vec<(usize, Option<usize>)>) {
+        for (slot, conflict_offset) in pending_moves {
+            if let Some(offset) = conflict_offset {
+                self.record_deferred_move(slot, offset);
+            }
+            self.moved.insert(slot);
         }
     }
 
@@ -612,7 +619,7 @@ impl<'a> Parser<'a> {
             }
             _ => self.lower_shared_expression(expression, depth, &mut nodes_left, &mut pending_moves)?,
         };
-        self.moved.extend(pending_moves);
+        self.commit_shared_moves(pending_moves);
         if boundary.is_none() {
             self.expression_nodes += budget - nodes_left;
         }
@@ -665,7 +672,7 @@ impl<'a> Parser<'a> {
             _ => unreachable!("output statement syntax"),
         };
         self.pos = end;
-        self.moved.extend(pending_moves);
+        self.commit_shared_moves(pending_moves);
         Some(lowered)
     }
 
@@ -1635,11 +1642,13 @@ mod tests {
         let binding = source.find("let text").unwrap() + 4;
         parser.names.insert("text".into(), (8, false, Type::String));
         parser.binding_ranges.insert(8, binding..binding + 4);
+        parser.borrows.push((8, 0, BorrowKind::View));
         parser.pos = parser.tokens.iter().position(|token| token.offset == source.find("assert(consume").unwrap()).unwrap();
         let assertion = parser.pos;
         assert!(parser.lower_output_from_syntax().is_none());
         assert_eq!(parser.pos, assertion);
         assert!(!parser.moved.contains(&8));
+        assert!(parser.deferred_write_conflicts.is_empty());
 
         parser.pos = parser.tokens.iter().position(|token| token.offset == source.find("print(consume").unwrap()).unwrap();
         assert!(matches!(
@@ -1647,5 +1656,7 @@ mod tests {
             Some(Statement::Print(Printed::Expr(Expr::Call(10, _, Type::Int)))),
         ));
         assert!(parser.moved.contains(&8));
+        let offset = source.find("print(consume(text").unwrap() + "print(consume(".len();
+        assert_eq!(parser.deferred_write_conflicts, vec![(8, offset, "text".into(), "move", None)]);
     }
 }

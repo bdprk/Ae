@@ -1775,16 +1775,27 @@ impl Parser<'_> {
         parse_infix_tail(self, lhs, min, |parser| parser.current(), Self::combine_infix)
     }
 
-    pub(super) fn check_variable_move(&mut self, id: usize) -> Result<(), ae_span::Diagnostic> {
+    pub(super) fn variable_move_needs_deferral(&self, id: usize) -> Option<bool> {
         // View conflicts are adjudicated at last use. Other borrows reject immediately.
         if self.is_borrowed(id) {
-            if !self.all_borrows_are_views(id) {
-                return Err(self.fail("cannot move a value while it is borrowed"));
-            }
+            self.all_borrows_are_views(id).then_some(true)
+        } else {
+            Some(false)
+        }
+    }
+
+    pub(super) fn record_deferred_move(&mut self, id: usize, offset: usize) {
+        let name = self.names.iter().find(|(_, (bound, _, _))| *bound == id)
+            .map(|(name, _)| name.clone()).unwrap_or_else(|| format!("v{id}"));
+        self.deferred_write_conflicts.push((id, offset, name, "move", None));
+    }
+
+    pub(super) fn check_variable_move(&mut self, id: usize) -> Result<(), ae_span::Diagnostic> {
+        let defer = self.variable_move_needs_deferral(id)
+            .ok_or_else(|| self.fail("cannot move a value while it is borrowed"))?;
+        if defer {
             let offset = self.tokens.get(self.pos.saturating_sub(1)).map(|token| token.offset).unwrap_or(0);
-            let name = self.names.iter().find(|(_, (bound, _, _))| *bound == id)
-                .map(|(name, _)| name.clone()).unwrap_or_else(|| format!("v{id}"));
-            self.deferred_write_conflicts.push((id, offset, name, "move", None));
+            self.record_deferred_move(id, offset);
         }
         Ok(())
     }

@@ -1,6 +1,6 @@
 # Handover — fuzz relay
 
-- Date: 2026-11-21 14:59 +08:00
+- Date: 2026-11-21 15:04 +08:00
 - Branch: `agent/fuzz-relay`
 - Worktree: the dedicated fuzz-relay worktree of this checkout
 - Area claim: docs
@@ -27,7 +27,7 @@
 - Bare owned local reads and moves now use resolver definitions and the compiler's existing borrow checks. Compound owned expressions still use typed lowering.
 - Safe direct calls to same-module functions with scalar arguments and scalar or string results now lower through resolver definitions and compiler signatures.
 - Shared direct calls now accept owned string temporaries and borrow string views from temporaries or resolved locals.
-- Shared direct calls stage moves of unborrowed string locals until the enclosing expression lowers successfully.
+- Shared direct calls stage owned string moves and deferred view conflicts until the enclosing expression lowers successfully.
 - All seven lanes were restarted from the next seeds after 93,428 seeds completed with zero differential failures. See the ledger for the ranges.
 - evaluate-2 resumed at 634915 after completing 12,115 seeds with zero failures.
 - eva resumed at 416112 after completing 6,576 seeds with zero failures.
@@ -81,4 +81,6 @@ cargo test --workspace --locked
 
 - String call arguments passed 484 tests, 50 generated C example comparisons, and 646 CLI comparisons on Windows and Ubuntu. Windows matched 24 focused invocations. Ubuntu passed 41 generated-C sanitizer and leak checks.
 
-- Staged string moves passed 484 tests, 50 C examples, 646 CLI invocations, and 28 focused comparisons on each platform. Ubuntu passed 41 sanitizer and leak checks. The next frontend step is to stage deferred view conflicts for borrowed string moves.
+- Staged string moves passed 484 tests, 50 C examples, 646 CLI invocations, and 28 focused comparisons on each platform. Ubuntu passed 41 sanitizer and leak checks.
+
+- Deferred string view moves passed the same Windows and Ubuntu corpus and focused checks. Next, feed the compiler the statement and expression nodes already assembled by the resolver module.

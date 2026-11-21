@@ -239,3 +239,5 @@
 
 
 - 2026-11-21 14:59 (+08:00): Shared direct calls now stage moves of unborrowed owned string arguments and commit them after their containing expression lowers. The regression covers both a committed move and an invalid enclosing assertion that leaves the slot live. Windows and Ubuntu each passed 484 workspace tests, 50 generated C examples, 646 frontend CLI invocations, and 28 focused comparisons. Ubuntu passed all 41 generated-C sanitizer and leak checks. All seven fuzz lane processes were live.
+
+- 2026-11-21 15:06 (+08:00): Shared owned string arguments now use the typed parser's move classification and defer view conflicts at the argument's source offset. The regression checks both successful recording and rollback on an invalid enclosing assertion. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 frontend CLI invocations, and 28 focused comparisons. Ubuntu passed 41 generated-C sanitizer and leak checks. The seven fuzz processes remained live.

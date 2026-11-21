@@ -120,10 +120,10 @@ updates this ADR as slices land.
    Safe direct calls in the same module also lower through resolver
    definitions when arguments match the signature and the result is
    scalar or string. The shared route handles scalar arguments, owned
-   string temporaries, unborrowed owned string locals, and string views
-   backed by temporaries or resolved locals. Moves are committed only
-   after the containing expression lowers successfully. Borrowed owned
-   locals and other call shapes retain the typed call path.
+   string temporaries, owned string locals, and string views backed by
+   temporaries or resolved locals. Moves and their deferred view conflicts
+   are committed only after the containing expression lowers successfully.
+   The existing last-use pass adjudicates the conflicts.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 
