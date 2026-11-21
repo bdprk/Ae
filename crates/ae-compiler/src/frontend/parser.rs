@@ -1360,7 +1360,10 @@ impl<'a> Parser<'a> {
                         let (key, key_ty) = self.expression(0, false)?;
                         if !matches!(key_ty, Type::String | Type::StrView) { return Err(self.fail("map keys must be strings")); }
                         self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
-                        let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
+                        let (value, value_ty) = match self.lower_shared_value(None, false) {
+                            Some(pair) => pair,
+                            None => self.expression(0, false)?,
+                        }; self.take(Kind::Semi)?;
                         if value_ty != map_element_ty(map_kind_of(ty)) { return Err(self.fail(&format!("map values must be {}", map_element_ty(map_kind_of(ty)).name()))); }
                         result.push(Statement::MapPut(MapPlace::Var(id, map_kind_of(ty)), key, value, line, col));
                     } else if let Type::Array(len) = ty {
@@ -1368,7 +1371,10 @@ impl<'a> Parser<'a> {
                         let (index, index_ty) = self.expression(0, false)?;
                         if index_ty != Type::Int { return Err(self.fail("array index must be an integer").with_code("E0201")); }
                         self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
-                        let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
+                        let (value, value_ty) = match self.lower_shared_value(None, false) {
+                            Some(pair) => pair,
+                            None => self.expression(0, false)?,
+                        }; self.take(Kind::Semi)?;
                         if value_ty != Type::Int { return Err(self.fail("array elements must be i64")); }
                         result.push(Statement::Store(id, len, index, value, line, col));
                     } else if ty == Type::StrVec && *self.current() == Kind::LBracket {
@@ -1392,7 +1398,10 @@ impl<'a> Parser<'a> {
                         let (index, index_ty) = self.expression(0, false)?;
                         if index_ty != Type::Int { return Err(self.fail("vector index must be an integer")); }
                         self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
-                        let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
+                        let (value, value_ty) = match self.lower_shared_value(None, false) {
+                            Some(pair) => pair,
+                            None => self.expression(0, false)?,
+                        }; self.take(Kind::Semi)?;
                         if ty == Type::VecF {
                             if value_ty != Type::F64 { return Err(self.fail("vector elements must be f64")); }
                             result.push(Statement::VecFStore(id, index, value, line, col));
@@ -1471,7 +1480,10 @@ impl<'a> Parser<'a> {
                                 let (key, key_ty) = self.expression(0, false)?;
                                 if !matches!(key_ty, Type::String | Type::StrView) { return Err(self.fail("map keys must be strings")); }
                                 self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
-                                let (value, value_ty) = self.expression(0, false)?; self.take(Kind::Semi)?;
+                                let (value, value_ty) = match self.lower_shared_value(None, false) {
+                            Some(pair) => pair,
+                            None => self.expression(0, false)?,
+                        }; self.take(Kind::Semi)?;
                                 if value_ty != map_element_ty(map_kind_of(fty)) { return Err(self.fail(&format!("map values must be {}", map_element_ty(map_kind_of(fty)).name()))); }
                                 result.push(Statement::MapPut(MapPlace::Field(id, fname, map_kind_of(fty)), key, value, line, col));
                                 continue;
