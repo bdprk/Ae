@@ -180,7 +180,10 @@ impl<'a> Parser<'a> {
             return Ok(Statement::TaskYield);
         }
         if matches!(name, "task_spawn" | "scope_spawn" | "pool_spawn") {
-            let (ex, ex_ty) = self.expression(0, false)?;
+            let (ex, ex_ty) = match self.lower_shared_value(Some(Kind::Comma), false) {
+                Some(pair) => pair,
+                None => self.expression(0, false)?,
+            };
             let expected_ty = match name {
                 "task_spawn" => Type::Exec,
                 "scope_spawn" => Type::TaskScope,
