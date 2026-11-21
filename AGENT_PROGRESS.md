@@ -236,3 +236,6 @@
 - 2026-11-21 14:45 (+08:00): Shared call nodes now lower safe same-module functions with scalar arguments and scalar or string returns through resolver definitions and typed signatures. The regression exercises a shared call and rejects an extern signature for this route. Windows and Ubuntu passed 484 tests. All 50 C examples and 646 CLI cases matched on both platforms. Windows matched 28 focused invocations, including malformed arity/types and unsafe boundaries. Ubuntu candidate fuzz passed 40 seeds.
 
 - 2026-11-21 14:51 (+08:00): Shared direct calls now accept owned string temporaries and string views from temporaries or resolved locals. Windows and Ubuntu each passed 484 tests and matched 50 generated C examples and 646 CLI fixture invocations. Windows matched 24 focused invocations. Ubuntu passed 41 generated-C sanitizer and leak checks.
+
+
+- 2026-11-21 14:59 (+08:00): Shared direct calls now stage moves of unborrowed owned string arguments and commit them after their containing expression lowers. The regression covers both a committed move and an invalid enclosing assertion that leaves the slot live. Windows and Ubuntu each passed 484 workspace tests, 50 generated C examples, 646 frontend CLI invocations, and 28 focused comparisons. Ubuntu passed all 41 generated-C sanitizer and leak checks. All seven fuzz lane processes were live.

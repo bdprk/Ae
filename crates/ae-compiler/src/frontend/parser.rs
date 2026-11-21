@@ -458,6 +458,7 @@ impl<'a> Parser<'a> {
         expression: ae_syntax::expression::Expression,
         remaining: usize,
         nodes_left: &mut usize,
+        pending_moves: &mut Vec<usize>,
     ) -> Option<(Expr, Type)> {
         use ae_syntax::expression::ExpressionKind;
 
@@ -484,7 +485,7 @@ impl<'a> Parser<'a> {
                 }
                 self.lower_resolved_local(&name, expression.range.start)
             }
-            ExpressionKind::Group(inner) => self.lower_shared_expression(*inner, remaining, nodes_left),
+            ExpressionKind::Group(inner) => self.lower_shared_expression(*inner, remaining, nodes_left, pending_moves),
             ExpressionKind::Call { callee, arguments } => {
                 let ExpressionKind::Atom(Kind::Ident(name)) = callee.kind else {
                     return None;
@@ -507,16 +508,27 @@ impl<'a> Parser<'a> {
                 let (id, params, ret) = (signature.id, signature.params.clone(), signature.ret);
                 let mut args = Vec::with_capacity(arguments.len());
                 for (argument, expected) in arguments.into_iter().zip(params) {
-                    let value = if expected == Type::StrView {
+                    let value = if matches!(expected, Type::String | Type::StrView) {
                         if let ExpressionKind::Atom(Kind::Ident(name)) = &argument.kind {
                             remaining.checked_sub(1)?;
                             *nodes_left = nodes_left.checked_sub(1)?;
-                            self.lower_resolved_local(name, argument.range.start)?
+                            let (value, ty) = self.lower_resolved_local(name, argument.range.start)?;
+                            let Expr::Variable(slot, ..) = value else { unreachable!("resolved local") };
+                            if pending_moves.contains(&slot) {
+                                return None;
+                            }
+                            if expected == Type::String && ty == Type::String {
+                                if self.is_borrowed(slot) {
+                                    return None;
+                                }
+                                pending_moves.push(slot);
+                            }
+                            (value, ty)
                         } else {
-                            self.lower_shared_expression(argument, remaining, nodes_left)?
+                            self.lower_shared_expression(argument, remaining, nodes_left, pending_moves)?
                         }
                     } else {
-                        self.lower_shared_expression(argument, remaining, nodes_left)?
+                        self.lower_shared_expression(argument, remaining, nodes_left, pending_moves)?
                     };
                     args.push(match (expected, value) {
                         (Type::StrView, (value, Type::String | Type::StrView)) => Argument::View(value),
@@ -529,7 +541,7 @@ impl<'a> Parser<'a> {
             ExpressionKind::Prefix { operator, operand } => {
                 let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < expression.range.start))?;
                 let position = (token.line, token.column);
-                let operand = self.lower_shared_expression(*operand, remaining, nodes_left)?;
+                let operand = self.lower_shared_expression(*operand, remaining, nodes_left, pending_moves)?;
                 self.lower_prefix(operator, operand, position).ok()
             }
             ExpressionKind::Binary { left, operator, right } => {
@@ -538,8 +550,8 @@ impl<'a> Parser<'a> {
                     return None;
                 }
                 let position = (token.line, token.column);
-                let left = self.lower_shared_expression(*left, remaining, nodes_left)?;
-                let right = self.lower_shared_expression(*right, remaining, nodes_left)?;
+                let left = self.lower_shared_expression(*left, remaining, nodes_left, pending_moves)?;
+                let right = self.lower_shared_expression(*right, remaining, nodes_left, pending_moves)?;
                 self.lower_infix(left, operator, right, position).ok()
             }
             _ => None,
@@ -579,6 +591,7 @@ impl<'a> Parser<'a> {
             (64, 128)
         };
         let mut nodes_left = budget;
+        let mut pending_moves = Vec::new();
         let value = match &expression.kind {
             ae_syntax::expression::ExpressionKind::Atom(Kind::Ident(name))
                 if self.names.get(name).is_some_and(|(_, _, ty)| ty.owned()) =>
@@ -597,8 +610,9 @@ impl<'a> Parser<'a> {
                 }
                 value
             }
-            _ => self.lower_shared_expression(expression, depth, &mut nodes_left)?,
+            _ => self.lower_shared_expression(expression, depth, &mut nodes_left, &mut pending_moves)?,
         };
+        self.moved.extend(pending_moves);
         if boundary.is_none() {
             self.expression_nodes += budget - nodes_left;
         }
@@ -628,21 +642,21 @@ impl<'a> Parser<'a> {
             return None;
         }
 
-        // Supported nodes do not change move or borrow state. Leave the cursor
-        // at the statement start until the entire tree lowers successfully,
-        // so unsupported arguments and errors take the existing path.
+        // Commit argument moves and advance the cursor only after the entire
+        // statement lowers successfully.
         let (statement, end) = parse_statement_tokens(&self.file, self.source, &self.tokens, self.pos).ok()?;
         let mut nodes_left = 128;
+        let mut pending_moves = Vec::new();
         let lowered = match statement.kind {
             StatementKind::Print(argument) => match argument.kind {
                 ExpressionKind::Atom(Kind::Text(value)) => Statement::Print(Printed::Text(value)),
                 _ => {
-                    let (value, _) = self.lower_shared_expression(argument, 64, &mut nodes_left)?;
+                    let (value, _) = self.lower_shared_expression(argument, 64, &mut nodes_left, &mut pending_moves)?;
                     Statement::Print(Printed::Expr(value))
                 }
             },
             StatementKind::Assert(argument) => {
-                let (condition, Type::Bool) = self.lower_shared_expression(argument, 64, &mut nodes_left)? else {
+                let (condition, Type::Bool) = self.lower_shared_expression(argument, 64, &mut nodes_left, &mut pending_moves)? else {
                     return None;
                 };
                 let (line, column) = self.position();
@@ -651,6 +665,7 @@ impl<'a> Parser<'a> {
             _ => unreachable!("output statement syntax"),
         };
         self.pos = end;
+        self.moved.extend(pending_moves);
         Some(lowered)
     }
 
@@ -1534,10 +1549,10 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn compute(x: i64) -> i64 { return x; } fn main() { let flag = true; let value = flag; if flag {} print(flag); print(compute(2)); }";
+        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; let value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
-        let call_token = tokens.iter().rposition(|token| token.kind == Kind::Print).unwrap();
+        let call_token = tokens.iter().position(|token| token.offset == source.find("print(compute").unwrap()).unwrap();
         let condition_token = tokens.iter().position(|token| token.kind == Kind::If).unwrap() + 1;
         let initializer = source.find("flag;").unwrap();
         let initializer_token = tokens.iter().position(|token| token.offset == initializer).unwrap();
@@ -1612,5 +1627,25 @@ mod tests {
         parser.functions.get_mut("compute").unwrap().extern_c = true;
         assert!(parser.lower_output_from_syntax().is_none());
         assert_eq!(parser.pos, call_token);
+
+        parser.functions.insert("consume".into(), Signature {
+            id: 10, params: vec![Type::String], ret: Type::Int, file: "case.ae".into(),
+            public: false, extern_c: false,
+        });
+        let binding = source.find("let text").unwrap() + 4;
+        parser.names.insert("text".into(), (8, false, Type::String));
+        parser.binding_ranges.insert(8, binding..binding + 4);
+        parser.pos = parser.tokens.iter().position(|token| token.offset == source.find("assert(consume").unwrap()).unwrap();
+        let assertion = parser.pos;
+        assert!(parser.lower_output_from_syntax().is_none());
+        assert_eq!(parser.pos, assertion);
+        assert!(!parser.moved.contains(&8));
+
+        parser.pos = parser.tokens.iter().position(|token| token.offset == source.find("print(consume").unwrap()).unwrap();
+        assert!(matches!(
+            parser.lower_output_from_syntax(),
+            Some(Statement::Print(Printed::Expr(Expr::Call(10, _, Type::Int)))),
+        ));
+        assert!(parser.moved.contains(&8));
     }
 }
