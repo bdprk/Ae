@@ -150,6 +150,10 @@ updates this ADR as slices land.
    lowering succeeds. Existing references forward without taking a
    second address. Owned struct arguments move resolved locals and also
    accept struct results from nested shared calls.
+   Named struct constructors use resolver constructor targets. Shared
+   lowering checks and moves fields in source order and arranges the
+   resulting values by layout order. Constructors with invalid fields
+   retain the typed diagnostics.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

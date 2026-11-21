@@ -448,6 +448,11 @@ impl<'a> Parser<'a> {
                     {
                         expressions.direct_calls.insert(occurrence.range.start);
                     }
+                    ae_resolve::Role::Construct if definition.kind == ae_resolve::DefKind::Struct
+                        && definition.name == occurrence.name =>
+                    {
+                        expressions.struct_constructors.insert(occurrence.range.start);
+                    }
                     _ => {}
                 }
             }
@@ -480,6 +485,40 @@ impl<'a> Parser<'a> {
         }
         let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < offset))?;
         Some((Expr::Variable(id, ty, token.line, token.column), ty))
+    }
+
+    fn lower_shared_argument(
+        &mut self,
+        argument: &ae_syntax::expression::Expression,
+        expected: Type,
+        remaining: usize,
+        nodes_left: &mut usize,
+        effects: &mut SharedExpressionEffects,
+    ) -> Option<(Expr, Type)> {
+        use ae_syntax::expression::ExpressionKind;
+
+        if expected.owned() || expected == Type::StrView {
+            if let ExpressionKind::Atom(Kind::Ident(name)) = &argument.kind {
+                remaining.checked_sub(1)?;
+                *nodes_left = nodes_left.checked_sub(1)?;
+                let (value, ty) = self.lower_resolved_local(name, argument.range.start)?;
+                let Expr::Variable(slot, ..) = value else { unreachable!("resolved local") };
+                if effects.moves.contains(&slot) {
+                    return None;
+                }
+                if expected == ty && ty.owned() {
+                    if self.variable_move_needs_deferral(slot)?
+                        || effects.call_borrows.contains(&slot)
+                        || effects.mut_borrows.contains(&slot)
+                    {
+                        effects.conflicts.push((slot, argument.range.start, name.clone(), "move", None));
+                    }
+                    effects.moves.push(slot);
+                }
+                return Some((value, ty));
+            }
+        }
+        self.lower_shared_expression(argument, remaining, nodes_left, effects)
     }
 
     fn lower_shared_expression(
@@ -542,6 +581,37 @@ impl<'a> Parser<'a> {
                     }
                     _ => None,
                 }
+            }
+            ExpressionKind::Struct { target, fields } => {
+                let ExpressionKind::Atom(Kind::Ident(name)) = &target.kind else {
+                    return None;
+                };
+                if std::env::var_os("AE_DEBUG_MIR").is_some()
+                    || !self.resolved_expressions().struct_constructors.contains(&target.range.start)
+                {
+                    return None;
+                }
+                let &sid = self.struct_names.get(name)?;
+                let def = self.structs.get(sid)?;
+                self.require_public("struct", &def.name, &def.file, def.public).ok()?;
+                if fields.len() != def.fields.len() {
+                    return None;
+                }
+                let declared_fields = def.fields.clone();
+                let mut values: Vec<_> = (0..fields.len()).map(|_| None).collect();
+                for field in fields {
+                    let slot = declared_fields.iter().position(|(name, _)| name == &field.name)?;
+                    if values[slot].is_some() {
+                        return None;
+                    }
+                    let expected = declared_fields[slot].1;
+                    let (value, actual) = self.lower_shared_argument(&field.value, expected, remaining, nodes_left, effects)?;
+                    if actual != expected {
+                        return None;
+                    }
+                    values[slot] = Some(value);
+                }
+                Some((Expr::StructLit(sid, values.into_iter().collect::<Option<_>>()?), Type::Struct(sid)))
             }
             ExpressionKind::Vector(elements) => {
                 let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < expression.range.start))?;
@@ -640,31 +710,7 @@ impl<'a> Parser<'a> {
                         args.push(Argument::Borrow(slot, address));
                         continue;
                     }
-                    let value = if expected.owned() || expected == Type::StrView {
-                        if let ExpressionKind::Atom(Kind::Ident(name)) = &argument.kind {
-                            remaining.checked_sub(1)?;
-                            *nodes_left = nodes_left.checked_sub(1)?;
-                            let (value, ty) = self.lower_resolved_local(name, argument.range.start)?;
-                            let Expr::Variable(slot, ..) = value else { unreachable!("resolved local") };
-                            if effects.moves.contains(&slot) {
-                                return None;
-                            }
-                            if expected == ty && ty.owned() {
-                                if self.variable_move_needs_deferral(slot)?
-                                    || effects.call_borrows.contains(&slot)
-                                    || effects.mut_borrows.contains(&slot)
-                                {
-                                    effects.conflicts.push((slot, argument.range.start, name.clone(), "move", None));
-                                }
-                                effects.moves.push(slot);
-                            }
-                            (value, ty)
-                        } else {
-                            self.lower_shared_expression(argument, remaining, nodes_left, effects)?
-                        }
-                    } else {
-                        self.lower_shared_expression(argument, remaining, nodes_left, effects)?
-                    };
+                    let value = self.lower_shared_argument(argument, expected, remaining, nodes_left, effects)?;
                     args.push(match (expected, value) {
                         (Type::StrView, (value, Type::String | Type::StrView)) => Argument::View(value),
                         (expected, (value, actual)) if expected == actual => Argument::Value(value),

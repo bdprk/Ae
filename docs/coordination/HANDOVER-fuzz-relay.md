@@ -114,3 +114,5 @@ cargo test --workspace --locked
 - At 19:25, seven terminal logs covered 78,897 seeds with zero differential or environmental failures. Active starts and PIDs: eva 435878 (1342854), evaluate-1 562107 (3693383), evaluate-2 670902 (2051232), evaluate-3 757011 (686040), ai 823803 (816250), Windows 975869 (34036), and Ubuntu 1092844 (guest 11). The evaluate-3 and ai continuations are the next expected to finish.
 
 - evaluate-3 and ai completed a further 16,254 seeds without failures. Their verified successors are 768241 (PID 1026848) and 828827 (PID 1219720).
+
+- Shared lowering now handles named struct constructors. Both platforms passed the full corpus and 36 focused comparisons. Next, consume field access nodes and preserve the compiler field path semantics. The Ubuntu relay remains bounded at 1100000.
