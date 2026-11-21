@@ -237,7 +237,10 @@ impl<'a> Parser<'a> {
             });
         }
         if name == "chan_close" {
-            let (handle, handle_ty) = self.expression(0, false)?;
+            let (handle, handle_ty) = match self.lower_shared_value(Some(Kind::RParen), false) {
+                Some(pair) => pair,
+                None => self.expression(0, false)?,
+            };
             if handle_ty != Type::Chan {
                 return Err(self.fail("chan_close expects a chan handle"));
             }
