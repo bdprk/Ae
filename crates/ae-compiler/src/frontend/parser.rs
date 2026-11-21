@@ -1357,7 +1357,10 @@ impl<'a> Parser<'a> {
                         }
                         let (line, col) = self.position();
                         self.take(Kind::LBracket)?;
-                        let (key, key_ty) = self.expression(0, false)?;
+                        let (key, key_ty) = match self.lower_shared_value(Some(Kind::RBracket), false) {
+                            Some(pair) => pair,
+                            None => self.expression(0, false)?,
+                        };
                         if !matches!(key_ty, Type::String | Type::StrView) { return Err(self.fail("map keys must be strings")); }
                         self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
                         let (value, value_ty) = match self.lower_shared_value(None, false) {
