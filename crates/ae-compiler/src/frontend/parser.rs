@@ -1646,7 +1646,10 @@ impl<'a> Parser<'a> {
                 Kind::Return => {
                     if self.in_main { return Err(self.fail("return is not supported in main")); }
                     self.pos += 1;
-                    let (value, ty) = self.expression(0, true)?;
+                    let (value, ty) = match self.lower_shared_value(None, true) {
+                        Some(pair) => pair,
+                        None => self.expression(0, true)?,
+                    };
                     self.take(Kind::Semi)?;
                     if matches!(ty, Type::Closure(_)) { return Err(self.fail("a closure cannot be returned: it has no storage, and its captures live in this frame")); }
                     if ty != self.return_type { return Err(self.fail(&format!("return type must be {}", self.return_type.name())).with_code("E0204")); }
