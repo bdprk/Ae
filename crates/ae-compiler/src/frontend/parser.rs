@@ -1301,7 +1301,10 @@ impl<'a> Parser<'a> {
                         }
                         if name == "push" {
                             self.take(Kind::Comma)?;
-                            let (value, value_ty) = self.expression(0, ty == Type::StrVec)?;
+                            let (value, value_ty) = match self.lower_shared_value(Some(Kind::RParen), ty == Type::StrVec) {
+                                Some(pair) => pair,
+                                None => self.expression(0, ty == Type::StrVec)?,
+                            };
                             // A borrow is fine: the element is a copy, so a view
                             // can be stored without outliving its source.
                             let ok = match ty {
