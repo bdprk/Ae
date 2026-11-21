@@ -110,6 +110,10 @@ updates this ADR as slices land.
    Nested scalar expressions also lower from the shared tree. Operand,
    group and prefix nodes count against the enclosing expression's
    existing complexity limit, including across successive call arguments.
+   String literals and literal-only string expressions also use shared
+   lowering. The compiler preserves literal locations and applies its
+   existing concatenation and comparison rules. Reads and moves of owned
+   variables continue through the typed path.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

@@ -228,3 +228,5 @@
 - 2026-11-21 13:10 (+08:00): The general expression entry now lowers outermost scalar trees at shared delimiters. Windows and Ubuntu passed 484 workspace tests and matched 50 example C outputs and 646 CLI invocations. Windows also matched 28 targeted invocations. Ubuntu candidate fuzz passed 40 seeds.
 
 - 2026-11-21 14:26 (+08:00): Nested scalar expressions now lower through the shared tree and charge the enclosing Pratt parser's budget. Windows and Ubuntu each passed 484 workspace tests and matched 50 C examples and 646 CLI invocations. Sixteen focused Windows comparisons pinned the 128-node success and 129-node diagnostic. Seven terminal fuzz segments reported 93,428 seeds and zero failures. Each successor is live and producing verdicts.
+
+- 2026-11-21 14:31 (+08:00): Shared expression lowering now builds positioned string literal nodes and applies the existing concatenation and comparison rules to literal-only trees. Windows and Ubuntu passed 484 workspace tests and matched 50 example C outputs and 646 CLI fixture invocations. Windows matched 24 focused string invocations. Ubuntu passed all 41 generated-C sanitizer/leak checks.

@@ -302,7 +302,7 @@ impl Parser<'_> {
         }
         if self.expression_depth >= 128 { return Err(self.fail("expression nesting limit exceeded (128)")); }
         if min == 0 {
-            if let Some(value) = self.lower_scalar_value(None) {
+            if let Some(value) = self.lower_shared_value(None) {
                 return Ok(value);
             }
         }

@@ -430,7 +430,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn lower_scalar_expression(
+    fn lower_shared_expression(
         &mut self,
         expression: ae_syntax::expression::Expression,
         remaining: usize,
@@ -449,6 +449,11 @@ impl<'a> Parser<'a> {
             ExpressionKind::Atom(Kind::Float(value)) => Some((Expr::FloatLit(value), Type::F64)),
             ExpressionKind::Atom(Kind::True) => Some((Expr::BoolLit(true), Type::Bool)),
             ExpressionKind::Atom(Kind::False) => Some((Expr::BoolLit(false), Type::Bool)),
+            ExpressionKind::Atom(Kind::Text(value)) => {
+                let offset = expression.range.start;
+                let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < offset))?;
+                Some((Expr::StrLit(value, token.line, token.column), Type::String))
+            }
             ExpressionKind::Atom(Kind::Ident(name)) => {
                 let (id, _, ty) = *self.names.get(&name)?;
                 if !matches!(ty, Type::Int | Type::F64 | Type::Bool) || self.moved.contains(&id)
@@ -466,11 +471,11 @@ impl<'a> Parser<'a> {
                 let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < offset))?;
                 Some((Expr::Variable(id, ty, token.line, token.column), ty))
             }
-            ExpressionKind::Group(inner) => self.lower_scalar_expression(*inner, remaining, nodes_left),
+            ExpressionKind::Group(inner) => self.lower_shared_expression(*inner, remaining, nodes_left),
             ExpressionKind::Prefix { operator, operand } => {
                 let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < expression.range.start))?;
                 let position = (token.line, token.column);
-                let operand = self.lower_scalar_expression(*operand, remaining, nodes_left)?;
+                let operand = self.lower_shared_expression(*operand, remaining, nodes_left)?;
                 self.lower_prefix(operator, operand, position).ok()
             }
             ExpressionKind::Binary { left, operator, right } => {
@@ -479,22 +484,22 @@ impl<'a> Parser<'a> {
                     return None;
                 }
                 let position = (token.line, token.column);
-                let left = self.lower_scalar_expression(*left, remaining, nodes_left)?;
-                let right = self.lower_scalar_expression(*right, remaining, nodes_left)?;
+                let left = self.lower_shared_expression(*left, remaining, nodes_left)?;
+                let right = self.lower_shared_expression(*right, remaining, nodes_left)?;
                 self.lower_infix(left, operator, right, position).ok()
             }
             _ => None,
         }
     }
 
-    fn scalar_expression_start(kind: &Kind) -> bool {
+    fn shared_expression_start(kind: &Kind) -> bool {
         matches!(kind, Kind::Number(_) | Kind::Float(_) | Kind::True | Kind::False |
-            Kind::LParen | Kind::Ident(_))
+            Kind::Text(_) | Kind::LParen | Kind::Ident(_))
             || ae_syntax::operator::prefix_binding_power(kind).is_some()
     }
 
-    pub(super) fn lower_scalar_value(&mut self, boundary: Option<Kind>) -> Option<(Expr, Type)> {
-        if !Self::scalar_expression_start(self.current()) {
+    pub(super) fn lower_shared_value(&mut self, boundary: Option<Kind>) -> Option<(Expr, Type)> {
+        if !Self::shared_expression_start(self.current()) {
             return None;
         }
         let parse = if boundary == Some(Kind::LBrace) {
@@ -520,7 +525,7 @@ impl<'a> Parser<'a> {
             (64, 128)
         };
         let mut nodes_left = budget;
-        let value = self.lower_scalar_expression(expression, depth, &mut nodes_left)?;
+        let value = self.lower_shared_expression(expression, depth, &mut nodes_left)?;
         if boundary.is_none() {
             self.expression_nodes += budget - nodes_left;
         }
@@ -529,7 +534,7 @@ impl<'a> Parser<'a> {
     }
 
     fn condition(&mut self) -> Result<Expr, ae_span::Diagnostic> {
-        let (condition, ty) = match self.lower_scalar_value(Some(Kind::LBrace)) {
+        let (condition, ty) = match self.lower_shared_value(Some(Kind::LBrace)) {
             Some(value) => value,
             None => self.expression(0, false)?,
         };
@@ -546,13 +551,11 @@ impl<'a> Parser<'a> {
         let [_, open, argument, ..] = &self.tokens[self.pos..] else {
             return None;
         };
-        if open.kind != Kind::LParen
-            || !(matches!(argument.kind, Kind::Text(_)) || Self::scalar_expression_start(&argument.kind))
-        {
+        if open.kind != Kind::LParen || !Self::shared_expression_start(&argument.kind) {
             return None;
         }
 
-        // Scalar nodes do not change move or borrow state. Leave the cursor
+        // Supported nodes do not change move or borrow state. Leave the cursor
         // at the statement start until the entire tree lowers successfully,
         // so unsupported arguments and errors take the existing path.
         let (statement, end) = parse_statement_tokens(&self.file, self.source, &self.tokens, self.pos).ok()?;
@@ -561,12 +564,12 @@ impl<'a> Parser<'a> {
             StatementKind::Print(argument) => match argument.kind {
                 ExpressionKind::Atom(Kind::Text(value)) => Statement::Print(Printed::Text(value)),
                 _ => {
-                    let (value, _) = self.lower_scalar_expression(argument, 64, &mut nodes_left)?;
+                    let (value, _) = self.lower_shared_expression(argument, 64, &mut nodes_left)?;
                     Statement::Print(Printed::Expr(value))
                 }
             },
             StatementKind::Assert(argument) => {
-                let (condition, Type::Bool) = self.lower_scalar_expression(argument, 64, &mut nodes_left)? else {
+                let (condition, Type::Bool) = self.lower_shared_expression(argument, 64, &mut nodes_left)? else {
                     return None;
                 };
                 let (line, column) = self.position();
@@ -1485,12 +1488,12 @@ mod tests {
         assert_eq!(*parser.current(), Kind::Semi);
 
         parser.pos = print_token + 2;
-        assert!(parser.lower_scalar_value(Some(Kind::Semi)).is_none());
+        assert!(parser.lower_shared_value(Some(Kind::Semi)).is_none());
         assert_eq!(parser.pos, print_token + 2);
 
         parser.pos = condition_token;
         assert!(matches!(
-            parser.lower_scalar_value(Some(Kind::LBrace)),
+            parser.lower_shared_value(Some(Kind::LBrace)),
             Some((Expr::Variable(7, Type::Bool, _, _), Type::Bool)),
         ));
         assert_eq!(*parser.current(), Kind::LBrace);
