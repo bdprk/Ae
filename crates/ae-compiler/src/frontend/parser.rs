@@ -487,20 +487,34 @@ impl<'a> Parser<'a> {
             || ae_syntax::operator::prefix_binding_power(kind).is_some()
     }
 
-    fn lower_scalar_value_before_semicolon(&mut self) -> Option<(Expr, Type)> {
+    fn lower_scalar_value_before(&mut self, boundary: Kind) -> Option<(Expr, Type)> {
         if !Self::scalar_expression_start(self.current()) {
             return None;
         }
-        let (expression, end) = ae_syntax::expression::parse_expression_tokens(
-            &self.file, self.source, &self.tokens, self.pos, false,
-        ).ok()?;
+        let parse = if boundary == Kind::LBrace {
+            ae_syntax::expression::parse_expression_tokens_no_struct
+        } else {
+            ae_syntax::expression::parse_expression_tokens
+        };
+        let (expression, end) = parse(&self.file, self.source, &self.tokens, self.pos, false).ok()?;
         // Propagation and incomplete expressions stay with the typed parser.
-        if self.tokens.get(end)?.kind != Kind::Semi {
+        if self.tokens.get(end)?.kind != boundary {
             return None;
         }
         let value = self.lower_scalar_expression(expression, 64)?;
         self.pos = end;
         Some(value)
+    }
+
+    fn condition(&mut self) -> Result<Expr, ae_span::Diagnostic> {
+        let (condition, ty) = match self.lower_scalar_value_before(Kind::LBrace) {
+            Some(value) => value,
+            None => self.expression(0, false)?,
+        };
+        if ty != Type::Bool {
+            return Err(self.fail("condition must be a boolean expression").with_code("E0205"));
+        }
+        Ok(condition)
     }
 
     fn lower_output_from_syntax(&mut self) -> Option<Statement> {
@@ -591,7 +605,7 @@ impl<'a> Parser<'a> {
                         self.take(Kind::RBracket)?; self.take(Kind::Semi)?;
                         let len = values.len(); (Statement::Array(id, values), Type::Array(len))
                     } else {
-                        let (value, ty) = match self.lower_scalar_value_before_semicolon() {
+                        let (value, ty) = match self.lower_scalar_value_before(Kind::Semi) {
                             Some(value) => value,
                             // The typed initializer consumes string values.
                             None => self.expression(0, true)?,
@@ -993,7 +1007,7 @@ impl<'a> Parser<'a> {
                 Kind::Return => {
                     if self.in_main { return Err(self.fail("return is not supported in main")); }
                     self.pos += 1;
-                    let (value, ty) = match self.lower_scalar_value_before_semicolon() {
+                    let (value, ty) = match self.lower_scalar_value_before(Kind::Semi) {
                         Some(value) => value,
                         None => self.expression(0, true)?,
                     };
@@ -1053,8 +1067,7 @@ impl<'a> Parser<'a> {
                 Kind::While => {
                     let loop_offset = self.tokens[self.pos].offset;
                     self.pos += 1;
-                    let (condition, ty) = self.expression(0, false)?;
-                    if ty != Type::Bool { return Err(self.fail("condition must be a boolean expression").with_code("E0205")); }
+                    let condition = self.condition()?;
                     if self.loop_depth >= 64 { return Err(self.fail("loop nesting limit exceeded (64)")); }
                     self.loop_depth += 1;
                     let base = self.scopes.len();
@@ -1243,8 +1256,7 @@ impl<'a> Parser<'a> {
     }
     pub(super) fn if_statement(&mut self) -> Result<Statement, ae_span::Diagnostic> {
         self.pos += 1;
-        let (condition, ty) = self.expression(0, false)?;
-        if ty != Type::Bool { return Err(self.fail("condition must be a boolean expression").with_code("E0205")); }
+        let condition = self.condition()?;
         let snapshot = self.moved.clone();
         let yes = self.block()?;
         let after_yes = std::mem::replace(&mut self.moved, snapshot.clone());
@@ -1429,9 +1441,10 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn main() { let flag = true; let value = flag; print(flag); }";
+        let source = "fn main() { let flag = true; let value = flag; if flag {} print(flag); }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
+        let condition_token = tokens.iter().position(|token| token.kind == Kind::If).unwrap() + 1;
         let initializer = source.find("flag;").unwrap();
         let initializer_token = tokens.iter().position(|token| token.offset == initializer).unwrap();
         let binding = source.find("flag").unwrap();
@@ -1449,14 +1462,21 @@ mod tests {
         parser.binding_ranges.insert(7, binding..binding + 4);
         parser.pos = initializer_token;
         assert!(matches!(
-            parser.lower_scalar_value_before_semicolon(),
+            parser.lower_scalar_value_before(Kind::Semi),
             Some((Expr::Variable(7, Type::Bool, _, _), Type::Bool)),
         ));
         assert_eq!(*parser.current(), Kind::Semi);
 
         parser.pos = print_token + 2;
-        assert!(parser.lower_scalar_value_before_semicolon().is_none());
+        assert!(parser.lower_scalar_value_before(Kind::Semi).is_none());
         assert_eq!(parser.pos, print_token + 2);
+
+        parser.pos = condition_token;
+        assert!(matches!(
+            parser.lower_scalar_value_before(Kind::LBrace),
+            Some((Expr::Variable(7, Type::Bool, _, _), Type::Bool)),
+        ));
+        assert_eq!(*parser.current(), Kind::LBrace);
 
         parser.pos = print_token;
         assert!(matches!(

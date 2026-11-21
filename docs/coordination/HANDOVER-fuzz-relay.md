@@ -1,6 +1,6 @@
 # Handover — fuzz relay
 
-- Date: 2026-11-21 12:57 +08:00
+- Date: 2026-11-21 13:03 +08:00
 - Branch: `agent/fuzz-relay`
 - Worktree: the dedicated fuzz-relay worktree of this checkout
 - Area claim: docs
@@ -20,6 +20,7 @@
 - Extended shared lowering to scalar operator trees, using the existing prefix and infix type checks.
 - Scalar local reads in shared output trees use resolver definitions that match active compiler slots.
 - Scalar binding initializers and return values now use shared expression nodes, including resolved local reads.
+- Scalar branch and loop conditions now use shared expression nodes and the existing boolean type check.
 - evaluate-2 resumed at 634915 after completing 12,115 seeds with zero failures.
 - eva resumed at 416112 after completing 6,576 seeds with zero failures.
 - evaluate-1 resumed at 527527 after completing 11,728 seeds with zero failures.
@@ -49,6 +50,7 @@ cargo test --workspace --locked
 - Scalar operator lowering passed 483 tests and the full corpus on Windows and Ubuntu. Windows also matched 27 focused invocations, and the Ubuntu candidate passed a 40-seed differential smoke run.
 - Resolved scalar reads passed 484 tests and the full corpus on both platforms. Windows matched 24 additional focused invocations, and Ubuntu candidate fuzz covered 40 more seeds without failures.
 - Shared scalar initializers and returns passed 484 tests and the full corpus on both platforms. Windows matched 32 focused invocations, and Ubuntu candidate fuzz passed 40 seeds.
+- Shared scalar conditions passed the same 484 tests and corpus on both platforms, 28 focused Windows comparisons and 40 candidate fuzz seeds on Ubuntu.
 - Ubuntu generated C passed 41 sanitizer/leak cases with zero leaked blocks.
 
 ## Risks and blockers

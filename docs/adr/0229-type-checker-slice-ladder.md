@@ -100,6 +100,9 @@ updates this ADR as slices land.
    expression nodes when the expression ends at its semicolon. Binding,
    return type, ownership and propagation rules retain their existing
    diagnostics.
+   Scalar `if` and `while` conditions also lower from shared expressions.
+   The condition parser preserves the opening brace for the loop or branch
+   body, and the type check retains the frontend's boolean diagnostic.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 
