@@ -33,7 +33,7 @@ def find_executable() -> Path:
     try:
         metadata = subprocess.run(
             ["cargo", "metadata", "--no-deps", "--format-version", "1"],
-            capture_output=True, text=True, check=True, cwd=ROOT,
+            capture_output=True, check=True, cwd=ROOT,
         )
         target_directory = json.loads(metadata.stdout)["target_directory"]
         return Path(target_directory) / "debug" / name
