@@ -952,19 +952,24 @@ impl<'a> Parser<'a> {
         let mut effects = SharedExpressionEffects::default();
         let value = match &expression.kind {
             ae_syntax::expression::ExpressionKind::Atom(Kind::Ident(name))
-                if self.names.get(name).is_some_and(|(_, _, ty)| ty.owned()) =>
+                if self.names.contains_key(name) =>
             {
                 nodes_left = nodes_left.checked_sub(1)?;
                 let value = self.lower_resolved_local(name, expression.range.start)?;
-                if moving {
-                    let Expr::Variable(id, ..) = &value.0 else { unreachable!("resolved local") };
+                let Expr::Variable(id, ty, ..) = &value.0 else { unreachable!("resolved local") };
+                // Owned locals move on `moving`; copy-semantics handles
+                // (Exec, Pool, Chan, Atomic, Mutex, Guard, TaskScope) and
+                // views never move, so their reads route the same way the
+                // typed parse reads them.
+                if moving && ty.owned() {
+                    let id = *id;
                     let start = self.pos;
                     self.pos = end;
-                    if self.check_variable_move(*id).is_err() {
+                    if self.check_variable_move(id).is_err() {
                         self.pos = start;
                         return None;
                     }
-                    self.moved.insert(*id);
+                    self.moved.insert(id);
                 }
                 value
             }
