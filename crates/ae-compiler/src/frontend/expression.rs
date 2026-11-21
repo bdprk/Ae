@@ -577,9 +577,7 @@ impl Parser<'_> {
                     // Option[string]::Some and Option[i64]::Some are different
                     // variants of different types (ADR-21).
                     let gid = self.generics.names[&name];
-                    self.pos += 1;
-                    let args = self.read_type_arguments(Self::type_argument)?;
-                    self.take(Kind::RBracket)?;
+                    let args = self.specialization_type_arguments(name_offset, |parser, _| parser.type_argument())?;
                     let eid = self.instantiate_enum(gid, args.clone(), name_offset)?;
                     // `::` after the arguments: a variant name stays a variant
                     // path (enum_literal consumes `::` itself); anything else

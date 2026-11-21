@@ -268,3 +268,10 @@ struct and enum specializations remain on the typed path.
 Struct literals and associated calls reuse the shared specialization
 argument ranges. The compiler still specializes layouts and checks
 visibility. Generic enum expressions are the next consumer.
+
+## Generic enum specializations (2026-11-22)
+
+Generic enum variants and associated calls reuse shared specialization
+argument ranges. The compiler retains type argument checks and enum layout
+instantiation. Compound pointee types and inline closure capture inference
+remain on the typed expression path.
