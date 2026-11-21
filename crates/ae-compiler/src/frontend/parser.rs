@@ -432,8 +432,8 @@ impl<'a> Parser<'a> {
                     continue;
                 };
                 match occurrence.role {
-                    ae_resolve::Role::Read if definition.kind.is_local() => {
-                        expressions.local_reads.insert(occurrence.range.start, definition.range.clone());
+                    ae_resolve::Role::Read | ae_resolve::Role::Borrow if definition.kind.is_local() => {
+                        expressions.local_bindings.insert(occurrence.range.start, definition.range.clone());
                     }
                     ae_resolve::Role::Call if definition.kind == ae_resolve::DefKind::Function
                         && definition.owner.is_none() && definition.name == occurrence.name =>
@@ -465,7 +465,7 @@ impl<'a> Parser<'a> {
         if self.moved.contains(&id) || self.shadow_ok || !self.subst.is_empty() {
             return None;
         }
-        let definition = self.resolved_expressions().local_reads.get(&offset)?;
+        let definition = self.resolved_expressions().local_bindings.get(&offset)?;
         // Match the resolver's source definition to the active compiler slot.
         if self.binding_ranges.get(&id)? != definition {
             return None;
@@ -570,7 +570,8 @@ impl<'a> Parser<'a> {
                 if signature.file != self.file || signature.extern_c || is_unsafe_fn(signature.id)
                     || arguments.len() != signature.params.len() || arguments.len() > 64
                     || !signature.params.iter().all(|ty| {
-                        matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView | Type::Vec | Type::VecF)
+                        matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView
+                            | Type::Vec | Type::VecF | Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_))
                     })
                     || !matches!(signature.ret, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::VecF)
                 {
@@ -579,6 +580,25 @@ impl<'a> Parser<'a> {
                 let (id, params, ret) = (signature.id, signature.params.clone(), signature.ret);
                 let mut args = Vec::with_capacity(arguments.len());
                 for (argument, expected) in arguments.iter().zip(params) {
+                    if matches!(expected, Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_)) {
+                        let ExpressionKind::BorrowArgument { name, name_range, mutable: false } = &argument.kind else {
+                            return None;
+                        };
+                        let (Expr::Variable(slot, ..), actual) = self.lower_resolved_local(name, name_range.start)? else {
+                            return None;
+                        };
+                        if pending_moves.iter().any(|&(moved, _)| moved == slot) {
+                            return None;
+                        }
+                        let address = match (expected, actual) {
+                            (expected, actual) if expected == actual => false,
+                            (Type::VecRef, Type::Vec) | (Type::VecFRef, Type::VecF)
+                            | (Type::StrVecRef, Type::StrVec) => true,
+                            _ => return None,
+                        };
+                        args.push(Argument::Borrow(slot, address));
+                        continue;
+                    }
                     let value = if expected.owned() || expected == Type::StrView {
                         if let ExpressionKind::Atom(Kind::Ident(name)) = &argument.kind {
                             remaining.checked_sub(1)?;

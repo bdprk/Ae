@@ -140,6 +140,10 @@ updates this ADR as slices land.
    Closure subparsers and local generic instantiations share the
    module's lazy expression index when they use the same token stream.
    Instantiations from another source retain a separate index.
+   Read-only vector and fixed-array arguments use resolved borrow nodes.
+   Owned vectors pass by address and borrowed containers forward their
+   existing representation. The typed path supplies diagnostics for an
+   invalid borrow shape, a moved slot, or a mismatched array length.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

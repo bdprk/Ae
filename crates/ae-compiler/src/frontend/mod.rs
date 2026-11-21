@@ -665,7 +665,7 @@ enum BorrowKind { View, Container }
 
 #[derive(Default)]
 struct ResolvedExpressions {
-    local_reads: HashMap<usize, std::ops::Range<usize>>,
+    local_bindings: HashMap<usize, std::ops::Range<usize>>,
     direct_calls: HashSet<usize>,
     values: HashMap<usize, Rc<ae_syntax::expression::Expression>>,
     statement_ends: HashMap<usize, usize>,
