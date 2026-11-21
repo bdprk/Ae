@@ -1,6 +1,6 @@
 # Handover — fuzz relay
 
-- Date: 2026-11-21 15:04 +08:00
+- Date: 2026-11-21 15:10 +08:00
 - Branch: `agent/fuzz-relay`
 - Worktree: the dedicated fuzz-relay worktree of this checkout
 - Area claim: docs
@@ -83,4 +83,6 @@ cargo test --workspace --locked
 
 - Staged string moves passed 484 tests, 50 C examples, 646 CLI invocations, and 28 focused comparisons on each platform. Ubuntu passed 41 sanitizer and leak checks.
 
-- Deferred string view moves passed the same Windows and Ubuntu corpus and focused checks. Next, feed the compiler the statement and expression nodes already assembled by the resolver module.
+- Deferred string view moves passed the same Windows and Ubuntu corpus and focused checks. The general expression entry now consumes indexed expression roots from the resolver module. Next, feed the statement entry points the statement nodes from the same tree.
+
+- Resolver expression roots passed 484 tests, 50 generated C examples, 646 frontend CLI invocations, and 28 focused comparisons per platform. Ubuntu passed 41 sanitizer and leak checks and 40 candidate fuzz seeds.

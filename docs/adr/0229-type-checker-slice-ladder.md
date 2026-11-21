@@ -107,9 +107,11 @@ updates this ADR as slices land.
    at shared delimiters. This covers scalar assignment values, array
    store indexes and range starts through the same operator and
    definition checks.
-   Nested scalar expressions also lower from the shared tree. Operand,
-   group and prefix nodes count against the enclosing expression's
-   existing complexity limit, including across successive call arguments.
+   The general expression entry now reads expression roots indexed from
+   the resolver module's function body trees. Operand, group and prefix
+   nodes count against the enclosing expression's existing complexity
+   limit. The compiler uses typed parsing for expression entry points
+   without a matching root or supported delimiter.
    String literals and literal-only string expressions also use shared
    lowering. The compiler preserves literal locations and applies its
    existing concatenation and comparison rules. Bare owned local reads

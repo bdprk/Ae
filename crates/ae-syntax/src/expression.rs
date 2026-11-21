@@ -6,13 +6,13 @@ use crate::literal::parse_literal;
 use crate::operator::{parse_infix_tail, prefix_binding_power};
 use crate::{diagnostic_range, Kind, Token};
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Expression {
     pub kind: ExpressionKind,
     pub range: Range<usize>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FieldInitializer {
     pub name: String,
     pub name_range: Range<usize>,
@@ -21,14 +21,14 @@ pub struct FieldInitializer {
 
 /// One `name: Type` in a closure's parameter list. The type stays a byte
 /// range: the shared parser records the spelling, the compiler resolves it.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ClosureParam {
     pub name: String,
     pub name_range: Range<usize>,
     pub ty: Range<usize>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ExpressionKind {
     Atom(Kind),
     Group(Box<Expression>),

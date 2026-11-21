@@ -435,6 +435,11 @@ impl<'a> Parser<'a> {
                     _ => {}
                 }
             }
+            for statement in module.functions.iter().filter_map(|function| function.body.as_ref()).flatten() {
+                ae_syntax::statement::visit_expressions(statement, &mut |expression| {
+                    expressions.values.insert(expression.range.start, Rc::new(expression.clone()));
+                });
+            }
             expressions
         })
     }
@@ -455,7 +460,7 @@ impl<'a> Parser<'a> {
 
     fn lower_shared_expression(
         &mut self,
-        expression: ae_syntax::expression::Expression,
+        expression: &ae_syntax::expression::Expression,
         remaining: usize,
         nodes_left: &mut usize,
         pending_moves: &mut Vec<(usize, Option<usize>)>,
@@ -468,34 +473,34 @@ impl<'a> Parser<'a> {
         if !matches!(expression.kind, ExpressionKind::Binary { .. }) {
             *nodes_left = nodes_left.checked_sub(1)?;
         }
-        match expression.kind {
-            ExpressionKind::Atom(Kind::Number(value)) => Some((Expr::Number(value), Type::Int)),
-            ExpressionKind::Atom(Kind::Float(value)) => Some((Expr::FloatLit(value), Type::F64)),
+        match &expression.kind {
+            ExpressionKind::Atom(Kind::Number(value)) => Some((Expr::Number(*value), Type::Int)),
+            ExpressionKind::Atom(Kind::Float(value)) => Some((Expr::FloatLit(*value), Type::F64)),
             ExpressionKind::Atom(Kind::True) => Some((Expr::BoolLit(true), Type::Bool)),
             ExpressionKind::Atom(Kind::False) => Some((Expr::BoolLit(false), Type::Bool)),
             ExpressionKind::Atom(Kind::Text(value)) => {
                 let offset = expression.range.start;
                 let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < offset))?;
-                Some((Expr::StrLit(value, token.line, token.column), Type::String))
+                Some((Expr::StrLit(value.clone(), token.line, token.column), Type::String))
             }
             ExpressionKind::Atom(Kind::Ident(name)) => {
-                let (_, _, ty) = self.names.get(&name)?;
+                let (_, _, ty) = self.names.get(name)?;
                 if !matches!(ty, Type::Int | Type::F64 | Type::Bool) {
                     return None;
                 }
-                self.lower_resolved_local(&name, expression.range.start)
+                self.lower_resolved_local(name, expression.range.start)
             }
-            ExpressionKind::Group(inner) => self.lower_shared_expression(*inner, remaining, nodes_left, pending_moves),
+            ExpressionKind::Group(inner) => self.lower_shared_expression(inner, remaining, nodes_left, pending_moves),
             ExpressionKind::Call { callee, arguments } => {
-                let ExpressionKind::Atom(Kind::Ident(name)) = callee.kind else {
+                let ExpressionKind::Atom(Kind::Ident(name)) = &callee.kind else {
                     return None;
                 };
-                if self.names.contains_key(&name) || RESERVED.contains(&name.as_str())
+                if self.names.contains_key(name) || RESERVED.contains(&name.as_str())
                     || !self.resolved_expressions().direct_calls.contains(&callee.range.start)
                 {
                     return None;
                 }
-                let signature = self.functions.get(&name)?;
+                let signature = self.functions.get(name)?;
                 if signature.file != self.file || signature.extern_c || is_unsafe_fn(signature.id)
                     || arguments.len() != signature.params.len() || arguments.len() > 64
                     || !signature.params.iter().all(|ty| {
@@ -507,7 +512,7 @@ impl<'a> Parser<'a> {
                 }
                 let (id, params, ret) = (signature.id, signature.params.clone(), signature.ret);
                 let mut args = Vec::with_capacity(arguments.len());
-                for (argument, expected) in arguments.into_iter().zip(params) {
+                for (argument, expected) in arguments.iter().zip(params) {
                     let value = if matches!(expected, Type::String | Type::StrView) {
                         if let ExpressionKind::Atom(Kind::Ident(name)) = &argument.kind {
                             remaining.checked_sub(1)?;
@@ -539,18 +544,18 @@ impl<'a> Parser<'a> {
             ExpressionKind::Prefix { operator, operand } => {
                 let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < expression.range.start))?;
                 let position = (token.line, token.column);
-                let operand = self.lower_shared_expression(*operand, remaining, nodes_left, pending_moves)?;
-                self.lower_prefix(operator, operand, position).ok()
+                let operand = self.lower_shared_expression(operand, remaining, nodes_left, pending_moves)?;
+                self.lower_prefix(operator.clone(), operand, position).ok()
             }
             ExpressionKind::Binary { left, operator, right } => {
                 let token = self.tokens.get(self.tokens.partition_point(|token| token.offset < left.range.end))?;
-                if token.kind != operator {
+                if &token.kind != operator {
                     return None;
                 }
                 let position = (token.line, token.column);
-                let left = self.lower_shared_expression(*left, remaining, nodes_left, pending_moves)?;
-                let right = self.lower_shared_expression(*right, remaining, nodes_left, pending_moves)?;
-                self.lower_infix(left, operator, right, position).ok()
+                let left = self.lower_shared_expression(left, remaining, nodes_left, pending_moves)?;
+                let right = self.lower_shared_expression(right, remaining, nodes_left, pending_moves)?;
+                self.lower_infix(left, operator.clone(), right, position).ok()
             }
             _ => None,
         }
@@ -575,12 +580,9 @@ impl<'a> Parser<'a> {
         if !Self::shared_expression_start(self.current()) {
             return None;
         }
-        let parse = if boundary == Some(Kind::LBrace) {
-            ae_syntax::expression::parse_expression_tokens_no_struct
-        } else {
-            ae_syntax::expression::parse_expression_tokens
-        };
-        let (expression, end) = parse(&self.file, self.source, &self.tokens, self.pos, false).ok()?;
+        let offset = self.tokens.get(self.pos)?.offset;
+        let expression = self.resolved_expressions().values.get(&offset).cloned()?;
+        let end = self.tokens.partition_point(|token| token.offset < expression.range.end);
         let next = &self.tokens.get(end)?.kind;
         // Stop only at delimiters on which both parsers agree. Propagation
         // and type-dependent postfix syntax stay with the typed parser.
@@ -617,7 +619,7 @@ impl<'a> Parser<'a> {
                 }
                 value
             }
-            _ => self.lower_shared_expression(expression, depth, &mut nodes_left, &mut pending_moves)?,
+            _ => self.lower_shared_expression(&expression, depth, &mut nodes_left, &mut pending_moves)?,
         };
         self.commit_shared_moves(pending_moves);
         if boundary.is_none() {
@@ -658,12 +660,12 @@ impl<'a> Parser<'a> {
             StatementKind::Print(argument) => match argument.kind {
                 ExpressionKind::Atom(Kind::Text(value)) => Statement::Print(Printed::Text(value)),
                 _ => {
-                    let (value, _) = self.lower_shared_expression(argument, 64, &mut nodes_left, &mut pending_moves)?;
+                    let (value, _) = self.lower_shared_expression(&argument, 64, &mut nodes_left, &mut pending_moves)?;
                     Statement::Print(Printed::Expr(value))
                 }
             },
             StatementKind::Assert(argument) => {
-                let (condition, Type::Bool) = self.lower_shared_expression(argument, 64, &mut nodes_left, &mut pending_moves)? else {
+                let (condition, Type::Bool) = self.lower_shared_expression(&argument, 64, &mut nodes_left, &mut pending_moves)? else {
                     return None;
                 };
                 let (line, column) = self.position();
