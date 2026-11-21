@@ -148,25 +148,24 @@ cargo test --workspace --locked
 - Indexed let and var headers passed full corpus parity and 32 focused comparisons. Next, use the shared for statement metadata for loop binding and iteration dispatch.
 
 
-## Remaining unshared expression sites (audit 2026-11-21, relay continuation)
+## Remaining typed-parse sites (audit 2026-11-21, relay continuation; framing corrected)
 
-`parser.rs` still parses 36 expressions with `self.expression(0, …)` outside
-the shared tree, by construct:
+The 36 `self.expression(0, …)` sites in `parser.rs` are NOT "unshared" —
+each consumes the shared tree indirectly: `expression()` consults
+`lower_shared_value` at operand starts, which reads the resolver's
+`values` map. The audit's real value is the per-construct location list
+for the remaining typed-parse entry points whose operand shapes the
+shared lowering does not cover yet. The authoritative work list is the
+"Next:" pointer at the end of each handover bullet (the incremental
+expansion of `shared_expression_start` and the `values` coverage), not
+this site count.
 
+Per-construct locations (for the next slices):
 - concurrency statements: TaskYield ×2, PoolSpawn ×1, ChanClose ×2
-- stores: Store ×2, StrVecStore ×2, VecStore ×1, FieldStore ×6, Star (pointer
-  store) ×1 — the indexed store-target slices landed, these are the VALUE
-  sides
+- stores (value sides): Store ×2, StrVecStore ×2, VecStore ×1,
+  FieldStore ×6, Star (pointer store) ×1
 - compound assignment: PercentEqual ×2; plain Assign ×2
 - containers and builtins: Array ×1, VecPop ×3, MapPut ×2, Sort ×1
-- control flow tail: condition ×1, Exit ×2, Return ×1, For ×2, Assert ×1,
-  Print ×1, match_statement ×1
+- control flow tail: condition ×1, Exit ×2, Return ×1, For ×2,
+  Assert ×1, Print ×1, match_statement ×1
 - Declare ×1
-
-The 41 `lower_shared_*` helpers are the consumption infrastructure; each
-remaining site converts by routing through the resolver index the way the
-landed slices did (one construct per slice, byte-parity gate + focused
-comparisons on both platforms). The audit came from
-`grep -n "self.expression(0" crates/ae-compiler/src/frontend/parser.rs`
-with nearest-statement context attribution.
-
