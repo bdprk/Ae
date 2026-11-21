@@ -503,6 +503,27 @@ Host: Windows 11 x86-64 (`rustc 1.99.1`, `cargo 1.99.1`, gcc 16.2.0 MinGW-W64 UC
 
 Design rationale and rejected alternatives: `docs/adr/0211-add-remove-dependency-commands.md`.
 
+## Fleet relay totals — 2026-11-22 (M2.13)
+
+Thirty completed one-hour segments across the five InstaBox boxes, collected
+from each box's own `bench/results/*.log`:
+
+| Lane | Segments | Seeds each (approx) | Failures |
+|---|---|---|---|
+| eva | 6 | 6,438–6,595 | 0 |
+| evaluate-1 | 6 | 11,398–11,797 | 0 |
+| evaluate-2 | 6 | 11,826–12,115 | 0 |
+| evaluate-3 | 6 | 11,230–11,895 | 0 |
+| ai | 6 | 4,932–10,069 | 0 |
+
+Total: about **270,000 distinct seed verdicts, zero differential failures,
+zero environmental verdicts**. Every lane ran the current compiler (the
+481→484-test state with the R3b/R3c checker and the shared-tree sweep), so
+this is regression coverage of the original seed corpus against new code.
+The supervisors continue chaining successors; the Ubuntu WSL leg and the
+Windows baseline segments are archived in
+`bench/results/2026-11-21-distributed-campaign/`.
+
 ## Verified 2026-11-22 — M0.2.08 byte-parity gate (frontend switchover)
 
 | Check | Evidence |
