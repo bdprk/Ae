@@ -184,6 +184,9 @@ updates this ADR as slices land.
    Direct field stores reuse the indexed assignment target name for
    owned and mutable-borrow receivers. Field typing, write permissions,
    and ownership transfer remain in the existing store checks.
+   Raw pointer stores reuse the pointer name from the shared statement.
+   The typed route still enforces the unsafe scope, the pointee type,
+   and the ownership restriction.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

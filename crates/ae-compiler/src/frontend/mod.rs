@@ -671,6 +671,7 @@ struct ResolvedExpressions {
     enum_variants: HashSet<usize>,
     values: HashMap<usize, Rc<ae_syntax::expression::Expression>>,
     statement_ends: HashMap<usize, usize>,
+    pointer_store_names: HashMap<usize, String>,
     match_patterns: HashMap<usize, ae_syntax::pattern::Pattern>,
 }
 

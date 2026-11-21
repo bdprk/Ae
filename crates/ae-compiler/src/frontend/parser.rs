@@ -467,6 +467,9 @@ impl<'a> Parser<'a> {
             for statement in function_statements.chain(closure_statements) {
                 ae_syntax::statement::visit_statements(statement, &mut |statement| {
                     expressions.statement_ends.insert(statement.range.start, statement.range.end);
+                    if let ae_syntax::statement::StatementKind::PointerStore { pointer, pointer_range, .. } = &statement.kind {
+                        expressions.pointer_store_names.insert(pointer_range.start, pointer.clone());
+                    }
                     if let ae_syntax::statement::StatementKind::Match { arms, .. } = &statement.kind {
                         for arm in arms {
                             expressions.match_patterns.insert(arm.pattern.range.start, arm.pattern.clone());
@@ -1556,7 +1559,14 @@ impl<'a> Parser<'a> {
                     // pointer names.
                     let (line, column) = self.position();
                     self.pos += 1;
-                    let name = self.identifier()?;
+                    let offset = self.tokens[self.pos].offset;
+                    let name = match self.resolved_expressions().pointer_store_names.get(&offset).cloned() {
+                        Some(name) => {
+                            self.pos += 1;
+                            name
+                        }
+                        None => self.identifier()?,
+                    };
                     let Some((var_id, _, Type::PtrMut(pointee_id))) = self.names.get(&name).cloned() else {
                         return Err(self.fail(&format!("'*{name}' requires a *mut pointer variable")));
                     };
