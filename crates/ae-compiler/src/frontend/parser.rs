@@ -1275,10 +1275,16 @@ impl<'a> Parser<'a> {
                     // half of the handoff (spec/concurrency.md §8).
                     if name == "cell_store" && self.tokens.get(self.pos + 1).map(|t| t.kind.clone()) == Some(Kind::LParen) {
                         self.pos += 2;
-                        let (handle, handle_ty) = self.expression(0, false)?;
+                        let (handle, handle_ty) = match self.lower_shared_value(Some(Kind::Comma), false) {
+                            Some(pair) => pair,
+                            None => self.expression(0, false)?,
+                        };
                         if handle_ty != Type::Atomic { return Err(self.fail("cell_store expects an atomic handle")); }
                         self.take(Kind::Comma)?;
-                        let (value, value_ty) = self.expression(0, false)?;
+                        let (value, value_ty) = match self.lower_shared_value(Some(Kind::RParen), false) {
+                            Some(pair) => pair,
+                            None => self.expression(0, false)?,
+                        };
                         if value_ty != Type::Int { return Err(self.fail("cell_store expects an i64 value")); }
                         self.take(Kind::RParen)?; self.take(Kind::Semi)?;
                         result.push(Statement::AtomicStore(Box::new(handle), Box::new(value)));
@@ -1418,7 +1424,10 @@ impl<'a> Parser<'a> {
                             return Err(self.fail(&format!("cannot modify '{name}' while it is borrowed")));
                         }
                         let (line, col) = self.position(); self.take(Kind::LBracket)?;
-                        let (index, index_ty) = self.expression(0, false)?;
+                        let (index, index_ty) = match self.lower_shared_value(Some(Kind::RBracket), false) {
+                            Some(pair) => pair,
+                            None => self.expression(0, false)?,
+                        };
                         if index_ty != Type::Int { return Err(self.fail("vector index must be an integer")); }
                         self.take(Kind::RBracket)?; self.take(Kind::Equal)?;
                         let (value, value_ty) = match self.lower_shared_value(None, false) {
