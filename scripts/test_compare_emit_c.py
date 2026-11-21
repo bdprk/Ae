@@ -42,9 +42,20 @@ class ComparisonTest(unittest.TestCase):
         result = subprocess.CompletedProcess([], 0, b"identical\r\n", b"")
         self.assertEqual(self.run_comparison(lambda *_: result), 0)
 
-    def test_even_line_ending_difference_fails(self):
+    def test_line_ending_difference_passes_after_normalization(self):
+        # Line endings are a platform artefact: a baseline built in a CRLF
+        # checkout and a candidate in an LF checkout differ on every line
+        # without a semantic change. The platform matrix mandates this
+        # normalization for example comparisons, and the script now applies
+        # it here too (2026-11-22: the switchover gate reported 50+122 false
+        # diffs before the fix).
         def emit(binary, source):
             return subprocess.CompletedProcess([], 0, b"same\r\n" if binary == self.baseline else b"same\n", b"")
+        self.assertEqual(self.run_comparison(emit), 0)
+
+    def test_real_content_difference_still_fails(self):
+        def emit(binary, source):
+            return subprocess.CompletedProcess([], 0, b"before\r\n" if binary == self.baseline else b"after\r\n", b"")
         self.assertEqual(self.run_comparison(emit), 1)
 
     def test_compiler_failure_does_not_pass_as_matching_output(self):
