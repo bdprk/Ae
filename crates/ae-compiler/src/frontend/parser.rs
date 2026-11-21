@@ -579,9 +579,9 @@ impl<'a> Parser<'a> {
                     || arguments.len() != signature.params.len() || arguments.len() > 64
                     || !signature.params.iter().all(|ty| {
                         matches!(ty, Type::Int | Type::Bool | Type::F64 | Type::String | Type::StrView
-                            | Type::Vec | Type::VecF | Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_) | Type::StructRef(_) | Type::StructMut(_))
+                            | Type::Vec | Type::VecF | Type::VecRef | Type::VecFRef | Type::StrVecRef | Type::Array(_) | Type::Struct(_) | Type::StructRef(_) | Type::StructMut(_))
                     })
-                    || !matches!(signature.ret, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::VecF)
+                    || !matches!(signature.ret, Type::Int | Type::Bool | Type::F64 | Type::String | Type::Vec | Type::VecF | Type::Struct(_))
                 {
                     return None;
                 }
@@ -650,7 +650,10 @@ impl<'a> Parser<'a> {
                                 return None;
                             }
                             if expected == ty && ty.owned() {
-                                if self.variable_move_needs_deferral(slot)? {
+                                if self.variable_move_needs_deferral(slot)?
+                                    || effects.call_borrows.contains(&slot)
+                                    || effects.mut_borrows.contains(&slot)
+                                {
                                     effects.conflicts.push((slot, argument.range.start, name.clone(), "move", None));
                                 }
                                 effects.moves.push(slot);

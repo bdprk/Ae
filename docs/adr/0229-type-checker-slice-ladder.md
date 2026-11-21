@@ -124,7 +124,7 @@ updates this ADR as slices land.
    operands continue through the typed path.
    Safe direct calls in the same module also lower through resolver
    definitions when arguments match the signature and the result is
-   scalar, string, or a numeric vector. The shared route handles scalar
+   scalar, string, numeric vector, or struct. The shared route handles scalar
    arguments, owned string and numeric vector temporaries or locals, and
    string views backed by temporaries or resolved locals. Moves and their deferred view conflicts
    are committed only after the containing expression lowers successfully.
@@ -148,7 +148,8 @@ updates this ADR as slices land.
    borrow alongside moves. Deferred view conflicts retain argument
    evaluation order, and the compiler commits the effects only after
    lowering succeeds. Existing references forward without taking a
-   second address.
+   second address. Owned struct arguments move resolved locals and also
+   accept struct results from nested shared calls.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 
