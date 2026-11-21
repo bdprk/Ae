@@ -666,6 +666,7 @@ enum BorrowKind { View, Container }
 #[derive(Clone, Copy)]
 enum IndexedStatement {
     Binding { name_start: usize, name_end: usize, mutable: bool },
+    For { binding_start: usize, binding_end: usize, is_range: bool },
     Print(usize),
     Assert(usize),
     Break,

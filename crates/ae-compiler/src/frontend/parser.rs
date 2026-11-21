@@ -473,6 +473,16 @@ impl<'a> Parser<'a> {
                             name_end: name_range.end,
                             mutable: *mutable,
                         }),
+                        StatementKind::ForRange { binding_range, .. } => Some(IndexedStatement::For {
+                            binding_start: binding_range.start,
+                            binding_end: binding_range.end,
+                            is_range: true,
+                        }),
+                        StatementKind::ForIn { binding_range, .. } => Some(IndexedStatement::For {
+                            binding_start: binding_range.start,
+                            binding_end: binding_range.end,
+                            is_range: false,
+                        }),
                         StatementKind::Print(argument) => Some(IndexedStatement::Print(argument.range.start)),
                         StatementKind::Assert(argument) => Some(IndexedStatement::Assert(argument.range.start)),
                         StatementKind::Break => Some(IndexedStatement::Break),
@@ -1048,6 +1058,20 @@ impl<'a> Parser<'a> {
         let start = self.tokens.get(self.pos)?.offset;
         let &(kind, end) = self.resolved_expressions().statements.get(&start)?;
         Some((kind, self.tokens.partition_point(|token| token.offset < end)))
+    }
+
+    /// The loop binding's name from the shared for statement, when the
+    /// resolver tree indexed this `for` (ADR-0229 slice 5): the binding
+    /// name and whether the iterable is a range. Falls back to the token
+    /// reads when the index misses.
+    fn for_header(&self, loop_offset: usize) -> Option<(String, bool)> {
+        let Some((IndexedStatement::For { binding_start, binding_end, is_range }, _)) =
+            self.resolved_expressions().statements.get(&loop_offset) else {
+            return None;
+        };
+        let (binding_start, binding_end, is_range) = (*binding_start, *binding_end, *is_range);
+        let name = self.source.get(binding_start..binding_end)?.to_owned();
+        Some((name, is_range))
     }
 
     fn binding_header(&self) -> Result<ae_syntax::statement::BindingHeader<'_>, ae_span::Diagnostic> {
@@ -1656,7 +1680,14 @@ impl<'a> Parser<'a> {
                 Kind::For => {
                     let loop_offset = self.tokens[self.pos].offset;
                     self.pos += 1;
-                    let var_name = self.identifier()?;
+                    let shared_for = self.for_header(loop_offset);
+                    let var_name = match &shared_for {
+                        Some((name, _)) => {
+                            self.pos += 1;
+                            name.clone()
+                        }
+                        None => self.identifier()?,
+                    };
                     if RESERVED.contains(&var_name.as_str()) { return Err(self.fail(&format!("'{var_name}' is a built-in name and cannot be a loop variable"))); }
                     if self.names.contains_key(&var_name) { return Err(self.duplicate_binding_error(&var_name)); }
                     self.take(Kind::In)?;
