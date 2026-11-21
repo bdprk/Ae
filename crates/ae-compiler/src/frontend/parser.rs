@@ -78,6 +78,12 @@ fn scalar_body_statement(statement: &ae_syntax::statement::Statement, resolved: 
             scalar_body_expression(condition, resolved)
                 && body.iter().all(|statement| scalar_body_statement(statement, resolved))
         }
+        StatementKind::ForRange { binding_range, start, end, body, .. } => {
+            resolved.scalar_definitions.contains_key(&binding_range.start)
+                && scalar_body_expression(start, resolved)
+                && scalar_body_expression(end, resolved)
+                && body.iter().all(|statement| scalar_body_statement(statement, resolved))
+        }
         StatementKind::Break | StatementKind::Continue => true,
         _ => false,
     }
@@ -653,7 +659,11 @@ impl<'a> Parser<'a> {
         self.take(Kind::LBrace)?;
         let mut statements = Vec::with_capacity(body.len());
         for statement in body {
-            statements.push(self.lower_scalar_statement(statement, slots)?);
+            if matches!(statement.kind, StatementKind::ForRange { .. }) {
+                self.lower_scalar_range(statement, slots, &mut statements)?;
+            } else {
+                statements.push(self.lower_scalar_statement(statement, slots)?);
+            }
         }
         self.take(Kind::RBrace)?;
         for statement in body {
@@ -755,10 +765,7 @@ impl<'a> Parser<'a> {
                 if self.loop_depth >= 64 {
                     return Err(self.fail("loop nesting limit exceeded (64)"));
                 }
-                self.loop_depth += 1;
-                let lowered = self.lower_scalar_statements(body, slots);
-                self.loop_depth -= 1;
-                Statement::While(condition, lowered?)
+                Statement::While(condition, self.lower_scalar_loop_body(body, slots, None)?)
             }
             StatementKind::Break | StatementKind::Continue => {
                 let is_break = matches!(statement.kind, StatementKind::Break);
@@ -767,12 +774,83 @@ impl<'a> Parser<'a> {
                     let keyword = if is_break { "break" } else { "continue" };
                     return Err(self.fail(&format!("'{keyword}' outside of a loop")));
                 }
-                if is_break { Statement::Break } else { Statement::Continue(None) }
+                if is_break {
+                    Statement::Break
+                } else {
+                    Statement::Continue(self.loop_labels.last().copied().flatten())
+                }
             }
             _ => unreachable!("scalar body eligibility"),
         };
         self.seek_scalar_offset(statement.range.end);
         Ok(lowered)
+    }
+
+    fn lower_scalar_range(
+        &mut self,
+        statement: &ae_syntax::statement::Statement,
+        slots: &mut HashMap<ae_resolve::DefId, (usize, Type)>,
+        statements: &mut Vec<Statement>,
+    ) -> Result<(), ae_span::Diagnostic> {
+        let ae_syntax::statement::StatementKind::ForRange { binding, binding_range, start, end, body } = &statement.kind else {
+            unreachable!("scalar range eligibility");
+        };
+        self.seek_scalar_offset(binding_range.end);
+        if RESERVED.contains(&binding.as_str()) {
+            return Err(self.fail(&format!("'{binding}' is a built-in name and cannot be a loop variable")));
+        }
+        if self.names.contains_key(binding) {
+            return Err(self.duplicate_binding_error(binding));
+        }
+        let start = self.lower_scalar_range_bound(start, slots)?;
+        let end = self.lower_scalar_range_bound(end, slots)?;
+        if self.loop_depth >= 64 {
+            return Err(self.fail("loop nesting limit exceeded (64)"));
+        }
+        let (line, column) = self.position();
+        let end_slot = self.next_var;
+        let slot = end_slot + 1;
+        self.next_var += 2;
+        let label = self.next_label;
+        self.next_label += 1;
+        let def = self.resolved_expressions().scalar_definitions[&binding_range.start];
+        slots.insert(def, (slot, Type::Int));
+        self.names.insert(binding.clone(), (slot, false, Type::Int));
+        let body = self.lower_scalar_loop_body(body, slots, Some(label));
+        slots.remove(&def);
+        self.names.remove(binding);
+        let body = body?;
+        statements.push(Statement::Declare(slot, start));
+        statements.push(Statement::Declare(end_slot, end));
+        statements.push(Statement::For(slot, end_slot, body, label, line, column));
+        Ok(())
+    }
+
+    fn lower_scalar_loop_body(
+        &mut self,
+        body: &[ae_syntax::statement::Statement],
+        slots: &mut HashMap<ae_resolve::DefId, (usize, Type)>,
+        label: Option<usize>,
+    ) -> Result<Vec<Statement>, ae_span::Diagnostic> {
+        self.loop_depth += 1;
+        self.loop_labels.push(label);
+        let result = self.lower_scalar_statements(body, slots);
+        self.loop_labels.pop();
+        self.loop_depth -= 1;
+        result
+    }
+
+    fn lower_scalar_range_bound(
+        &mut self,
+        expression: &ae_syntax::expression::Expression,
+        slots: &HashMap<ae_resolve::DefId, (usize, Type)>,
+    ) -> Result<Expr, ae_span::Diagnostic> {
+        let (value, ty) = self.lower_scalar_body_expression(expression, slots)?;
+        self.seek_scalar_offset(expression.range.end);
+        if ty != Type::Int {
+            return Err(self.fail("range bounds must be i64"));
+        }
+        Ok(value)
     }
 
     fn lower_scalar_condition(
@@ -2485,7 +2563,7 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn scalar() -> bool { let local = (2 + 3) * 4; return local == 20; } fn mismatch() -> i64 { return true; } fn branches() -> i64 { if false { let same = 1; return same; } else if true { let same = 2; return same; } else { let same = 3; return same; } } fn loops() -> i64 { while true { while false { continue; } break; } return 7; } fn bad_loop() -> i64 { continue; return 0; } fn countdown() -> i64 { var n = 4; n = 2; while n > 0 { n -= 1; } return n; } fn frozen() -> i64 { let n = 1; n = 2; return n; } fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; task_spawn(ex, || -> i64 { return 0; }); let closure = |x: i64| -> bool { return x == 0; }; }";
+        let source = "fn scalar() -> bool { let local = (2 + 3) * 4; return local == 20; } fn mismatch() -> i64 { return true; } fn branches() -> i64 { if false { let same = 1; return same; } else if true { let same = 2; return same; } else { let same = 3; return same; } } fn loops() -> i64 { while true { while false { continue; } break; } return 7; } fn bad_loop() -> i64 { continue; return 0; } fn ranges() -> i64 { for i in 2..5 { while false { continue; } if i == 3 { continue; } } let i = 7; return i; } fn bad_range() -> i64 { for j in false..5 {} return 0; } fn countdown() -> i64 { var n = 4; n = 2; while n > 0 { n -= 1; } return n; } fn frozen() -> i64 { let n = 1; n = 2; return n; } fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; var value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; let write = &mut value as *mut bool; print(compute(choose[i64, vec[f64]](2, vec[1.0]))); let pair = Pair[i64, vec[f64]] { first: 1, second: vec[1.0] }; let made = Pair[i64, vec[f64]]::new(); let variant = Choice[i64, vec[f64]]::Some(1); let empty = Choice[i64, vec[f64]]::empty(); let compound = raw as *const shared[i64]; task_spawn(ex, || -> i64 { return 0; }); let closure = |x: i64| -> bool { return x == 0; }; }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
         let call_token = tokens.iter().position(|token| token.offset == source.find("print(compute").unwrap()).unwrap();
@@ -2537,6 +2615,25 @@ mod tests {
         let error = parser.lower_resolved_scalar_body().expect("resolved loop error").err().unwrap();
         assert_eq!(error.message, "'continue' outside of a loop");
         assert_eq!(parser.loop_depth, 0);
+
+        parser.seek_scalar_offset(source.find("{ for i in 2").unwrap());
+        let body = parser.lower_resolved_scalar_body().expect("resolved range").unwrap();
+        let [Statement::Declare(start, Expr::Number(2)), Statement::Declare(end, Expr::Number(5)), Statement::For(counter, limit, loop_body, label, ..), Statement::Declare(reused, Expr::Number(7)), Statement::Return(Expr::Variable(read, Type::Int, ..), _)] = body.as_slice() else {
+            panic!("expected range bounds and loop");
+        };
+        assert_eq!((start, end), (counter, limit));
+        assert_eq!(*start, *end + 1);
+        assert_ne!(counter, reused);
+        assert_eq!(reused, read);
+        let [Statement::While(_, inner), Statement::If(_, branch, _)] = loop_body.as_slice() else {
+            panic!("expected nested while and conditional");
+        };
+        assert!(matches!(inner.as_slice(), [Statement::Continue(None)]));
+        assert!(matches!(branch.as_slice(), [Statement::Continue(Some(jump))] if jump == label));
+
+        parser.seek_scalar_offset(source.find("{ for j in false").unwrap());
+        let error = parser.lower_resolved_scalar_body().expect("resolved range error").err().unwrap();
+        assert_eq!(error.message, "range bounds must be i64");
 
         parser.seek_scalar_offset(source.find("{ var n = 4").unwrap());
         let body = parser.lower_resolved_scalar_body().expect("resolved assignments").unwrap();

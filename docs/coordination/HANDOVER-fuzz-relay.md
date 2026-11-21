@@ -320,3 +320,9 @@ loops are still on the typed token route.
 Scalar bodies now lower plain and compound assignment to resolved locals.
 Writable bindings and compound operand types retain the compiler's existing
 checks. Range loops remain the next control-flow slice.
+
+## Resolved scalar range loops (2026-11-22)
+
+The scalar body route lowers i64 ranges, declares bounds in evaluation
+order, and uses the existing range-loop continue label. The loop binding
+is scoped to its body. Iterable collection loops remain open.
