@@ -202,6 +202,26 @@ call sites), plus lower_shared_array for fixed arrays in the Declare arm.
    compiler-side until the type checker owns instantiation.
 4. `Closure` - deliberately opaque (capture inference is compiler-side).
 
+## Frontier closed (2026-11-22)
+
+Every typed-parse entry point except one now routes through the shared
+tree: statement heads (let/var, for), statement values (exit, chan_close,
+cell_store, spawn handles, push, array/vec/strvec/map stores, moving
+values, compound RHS, return, pointer stores), reads (locals incl.
+copy-semantics handles, map keys, array/vec indices, assert/print
+arguments, field-store keys). All dual-platform 484/0 with byte parity.
+
+**The single remaining site is by design:** the `spawn` callable
+parameter (parser.rs:196). It needs `Expr::ClosureLit(cid)` with capture
+inference from the compiler's `generics.closures` machinery; the shared
+resolver keeps closure bodies opaque (ADR-0229's recorded decision), so
+this argument stays on the typed parse until R3c owns capture inference.
+
+With the sweep complete, the next evaluation is the M0.2.08 close
+condition: `emit-c` byte-parity over the whole corpus plus the remaining
+typed-only constructs (casts, specializations) reviewed as either
+R3c-blocked or acceptable.
+
 The frontier is the type-checker boundary (R3c): the remaining kinds each
 need type-level machinery the resolver does not have. The ladder resumes
 here in the next session, one kind per slice with the dual-platform gates.
