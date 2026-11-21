@@ -288,3 +288,5 @@
 - 2026-11-21 20:06 (+08:00): Shared propagation nodes now feed binding initializers and effect statements while leaving the marker for existing typed early-return checks. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 36 focused comparisons. Ubuntu passed 41 sanitizer and leak checks. All seven distributed relays were verified live.
 
 - 2026-11-21 20:13 (+08:00): For loops now consume indexed vector and token-cursor bindings and the shared range upper bound. Loop binding diagnostic spans retain the baseline behavior. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 36 focused comparisons. Ubuntu passed 41 sanitizer and leak checks. All seven distributed relays were verified live.
+
+- 2026-11-21 20:18 (+08:00): Fixed-array declarations now lower indexed initializer elements in order with independent complexity budgets. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 36 focused comparisons including the element-limit boundary. Ubuntu passed 41 sanitizer and leak checks. All seven relay processes were verified live.

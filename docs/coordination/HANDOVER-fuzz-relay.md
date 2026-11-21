@@ -130,3 +130,5 @@ cargo test --workspace --locked
 - Shared propagation passed the full corpus and 36 focused comparisons. Next, consume indexed for-loop operand nodes while preserving iteration mode and ownership.
 
 - Indexed for-loop operands passed the full corpus and 36 focused comparisons. The diagnostic binding-range map retains its prior scope. Next, consume fixed-array initializer trees.
+
+- Fixed-array initializers passed full corpus and focused parity on both platforms. Next, consume indexed assignment targets and preserve the existing write checks. The three early remote lanes and the Windows lane should be checked for completion around 20:25.

@@ -941,6 +941,32 @@ impl<'a> Parser<'a> {
         Some(value)
     }
 
+    fn lower_shared_array(&mut self) -> Option<Vec<Expr>> {
+        use ae_syntax::expression::ExpressionKind;
+
+        let start = self.tokens.get(self.pos)?.offset;
+        let root = self.resolved_expressions().values.get(&start).cloned()?;
+        let ExpressionKind::Array(elements) = &root.kind else {
+            return None;
+        };
+        let end = self.tokens.partition_point(|token| token.offset < root.range.end);
+        if elements.is_empty() || elements.len() > 4096 || self.tokens.get(end)?.kind != Kind::Semi {
+            return None;
+        }
+        let mut effects = SharedExpressionEffects::default();
+        let mut values = Vec::with_capacity(elements.len());
+        for element in elements {
+            let mut nodes_left = 128;
+            let (value, Type::Int) = self.lower_shared_expression(element, 64, &mut nodes_left, &mut effects)? else {
+                return None;
+            };
+            values.push(value);
+        }
+        self.pos = end + 1;
+        self.commit_shared_effects(effects);
+        Some(values)
+    }
+
     fn lower_shared_iterable(&mut self) -> Option<(Expr, Type)> {
         use ae_syntax::expression::ExpressionKind;
 
@@ -1055,7 +1081,11 @@ impl<'a> Parser<'a> {
                     if self.names.contains_key(&name) { return Err(self.duplicate_binding_error(&name)); }
                     self.take(Kind::Equal)?;
                     let id = self.next_var; self.next_var += 1;
-                    let (stmt, ty) = if *self.current() == Kind::LBracket {
+                    let shared_array = if *self.current() == Kind::LBracket { self.lower_shared_array() } else { None };
+                    let (stmt, ty) = if let Some(values) = shared_array {
+                        let len = values.len();
+                        (Statement::Array(id, values), Type::Array(len))
+                    } else if *self.current() == Kind::LBracket {
                         self.pos += 1;
                         if *self.current() == Kind::RBracket { return Err(self.fail("array must contain at least one element")); }
                         let values = ae_syntax::parse_comma_list(

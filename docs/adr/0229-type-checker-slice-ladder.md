@@ -175,6 +175,9 @@ updates this ADR as slices land.
    For loops use indexed vector or token-cursor bindings and range
    operands. The typed loop machinery still owns evaluation order,
    borrow lifetime, jump targets, and cleanup.
+   Fixed-array declarations consume indexed initializer elements in
+   source order. Each element retains its own expression budget, and
+   the typed route handles invalid lengths and element types.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 
