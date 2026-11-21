@@ -196,3 +196,5 @@
 
 - 2026-11-21 11:00 R4.1 分类草案：std 261 文件扫描——240 个零宿主内建调用（core-eligible），21 个引用宿主面（bytes/exit/cell_*/io/task 族；bytes 与 cell_* 是否纯到可入 core 留给拆分切片裁决）。已记入台账 R4.1 进度。同日确认接力模式：下一 AI 直接在主树工作（仓库根目录；入口 = docs/HANDOFF-20261121.md → AGENT_PROGRESS 停点交接 → 台账）。
 
+- 2026-11-21 12:35 战役收尾：完整段三台收数——evaluate-2 12100 seeds/0、evaluate-1 11599/0、eva 6536/0（合计 30235 seeds 零失败，时长 3600s 每台）；evaluate-3/WSL/Windows 收集时仍在跑且全程零失败（WSL 终值因树对齐时 git clean 误删打开中的日志而不可恢复——教训：树对齐前的 clean 要避开打开中的日志句柄）。机读记录 bench/results/2026-11-21-distributed-campaign/summary.json。全部已提交（自动推送）。
+
