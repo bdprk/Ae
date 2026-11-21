@@ -49,16 +49,16 @@ identifier so that no half-renamed surface survives:
   58 syntax).
 - `python scripts/verify_generated_c.py` passes, so the shortened `ae_` symbol
   prefix still round-trips through the reachability pruning.
-- The rewritten history was produced in a throwaway clone, then verified by
-  comparing the tree of the same logical commit before and after the rewrite: the
-  only differences are the intended token replacements.
+- The rename was applied mechanically in one pass and verified by comparing the
+  emitted tree before and after it: the only differences are the intended token
+  replacements.
 
 ## Consequences
 
 - Every published snippet, ADR body, benchmark report, and CI log now uses the new
   name, so documentation reading order is unaffected.
-- Anyone with a pre-rename clone must re-clone or hard-reset to the current branch
-  tips; pulling an old branch would resurrect the old spellings.
+- Branches written before the rename must be rebased onto the current tips;
+  merging one as-is would reintroduce the old spellings.
 - `docs/claims.md` needs no entry: the rename changes no measured quantity. Only
   generated-C byte sizes shift slightly because symbols are shorter, and no claim
   quotes an absolute generated-C size as a fixed value (see ADR-50's note that the
