@@ -1707,7 +1707,10 @@ let (rhs, rhs_ty) = match self.lower_shared_value(None, false) {
                         return Err(self.error_at(line, "writing through a raw pointer requires 'unsafe'").with_code("E0700"));
                     }
                     self.take(Kind::Equal)?;
-                    let (value, value_ty) = self.expression(0, false)?;
+                    let (value, value_ty) = match self.lower_shared_value(None, false) {
+                        Some(pair) => pair,
+                        None => self.expression(0, false)?,
+                    };
                     let pointee = super::ptr_pointee(pointee_id);
                     if value_ty != pointee {
                         return Err(self.fail(&format!("cannot write a {} value through *mut {}", value_ty.name(), pointee.name())));
