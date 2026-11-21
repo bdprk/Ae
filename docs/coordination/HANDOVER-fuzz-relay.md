@@ -1,6 +1,6 @@
 # Handover — fuzz relay
 
-- Date: 2026-11-21 15:15 +08:00
+- Date: 2026-11-21 15:27 +08:00
 - Branch: `agent/fuzz-relay`
 - Worktree: the dedicated fuzz-relay worktree of this checkout
 - Area claim: docs
@@ -42,8 +42,9 @@
 ## Next step
 
 ```powershell
-ssh instabox-evaluate-3 'tail -n 20 ~/ae/bench/results/fuzz-segment-start734251.log'
-wsl -d Ubuntu -- bash -lc 'tail -n 20 ~/ae/bench/results/fuzz-segment-start1040072.log'
+ssh instabox-evaluate-3 'tail -n 20 ~/ae/bench/results/fuzz-segment-start745647.log'
+wsl -d Ubuntu -- bash -lc 'tail -n 20 ~/ae/bench/results/fuzz-segment-start1066059.log'
+Get-Content ../../ae/bench/results/2026-11-21-distributed-campaign/windows-baseline-start970018.log -Tail 20
 cargo test --workspace --locked
 ```
 
@@ -88,3 +89,5 @@ cargo test --workspace --locked
 - Resolver expression roots passed 484 tests, 50 generated C examples, 646 frontend CLI invocations, and 28 focused comparisons per platform. Ubuntu passed 41 sanitizer and leak checks and 40 candidate fuzz seeds.
 
 - Indexed output statements and loop jumps passed 484 tests, 50 generated C example comparisons, 646 CLI comparisons, and 32 focused comparisons per platform. Ubuntu passed 41 sanitizer and leak checks. The resolver still parses opaque closure bodies during its walk. Exposing those bodies to compiler lowering is the next frontend step.
+
+- The 15:27 batch covered 78,348 distinct seeds with zero differential failures and zero environmental verdicts. Active successors are eva 429299 (PID 3614912), evaluate-1 550709 (3338406), evaluate-2 658941 (1679986), evaluate-3 745647 (343010), ai 818844 (418711), Windows 970018 (5512, exclusive ceiling 1000000), and Ubuntu 1066059 (guest 913946, exclusive ceiling 1100000). Use the Windows baseline log named above. The separate Windows 970018 probe is excluded.

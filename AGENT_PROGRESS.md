@@ -245,3 +245,6 @@
 - 2026-11-21 15:12 (+08:00): Shared expression entry points now lower roots from resolver module body trees and derive the next token from each root's source range. Recursive lowering borrows the indexed tree. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 frontend CLI invocations, and 28 focused comparisons. Ubuntu passed 41 sanitizer and leak checks and 40 candidate fuzz seeds with zero failures. All seven distributed fuzz processes were live.
 
 - 2026-11-21 15:22 (+08:00): Output and loop jump statements now use the source ranges and argument roots indexed from resolver body trees. Opaque closure bodies retain local shared statement parsing to preserve C and MIR for literal print calls. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 frontend CLI invocations, and 32 focused comparisons. Ubuntu passed 41 generated-C sanitizer and leak checks.
+
+
+- 2026-11-21 15:27 (+08:00): Reconciled seven terminal fuzz segments covering 78,348 distinct continuous seeds with zero differential or environmental failures. Started each successor from its next seed. Windows and Ubuntu retain separate exclusive ceilings and the original compiler binaries. The Windows probe that selected another binary is excluded from the ledger totals.
