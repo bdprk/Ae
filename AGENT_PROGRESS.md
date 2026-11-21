@@ -266,3 +266,6 @@
 - 2026-11-21 16:17 (+08:00): Shared direct calls now lower mutable struct borrows and stage both move and mutation conflicts in argument evaluation order. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 frontend CLI comparisons, and 40 focused comparisons. Ubuntu passed all 41 sanitizer and leak checks. Six relay PIDs were verified live. The evaluate-1 SSH endpoint closed repeated observation attempts.
 
 - 2026-11-21 16:24 (+08:00): Shared direct calls now move owned struct locals and consume struct results from nested calls. Moves after staged statement borrows retain the existing deferred checks. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 frontend CLI comparisons, and 40 focused comparisons. Ubuntu passed all 41 sanitizer and leak checks.
+
+
+- 2026-11-21 19:25 (+08:00): Reconciled 78,897 contiguous seed verdicts across seven terminal relay logs. All seven successors produced new verdicts. Windows and Ubuntu retain their exclusive seed ceilings.
