@@ -2,7 +2,7 @@
 
 - Date: 2026-11-21 11:52 +08:00
 - Branch: `agent/fuzz-relay`
-- Worktree: `D:/用户/trevv/桌面/projects-bdprk-副号/worktrees/fuzz-relay`
+- Worktree: the dedicated fuzz-relay worktree of this checkout
 - Area claim: docs
 
 ## What is done

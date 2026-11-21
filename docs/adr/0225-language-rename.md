@@ -49,9 +49,9 @@ identifier so that no half-renamed surface survives:
   58 syntax).
 - `python scripts/verify_generated_c.py` passes, so the shortened `ae_` symbol
   prefix still round-trips through the reachability pruning.
-- The rewritten history was produced in a throwaway clone, then verified by
-  comparing the tree of the same logical commit before and after the rewrite: the
-  only differences are the intended token replacements.
+- The rename was applied mechanically in one pass and verified by comparing the
+  emitted tree before and after it: the only differences are the intended token
+  replacements.
 
 ## Consequences
 
