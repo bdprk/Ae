@@ -251,7 +251,10 @@ impl<'a> Parser<'a> {
             self.take(Kind::Semi)?;
             return Ok(Statement::ChanClose(Box::new(handle)));
         }
-        let (handle, handle_ty) = self.expression(0, false)?;
+        let (handle, handle_ty) = match self.lower_shared_value(Some(Kind::Comma), false) {
+            Some(pair) => pair,
+            None => self.expression(0, false)?,
+        };
         let sid = match handle_ty {
             Type::Shared(sid) => sid,
             _ => return Err(self.fail("shared_set expects a shared handle")),
