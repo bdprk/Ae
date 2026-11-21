@@ -1,6 +1,15 @@
 //! Type syntax, definitions, constructors, and generic instantiation.
 use super::*;
 
+pub(super) fn scalar_type(name: &str) -> Option<Type> {
+    match name {
+        "i64" => Some(Type::Int),
+        "f64" => Some(Type::F64),
+        "bool" => Some(Type::Bool),
+        _ => None,
+    }
+}
+
 impl Parser<'_> {
     pub(super) fn read_type_arguments(
         &mut self,
@@ -26,10 +35,8 @@ impl Parser<'_> {
         // argument the call site supplied; nothing must reach code generation
         // with a parameter still in it.
         if let Some(&concrete) = self.subst.get(&name) { return Ok(concrete); }
+        if let Some(ty) = scalar_type(&name) { return Ok(ty); }
         match name.as_str() {
-            "i64" => Ok(Type::Int),
-            "f64" => Ok(Type::F64),
-            "bool" => Ok(Type::Bool),
             "string" => Ok(Type::String),
             // The copy-semantics cell handle (spec/concurrency.md §8): a
             // parameter typed `atomic` shares the caller's cell.

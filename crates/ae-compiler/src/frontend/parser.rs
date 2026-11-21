@@ -689,8 +689,8 @@ impl<'a> Parser<'a> {
         }
         let remaining = remaining.checked_sub(1)?;
         // The typed Pratt parser charges operands, groups and prefixes.
-        // An infix node adds no charge beyond its two operand walks.
-        if !matches!(expression.kind, ExpressionKind::Binary { .. }) {
+        // Infix and postfix cast nodes add no charge beyond their operands.
+        if !matches!(expression.kind, ExpressionKind::Binary { .. } | ExpressionKind::PointerCast { .. }) {
             *nodes_left = nodes_left.checked_sub(1)?;
         }
         match &expression.kind {
@@ -705,7 +705,7 @@ impl<'a> Parser<'a> {
             }
             ExpressionKind::Atom(Kind::Ident(name)) => {
                 let (_, _, ty) = self.names.get(name)?;
-                if !matches!(ty, Type::Int | Type::F64 | Type::Bool | Type::Closure(_)) {
+                if !matches!(ty, Type::Int | Type::F64 | Type::Bool | Type::Closure(_) | Type::Ptr(_) | Type::PtrMut(_)) {
                     return None;
                 }
                 self.lower_resolved_local(name, expression.range.start)
@@ -790,6 +790,19 @@ impl<'a> Parser<'a> {
                 }
                 let ty = vector_type.unwrap_or(Type::Vec);
                 Some((Expr::VecLit(values, ty, line, column), ty))
+            }
+            ExpressionKind::PointerCast { base, mutable, pointee } => {
+                let (operand, base_type) = self.lower_shared_expression(base, remaining, nodes_left, effects)?;
+                if !matches!(base_type, Type::Ptr(_) | Type::PtrMut(_)) {
+                    return None;
+                }
+                let name = self.source.get(pointee.clone())?;
+                let pointee = self.subst.get(name).copied().or_else(|| super::types::scalar_type(name))?;
+                let end = self.tokens.partition_point(|token| token.offset < expression.range.end);
+                let token = self.tokens.get(end)?;
+                let id = super::intern_pointee(pointee);
+                let ty = if *mutable { Type::PtrMut(id) } else { Type::Ptr(id) };
+                Some((Expr::PtrCast(Box::new(operand), *mutable, id, token.line, token.column), ty))
             }
             ExpressionKind::Group(inner) => self.lower_shared_expression(inner, remaining, nodes_left, effects),
             ExpressionKind::Qualified { .. } => {
@@ -2157,7 +2170,7 @@ mod tests {
 
     #[test]
     fn scalar_output_matches_resolver_definition_to_live_slot() {
-        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; let value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); }";
+        let source = "fn compute(x: i64) -> i64 { return x; } fn consume(s: string) -> i64 { return 1; } fn main() { let text = \"hello\"; let flag = true; let value = flag; if flag {} print(flag); print(compute(2)); assert(consume(text)); print(consume(text)); let v = vec[1.0, 2.0]; print(vec[1]); print(v[0]); let raw = &value as *const bool; let view = raw as *mut f64; }";
         let tokens = Rc::new(ae_syntax::lex_diagnostic(source).unwrap());
         let print_token = tokens.iter().position(|token| token.kind == Kind::Print).unwrap();
         let call_token = tokens.iter().position(|token| token.offset == source.find("print(compute").unwrap()).unwrap();
@@ -2281,5 +2294,20 @@ mod tests {
             parser.lower_output_from_syntax(),
             Some(Statement::Print(Printed::Expr(Expr::VecIndex(11, _, 1, _, false, Type::F64))))
         ));
+
+        let binding = source.find("let raw").unwrap() + 4;
+        let raw = Type::Ptr(super::super::intern_pointee(Type::Bool));
+        parser.names.insert("raw".into(), (12, false, raw));
+        parser.binding_ranges.insert(12, binding..binding + 3);
+        let cast = source.find("raw as").unwrap();
+        parser.pos = parser.tokens.partition_point(|token| token.offset < cast);
+        assert!(matches!(
+            parser.lower_shared_value(Some(Kind::Semi), false),
+            Some((Expr::PtrCast(operand, true, id, _, column), Type::PtrMut(pointee)))
+                if matches!(*operand, Expr::Variable(12, ty, _, _) if ty == raw)
+                    && id == pointee && super::super::ptr_pointee(id) == Type::F64
+                    && column == cast + "raw as *mut f64;".len()
+        ));
+        assert_eq!(*parser.current(), Kind::Semi);
     }
 }

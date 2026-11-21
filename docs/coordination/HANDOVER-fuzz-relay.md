@@ -241,3 +241,10 @@ Named closure references use shared expression lowering, including grouped
 references. The task fixture exercises a grouped closure with a captured
 value. Inline literals still use the compiler's capture inference. The next
 expression constructs to review are pointer casts and specializations.
+
+## Pointer retags (2026-11-22)
+
+Shared expression lowering consumes pointer-to-pointer casts to scalar
+pointees, preserving the typed cursor location and pointer interning.
+Address casts still use the typed path for borrow and ownership checks.
+Compound pointee types and generic specialization remain compiler work.
