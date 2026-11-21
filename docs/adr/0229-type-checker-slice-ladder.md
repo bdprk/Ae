@@ -166,6 +166,9 @@ updates this ADR as slices land.
    string payload moves and the original arity and type diagnostics.
    Shared direct calls accept enum temporaries and move owned enum
    arguments, including unit variants, using the existing move rules.
+   Match statements use indexed enum binding subjects and cached arm
+   patterns. The compiler still binds payload slots, checks exhaustiveness,
+   and enforces the subject's container borrow.
 6. **LSP rebase** (R3d) after 5: hover/definition/rename/completion read
    the def table and types instead of matching text.
 

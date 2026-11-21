@@ -282,3 +282,5 @@
 - 2026-11-21 19:49 (+08:00): Shared lowering now consumes resolved unit and payload enum constructors, preserving string moves and payload diagnostics. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 36 focused comparisons. Ubuntu passed 41 sanitizer and leak checks. All seven relay processes were verified live.
 
 - 2026-11-21 19:54 (+08:00): Shared direct calls now accept enum values, move enum locals including unit variants, and return enum temporaries. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 32 focused comparisons. Ubuntu passed 41 sanitizer and leak checks. All seven distributed relay processes were verified live.
+
+- 2026-11-21 20:00 (+08:00): Match lowering now reads an indexed bare enum subject and reuses cached resolver arm patterns. Windows and Ubuntu each passed 484 tests, 50 generated C examples, 646 CLI comparisons, and 36 focused comparisons. Ubuntu passed 41 sanitizer and leak checks. All seven relay processes were verified live.

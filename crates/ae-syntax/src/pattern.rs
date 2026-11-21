@@ -4,13 +4,13 @@ use ae_span::Diagnostic;
 
 use crate::{diagnostic_range, Kind, Token};
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Pattern {
     pub kind: PatternKind,
     pub range: Range<usize>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PatternKind {
     Binding(String),
     /// `variant_range` is the variant name's byte span; semantic checks point

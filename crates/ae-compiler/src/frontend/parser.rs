@@ -467,6 +467,11 @@ impl<'a> Parser<'a> {
             for statement in function_statements.chain(closure_statements) {
                 ae_syntax::statement::visit_statements(statement, &mut |statement| {
                     expressions.statement_ends.insert(statement.range.start, statement.range.end);
+                    if let ae_syntax::statement::StatementKind::Match { arms, .. } = &statement.kind {
+                        for arm in arms {
+                            expressions.match_patterns.insert(arm.pattern.range.start, arm.pattern.clone());
+                        }
+                    }
                     for expression in statement.expressions() {
                         expressions.values.insert(expression.range.start, Rc::new(expression.clone()));
                     }
@@ -1757,7 +1762,17 @@ impl<'a> Parser<'a> {
     // the semantic layer (declaration shape, binding kinds, exhaustiveness).
     pub(super) fn match_statement(&mut self) -> Result<Statement, ae_span::Diagnostic> {
         self.pos += 1;
-        let (subject, subject_ty) = self.expression(0, false)?;
+        let bare_enum = match self.current() {
+            Kind::Ident(name) => name != "Self" && !self.struct_names.contains_key(name)
+                && matches!(self.names.get(name), Some((_, _, Type::Enum(..))))
+                && self.tokens.get(self.pos + 1).is_some_and(|token| token.kind == Kind::LBrace),
+            _ => false,
+        };
+        let shared = if bare_enum { self.lower_shared_value(Some(Kind::LBrace), false) } else { None };
+        let (subject, subject_ty) = match shared {
+            Some(value) => value,
+            None => self.expression(0, false)?,
+        };
         let (sid, eid) = match (&subject, subject_ty) {
             (Expr::Variable(id, Type::Enum(_, _), _, _), Type::Enum(_, k)) => (*id, k),
             _ => return Err(self.fail("match needs a bare enum variable as its subject")),
@@ -1776,9 +1791,13 @@ impl<'a> Parser<'a> {
             {
                 return Err(self.fail(&format!("pattern must name the matched enum ('{}::Variant')", def.pattern)));
             }
-            let (tree, end) = ae_syntax::pattern::parse_pattern_tokens(
-                &self.file, self.source, &self.tokens, self.pos,
-            )?;
+            let offset = self.tokens[self.pos].offset;
+            let (tree, end) = if let Some(pattern) = self.resolved_expressions().match_patterns.get(&offset).cloned() {
+                let end = self.tokens.partition_point(|token| token.offset < pattern.range.end);
+                (pattern, end)
+            } else {
+                ae_syntax::pattern::parse_pattern_tokens(&self.file, self.source, &self.tokens, self.pos)?
+            };
             self.pos = end;
             let ae_syntax::pattern::PatternKind::Variant {
                 enum_name, variant: vname, variant_range, payload,
