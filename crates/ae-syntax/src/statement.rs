@@ -339,44 +339,54 @@ impl Parser<'_> {
     }
 }
 
-/// Depth-first walk over every expression a statement holds. Callers use it
-/// to inspect or rewrite without re-implementing the statement shapes.
-pub fn visit_expressions(statement: &Statement, visit: &mut impl FnMut(&Expression)) {
+/// Visit a statement and its nested statements in source order.
+pub fn visit_statements(statement: &Statement, visit: &mut impl FnMut(&Statement)) {
+    visit(statement);
     match &statement.kind {
-        StatementKind::Binding { initializer, .. } => visit(initializer),
-        StatementKind::Assign { target, value, .. } => { visit(target); visit(value); }
-        StatementKind::PointerStore { value, .. } => visit(value),
-        StatementKind::Print(value) | StatementKind::Assert(value) | StatementKind::Return(value) => visit(value),
-        StatementKind::Expr { value, .. } => visit(value),
-        StatementKind::If { condition, then_body, else_body } => {
-            visit(condition);
-            then_body.iter().for_each(|inner| visit_expressions(inner, visit));
+        StatementKind::If { then_body, else_body, .. } => {
+            then_body.iter().for_each(|inner| visit_statements(inner, visit));
             match else_body {
-                Some(ElseBranch::Block(body)) => body.iter().for_each(|inner| visit_expressions(inner, visit)),
-                Some(ElseBranch::If(inner)) => visit_expressions(inner, visit),
+                Some(ElseBranch::Block(body)) => body.iter().for_each(|inner| visit_statements(inner, visit)),
+                Some(ElseBranch::If(inner)) => visit_statements(inner, visit),
                 None => {}
             }
         }
-        StatementKind::While { condition, body } => {
-            visit(condition);
-            body.iter().for_each(|inner| visit_expressions(inner, visit));
+        StatementKind::While { body, .. }
+        | StatementKind::ForRange { body, .. }
+        | StatementKind::ForIn { body, .. }
+        | StatementKind::Unsafe(body) => body.iter().for_each(|inner| visit_statements(inner, visit)),
+        StatementKind::Match { arms, .. } => {
+            arms.iter().for_each(|arm| arm.body.iter().for_each(|inner| visit_statements(inner, visit)));
         }
-        StatementKind::ForRange { start, end, body, .. } => {
-            visit(start);
-            visit(end);
-            body.iter().for_each(|inner| visit_expressions(inner, visit));
-        }
-        StatementKind::ForIn { iterable, body, .. } => {
-            visit(iterable);
-            body.iter().for_each(|inner| visit_expressions(inner, visit));
-        }
-        StatementKind::Match { subject, arms } => {
-            visit(subject);
-            arms.iter().for_each(|arm| arm.body.iter().for_each(|inner| visit_expressions(inner, visit)));
-        }
-        StatementKind::Unsafe(body) => body.iter().for_each(|inner| visit_expressions(inner, visit)),
-        StatementKind::Break | StatementKind::Continue => {}
+        _ => {}
     }
+}
+
+impl Statement {
+    /// Expressions directly owned by this statement, excluding nested bodies.
+    pub fn expressions(&self) -> impl Iterator<Item = &Expression> {
+        let pair = match &self.kind {
+            StatementKind::Binding { initializer, .. } => [Some(initializer), None],
+            StatementKind::Assign { target, value, .. } => [Some(target), Some(value)],
+            StatementKind::PointerStore { value, .. }
+            | StatementKind::Print(value)
+            | StatementKind::Assert(value)
+            | StatementKind::Return(value)
+            | StatementKind::Expr { value, .. } => [Some(value), None],
+            StatementKind::If { condition, .. }
+            | StatementKind::While { condition, .. } => [Some(condition), None],
+            StatementKind::ForRange { start, end, .. } => [Some(start), Some(end)],
+            StatementKind::ForIn { iterable, .. } => [Some(iterable), None],
+            StatementKind::Match { subject, .. } => [Some(subject), None],
+            StatementKind::Unsafe(_) | StatementKind::Break | StatementKind::Continue => [None, None],
+        };
+        pair.into_iter().flatten()
+    }
+}
+
+/// Depth-first walk over the expression roots owned by this statement and its body.
+pub fn visit_expressions(statement: &Statement, visit: &mut impl FnMut(&Expression)) {
+    visit_statements(statement, &mut |statement| statement.expressions().for_each(&mut *visit));
 }
 
 /// True when a binary operator at this position could have continued the

@@ -86,14 +86,16 @@ updates this ADR as slices land.
    Standalone statement parsing caps recursive descent at 64 statements
    across nested blocks and else-if chains. Its depth check keeps syntax
    tree construction safe before typed body lowering consumes it.
-   The compiler also lowers shared `break` and `continue` nodes, after
-   checking loop scope and before attaching ownership cleanup and targets.
+   For `break` and `continue`, the compiler advances to the end of the
+   indexed resolver statement after checking loop scope, then attaches
+   ownership cleanup and loop targets.
    Module assembly and the resolver can borrow the same lexer token stream.
    The `emit-resolve` route uses this path for the entry module.
-   `print` and `assert` lower scalar constant expressions from shared
-   statement and expression nodes, including grouped and operator
-   expressions. Both paths share operator typing. Scalar local reads can
-   use a resolver `DefId` when its definition range matches the active
+   `print` and `assert` use the resolver statement's end and indexed
+   argument nodes, including grouped and operator expressions. Opaque
+   closure bodies retain local shared statement parsing. Both paths share
+   operator typing. Scalar local reads can use a resolver `DefId` when its
+   definition range matches the active
    compiler slot. Ownership-sensitive expressions and unresolved reads
    still use typed expression parsing.
    Scalar binding initializers and return values also lower from shared

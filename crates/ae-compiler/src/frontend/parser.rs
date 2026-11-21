@@ -436,8 +436,11 @@ impl<'a> Parser<'a> {
                 }
             }
             for statement in module.functions.iter().filter_map(|function| function.body.as_ref()).flatten() {
-                ae_syntax::statement::visit_expressions(statement, &mut |expression| {
-                    expressions.values.insert(expression.range.start, Rc::new(expression.clone()));
+                ae_syntax::statement::visit_statements(statement, &mut |statement| {
+                    expressions.statement_ends.insert(statement.range.start, statement.range.end);
+                    for expression in statement.expressions() {
+                        expressions.values.insert(expression.range.start, Rc::new(expression.clone()));
+                    }
                 });
             }
             expressions
@@ -640,38 +643,56 @@ impl<'a> Parser<'a> {
         Ok(condition)
     }
 
+    fn resolved_statement_end(&mut self) -> Option<usize> {
+        let start = self.tokens.get(self.pos)?.offset;
+        let end = *self.resolved_expressions().statement_ends.get(&start)?;
+        Some(self.tokens.partition_point(|token| token.offset < end))
+    }
+
     fn lower_output_from_syntax(&mut self) -> Option<Statement> {
         use ae_syntax::expression::ExpressionKind;
-        use ae_syntax::statement::{parse_statement_tokens, StatementKind};
 
-        let [_, open, argument, ..] = &self.tokens[self.pos..] else {
+        let [keyword, open, argument, ..] = &self.tokens[self.pos..] else {
             return None;
         };
         if open.kind != Kind::LParen || !Self::shared_expression_start(&argument.kind) {
             return None;
         }
+        let print = keyword.kind == Kind::Print;
+        let offset = argument.offset;
+        let (argument, end) = if let Some(end) = self.resolved_statement_end() {
+            let argument = self.resolved_expressions().values.get(&offset).cloned()?;
+            (argument, end)
+        } else {
+            use ae_syntax::statement::{parse_statement_tokens, StatementKind};
+
+            // Closure bodies are still opaque in the module statement tree.
+            let (statement, end) = parse_statement_tokens(&self.file, self.source, &self.tokens, self.pos).ok()?;
+            let argument = match statement.kind {
+                StatementKind::Print(value) | StatementKind::Assert(value) => value,
+                _ => unreachable!("output statement syntax"),
+            };
+            (Rc::new(argument), end)
+        };
 
         // Commit argument moves and advance the cursor only after the entire
         // statement lowers successfully.
-        let (statement, end) = parse_statement_tokens(&self.file, self.source, &self.tokens, self.pos).ok()?;
         let mut nodes_left = 128;
         let mut pending_moves = Vec::new();
-        let lowered = match statement.kind {
-            StatementKind::Print(argument) => match argument.kind {
-                ExpressionKind::Atom(Kind::Text(value)) => Statement::Print(Printed::Text(value)),
+        let lowered = if print {
+            match &argument.kind {
+                ExpressionKind::Atom(Kind::Text(value)) => Statement::Print(Printed::Text(value.clone())),
                 _ => {
                     let (value, _) = self.lower_shared_expression(&argument, 64, &mut nodes_left, &mut pending_moves)?;
                     Statement::Print(Printed::Expr(value))
                 }
-            },
-            StatementKind::Assert(argument) => {
-                let (condition, Type::Bool) = self.lower_shared_expression(&argument, 64, &mut nodes_left, &mut pending_moves)? else {
-                    return None;
-                };
-                let (line, column) = self.position();
-                Statement::Assert(condition, line, column)
             }
-            _ => unreachable!("output statement syntax"),
+        } else {
+            let (condition, Type::Bool) = self.lower_shared_expression(&argument, 64, &mut nodes_left, &mut pending_moves)? else {
+                return None;
+            };
+            let (line, column) = self.position();
+            Statement::Assert(condition, line, column)
         };
         self.pos = end;
         self.commit_shared_moves(pending_moves);
@@ -1324,18 +1345,18 @@ impl<'a> Parser<'a> {
                 Kind::Break | Kind::Continue => {
                     let keyword = if *self.current() == Kind::Break { "break" } else { "continue" };
                     if self.loop_depth == 0 { return Err(self.fail(&format!("'{keyword}' outside of a loop"))); }
-                    use ae_syntax::statement::{parse_statement_tokens, StatementKind};
-
-                    let (statement, end) = parse_statement_tokens(
-                        &self.file, self.source, &self.tokens, self.pos,
-                    )?;
-                    self.pos = end;
+                    self.pos = match self.resolved_statement_end() {
+                        Some(end) => end,
+                        None => ae_syntax::statement::parse_statement_tokens(
+                            &self.file, self.source, &self.tokens, self.pos,
+                        )?.1,
+                    };
                     let owned = self.loop_local_owned();
                     if !owned.is_empty() { result.push(Statement::Frees(owned)); }
-                    result.push(match statement.kind {
-                        StatementKind::Break => Statement::Break,
-                        StatementKind::Continue => Statement::Continue(self.loop_labels.last().copied().flatten()),
-                        _ => unreachable!("loop jump syntax"),
+                    result.push(if keyword == "break" {
+                        Statement::Break
+                    } else {
+                        Statement::Continue(self.loop_labels.last().copied().flatten())
                     });
                 }
                 Kind::Assert => {
