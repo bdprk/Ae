@@ -192,3 +192,5 @@
 
 - 2026-11-21 09:40 InstaBox 5 台全部投入（用户指令：最大化利用）：5/5 SSH 证书续签（24h），工作树状态（bc238a5 + 24 未提交路径 tar 包 14595af216ec34bf）部署至 ~/ae；evaluate-2 与 evaluate-3 全量 481 绿（Linux 第三、四台验证），node/evaluate-1/ai 构建完成。分布式差分 fuzz 战役启动（M2.13 段模式，--duration 3600）：eva start=400000 jobs=2、evaluate-1 start=500000 jobs=2、evaluate-2 start=600000 jobs=3、evaluate-3 start=700000 jobs=3、ai start=800000 jobs=2（繁忙机按并行会话负载降额），加 WSL start=900000 jobs=8 与 Windows start=950000 jobs=8 —— 7 路并行、种子区间互不重叠。5 盒启动 ~2.5 分钟合计 ~39 seeds/s，全域预计 30 万+ seeds/小时。结果日志在各盒 ~/ae/bench/results/fuzz-segment-start<seed>.log，1 小时段满自动停并出汇总。
 
+- 2026-11-21 10:40 推送机制升级（用户指令：每个小节点完成立即推，不要定时）：全局 post-commit 钩子（C:/Users/trevv/.config/git/hooks/post-commit）——每次提交后后台自动 push（有 upstream 才推、绝不 force、失败记 .git/autopush.log），覆盖本机全部仓库；`ae-autopush` 每 15 分钟计划任务保留为兜底（接住钩子失败与 amend/merge）。本提交即为钩子首验。
+
